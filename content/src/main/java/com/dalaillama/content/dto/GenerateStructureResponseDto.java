@@ -6,7 +6,13 @@ import java.util.List;
 
 @Data
 public class GenerateStructureResponseDto {
-    private String heading;
 
-    private List<String> points;
+    public List<Structure> generateStructure;
+    @Data
+    public static class Structure {
+        private String heading;
+
+        private List<String> points;
+
+    }
 }

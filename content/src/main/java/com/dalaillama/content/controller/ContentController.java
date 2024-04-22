@@ -1,7 +1,9 @@
 package com.dalaillama.content.controller;
 
+import com.dalaillama.content.dto.GenerateArticleRequestDto;
 import com.dalaillama.content.dto.GenerateStructureRequestDto;
 import com.dalaillama.content.dto.GenerateStructureResponseDto;
+import com.dalaillama.content.dto.GeneratedArticleResponseDto;
 import com.dalaillama.content.service.ContentService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,7 +21,12 @@ public class ContentController {
         this.contentService = contentService;
     }
     @PostMapping("/generateStructure")
-    List<GenerateStructureResponseDto> generateStructure(@RequestBody GenerateStructureRequestDto generateStructureRequestDto) {
+    GenerateStructureResponseDto generateStructure(@RequestBody GenerateStructureRequestDto generateStructureRequestDto) {
         return this.contentService.generateStructure(generateStructureRequestDto);
+    }
+
+    @PostMapping("/generateArticle")
+    GeneratedArticleResponseDto generateArticle(@RequestBody GenerateArticleRequestDto generateArticleRequestDto) {
+        return this.contentService.generateArticle(generateArticleRequestDto);
     }
 }

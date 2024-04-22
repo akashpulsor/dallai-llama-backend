@@ -1,5 +1,6 @@
 package com.dalaillama.content.controller;
 
+import com.dalaillama.content.dto.ChatResponseGenerated;
 import com.dalaillama.content.service.ChatService;
 import com.dalaillama.content.service.ContentService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,7 +18,7 @@ public class ChatController {
     }
 
     @GetMapping("/ai/generate")
-    public Map generate(@RequestParam(value = "message", defaultValue = "Tell me a joke") String message) {
-        return Map.of("generation", this.chatService.generateChat(1,message));
+    public ChatResponseGenerated generate(@RequestParam(value = "message", defaultValue = "Tell me a joke") String message) {
+        return this.chatService.generateChat(1,message);
     }
 }
