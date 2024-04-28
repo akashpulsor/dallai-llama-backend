@@ -15,40 +15,40 @@ public class SearchResponse {
     @JsonProperty("organic_results")
     private OrganicResults[] organicResults;
 
-    @JsonProperty("search_information")
-    private SearchInformation searchInformation;
+    //@JsonProperty("search_information")
+    //private SearchInformation searchInformation;
 
-    @JsonProperty("knowledge_graph")
-    private Object knowledgeGraph;
+    //@JsonProperty("knowledge_graph")
+    //private Object knowledgeGraph;
 
     @JsonProperty("twitter_results")
     private Object twitterResults;
 
-    @JsonProperty("related_questions")
-    private Object relatedQuestions;
+    //@JsonProperty("related_questions")
+    //private Object relatedQuestions;
 
-    @JsonProperty("search_metadata")
-    private SearchMetaData searchMetadata;
+    //@JsonProperty("search_metadata")
+    //private SearchMetaData searchMetadata;
 
     @JsonProperty("top_stories")
     private List<TopStories> topStories;
 
-    @JsonProperty("search_parameters")
-    private SearchParameters searchParameters;
+    //@JsonProperty("search_parameters")
+    //private SearchParameters searchParameters;
 
     @JsonProperty("top_stories_link")
     private String topStoriesLink;
 
-    @JsonProperty("top_stories_serpapi_link")
-    private String topStoriesSerpApiLink;
+    //@JsonProperty("top_stories_serpapi_link")
+    //private String topStoriesSerpApiLink;
 
-    @JsonProperty("related_searches")
-    private List<RelatedSearch> relatedSearches;
+    //@JsonProperty("related_searches")
+    //private List<RelatedSearch> relatedSearches;
 
-    private Pagination pagination;
+    //private Pagination pagination;
 
-    @JsonProperty("serpapi_pagination")
-    private SerpPagination serpApiPagination;
+    //@JsonProperty("serpapi_pagination")
+    //private SerpPagination serpApiPagination;
 
 
     @Data

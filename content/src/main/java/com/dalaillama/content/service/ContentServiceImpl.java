@@ -40,9 +40,10 @@ public class ContentServiceImpl implements ContentService{
     }
     @Override
     public GenerateStructureResponseDto generateStructure(GenerateStructureRequestDto generateStructureRequestDto) {
-        try {
-            SearchResponse searchResponse = this.searchService.search(generateStructureRequestDto.getTopicName());
-            log.info(""+searchResponse);
+        //try {
+
+            //SearchResponse searchResponse = this.searchService.search(generateStructureRequestDto.getTopicName());
+            //log.info(""+searchResponse);
             //List<SearchResponseDto> searchResponseDtoList = this.parsingService.parseContent(searchResponse);
             //summarizeData(searchResponseDtoList);
             /*
@@ -54,9 +55,9 @@ public class ContentServiceImpl implements ContentService{
            */
             log.info("Store data in the form of embedding in postgres");
             return this.chatService.generateStructure(generateStructureRequestDto.getLlmId(),generateStructureRequestDto.getTopicName());
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
+        //} catch (JsonProcessingException e) {
+          //  throw new RuntimeException(e);
+        //}
     }
 
     @Override

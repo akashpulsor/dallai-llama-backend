@@ -5,15 +5,15 @@ import com.dalaillama.content.dto.GenerateStructureRequestDto;
 import com.dalaillama.content.dto.GenerateStructureResponseDto;
 import com.dalaillama.content.dto.GeneratedArticleResponseDto;
 import com.dalaillama.content.service.ContentService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
 //OPENAI_API_KEY="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"
 //SERPAPI_API_KEY="262b581dac1cc55105c69261270f183127d0e361e3bdd6d57579173b94a80204"
+@CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
+@RequestMapping("/api/content")
 public class ContentController {
 
     private final ContentService contentService;
