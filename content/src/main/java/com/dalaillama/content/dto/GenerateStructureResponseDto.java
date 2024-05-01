@@ -8,6 +8,7 @@ import java.util.List;
 public class GenerateStructureResponseDto {
 
     public List<Structure> generateStructure;
+    private int llamaContentId;
     @Data
     public static class Structure {
         private String heading;

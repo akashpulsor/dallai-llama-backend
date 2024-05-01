@@ -15,26 +15,23 @@ public class Article {
     @Column(name="article_id")
     private int articleId;
 
-    @Column(name="title")
-    private String title;
+    @Column(name="generated_title")
+    private String generatedTitle;
+
+    @Column(name="generated_body")
+    private String generatedBody;
 
     @Column(name="body")
     private String body;
 
+    @Column(name="title")
+    private String title;
+
     @Column(name="user_id")
     private int userId;
 
-    @Column(name="structure_id")
-    private int structureId;
-
-    @Column(name="generation_id")
-    private int generationId;
-
-    @Column(name="is_published")
-    private boolean isPublished;
-
-    @Column(name="publish_id")
-    private String publishId;
+    @Column(name="generated_images")
+    private List<String> generatedImages;
 
     @Column(name="search_tags")
     private List<String> searchTags;

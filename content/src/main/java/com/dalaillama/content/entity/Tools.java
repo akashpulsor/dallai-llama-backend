@@ -13,19 +13,7 @@ import java.util.Date;
 @Entity
 @Table(name="tools")
 public class Tools {
-/*
-* {
-        "id": 1,
-        "name": "llamaContent",
-        "title": "llama-content",
-        "creatorId": 1,
-        "creatorName": "Akash",
-        "createDate": "24-01-1989",
-        "updateDate": "24-01-1989",
-        "active": true
-    },
-*
-* */
+
     @Id
     @GeneratedValue(strategy= GenerationType.IDENTITY)
     @Column(name="tool_id")

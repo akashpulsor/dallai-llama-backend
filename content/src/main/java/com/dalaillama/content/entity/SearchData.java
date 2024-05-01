@@ -10,15 +10,16 @@ import java.util.Date;
 @Table(name="search_data")
 public class SearchData {
 
-    //private SearchResponse searchResponse;
-
-    @Column(name="search_query")
-    private String searchQuery;
-
     @Id
     @GeneratedValue(strategy= GenerationType.UUID)
     @Column(name="search_id")
     private String searchId;
+
+    @Column(name="search_query")
+    private String searchQuery;
+
+    @Column(name="search_response")
+    private String searchResponse;
 
     @Column(name="user_id")
     private String userId;

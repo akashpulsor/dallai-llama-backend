@@ -1,6 +1,7 @@
 package com.dalaillama.content.service;
 
 import com.dalaillama.content.dto.LlmDto;
+import com.dalaillama.content.dto.PriceListRequestDto;
 import com.dalaillama.content.dto.PriceListResponseDto;
 import com.dalaillama.content.dto.ToolsDto;
 import com.dalaillama.content.entity.Llm;
@@ -18,4 +19,6 @@ public interface ConfigurationManager {
     List<LlmDto> getAllLlm();
 
     List<PriceListResponseDto> getPriceList();
+
+    PriceListResponseDto addPriceList(PriceListRequestDto priceListRequestDto);
 }

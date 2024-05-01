@@ -4,7 +4,7 @@ package com.dalaillama.content.dto;
 import lombok.Data;
 
 @Data
-public class PriceListResponseDto {
+public class PriceListRequestDto {
     private int priceId;
     private int llmId;
     private int toolId;

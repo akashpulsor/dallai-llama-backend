@@ -43,7 +43,7 @@ public class User {
     private String githubUrl;
 
     @Column(unique=true, name="phone_number")
-    private String number;
+    private String phoneNumber;
 
 
     @Column(name="account_non_expired")
@@ -73,6 +73,5 @@ public class User {
 
     @Enumerated(EnumType.STRING)
     private Gender gender;
-
 
 }

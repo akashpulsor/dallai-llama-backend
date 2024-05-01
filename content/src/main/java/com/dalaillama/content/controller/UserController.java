@@ -22,12 +22,12 @@ public class UserController {
     }
 
     @GetMapping("/getHistory")
-    public List<UserHistoryDto> getHistory(@RequestParam(value = "message", defaultValue = "Tell me a joke") int userId) {
+    public List<UserHistoryDto> getHistory(@RequestParam(value = "userId", required = true) int userId ) {
         return this.userManager.getUserHistory(userId);
     }
 
     @GetMapping("/getUser")
-    public UserDto getUser(@RequestParam(value = "message", defaultValue = "Tell me a joke") int userId) {
+    public UserDto getUser(@RequestParam(value = "userId", required = true) int userId) {
         return this.userManager.getUser(userId);
     }
 

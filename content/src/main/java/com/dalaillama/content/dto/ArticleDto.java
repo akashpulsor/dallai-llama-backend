@@ -12,6 +12,7 @@ public class ArticleDto {
     private int searchId;
     private int llmId;
     private int toolId;
+    private int llamaContentId;
     private String title;
     private String body;
     private List<String> generateTags;

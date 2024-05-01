@@ -11,6 +11,9 @@ public class PublishDestination {
 
     @Id
     @GeneratedValue(strategy= GenerationType.IDENTITY)
+    @Column(name="publish_id")
+    private int publishId;
+
     @Column(name="destination_id")
     private int destinationId;
 
@@ -25,4 +28,5 @@ public class PublishDestination {
 
     @Column(name="password")
     private String password;
+
 }

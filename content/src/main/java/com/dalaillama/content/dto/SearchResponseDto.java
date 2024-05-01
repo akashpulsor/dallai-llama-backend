@@ -9,6 +9,8 @@ public class SearchResponseDto {
 
     private Content content;
 
+    private int llamaContentId;
+
     @Data
     public static class Content {
         private String title;

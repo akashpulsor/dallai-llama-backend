@@ -25,7 +25,7 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public UserDto registerUser(@Valid @RequestBody SignUpRequestDto signUpRequestDto) {
+    public LoginResponseDto registerUser(@Valid @RequestBody SignUpRequestDto signUpRequestDto) {
         return this.userManager.signUp(signUpRequestDto);
     }
 

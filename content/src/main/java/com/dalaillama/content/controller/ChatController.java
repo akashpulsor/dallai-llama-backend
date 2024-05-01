@@ -11,7 +11,7 @@ import java.util.Map;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
-@RequestMapping("/api/chat")
+@RequestMapping("/api/ai")
 public class ChatController {
 
     private final ChatService chatService;
@@ -19,12 +19,12 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    @GetMapping("/ai/generate")
+    @GetMapping("/generate")
     public ChatResponseGenerated generate(@RequestParam(value = "message", defaultValue = "Tell me a joke") String message) {
         return this.chatService.generateChat(1,message);
     }
 
-    @PostMapping("/ai/chat")
+    @PostMapping("/chat")
     public ChatResponseGenerated chat( @RequestBody SearchRequest searchRequest) {
         return this.chatService.chat(searchRequest);
     }

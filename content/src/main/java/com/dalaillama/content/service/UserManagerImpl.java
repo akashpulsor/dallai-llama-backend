@@ -6,6 +6,7 @@ import com.dalaillama.content.entity.RefreshToken;
 import com.dalaillama.content.entity.Role;
 import com.dalaillama.content.entity.User;
 import com.dalaillama.content.exception.EmailExistsException;
+import com.dalaillama.content.exception.PhoneNumberExistsException;
 import com.dalaillama.content.exception.TokenRefreshException;
 import com.dalaillama.content.exception.UserNameExistsException;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -14,6 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.Authentication;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -59,16 +61,21 @@ public class UserManagerImpl  implements  UserManager {
         SecurityContextHolder.getContext().setAuthentication(authentication);
         Principal userDetails = (Principal) authentication.getPrincipal();
         String jwtToken  = this.jwtService.generateJwtToken(userDetails);
-
         List<String> roles = userDetails.getAuthorities().stream()
                 .map(item -> item.getAuthority())
                 .collect(Collectors.toList());
-
-        RefreshToken refreshToken = this.userService.createRefreshToken(userDetails.getId());
-
+        User user = this.userService.findUserById(userDetails.getId());
+        RefreshToken refreshToken = this.userService.getRefreshToken(user);
         LoginResponseDto loginResponseDto = new LoginResponseDto();
         loginResponseDto.setAccessToken(jwtToken);
+        if(refreshToken!=null){
+            this.userService.deleteByUserId(userDetails.getId());
+        }
+
+        refreshToken = this.userService.createRefreshToken(userDetails.getId());
         loginResponseDto.setRefreshToken(refreshToken.getToken());
+        loginResponseDto.setRefreshToken(refreshToken.getToken());
+
         UserInfoResponse userInfoResponse = new UserInfoResponse();
         userInfoResponse.setUsername(userDetails.getUsername());
         userInfoResponse.setId(userDetails.getId());
@@ -78,6 +85,8 @@ public class UserManagerImpl  implements  UserManager {
         return loginResponseDto;
     }
 
+
+
     @Override
     public UserDto getUserById(long id) {
         return userModelToDto(this.userService.findUserById(id));
@@ -86,6 +95,7 @@ public class UserManagerImpl  implements  UserManager {
     @Override
     public LoginResponseDto logout() {
         Object principle = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (principle.toString() != "anonymousUser") {
             int userId = ((Principal) principle).getId();
             this.userService.deleteByUserId(userId);
@@ -137,7 +147,7 @@ public class UserManagerImpl  implements  UserManager {
     }
 
     @Override
-    public UserDto signUp(SignUpRequestDto signUpRequestDto) {
+    public LoginResponseDto signUp(SignUpRequestDto signUpRequestDto) {
         if(this.userService.findByEmail(signUpRequestDto.getEmail())) {
             throw  new EmailExistsException("Email Already exception");
         }
@@ -145,19 +155,34 @@ public class UserManagerImpl  implements  UserManager {
         if(this.userService.findByUsername(signUpRequestDto.getUserName())) {
             throw  new UserNameExistsException("User Name exists exception");
         }
+
+        if(this.userService.findByPhone(signUpRequestDto.getPhone())) {
+            throw  new PhoneNumberExistsException("Phone Number exists exception");
+        }
         User user = singUpRequestDtoToUser(signUpRequestDto);
         Set<String> strRoles = signUpRequestDto.getRoles();
         user.setRoles(getRoles(strRoles));
         this.userService.createUser(user);
-        return userModelToDto(user);
+
+        UserDto userDto  =userModelToDto(user);
+        LoginRequestDto loginRequestDto = new LoginRequestDto();
+        loginRequestDto.setUserName(userDto.getUserName());
+        loginRequestDto.setPassword(signUpRequestDto.getPassword());
+        return login(loginRequestDto);
     }
 
     private User singUpRequestDtoToUser(SignUpRequestDto signUpRequestDto){
         User user = new User();
         user.setPassword(passwordEncoder.encode(signUpRequestDto.getPassword()));
-        user.setNumber(signUpRequestDto.getPhone());
+        user.setPhoneNumber(signUpRequestDto.getPhone());
         user.setEmail(signUpRequestDto.getEmail());
         user.setUserName(signUpRequestDto.getUserName());
+        user.setCompanyName(signUpRequestDto.getCompanyName());
+        user.setLinkedInUrl(signUpRequestDto.getLinkedInUrl());
+        user.setGithubUrl(signUpRequestDto.getLinkedInUrl());
+        user.setProfileImage(signUpRequestDto.getLinkedInUrl());
+        user.setBio(signUpRequestDto.getLinkedInUrl());
+        user.setGender(signUpRequestDto.getGender());
         return user;
     }
 
@@ -194,7 +219,7 @@ public class UserManagerImpl  implements  UserManager {
         userDto.setUserId(user.getId());
         userDto.setUserName(user.getUserName());
         userDto.setEmail(user.getEmail());
-        userDto.setNumber(user.getNumber());
+        userDto.setNumber(user.getPhoneNumber());
         userDto.setPassword(user.getPassword());
         userDto.setProfileImage(user.getProfileImage());
         userDto.setFollowerCount(user.getFollowerCount());
@@ -207,7 +232,7 @@ public class UserManagerImpl  implements  UserManager {
         User user = new User();
         if(userDto.getUserName()!= null) user.setUserName(userDto.getUserName()) ;
         if(userDto.getEmail()!= null) user.setEmail(userDto.getEmail());
-        if(userDto.getNumber()!= null) user.setNumber(userDto.getNumber());
+        if(userDto.getNumber()!= null) user.setPhoneNumber(userDto.getNumber());
         if(userDto.getFollowerCount()!= 0l) user.setFollowerCount(userDto.getFollowerCount());
         if(userDto.getBio()!= null) user.setBio(userDto.getBio());
         if(userDto.getProfileImage()!= null) user.setProfileImage(userDto.getProfileImage());
@@ -223,13 +248,12 @@ public class UserManagerImpl  implements  UserManager {
         User user = new User();
         if(userDto.getUserName()!= null) user.setUserName(userDto.getUserName()) ;
         if(userDto.getEmail()!= null) user.setEmail(userDto.getEmail());
-        if(userDto.getNumber()!= null) user.setNumber(userDto.getNumber());
+        if(userDto.getNumber()!= null) user.setPhoneNumber(userDto.getNumber());
         if(userDto.getFollowerCount()!= 0l) user.setFollowerCount(userDto.getFollowerCount());
         if(userDto.getBio()!= null) user.setBio(userDto.getBio());
         if(userDto.getProfileImage()!= null) user.setProfileImage(userDto.getProfileImage());
         if(userDto.getGender()!= null) user.setGender(userDto.getGender());
         if(userDto.getUserId()!= 0) user.setId(userDto.getUserId()); ;
-
         return user;
     }
 }

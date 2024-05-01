@@ -18,8 +18,9 @@ public class StructureData {
     @Column(name="user_id")
     private int userId;
 
-    @Column(name="structure")
+    @Column(name="generated_structure")
     private String structure;
 
-    //private List<SearchData> searchResultList;
+    @Column(name="selected_structure")
+    private String selectedStructure;
 }

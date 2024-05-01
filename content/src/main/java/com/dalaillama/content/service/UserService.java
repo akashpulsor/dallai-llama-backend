@@ -71,6 +71,9 @@ public class UserService implements UserDetailsService {
         return refreshTokenRepository.findByToken(token);
     }
 
+    public RefreshToken getRefreshToken(User user){
+        return this.refreshTokenRepository.findByUser(user);
+    }
     public RefreshToken createRefreshToken(int userId) {
         RefreshToken refreshToken = new RefreshToken();
 
@@ -109,4 +112,7 @@ public class UserService implements UserDetailsService {
         return this.roleRepository.findByName(role);
     }
 
+    public boolean findByPhone(String phone) {
+        return this.userRepository.existsByPhoneNumber(phone);
+    }
 }

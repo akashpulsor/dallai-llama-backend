@@ -1,6 +1,7 @@
 package com.dalaillama.content.service;
 
 import com.dalaillama.content.dto.LlmDto;
+import com.dalaillama.content.dto.PriceListRequestDto;
 import com.dalaillama.content.dto.PriceListResponseDto;
 import com.dalaillama.content.dto.ToolsDto;
 import com.dalaillama.content.entity.Llm;
@@ -18,9 +19,11 @@ public class ConfigurationManagerImpl implements ConfigurationManager {
     private final ToolsService toolsService;
     private final LlmService llmService;
 
-    public ConfigurationManagerImpl(ToolsService toolsService,LlmService llmService){
+    private final PriceService priceService;
+    public ConfigurationManagerImpl(ToolsService toolsService,LlmService llmService,PriceService priceService){
         this.toolsService = toolsService;
         this.llmService = llmService;
+        this.priceService = priceService;
     }
     @Override
     public ToolsDto addTools(ToolsDto toolsDto) {
@@ -46,11 +49,18 @@ public class ConfigurationManagerImpl implements ConfigurationManager {
         return this.llmService.getAllLlm().stream().map(this::mapLlmModelToDto).toList();
     }
 
-    //TODO price list implemented
+
     @Override
     public List<PriceListResponseDto> getPriceList() {
-        return new ArrayList<>();
+        return this.priceService.getAllPrice();
     }
+
+    @Override
+    public PriceListResponseDto addPriceList(PriceListRequestDto priceListRequestDto)
+    {
+        return this.priceService.addPrice(priceListRequestDto);
+    }
+
 
 
     private Tools mapToolsDtoToModel(ToolsDto toolsDto) {

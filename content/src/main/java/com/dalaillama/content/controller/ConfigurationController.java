@@ -42,4 +42,9 @@ public class ConfigurationController {
     public List<PriceListResponseDto> getPriceList() {
         return this.configurationManager.getPriceList();
     }
+
+    @PostMapping("/add-price-list")
+    public PriceListResponseDto addPriceList(PriceListRequestDto priceListRequestDto) {
+        return this.configurationManager.addPriceList(priceListRequestDto);
+    }
 }

@@ -11,7 +11,7 @@ public interface UserManager {
 
     LoginResponseDto login(LoginRequestDto loginRequestDto);
 
-    UserDto signUp(SignUpRequestDto signUpRequestDto);
+    LoginResponseDto signUp(SignUpRequestDto signUpRequestDto);
 
     UserDto getUserById(long id);
 

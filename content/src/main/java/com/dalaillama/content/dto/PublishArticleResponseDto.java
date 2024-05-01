@@ -8,4 +8,6 @@ public class PublishArticleResponseDto {
     private int publishId;
 
     private int articleId;
+
+    private int llamaContentId;
 }

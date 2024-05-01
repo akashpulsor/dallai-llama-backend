@@ -1,6 +1,8 @@
 package com.dalaillama.content.service;
 
 import com.dalaillama.content.dto.*;
+import com.dalaillama.content.entity.Article;
+import com.dalaillama.content.entity.LlamaContent;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -10,9 +12,12 @@ import java.util.List;
 @Component
 public class ContentManagerImpl implements ContentManager {
 
-    private ArticleService articleService;
-    public ContentManagerImpl(ArticleService articleService) {
+    private final ArticleService articleService;
+
+    private final LlamaContentService llamaContentService;
+    public ContentManagerImpl(ArticleService articleService, LlamaContentService llamaContentService) {
         this.articleService = articleService;
+        this.llamaContentService = llamaContentService;
     }
     @Override
     public ArticleDto saveArticle(ArticleDto articleDto) {
@@ -33,4 +38,7 @@ public class ContentManagerImpl implements ContentManager {
     public List<String> generateTags(ArticleDto articleDto) {
         return new ArrayList<>();
     }
+
+
+
 }

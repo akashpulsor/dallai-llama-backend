@@ -10,7 +10,6 @@ public class UserDto {
 
     private String userName;
 
-
     private String number;
 
     private String email;
