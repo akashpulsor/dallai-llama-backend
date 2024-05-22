@@ -10,6 +10,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.function.Function;
 //import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,6 +30,11 @@ public class ContentApplication {
 	public Function<SearchServiceImpl.Request, SearchServiceImpl.Response> searchFunction(SearchServiceImpl searchService) {
 
 		return (searchService::apply);
+	}
+
+	@Bean
+	public RestTemplate restTemplate() {
+		return new RestTemplate();
 	}
 /*
 	@Bean

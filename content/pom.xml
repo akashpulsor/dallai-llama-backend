@@ -141,7 +141,25 @@
                     <classifier>models</classifier>
                 </dependency>
 
-            </dependencies>
+
+        <!-- https://mvnrepository.com/artifact/dev.langchain4j/langchain4j-core -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.30.0</version>
+        </dependency>
+
+
+        <!-- https://mvnrepository.com/artifact/dev.langchain4j/langchain4j-embeddings-all-minilm-l6-v2-q -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-embeddings-all-minilm-l6-v2-q</artifactId>
+            <version>0.30.0</version>
+            <scope>test</scope>
+        </dependency>
+
+
+    </dependencies>
             <dependencyManagement>
                 <dependencies>
                     <dependency>

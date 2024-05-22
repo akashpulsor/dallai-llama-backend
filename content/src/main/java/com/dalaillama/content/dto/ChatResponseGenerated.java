@@ -8,8 +8,10 @@ import java.util.List;
 public class ChatResponseGenerated {
     private String subject;
     private String Summary;
-    private List<SearchResponse.TopStories> topStories;
-    List<SearchResponse.OrganicResults> organicResults;
-    private Object twitterResults;
+
+    private JinaResponse response;
+    //private List<SearchResponse.TopStories> topStories;
+    //List<SearchResponse.OrganicResults> organicResults;
+    //private Object twitterResults;
 
 }

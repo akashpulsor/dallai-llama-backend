@@ -3,6 +3,7 @@ package com.dalaillama.content.service;
 import com.dalaillama.content.dto.*;
 import com.dalaillama.content.entity.Article;
 import com.dalaillama.content.entity.LlamaContent;
+import dev.langchain4j.data.document.Document;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -39,6 +40,8 @@ public class ContentManagerImpl implements ContentManager {
         return new ArrayList<>();
     }
 
-
+    public void loadJson(Article article){
+        //Document document = new Document();
+    }
 
 }

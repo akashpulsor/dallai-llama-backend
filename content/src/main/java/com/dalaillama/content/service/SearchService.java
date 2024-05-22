@@ -1,5 +1,6 @@
 package com.dalaillama.content.service;
 
+import com.dalaillama.content.dto.JinaResponse;
 import com.dalaillama.content.dto.SearchRequest;
 import com.dalaillama.content.dto.SearchResponse;
 import com.fasterxml.jackson.annotation.JsonClassDescription;
@@ -11,9 +12,9 @@ import java.util.function.Function;
 
 public interface SearchService extends Function<SearchService.Request, SearchService.Response> {
 
-    public SearchResponse search(SearchRequest searchRequest) throws JsonProcessingException;
+    public JinaResponse search(SearchRequest searchRequest) throws JsonProcessingException;
 
-    public record Response(SearchResponse searchResponse) {
+    public record Response(JinaResponse jinaResponse) {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -30,6 +30,15 @@ public class Article {
     @Column(name="user_id")
     private int userId;
 
+    @Column(name="external_url")
+    private String externalUrl;
+
+    @Enumerated(EnumType.STRING)
+    private ContentType contentType;
+
+    @Column(name="favicon_url")
+    private String faviconUrl;
+
     @Column(name="generated_images")
     private List<String> generatedImages;
 

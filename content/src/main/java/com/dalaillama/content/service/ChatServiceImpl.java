@@ -6,6 +6,7 @@ import com.dalaillama.content.dto.GenerateStructureResponseDto;
 import com.dalaillama.content.dto.GeneratedArticleResponseDto;
 import com.dalaillama.content.dto.SearchRequest;
 import com.google.gson.Gson;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.ChatResponse;
 import org.springframework.ai.chat.Generation;
@@ -21,12 +22,11 @@ import org.springframework.ai.parser.BeanOutputParser;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.model.function.FunctionCallbackWrapper;
-
+import dev.langchain4j.data.document.Document;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.chat.ChatClient;
-
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -94,18 +94,8 @@ public class ChatServiceImpl implements ChatService{
     }
 
     //@Override
-    public GenerateStructureResponseDto generateStructure1(int llmId, String message) {
-        BeanOutputParser<GenerateStructureResponseDto> parser =
-                new BeanOutputParser<>(GenerateStructureResponseDto.class);
-        String format = parser.getFormat();
-        PromptTemplate pt = new PromptTemplate(generateStructurePromptTemplate);
-        Prompt renderedPrompt = pt.create(Map.of("Topic", message, "format", format));
-        Generation generation = chatClient.call(renderedPrompt).getResult();
-        GenerateStructureResponseDto actorsFilms = parser.parse(generation.getOutput().getContent());
-        //log.info("Usage: " + usage.getPromptTokens() + " " + usage.getGenerationTokens() + "; " + usage.getTotalTokens());
-        //log.info(response.getResult().getOutput().getContent());
-        return actorsFilms;
-    }
+
+
 
     @Override
     public GenerateStructureResponseDto generateStructure(int llmId, String message) {
