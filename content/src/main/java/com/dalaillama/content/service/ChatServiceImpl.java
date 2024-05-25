@@ -10,6 +10,7 @@ import com.google.gson.Gson;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.ChatResponse;
 import org.springframework.ai.chat.Generation;
+import org.springframework.ai.chat.StreamingChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.Usage;
@@ -27,6 +28,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.chat.ChatClient;
+import reactor.core.publisher.Flux;
+
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +46,7 @@ public class ChatServiceImpl implements ChatService{
     private final SearchService searchService;
     private String promptTemplate;
 
-
+    private StreamingChatClient streamingChatClient;
     private String generateStructurePromptTemplate;
 
 
@@ -51,6 +54,7 @@ public class ChatServiceImpl implements ChatService{
     @Autowired
     public ChatServiceImpl(ChatClient chatClient,OpenAiChatClient openAiChatClient,
                            @Value("${app.promptTemplate}") String promptTemplate,
+                           StreamingChatClient streamingChatClient,
                            SearchService searchService,
                            @Value("${app.generate.structure.promptTemplate}") String generateStructurePromptTemplate)
     {
@@ -59,6 +63,7 @@ public class ChatServiceImpl implements ChatService{
         this.promptTemplate = promptTemplate;
         this.generateStructurePromptTemplate = generateStructurePromptTemplate;
         this.searchService = searchService;
+        this.streamingChatClient= streamingChatClient;
     }
 
     //@Override
@@ -67,15 +72,30 @@ public class ChatServiceImpl implements ChatService{
                 new BeanOutputParser<>(ChatResponseGenerated.class);
         String format = parser.getFormat();
         PromptTemplate pt = new PromptTemplate(promptTemplate);
-
         Message userMessage = pt.createMessage(Map.of("subject", searchRequest.getQuery(), "format", format));
         ChatResponse response = chatClient.call(new Prompt(List.of(userMessage),
-                OpenAiChatOptions.builder().withFunction("searchFunction").build()));
+                OpenAiChatOptions.builder().withFunction("searchFunction").build()
+                ));
         Usage usage = response.getMetadata().getUsage();
-
         log.info("Usage: " + usage.getPromptTokens() + " " + usage.getGenerationTokens() + "; " + usage.getTotalTokens());
         return parser.parse(response.getResult().getOutput().getContent());
     }
+
+    @Override
+    public Flux<ChatResponse> chatStream(SearchRequest searchRequest) {
+        BeanOutputParser<ChatResponseGenerated> parser =
+                new BeanOutputParser<>(ChatResponseGenerated.class);
+        String format = parser.getFormat();
+        PromptTemplate pt = new PromptTemplate(promptTemplate);
+
+        Message userMessage = pt.createMessage(Map.of("subject", searchRequest.getQuery(), "format", format));
+        //ChatResponse response = chatClient.call();
+        //Usage usage = response.getMetadata().getUsage();
+        return this.streamingChatClient.stream(new Prompt(List.of(userMessage),
+                OpenAiChatOptions.builder().withFunction("searchFunction").build()));
+    }
+
+
 
     @Override
     public ChatResponseGenerated generateChat(int llmId, String message) {
@@ -86,7 +106,7 @@ public class ChatServiceImpl implements ChatService{
         Message userMessage = pt.createMessage(Map.of("subject", message, "format", format));
         ChatResponse response = chatClient.call(new Prompt(List.of(userMessage),
                 OpenAiChatOptions.builder().withFunction("searchFunction").build()));
-        //ChatResponse response = chatClient.call(new Prompt(List.of(userMessage)));
+
         Usage usage = response.getMetadata().getUsage();
 
         log.info("Usage: " + usage.getPromptTokens() + " " + usage.getGenerationTokens() + "; " + usage.getTotalTokens());

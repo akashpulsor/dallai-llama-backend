@@ -16,6 +16,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.hw.serpapi.GoogleSearch;
 import com.hw.serpapi.SerpApiSearchException;
+import dev.langchain4j.agent.tool.Tool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,13 +63,16 @@ public class SearchServiceImpl implements  SearchService{
         return mapper.readValue(data, SearchResponse.class);
     }
 
+
+
     @Override
     public JinaResponse search(SearchRequest searchRequest) throws JsonProcessingException,SerpApiSearchException {
         String url = "https://s.jina.ai/"+ searchRequest.getQuery();
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/json");
         headers.set("X-With-Generated-Alt", "true");
-
+        headers.set("X-With-Images-Summary", "true");
+        //
         // Create an HttpEntity with the headers
         HttpEntity<String> entity = new HttpEntity<>(headers);
 
@@ -84,6 +88,7 @@ public class SearchServiceImpl implements  SearchService{
     public SearchServiceImpl.Response apply(Request request) {
         try {
             JinaResponse jinaResponse = search(request.searchRequest());
+            log.info("Jina response: {}", jinaResponse);
             return new Response(jinaResponse);
         } catch (JsonProcessingException e) {
             log.error("Search query failed", e);
