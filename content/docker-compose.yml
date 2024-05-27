@@ -20,3 +20,5 @@ services:
     environment:
       MYSQL_DATABASE: test
       MYSQL_ROOT_PASSWORD: root
+      OPEN_AI_API_KEY: sk-proj-oCV1d5OP2E1WNwkR0f8bT3BlbkFJPSjeCs8wEJfEdEGMiVeY
+      SERP_API_KEY: 7c4a91d98646880ba279c6c30fa9a14dbd32c2b0f8ce77d416c6759b3a37120f
