@@ -2,6 +2,7 @@ package com.dalaillama.content.advice;
 
 import com.dalaillama.content.exception.*;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -75,6 +76,18 @@ public class TokenControllerAdvice {
     public ErrorMessage handleUserNotFoundException(UserNotFoundException ex, WebRequest request) {
         return new ErrorMessage(
                 HttpStatus.NOT_FOUND.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
+
+    @ResponseBody
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    @ExceptionHandler({ AuthenticationException.class })
+    public ErrorMessage handleAuthenticationException(Exception ex, WebRequest request) {
+
+        return new ErrorMessage(
+                HttpStatus.UNAUTHORIZED.value(),
                 new Date(),
                 ex.getMessage(),
                 request.getDescription(false));
