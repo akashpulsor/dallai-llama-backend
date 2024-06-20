@@ -72,7 +72,7 @@ public class JwtService {
     }
 
     public ResponseCookie generateJwtCookie(User user) {
-        String jwt = generateTokenFromUsername(user.getUserName());
+        String jwt = generateTokenFromUsername(user.getName());
         return generateCookie(jwtCookie, jwt, "/api");
     }
 

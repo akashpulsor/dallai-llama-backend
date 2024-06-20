@@ -30,7 +30,7 @@ public class SignUpRequestDto {
     Set<String> roles = new HashSet<>();
 
     @Size(min = 3, max = 20)
-    private String userName;
+    private String name;
 
     private String companyName;
 

@@ -116,7 +116,7 @@ public class UserManagerImpl  implements  UserManager {
                     .map(this.userService::verifyExpiration)
                     .map(RefreshToken::getUser)
                     .map(user -> {
-                        String token =  this.jwtService.generateTokenFromUsername(user.getUserName());
+                        String token =  this.jwtService.generateTokenFromUsername(user.getName());
                         TokenRefreshResponse response = new TokenRefreshResponse();
                         response.setAccessToken(token);
                         response.setRefreshToken(refreshToken);
@@ -152,7 +152,7 @@ public class UserManagerImpl  implements  UserManager {
             throw  new EmailExistsException("Email Already exception");
         }
 
-        if(this.userService.findByUsername(signUpRequestDto.getUserName())) {
+        if(this.userService.findByUsername(signUpRequestDto.getName())) {
             throw  new UserNameExistsException("User Name exists exception");
         }
 
@@ -166,7 +166,7 @@ public class UserManagerImpl  implements  UserManager {
 
         UserDto userDto  =userModelToDto(user);
         LoginRequestDto loginRequestDto = new LoginRequestDto();
-        loginRequestDto.setUserName(userDto.getUserName());
+        loginRequestDto.setUserName(userDto.getName());
         loginRequestDto.setPassword(signUpRequestDto.getPassword());
         return login(loginRequestDto);
     }
@@ -176,7 +176,7 @@ public class UserManagerImpl  implements  UserManager {
         user.setPassword(passwordEncoder.encode(signUpRequestDto.getPassword()));
         user.setPhoneNumber(signUpRequestDto.getPhone());
         user.setEmail(signUpRequestDto.getEmail());
-        user.setUserName(signUpRequestDto.getUserName());
+        user.setName(signUpRequestDto.getName());
         user.setCompanyName(signUpRequestDto.getCompanyName());
         user.setLinkedInUrl(signUpRequestDto.getLinkedInUrl());
         user.setGithubUrl(signUpRequestDto.getLinkedInUrl());
@@ -217,7 +217,7 @@ public class UserManagerImpl  implements  UserManager {
     private UserDto userModelToDto(User user){
         UserDto userDto = new UserDto();
         userDto.setUserId(user.getId());
-        userDto.setUserName(user.getUserName());
+        userDto.setName(user.getName());
         userDto.setEmail(user.getEmail());
         userDto.setNumber(user.getPhoneNumber());
         userDto.setPassword(user.getPassword());
@@ -230,7 +230,7 @@ public class UserManagerImpl  implements  UserManager {
 
     private User userDtoToModel(UserDto userDto){
         User user = new User();
-        if(userDto.getUserName()!= null) user.setUserName(userDto.getUserName()) ;
+        if(userDto.getName()!= null) user.setName(userDto.getName()) ;
         if(userDto.getEmail()!= null) user.setEmail(userDto.getEmail());
         if(userDto.getNumber()!= null) user.setPhoneNumber(userDto.getNumber());
         if(userDto.getFollowerCount()!= 0l) user.setFollowerCount(userDto.getFollowerCount());
@@ -246,7 +246,7 @@ public class UserManagerImpl  implements  UserManager {
 
     private User updateUserDtoToModel(UserDto userDto){
         User user = new User();
-        if(userDto.getUserName()!= null) user.setUserName(userDto.getUserName()) ;
+        if(userDto.getName()!= null) user.setName(userDto.getName()) ;
         if(userDto.getEmail()!= null) user.setEmail(userDto.getEmail());
         if(userDto.getNumber()!= null) user.setPhoneNumber(userDto.getNumber());
         if(userDto.getFollowerCount()!= 0l) user.setFollowerCount(userDto.getFollowerCount());

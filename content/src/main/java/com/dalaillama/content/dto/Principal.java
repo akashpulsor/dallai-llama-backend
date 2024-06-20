@@ -46,7 +46,7 @@ public class Principal implements UserDetails {
 
         return new Principal(
                 user.getId(),
-                user.getUserName(),
+                user.getName(),
                 user.getEmail(),
                 user.getPassword(),
                 authorities);
