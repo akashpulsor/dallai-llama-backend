@@ -8,7 +8,7 @@ import lombok.Data;
 public class UserDto {
     private int userId;
 
-    private String userName;
+    private String name;
 
     private String number;
 
