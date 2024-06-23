@@ -152,10 +152,6 @@ public class UserManagerImpl  implements  UserManager {
             throw  new EmailExistsException("Email Already exception");
         }
 
-        if(this.userService.findByUsername(signUpRequestDto.getName())) {
-            throw  new UserNameExistsException("User Name exists exception");
-        }
-
         if(this.userService.findByPhone(signUpRequestDto.getPhone())) {
             throw  new PhoneNumberExistsException("Phone Number exists exception");
         }

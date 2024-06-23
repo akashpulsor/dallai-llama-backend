@@ -23,7 +23,7 @@ public interface UserRepository  extends JpaRepository<User, Integer> {
     List<User> finaProfiles(String userName);
     User save(User user);
 
-    Optional<User> findByUserName(String userName);
+    Optional<User> findByEmail(String userName);
 
     Optional<User> findById(long id);
 

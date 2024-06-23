@@ -57,7 +57,7 @@ public class UserService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = this.userRepository.findByUserName(username).
+        User user = this.userRepository.findByEmail(username).
                 orElseThrow(()-> new UserNotFoundException("User Not Found with username: "+ username));
 
         return Principal.build(user);
@@ -99,10 +99,6 @@ public class UserService implements UserDetailsService {
         return refreshTokenRepository.deleteByUser(userRepository.findById(userId).get());
     }
 
-
-    public boolean findByUsername(String username) {
-        return this.userRepository.existsByUserName(username);
-    }
 
     public boolean findByEmail(String email) {
         return this.userRepository.existsByEmail(email);
