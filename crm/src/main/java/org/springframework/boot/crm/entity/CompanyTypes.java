@@ -17,4 +17,7 @@ public class CompanyTypes {
 
     @Column(name="business_classification_id")
     private int businessClassificationId;
+
+    @Embedded
+    private SanitaryColumn sanitaryColumn;
 }

@@ -3,8 +3,6 @@ package org.springframework.boot.crm.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
-import java.util.ArrayList;
-import java.util.List;
 
 @Data
 @Entity(name = "business_classification")
@@ -21,4 +19,6 @@ public class BusinessClassification {
     @Column(name="country_id")
     private int countryId;
 
+    @Embedded
+    private SanitaryColumn sanitaryColumn;
 }

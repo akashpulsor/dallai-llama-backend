@@ -40,4 +40,7 @@ public class BusinessDataIndia {
 
     @Embedded
     private BankDetails bankDetails;
+
+    @Embedded
+    private SanitaryColumn sanitaryColumn;
 }

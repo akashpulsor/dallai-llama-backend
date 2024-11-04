@@ -33,4 +33,7 @@ public class BusinessData {
     @Column(name="basic_activity_description")
     private String basicActivityDescription;
 
+    @Embedded
+    private SanitaryColumn sanitaryColumn;
+
 }

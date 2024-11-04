@@ -23,4 +23,7 @@ public class CountryMasterData {
 
     @Column(name="image_url")
     private String imageUrl;
+
+    @Embedded
+    private SanitaryColumn sanitaryColumn;
 }
