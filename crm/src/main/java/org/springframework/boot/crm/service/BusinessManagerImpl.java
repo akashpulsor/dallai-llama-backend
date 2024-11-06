@@ -41,6 +41,24 @@ public class BusinessManagerImpl implements BusinessManager {
         return this.businessApiKeyService.addTwilioData(twilioData);
     }
 
+    public BusinessData getBusinessByEmail(String email) {
+        return this.businessService.getBusinessDataByEmail(email);
+    }
+
+    public BusinessData getBusinessByMobile(String mobile) {
+        return this.businessService.getBusinessDataByMobile(mobile);
+    }
+
+    @Override
+    public boolean checkEmailExists(String email) {
+        return this.businessService.checkEmailExists(email);
+    }
+
+    @Override
+    public boolean checkPhoneExists(String phone) {
+        return this.businessService.checkPhoneExists(phone);
+    }
+
     @Override
     public List<LlmData> getAllLlmData() {
         return this.businessApiKeyService.getLlmData();

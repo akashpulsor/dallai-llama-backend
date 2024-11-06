@@ -3,6 +3,9 @@ package org.springframework.boot.crm.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Data
 @Entity(name = "business_data")
 public class BusinessData {
@@ -30,8 +33,42 @@ public class BusinessData {
     @Column(name="number_of_employee")
     private int numberOfEmployee;
 
+    @Column(name="password")
+    private String password;
+
     @Column(name="basic_activity_description")
     private String basicActivityDescription;
+
+    @Column(name="account_non_expired")
+    private boolean accountNonExpired;
+
+    @Column(name="account_non_locked")
+    private boolean accountNonLocked;
+
+    @Column(name="credentials_non_expired")
+    private boolean credentialsNonExpired;
+
+    @Column(name="profile_image")
+    private String profileImage;
+
+    @Column(name="follower_count")
+    private long followerCount;
+
+    @Column(name="instagram_handle")
+    private long instagramHandle;
+
+    @Column(name="linkedIn_handle")
+    private long linkedInHandle;
+
+    @Column(name="is_active")
+    private boolean isActive;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "user_roles",
+            joinColumns = @JoinColumn(name = "user_id"),
+            inverseJoinColumns = @JoinColumn(name = "role_id"))
+    private Set<Role> roles = new HashSet<>();
+
 
     @Embedded
     private SanitaryColumn sanitaryColumn;

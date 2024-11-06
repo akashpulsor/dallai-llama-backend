@@ -18,4 +18,12 @@ public interface BusinessManager {
     List<LlmData> getAllLlmData();
 
     List<TwilioData> getAllTwilioData();
+
+    BusinessData getBusinessByEmail(String email);
+
+    BusinessData getBusinessByMobile(String mobile);
+
+    boolean checkEmailExists(String email);
+
+    boolean checkPhoneExists(String phone);
 }

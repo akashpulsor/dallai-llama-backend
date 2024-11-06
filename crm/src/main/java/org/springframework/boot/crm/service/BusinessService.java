@@ -26,5 +26,25 @@ public class BusinessService {
         return this.businessDataRepository.save(businessData);
     }
 
+    public BusinessData getBusinessDataByEmail(String email) {
+        log.info("Fetching Data about Email : {}", email);
+        return this.businessDataRepository.findByEmail(email).
+                orElseThrow(() -> new BusinessNotFoundException("Business not found!"));
+    }
 
+    public BusinessData getBusinessDataByMobile(String mobile) {
+        log.info("Fetching Data about Mobile : {}", mobile);
+        return this.businessDataRepository.findByMobile(mobile).
+                orElseThrow(() -> new BusinessNotFoundException("Business not found!"));
+    }
+
+    public boolean checkEmailExists(String email) {
+        log.info("Checking if Email exists : {}", email);
+        return this.businessDataRepository.existsByEmail(email);
+    }
+
+    public boolean checkPhoneExists(String mobile) {
+        log.info("Checking if Mobile exists : {}", mobile);
+        return this.businessDataRepository.existsByMobile(mobile);
+    }
 }
