@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DdlMappings">
+    <mapping uuid="99963e46-ccac-46c9-aef6-717a4c846476" name="dalai_llama2@localhost Mapping">
+      <data-sources db="56e70710-80c4-4eff-a43c-ecb45261f225" ddl="3911a537-9dec-49bd-9cc3-f9e300d5451b" />
+    </mapping>
+  </component>
+  <component name="SqlDataSourceStorage">
+    <option name="dataSources">
+      <list>
+        <State>
+          <option name="id" value="3911a537-9dec-49bd-9cc3-f9e300d5451b" />
+          <option name="name" value="dalai_llama2@localhost (DDL)" />
+          <option name="dbmsName" value="MYSQL" />
+          <option name="urls">
+            <array>
+              <option value="file://$PROJECT_DIR$/crm/src/main/resources/db/migration/V1__DDL_CRM.sql" />
+            </array>
+          </option>
+          <option name="outLayout" value="File per object by schema.groovy" />
+        </State>
+      </list>
+    </option>
+  </component>
+</project>

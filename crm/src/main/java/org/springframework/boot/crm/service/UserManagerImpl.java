@@ -1,14 +1,13 @@
 package org.springframework.boot.crm.service;
 
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.BusinessData;
 import org.springframework.boot.crm.entity.ERole;
 import org.springframework.boot.crm.entity.RefreshToken;
 import org.springframework.boot.crm.entity.Role;
-import org.springframework.boot.crm.exceptions.EmailExistsException;
-import org.springframework.boot.crm.exceptions.PhoneNumberExistsException;
-import org.springframework.boot.crm.exceptions.TokenRefreshException;
+import org.springframework.boot.crm.exceptions.*;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -22,6 +21,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Component
 public class UserManagerImpl implements UserManager {
 
@@ -108,6 +108,28 @@ public class UserManagerImpl implements UserManager {
     }
 
     @Override
+    public VerificationCodeResponseDto sendVerificationCode(VerificationCodeRequestDto verificationCodeRequestDto) {
+        if(!this.businessManager.checkEmailExists(verificationCodeRequestDto.getEmail())){
+            log.error("Email is not registered");
+            throw new UnregisteredEmailException("Email not registered");
+        }
+        VerificationCodeResponseDto verificationCodeResponseDto = new VerificationCodeResponseDto();
+        int number = 100000 + (int)(Math.random() * 900000);
+        verificationCodeResponseDto.setVerificationCode(number+"");
+        return verificationCodeResponseDto;
+    }
+
+    @Override
+    public UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto) {
+        if(!updatePasswordRequestDto.getOldPassword().equals(updatePasswordRequestDto.getNewPassword())){
+            throw  new PasswordMismatchException("Passwords do not match");
+        }
+        BusinessData businessData = this.businessManager.getBusinessByEmail(updatePasswordRequestDto.getEmail());
+        businessData.setPassword(passwordEncoder.encode(updatePasswordRequestDto.getNewPassword()));
+        return modelToDto(this.businessManager.addBusiness(businessData));
+    }
+
+    @Override
     public LoginResponseDto logout() {
         Object principle = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -182,12 +204,14 @@ public class UserManagerImpl implements UserManager {
 
     private BusinessData registerDtoToModel(RegisterRequestDto registerRequestDto) {
         BusinessData businessData = new BusinessData();
-        businessData.setBusinessName(registerRequestDto.getBusinessName());
-        businessData.setEmail(registerRequestDto.getEmail());
-        businessData.setMobile(registerRequestDto.getMobile());
-        businessData.setPassword(passwordEncoder.encode(registerRequestDto.getPassword()));
-        businessData.setWhatsAppNumber(registerRequestDto.getWhatsAppNumber());
-        businessData.setCountryId(registerRequestDto.getCountryId());
+        if(registerRequestDto.getBusinessName()!= null ) businessData.setBusinessName(registerRequestDto.getBusinessName());
+        if(registerRequestDto.getEmail()!= null ) businessData.setEmail(registerRequestDto.getEmail());
+        if(registerRequestDto.getMobile()!= null )businessData.setMobile(registerRequestDto.getMobile());
+        if(registerRequestDto.getPassword()!= null ) businessData.setPassword(passwordEncoder.encode(registerRequestDto.getPassword()));
+        if(registerRequestDto.getWhatsAppNumber()!= null ) businessData.setWhatsAppNumber(registerRequestDto.getWhatsAppNumber());
+        if(registerRequestDto.getCountryCallingCode()!= null ) businessData.setCountryDialingCode(registerRequestDto.getCountryCallingCode());
+        if(registerRequestDto.getCountryCode()!= null ) businessData.setCountryCode(registerRequestDto.getCountryCode());
+        if(registerRequestDto.getCompanySize()!= 0 )  businessData.setBusinessSizeId(registerRequestDto.getCompanySize());
         return businessData;
     }
 }

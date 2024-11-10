@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 public class BusinessService {
 
     private final BusinessDataRepository businessDataRepository;
+
     public BusinessService(BusinessDataRepository businessDataRepository){
         this.businessDataRepository = businessDataRepository;
     }

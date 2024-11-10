@@ -1,6 +1,7 @@
 package org.springframework.boot.crm.service;
 
 import org.springframework.boot.crm.entity.BusinessData;
+import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 
@@ -26,4 +27,7 @@ public interface BusinessManager {
     boolean checkEmailExists(String email);
 
     boolean checkPhoneExists(String phone);
+
+    List<BusinessSizeMasterData> getAllBusinessSizeMasterData();
+
 }

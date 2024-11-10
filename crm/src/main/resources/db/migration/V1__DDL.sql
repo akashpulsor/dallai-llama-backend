@@ -11,15 +11,26 @@ CREATE TABLE business_classification
 CREATE TABLE business_data
 (
     business_id                INT AUTO_INCREMENT NOT NULL,
-    email                      VARCHAR(255) NULL,
-    mobile                     VARCHAR(255) NULL,
-    whatsapp_number            VARCHAR(255) NULL,
-    business_name              VARCHAR(255) NULL,
-    country_id                 INT NULL,
-    number_of_employee         INT NULL,
-    basic_activity_description VARCHAR(255) NULL,
-    created_at                 datetime NULL,
-    updated_at                 datetime NULL,
+    email                      VARCHAR(255)       NULL,
+    name                       VARCHAR(255)       NULL,
+    mobile                     VARCHAR(255)       NULL,
+    whatsapp_number            VARCHAR(255)       NULL,
+    business_name              VARCHAR(255)       NULL,
+    country_code               VARCHAR(255)       NULL,
+    country_dialing_code       VARCHAR(255)       NULL,
+    business_size_id           INT                NULL,
+    password                   VARCHAR(255)       NULL,
+    basic_activity_description VARCHAR(255)       NULL,
+    account_non_expired        BIT(1)             NULL,
+    account_non_locked         BIT(1)             NULL,
+    credentials_non_expired    BIT(1)             NULL,
+    profile_image              VARCHAR(255)       NULL,
+    follower_count             BIGINT             NULL,
+    instagram_handle           BIGINT             NULL,
+    linked_in_handle           BIGINT             NULL,
+    is_active                  BIT(1)             NULL,
+    created_at                 datetime           NULL,
+    updated_at                 datetime           NULL,
     CONSTRAINT pk_business_data PRIMARY KEY (business_id)
 );
 
@@ -67,4 +78,11 @@ CREATE TABLE country_master_data
     created_at datetime NULL,
     updated_at datetime NULL,
     CONSTRAINT pk_country_master_data PRIMARY KEY (id)
+);
+
+CREATE TABLE business_size
+(
+    id    INT AUTO_INCREMENT NOT NULL,
+    label VARCHAR(255)       NULL,
+    CONSTRAINT pk_business_size PRIMARY KEY (id)
 );

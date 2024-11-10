@@ -2,10 +2,14 @@ package org.springframework.boot.crm.controller;
 
 import jakarta.validation.Valid;
 import org.springframework.boot.crm.dto.*;
+import org.springframework.boot.crm.entity.BusinessSizeMasterData;
+import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.UserManager;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @CrossOrigin(origins = "*", maxAge = 3600)
 @RestController
@@ -14,8 +18,11 @@ public class AuthController {
 
     private final UserManager userManager;
 
-    public AuthController(UserManager userManager) {
+    private final BusinessManager businessManager;
+
+    public AuthController(UserManager userManager, BusinessManager businessManager) {
         this.userManager = userManager;
+        this.businessManager = businessManager;
     }
 
     @PostMapping("/login")
@@ -40,5 +47,21 @@ public class AuthController {
     @PostMapping("/refresh-token")
     public TokenRefreshResponse refreshToken(@Valid @RequestBody TokenRefreshRequest request) {
         return this.userManager.refreshToken(request);
+    }
+
+
+    @GetMapping("/company-size")
+    public List<BusinessSizeMasterData> getCompanySizeMasterData() {
+        return this.businessManager.getAllBusinessSizeMasterData();
+    }
+
+    @PostMapping("/verification-code")
+    public VerificationCodeResponseDto getVerificationCode(VerificationCodeRequestDto verificationCodeRequestDto) {
+        return this.userManager.sendVerificationCode(verificationCodeRequestDto);
+    }
+
+    @PutMapping("/update-password")
+    public UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto) {
+        return this.userManager.updatePassword(updatePasswordRequestDto);
     }
 }

@@ -2,6 +2,7 @@ package org.springframework.boot.crm.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.entity.BusinessData;
+import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 import org.springframework.stereotype.Component;
@@ -15,10 +16,14 @@ public class BusinessManagerImpl implements BusinessManager {
 
     private final BusinessApiKeyService businessApiKeyService;
 
+    private final MasterDataService masterDataService;
+
     public BusinessManagerImpl( BusinessService businessService,
-                               BusinessApiKeyService businessApiKeyService){
+                               BusinessApiKeyService businessApiKeyService,
+                                MasterDataService masterDataService){
         this.businessService = businessService;
         this.businessApiKeyService = businessApiKeyService;
+        this.masterDataService = masterDataService;
     }
     @Override
     public BusinessData getBusinessData(int businessId) {
@@ -58,6 +63,13 @@ public class BusinessManagerImpl implements BusinessManager {
     public boolean checkPhoneExists(String phone) {
         return this.businessService.checkPhoneExists(phone);
     }
+
+    @Override
+    public List<BusinessSizeMasterData> getAllBusinessSizeMasterData() {
+        return this.masterDataService.getAllBusinessSize();
+    }
+
+
 
     @Override
     public List<LlmData> getAllLlmData() {

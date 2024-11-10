@@ -12,7 +12,9 @@ public class RegisterRequestDto {
     private String mobile;
     private String whatsAppNumber;
     private String businessName;
-    private int countryId;
+    private String countryCallingCode;
+    private String countryCode;
+    private int companySize;
     private String password;
 
     Set<String> roles = new HashSet<>();

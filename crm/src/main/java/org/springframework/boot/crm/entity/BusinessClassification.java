@@ -16,8 +16,8 @@ public class BusinessClassification {
     @Column(name="criteria")
     private String criteria;
 
-    @Column(name="country_id")
-    private int countryId;
+    @Column(name="country_code")
+    private String countryCode;
 
     @Embedded
     private SanitaryColumn sanitaryColumn;

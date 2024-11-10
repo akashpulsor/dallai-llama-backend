@@ -17,5 +17,8 @@ public interface UserManager {
 
     RegisterResponseDto register(RegisterRequestDto registerRequestDto);
 
+    VerificationCodeResponseDto sendVerificationCode(VerificationCodeRequestDto verificationCodeRequestDto);
+
+    UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto);
 
 }

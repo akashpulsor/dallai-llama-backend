@@ -18,6 +18,9 @@ public class BusinessData {
     @Column(name="email")
     private String email;
 
+    @Column(name="name")
+    private String name;
+
     @Column(name="mobile")
     private String mobile;
 
@@ -27,11 +30,14 @@ public class BusinessData {
     @Column(name="business_name")
     private String businessName;
 
-    @Column(name="country_id")
-    private int countryId;
+    @Column(name="country_code")
+    private String countryCode;
 
-    @Column(name="number_of_employee")
-    private int numberOfEmployee;
+    @Column(name="country_dialing_code")
+    private String countryDialingCode;
+
+    @Column(name="business_size_id")
+    private int businessSizeId;
 
     @Column(name="password")
     private String password;
