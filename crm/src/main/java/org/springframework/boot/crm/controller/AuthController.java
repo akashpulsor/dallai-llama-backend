@@ -51,7 +51,7 @@ public class AuthController {
 
 
     @GetMapping("/company-size")
-    public List<BusinessSizeMasterData> getCompanySizeMasterData() {
+    public List<BusinessSizeMasterDataDto> getCompanySizeMasterData() {
         return this.businessManager.getAllBusinessSizeMasterData();
     }
 
@@ -60,7 +60,7 @@ public class AuthController {
         return this.userManager.sendVerificationCode(verificationCodeRequestDto);
     }
 
-    @PutMapping("/update-password")
+    @PostMapping("/update-password")
     public UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto) {
         return this.userManager.updatePassword(updatePasswordRequestDto);
     }

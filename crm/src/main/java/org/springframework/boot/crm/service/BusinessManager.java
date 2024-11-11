@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.service;
 
+import org.springframework.boot.crm.dto.BusinessSizeMasterDataDto;
 import org.springframework.boot.crm.entity.BusinessData;
 import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.LlmData;
@@ -28,6 +29,6 @@ public interface BusinessManager {
 
     boolean checkPhoneExists(String phone);
 
-    List<BusinessSizeMasterData> getAllBusinessSizeMasterData();
+    List<BusinessSizeMasterDataDto> getAllBusinessSizeMasterData();
 
 }

@@ -1,6 +1,7 @@
 package org.springframework.boot.crm.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.dto.BusinessSizeMasterDataDto;
 import org.springframework.boot.crm.entity.BusinessData;
 import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.LlmData;
@@ -65,10 +66,16 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     @Override
-    public List<BusinessSizeMasterData> getAllBusinessSizeMasterData() {
-        return this.masterDataService.getAllBusinessSize();
+    public List<BusinessSizeMasterDataDto> getAllBusinessSizeMasterData() {
+        return this.masterDataService.getAllBusinessSize().stream().map(this::businessSizeMasterDataModelToDto).toList();
     }
 
+    private BusinessSizeMasterDataDto businessSizeMasterDataModelToDto(BusinessSizeMasterData businessSizeMasterData) {
+        BusinessSizeMasterDataDto businessSizeMasterDataDto = new BusinessSizeMasterDataDto();
+        businessSizeMasterDataDto.setValue(businessSizeMasterData.getId());
+        businessSizeMasterDataDto.setLabel(businessSizeMasterData.getLabel());
+        return  businessSizeMasterDataDto;
+    }
 
 
     @Override
