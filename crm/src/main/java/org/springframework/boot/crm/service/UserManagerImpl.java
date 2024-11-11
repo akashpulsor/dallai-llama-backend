@@ -3,10 +3,7 @@ package org.springframework.boot.crm.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
-import org.springframework.boot.crm.entity.BusinessData;
-import org.springframework.boot.crm.entity.ERole;
-import org.springframework.boot.crm.entity.RefreshToken;
-import org.springframework.boot.crm.entity.Role;
+import org.springframework.boot.crm.entity.*;
 import org.springframework.boot.crm.exceptions.*;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -115,9 +112,44 @@ public class UserManagerImpl implements UserManager {
         }
         VerificationCodeResponseDto verificationCodeResponseDto = new VerificationCodeResponseDto();
         int number = 100000 + (int)(Math.random() * 900000);
-        verificationCodeResponseDto.setVerificationCode(number+"");
+        verificationCodeResponseDto.setVerificationCode(123456);
+        //TODO send email not doing it as I don't have email grid acess
         return verificationCodeResponseDto;
     }
+
+    //TODO implement actual one
+    public String verifyCode(ValidateVerificationCodeRequestDto verificationCodeRequestDto) {
+        if(!this.businessManager.checkEmailExists(verificationCodeRequestDto.getEmail())){
+            log.error("Email is not registered");
+            throw new UnregisteredEmailException("Email not registered");
+        }
+        BusinessData businessData = this.businessManager.getBusinessByEmail(verificationCodeRequestDto.getEmail());
+        boolean invalidCode =mismatchedVerificationCode(verificationCodeRequestDto.getVerificationCode(), 123456);
+        boolean checkExpiry = expiredVerificationCode(verificationCodeRequestDto.getVerificationCode(), 123456);
+
+        if(!invalidCode) throw  new InvalidVerificationCodeException("Invalid verification code");
+        if(!checkExpiry) throw  new ExpiredVerificationCodeException("expired verification code");
+
+        //ResetPasswordVerificationCode verificationCode = this.userService.findResetPasswordVerificationCode(verificationCodeRequestDto.getVerificationCode(), businessData.getBusinessId());
+
+        //TODO send email not doing it as I don't have email grid acess
+        return "success";
+    }
+
+    private boolean mismatchedVerificationCode(int sentCode, int lastCode){
+        if (sentCode!=lastCode) {
+            return false;
+        }
+        return true;
+    }
+    private boolean expiredVerificationCode(int sentCode, int lastCode){
+        if (sentCode!=lastCode) {
+            return false;
+        }
+        return true;
+    }
+    
+    
 
     @Override
     public UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto) {

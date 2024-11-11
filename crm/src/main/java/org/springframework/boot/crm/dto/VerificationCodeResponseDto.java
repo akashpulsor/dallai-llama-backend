@@ -5,5 +5,5 @@ import lombok.Data;
 @Data
 public class VerificationCodeResponseDto {
 
-    private String verificationCode;
+    private int verificationCode;
 }

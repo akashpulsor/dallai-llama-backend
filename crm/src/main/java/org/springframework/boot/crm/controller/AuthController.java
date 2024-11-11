@@ -60,6 +60,12 @@ public class AuthController {
         return this.userManager.sendVerificationCode(verificationCodeRequestDto);
     }
 
+
+    @PostMapping("/verify-code")
+    public String getVerificationCode(ValidateVerificationCodeRequestDto validateVerificationCodeRequestDto) {
+        return this.userManager.verifyCode(validateVerificationCodeRequestDto);
+    }
+
     @PostMapping("/update-password")
     public UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto) {
         return this.userManager.updatePassword(updatePasswordRequestDto);

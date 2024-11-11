@@ -4,12 +4,12 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.crm.dto.Principal;
-import org.springframework.boot.crm.entity.BusinessData;
-import org.springframework.boot.crm.entity.ERole;
-import org.springframework.boot.crm.entity.RefreshToken;
-import org.springframework.boot.crm.entity.Role;
+import org.springframework.boot.crm.entity.*;
+import org.springframework.boot.crm.exceptions.BusinessNotFoundException;
+import org.springframework.boot.crm.exceptions.InvalidVerificationCodeException;
 import org.springframework.boot.crm.exceptions.TokenRefreshException;
 import org.springframework.boot.crm.repository.RefreshTokenRepository;
+import org.springframework.boot.crm.repository.ResetPasswordVerificationCodeRepository;
 import org.springframework.boot.crm.repository.RoleRepository;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -34,12 +34,16 @@ public class UserService  implements UserDetailsService {
 
     private final RoleRepository roleRepository;
 
+    private final ResetPasswordVerificationCodeRepository resetPasswordVerificationCodeRepository;
+
     public UserService(BusinessService businessService,
                        RefreshTokenRepository refreshTokenRepository,
-                       RoleRepository roleRepository) {
+                       RoleRepository roleRepository,
+                       ResetPasswordVerificationCodeRepository resetPasswordVerificationCodeRepository) {
         this.businessService = businessService;
         this.refreshTokenRepository = refreshTokenRepository;
         this.roleRepository = roleRepository;
+        this.resetPasswordVerificationCodeRepository = resetPasswordVerificationCodeRepository;
     }
 
 
@@ -101,6 +105,11 @@ public class UserService  implements UserDetailsService {
 
     public Optional<Role> findByName(ERole role) {
         return this.roleRepository.findByName(role);
+    }
+
+    public ResetPasswordVerificationCode findResetPasswordVerificationCode(int verificationCode, int businessId) {
+        return this.resetPasswordVerificationCodeRepository.findByVerificationCodeAndUserId(verificationCode,businessId).
+                orElseThrow(() -> new InvalidVerificationCodeException("Invalid verification code"));
     }
 
 }

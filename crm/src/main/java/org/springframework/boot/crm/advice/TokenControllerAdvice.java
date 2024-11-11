@@ -103,4 +103,26 @@ public class TokenControllerAdvice {
                 request.getDescription(false));
     }
 
+    @ResponseBody
+    @ExceptionHandler(value = InvalidVerificationCodeException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public ErrorMessage handleInvalidVerificationCode(InvalidVerificationCodeException ex, WebRequest request) {
+        return new ErrorMessage(
+                HttpStatus.FORBIDDEN.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
+
+    @ResponseBody
+    @ExceptionHandler(value = ExpiredVerificationCodeException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public ErrorMessage handleExpiredVerificationCode(ExpiredVerificationCodeException ex, WebRequest request) {
+        return new ErrorMessage(
+                HttpStatus.FORBIDDEN.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
+
 }

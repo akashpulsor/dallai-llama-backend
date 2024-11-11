@@ -21,4 +21,6 @@ public interface UserManager {
 
     UserDto updatePassword(UpdatePasswordRequestDto updatePasswordRequestDto);
 
+    String verifyCode(ValidateVerificationCodeRequestDto verificationCodeRequestDto);
+
 }
