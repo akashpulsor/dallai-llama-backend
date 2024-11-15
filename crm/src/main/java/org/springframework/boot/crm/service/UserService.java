@@ -79,11 +79,9 @@ public class UserService  implements UserDetailsService {
     }
     public RefreshToken createRefreshToken(int businessId) {
         RefreshToken refreshToken = new RefreshToken();
-
         refreshToken.setBusinessData(this.businessService.getBusinessDataById(businessId));
         refreshToken.setExpiryDate(Instant.now().plusMillis(refreshTokenDurationMs));
         refreshToken.setToken(UUID.randomUUID().toString());
-
         refreshToken = refreshTokenRepository.save(refreshToken);
         return refreshToken;
     }

@@ -60,18 +60,8 @@ public class UserManagerImpl implements UserManager {
         List<String> roles = userDetails.getAuthorities().stream()
                 .map(item -> item.getAuthority())
                 .collect(Collectors.toList());
-        BusinessData businessData = this.userService.findUserById(userDetails.getId());
-        RefreshToken refreshToken = this.userService.getRefreshToken(businessData);
         LoginResponseDto loginResponseDto = new LoginResponseDto();
         loginResponseDto.setAccessToken(jwtToken);
-        if(refreshToken!=null){
-            this.userService.deleteByUserId(userDetails.getId());
-        }
-
-        refreshToken = this.userService.createRefreshToken(userDetails.getId());
-        loginResponseDto.setRefreshToken(refreshToken.getToken());
-        loginResponseDto.setRefreshToken(refreshToken.getToken());
-
         UserInfoResponse userInfoResponse = new UserInfoResponse();
         userInfoResponse.setUsername(userDetails.getUsername());
         userInfoResponse.setId(userDetails.getId());
@@ -83,6 +73,7 @@ public class UserManagerImpl implements UserManager {
 
     @Override
     public RegisterResponseDto register(RegisterRequestDto registerRequestDto) {
+        log.info("Register Request data - {}", registerRequestDto);
         if(this.businessManager.checkEmailExists(registerRequestDto.getEmail())) {
             throw  new EmailExistsException("Email Already exception");
         }
@@ -170,10 +161,8 @@ public class UserManagerImpl implements UserManager {
             this.userService.deleteByUserId(userId);
         }
         ResponseCookie jwtCookie = this.jwtService.getCleanJwtCookie();
-        ResponseCookie jwtRefreshCookie = this.jwtService.getCleanJwtRefreshCookie();
         LoginResponseDto loginResponseDto = new LoginResponseDto();
         loginResponseDto.setAccessToken(jwtCookie.toString());
-        loginResponseDto.setRefreshToken(jwtRefreshCookie.toString());
         return loginResponseDto;
     }
 
@@ -236,14 +225,19 @@ public class UserManagerImpl implements UserManager {
 
     private BusinessData registerDtoToModel(RegisterRequestDto registerRequestDto) {
         BusinessData businessData = new BusinessData();
+        if(registerRequestDto.getName()!= null ) businessData.setName(registerRequestDto.getName());
         if(registerRequestDto.getBusinessName()!= null ) businessData.setBusinessName(registerRequestDto.getBusinessName());
         if(registerRequestDto.getEmail()!= null ) businessData.setEmail(registerRequestDto.getEmail());
         if(registerRequestDto.getMobile()!= null )businessData.setMobile(registerRequestDto.getMobile());
         if(registerRequestDto.getPassword()!= null ) businessData.setPassword(passwordEncoder.encode(registerRequestDto.getPassword()));
-        if(registerRequestDto.getWhatsAppNumber()!= null ) businessData.setWhatsAppNumber(registerRequestDto.getWhatsAppNumber());
         if(registerRequestDto.getCountryCallingCode()!= null ) businessData.setCountryDialingCode(registerRequestDto.getCountryCallingCode());
         if(registerRequestDto.getCountryCode()!= null ) businessData.setCountryCode(registerRequestDto.getCountryCode());
+        if(registerRequestDto.getBasicActivityDescription()!= null ) businessData.setBasicActivityDescription(registerRequestDto.getBasicActivityDescription());
         if(registerRequestDto.getCompanySize()!= 0 )  businessData.setBusinessSizeId(registerRequestDto.getCompanySize());
+        businessData.setAccountNonLocked(true);
+        businessData.setActive(true);
+        businessData.setAccountNonExpired(true);
+        businessData.setCredentialsNonExpired(true);
         return businessData;
     }
 }

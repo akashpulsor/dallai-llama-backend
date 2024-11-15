@@ -14,31 +14,44 @@ import java.util.stream.Collectors;
 
 @Data
 @AllArgsConstructor
-public class Principal  extends BusinessData implements UserDetails {
-
+public class Principal   implements UserDetails {
     private static final long serialVersionUID = 1L;
 
     private int id;
 
-    private String mobile;
-    private String username;
+    private String companyName;
 
     private String email;
+
+    private String phone;
 
     @JsonIgnore
     private String password;
 
+    private boolean accountNonExpired;
+    private boolean accountNonLocked;
+    private boolean credentialsNonExpired;
+    private boolean enabled;
     private Collection<? extends GrantedAuthority> authorities;
 
     public Principal(BusinessData businessData) {
+        this.id = businessData.getBusinessId();
+        this.companyName = businessData.getBusinessName();
+        this.email = businessData.getEmail();
+        this.phone = businessData.getMobile();
+        this.password = businessData.getPassword();
+        this.accountNonExpired = businessData.isAccountNonExpired();
+        this.accountNonLocked = businessData.isAccountNonLocked();
+        this.credentialsNonExpired = businessData.isCredentialsNonExpired();
+        this.enabled = businessData.isActive();
         this.authorities = businessData.getRoles().stream()
                 .map(role -> new SimpleGrantedAuthority(role.getName().name()))
                 .collect(Collectors.toList());
-        this.setId(businessData.getBusinessId());
-        this.setMobile(businessData.getMobile());
-        this.setBusinessName(businessData.getBusinessName());
-        this.setEmail(businessData.getEmail());
-        this.setPassword(businessData.getPassword());
+    }
+
+    public static Principal build(BusinessData businessData) {
+        Principal principal =  new Principal(businessData);
+        return principal;
     }
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
@@ -47,16 +60,31 @@ public class Principal  extends BusinessData implements UserDetails {
 
     @Override
     public String getPassword() {
-        return super.getPassword();
+        return this.password;
     }
 
     @Override
     public String getUsername() {
-        return super.getBusinessName();
+        return this.email;
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return this.accountNonExpired;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return this.accountNonLocked;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return this.credentialsNonExpired;
     }
 
     @Override
     public boolean isEnabled() {
-        return super.isActive();
+        return this.enabled;
     }
 }
