@@ -2,6 +2,7 @@ package org.springframework.boot.crm.entity;
 
 import jakarta.persistence.Embeddable;
 import jakarta.persistence.EntityListeners;
+import jakarta.persistence.PrePersist;
 import lombok.Data;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -18,4 +19,12 @@ public class SanitaryColumn {
 
     @LastModifiedDate
     private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if(createdAt==null){
+            createdAt = LocalDateTime.now();
+        }
+        updatedAt= LocalDateTime.now();
+    }
 }

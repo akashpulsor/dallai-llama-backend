@@ -17,9 +17,13 @@ CREATE TABLE twilio_data
     account_auth_token VARCHAR(255)       NULL,
     account_sid        VARCHAR(255)       NULL,
     business_number    VARCHAR(255)       NULL,
+    friendly_name      VARCHAR(255)       NULL,
     call_secret        VARCHAR(255)       NULL,
+    status             VARCHAR(255)       NULL,
     active             BIT(1)             NULL,
     created_at         datetime           NULL,
     updated_at         datetime           NULL,
+    UNIQUE KEY unique_business_id (business_id),
+    UNIQUE KEY unique_account_sid (account_sid),
     CONSTRAINT pk_twilio_data PRIMARY KEY (twilio_id)
 );

@@ -23,17 +23,18 @@ public class BusinessDataIndia {
     @Column(name="adhaar_number")
     private String adhaarNumber;
 
-    @Column(name="country_id")
-    private int countryId;
-
-    @Column(name="company_type_id")
-    private int companyTypeId;
-
     @Column(name="active")
     private boolean active;
 
     @Column(name="gst_in")
     private String gstIn;
+
+    @Column(name="phone")
+    private String phone;
+
+    @Column(name="phone_generated")
+    private boolean phoneGenerated;
+
 
     @Embedded
     private Address address;

@@ -1,6 +1,6 @@
 package org.springframework.boot.crm.service;
 
-import org.springframework.boot.crm.dto.BusinessSizeMasterDataDto;
+import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.BusinessData;
 import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.LlmData;
@@ -30,5 +30,11 @@ public interface BusinessManager {
     boolean checkPhoneExists(String phone);
 
     List<BusinessSizeMasterDataDto> getAllBusinessSizeMasterData();
+
+    OnBoardingResponseDto onBoardBusiness(OnBoardingDto onBoardingDto);
+    OnBoardingResponseDto getOnBoardBusiness(int businessId);
+
+
+    TwilioSubAccountDto generateNumber(GenerateNumberRequestDto generateNumberRequestDto);
 
 }

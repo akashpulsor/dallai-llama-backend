@@ -40,12 +40,44 @@ public class JwtService {
 
 
     public boolean validate(String token) {
-        return validateJwtToken(token);
+        try {
+            log.debug("Validating token: {}", token);
+            Jwts.parserBuilder()
+                    .setSigningKey(getSigningKey())
+                    .build()
+                    .parseClaimsJws(token);
+            log.debug("Token is valid");
+            return true;
+        } catch (SecurityException e) {
+            log.error("Invalid JWT signature: {}", e.getMessage());
+        } catch (MalformedJwtException e) {
+            log.error("Invalid JWT token: {}", e.getMessage());
+        } catch (ExpiredJwtException e) {
+            log.error("JWT token is expired: {}", e.getMessage());
+        } catch (UnsupportedJwtException e) {
+            log.error("JWT token is unsupported: {}", e.getMessage());
+        } catch (IllegalArgumentException e) {
+            log.error("JWT claims string is empty: {}", e.getMessage());
+        } catch (Exception e) {
+            log.error("JWT validation error: {}", e.getMessage());
+        }
+        return false;
     }
 
     public String getUsername(String token) {
-        Claims claims = getClaims(token);
-        return claims.getSubject();
+        try {
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(getSigningKey())
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+            String username = claims.getSubject();
+            log.debug("Extracted username from token: {}", username);
+            return username;
+        } catch (Exception e) {
+            log.error("Error extracting username from token: {}", e.getMessage());
+            return null;
+        }
     }
 
     public boolean isExpired(String token) {
@@ -121,15 +153,16 @@ public class JwtService {
     }
 
     public String generateTokenFromUsername(String username) {
-        return Jwts.builder()
+        log.debug("Generating token for username: {}", username);
+        String token = Jwts.builder()
                 .setSubject(username)
                 .setIssuer("backendstory.com")
                 .setIssuedAt(new Date())
                 .setExpiration(new Date((new Date()).getTime() + jwtExpirationMs))
-                .signWith(SignatureAlgorithm.HS256, Base64.getEncoder().
-                        encodeToString(jwtSecret.getBytes(StandardCharsets.UTF_8)))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
                 .compact();
-
+        log.debug("Generated token: {}", token);
+        return token;
     }
 
     private ResponseCookie generateCookie(String name, String value, String path) {
@@ -145,5 +178,11 @@ public class JwtService {
         } else {
             return null;
         }
+    }
+
+    private Key getSigningKey() {
+        byte[] keyBytes = Base64.getDecoder().decode(Base64.getEncoder()
+                .encodeToString(jwtSecret.getBytes(StandardCharsets.UTF_8)));
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 }

@@ -1,6 +1,10 @@
 package org.springframework.boot.crm.controller;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.dto.GenerateNumberRequestDto;
+import org.springframework.boot.crm.dto.OnBoardingDto;
+import org.springframework.boot.crm.dto.OnBoardingResponseDto;
+import org.springframework.boot.crm.dto.TwilioSubAccountDto;
 import org.springframework.boot.crm.entity.BusinessData;
 import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
@@ -25,6 +29,22 @@ public class BusinessController {
         return this.businessManager.addBusiness(BusinessData);
     }
 
+    @PostMapping("/onboard")
+    public OnBoardingResponseDto onBoardBusiness(@RequestBody OnBoardingDto onBoardingDto) {
+        return businessManager.onBoardBusiness(onBoardingDto);
+    }
+
+    @GetMapping("/onboard")
+    public OnBoardingResponseDto getOnBoardBusinessData(@RequestParam(value = "businessId") int businessId) {
+        return businessManager.getOnBoardBusiness(businessId);
+    }
+
+    @PostMapping("/generate-number")
+    public TwilioSubAccountDto generateNumber(GenerateNumberRequestDto generateNumberRequestDto) {
+        return businessManager.generateNumber(generateNumberRequestDto);
+    }
+
+
     @GetMapping("/get")
     public BusinessData getBusinessData(@RequestParam(value = "businessId") int businessId) {
         return this.businessManager.getBusinessData(businessId);
@@ -42,6 +62,11 @@ public class BusinessController {
 
     @PostMapping("/add-twilio")
     public TwilioData addBusinessData(@RequestBody TwilioData twilioData) {
+        return this.businessManager.addTwilioData(twilioData);
+    }
+
+    @PostMapping("/generate-phone")
+    public TwilioData addGeneratePhoneData(@RequestBody TwilioData twilioData) {
         return this.businessManager.addTwilioData(twilioData);
     }
 

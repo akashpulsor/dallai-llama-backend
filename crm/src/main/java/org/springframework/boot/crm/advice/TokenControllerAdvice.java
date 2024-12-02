@@ -3,6 +3,7 @@ package org.springframework.boot.crm.advice;
 import org.springframework.boot.crm.exceptions.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -138,4 +139,27 @@ public class TokenControllerAdvice {
                 request.getDescription(false));
     }
 
+    //
+
+    @ResponseBody
+    @ExceptionHandler(value = InsufficientAuthenticationException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public ErrorMessage handleInsufficientAuthenticationException(InsufficientAuthenticationException ex, WebRequest request) {
+        return new ErrorMessage(
+                HttpStatus.UNAUTHORIZED.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
+
+    @ResponseBody
+    @ExceptionHandler(value = Exception.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ErrorMessage handleInsufficientAuthenticationException(Exception ex, WebRequest request) {
+        return new ErrorMessage(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
 }
