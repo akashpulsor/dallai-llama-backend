@@ -34,6 +34,8 @@ public class CampaignDataRequestDto {
 
     private boolean isActive;
 
+    private int duration;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

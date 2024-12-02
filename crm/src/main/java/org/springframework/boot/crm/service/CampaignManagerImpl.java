@@ -11,25 +11,32 @@ import java.util.stream.Collectors;
 
 @Component
 public class CampaignManagerImpl implements  CampaignManager {
-    private CampaignService campaignService;
+    private final CampaignService campaignService;
 
-    public CampaignManagerImpl(CampaignService campaignService) {
+    private final BusinessManager businessManager;
+
+    public CampaignManagerImpl(CampaignService campaignService,
+                               BusinessManager businessManager) {
         this.campaignService = campaignService;
+        this.businessManager = businessManager;
     }
         @Override
     public CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto) {
+        this.businessManager.getBusinessData(campaignDataRequestDto.getBusinessId());
         CampaignData campaignData = this.campaignService.save(dtoToModel(campaignDataRequestDto));
         return modelToDto(campaignData);
     }
 
     @Override
     public CampaignDataResponseDto get(int campaignId, int businessId) {
+        this.businessManager.getBusinessData(businessId);
         CampaignData campaignData = this.campaignService.findByCampaignIdAndBusinessId(campaignId, businessId);
         return modelToDto(campaignData);
     }
 
     @Override
     public List<CampaignDataResponseDto> getByBusinessId(int  businessId) {
+        this.businessManager.getBusinessData(businessId);
         return this.campaignService.getAllByBusinessId(businessId).stream().
                 map(this::modelToDto).collect(Collectors.toList());
     }
@@ -48,6 +55,8 @@ public class CampaignManagerImpl implements  CampaignManager {
         if(!StringUtils.isBlank(campaignDataRequestDto.getFirstMessage())) campaignData.setFirstMessage(campaignDataRequestDto.getFirstMessage());
         if(!StringUtils.isBlank(campaignDataRequestDto.getHandlingFaq())) campaignData.setHandlingFaq(campaignDataRequestDto.getHandlingFaq());
         if(!StringUtils.isBlank(campaignDataRequestDto.getPlacingOrder()))campaignData.setPlacingOrder(campaignDataRequestDto.getPlacingOrder());
+        if(campaignDataRequestDto.getDuration() > 0 )campaignData.setDuration(campaignDataRequestDto.getDuration());
+        campaignData.setActive(campaignDataRequestDto.isActive());
         return campaignData;
     }
 
@@ -64,6 +73,8 @@ public class CampaignManagerImpl implements  CampaignManager {
         if(!StringUtils.isBlank(campaignData.getFirstMessage())) campaignDataResponseDto.setFirstMessage(campaignData.getFirstMessage());
         if(!StringUtils.isBlank(campaignData.getHandlingFaq())) campaignDataResponseDto.setHandlingFaq(campaignData.getHandlingFaq());
         if(!StringUtils.isBlank(campaignData.getPlacingOrder())) campaignDataResponseDto.setPlacingOrder(campaignData.getPlacingOrder());
+        campaignDataResponseDto.setActive(campaignData.isActive());
+        campaignDataResponseDto.setDuration(campaignData.getDuration());
         return campaignDataResponseDto;
     }
 }

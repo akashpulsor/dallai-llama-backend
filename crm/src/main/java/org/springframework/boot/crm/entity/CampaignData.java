@@ -46,6 +46,12 @@ public class CampaignData {
     @Column(name="is_active")
     private boolean isActive;
 
+    @Column(name="language")
+    private String language;
+
+    @Column(name="duration")
+    private int duration;
+
     @Embedded
     private SanitaryColumn sanitaryColumn;
 
