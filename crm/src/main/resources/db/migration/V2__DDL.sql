@@ -4,7 +4,7 @@ CREATE TABLE llm_data
     business_id INT                NULL,
     api_key     VARCHAR(255)       NULL,
     vendor_name VARCHAR(255)       NULL,
-    created_at  datetime           NULL,
+    created_at  datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at  datetime           NULL,
     CONSTRAINT pk_llm_data PRIMARY KEY (llm_id)
 );
@@ -21,7 +21,7 @@ CREATE TABLE twilio_data
     call_secret        VARCHAR(255)       NULL,
     status             VARCHAR(255)       NULL,
     active             BIT(1)             NULL,
-    created_at         datetime           NULL,
+    created_at         datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at         datetime           NULL,
     UNIQUE KEY unique_business_id (business_id),
     UNIQUE KEY unique_account_sid (account_sid),

@@ -15,6 +15,8 @@ public class LeadResponseDto {
 
     private String leadEmail;
 
+    private String leadPhone;
+
 
 
     private String leadName;

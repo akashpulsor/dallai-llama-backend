@@ -45,12 +45,13 @@ public class CampaignManagerImpl implements  CampaignManager {
 
     private CampaignData dtoToModel(CampaignDataRequestDto campaignDataRequestDto){
         CampaignData campaignData = new CampaignData();
+        campaignData.setCampaignId(campaignDataRequestDto.getCampaignId());
         campaignData.setBusinessId(campaignDataRequestDto.getBusinessId());
         if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignAim())) campaignData.setCampaignAim(campaignDataRequestDto.getCampaignAim());
         if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignDesc())) campaignData.setCampaignDesc(campaignDataRequestDto.getCampaignDesc());
         if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignImgUrl())) campaignData.setCampaignImgUrl(campaignDataRequestDto.getCampaignImgUrl());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getLanguage())) campaignData.setLanguage(campaignDataRequestDto.getLanguage());
         if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignName())) campaignData.setCampaignName(campaignDataRequestDto.getCampaignName());
-        if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignPrompt())) campaignData.setCampaignPrompt(campaignDataRequestDto.getCampaignPrompt());
         if(!StringUtils.isBlank(campaignDataRequestDto.getConversationGuideLines())) campaignData.setConversationGuideLines(campaignDataRequestDto.getConversationGuideLines());
         if(!StringUtils.isBlank(campaignDataRequestDto.getFirstMessage())) campaignData.setFirstMessage(campaignDataRequestDto.getFirstMessage());
         if(!StringUtils.isBlank(campaignDataRequestDto.getHandlingFaq())) campaignData.setHandlingFaq(campaignDataRequestDto.getHandlingFaq());
@@ -73,6 +74,7 @@ public class CampaignManagerImpl implements  CampaignManager {
         if(!StringUtils.isBlank(campaignData.getFirstMessage())) campaignDataResponseDto.setFirstMessage(campaignData.getFirstMessage());
         if(!StringUtils.isBlank(campaignData.getHandlingFaq())) campaignDataResponseDto.setHandlingFaq(campaignData.getHandlingFaq());
         if(!StringUtils.isBlank(campaignData.getPlacingOrder())) campaignDataResponseDto.setPlacingOrder(campaignData.getPlacingOrder());
+        if(!StringUtils.isBlank(campaignData.getPlacingOrder())) campaignDataResponseDto.setLanguage(campaignData.getLanguage());
         campaignDataResponseDto.setActive(campaignData.isActive());
         campaignDataResponseDto.setDuration(campaignData.getDuration());
         return campaignDataResponseDto;

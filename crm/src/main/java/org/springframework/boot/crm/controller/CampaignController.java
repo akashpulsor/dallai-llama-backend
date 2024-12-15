@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.controller;
 
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.BusinessData;
@@ -23,7 +24,7 @@ public class CampaignController {
         this.campaignManager = campaignManager;
     }
     @PostMapping("/add")
-    public CampaignDataResponseDto addCampaignData(@RequestBody CampaignDataRequestDto campaignDataRequestDto) {
+    public CampaignDataResponseDto addCampaignData(@RequestBody @Valid CampaignDataRequestDto campaignDataRequestDto) {
         return this.campaignManager.add(campaignDataRequestDto);
     }
 

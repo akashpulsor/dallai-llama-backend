@@ -12,6 +12,7 @@ public interface LeadManager {
 
     List<LeadResponseDto> getLead(int businessId);
 
-    Page<LeadResponseDto> getLeadsByBusinessIdPaginated(int businessId,int page,int size,String sortBy);
+
+    Page<LeadResponseDto> getLeadsByBusinessIdPaginated(int businessId,int page,int size,String sortBy, boolean test);
 
 }

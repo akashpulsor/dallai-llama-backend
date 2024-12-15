@@ -17,22 +17,21 @@ public class LeadRequestDto {
 
     private int businessId;
 
-    private String leadAddress;
+    private String email;
 
-    private String leadEmail;
+    private String name;
 
-    private String leadLatLocation;
+    private String phone;
 
-    private String leadLongLocation;
+    private String phoneCountryCode;
 
-    private String leadName;
+    private String whatsapp;
 
-    private String leadPhone;
+    private String whatsappCountryCode;
 
     private String gender;
 
-
-    private String leadWatsApp;
+    private boolean test;
 
     private LocalDateTime createdAt;
 

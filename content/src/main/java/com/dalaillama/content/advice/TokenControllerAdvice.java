@@ -2,6 +2,7 @@ package com.dalaillama.content.advice;
 
 import com.dalaillama.content.exception.*;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -85,6 +86,19 @@ public class TokenControllerAdvice {
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     @ExceptionHandler({ AuthenticationException.class })
     public ErrorMessage handleAuthenticationException(Exception ex, WebRequest request) {
+
+        return new ErrorMessage(
+                HttpStatus.UNAUTHORIZED.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+    }
+
+
+    @ResponseBody
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    @ExceptionHandler({ InsufficientAuthenticationException.class })
+    public ErrorMessage handleInsuffiecientAuthenticationException(Exception ex, WebRequest request) {
 
         return new ErrorMessage(
                 HttpStatus.UNAUTHORIZED.value(),

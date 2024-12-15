@@ -14,7 +14,7 @@ CREATE TABLE campaign_data
     is_active                BIT(1)             NULL,
     language                 VARCHAR(255)       NULL,
     duration                 INT                NULL,
-    created_at               datetime           NULL,
+    created_at               datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at               datetime           NULL,
     CONSTRAINT pk_campaign_data PRIMARY KEY (campaign_id)
 );

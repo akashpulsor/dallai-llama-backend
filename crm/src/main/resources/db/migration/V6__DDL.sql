@@ -7,7 +7,7 @@ CREATE TABLE agent_data
     `role`      VARCHAR(255)       NULL,
     voice       VARCHAR(255)       NULL,
     active      BIT(1)             NULL,
-    created_at  datetime           NULL,
+    created_at  datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at  datetime           NULL,
     CONSTRAINT pk_agent_data PRIMARY KEY (agent_id)
 );

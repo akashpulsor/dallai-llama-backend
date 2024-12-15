@@ -44,6 +44,11 @@ public class LeadDataService {
         return this.businessLeadRepository.findLeadsByBusinessId(businessId, pageable);
     }
 
+    @Transactional(readOnly = true)
+    public Page<LeadData> getTestLeadsByBusinessIdPaginated(int businessId, Pageable pageable) {
+        return this.businessLeadRepository.findTestLeadsByBusinessId(businessId, pageable);
+    }
+
     public void addBusinessLead(int leadId, int businessId) {
         if (this.businessLeadRepository.findByLeadIdAndBusinessId(leadId, businessId).isPresent()) {
             throw new IllegalStateException("Mapping already exists between lead " + leadId + " and business " + businessId);

@@ -2,7 +2,6 @@ package org.springframework.boot.crm.service;
 
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
 import org.springframework.stereotype.Component;

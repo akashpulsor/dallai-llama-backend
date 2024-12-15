@@ -8,6 +8,8 @@ public class AgentRequestDto {
 
     private int businessId;
 
+    private int agentId;
+
     private String agentName;
 
     private String persona;

@@ -2,8 +2,8 @@
 <project version="4">
   <component name="DiffGenerationConfig" isInitGenerateDdl="true">
     <option name="initGenerateDdl" value="true" />
-    <option name="snapshotDb" value="false" />
-    <option name="snapshotModelValue" value="crm:crm" />
+    <option name="snapshotDbValue" value="56e70710-80c4-4eff-a43c-ecb45261f225" />
+    <option name="snapshotModelValue" value="crm:entityManagerFactory" />
     <option name="sourceModelValue" value="crm:entityManagerFactory" />
     <option name="targetDbValue" value="56e70710-80c4-4eff-a43c-ecb45261f225" />
   </component>

@@ -1,0 +1,1 @@
+ALTER TABLE agent_data MODIFY persona MEDIUMBLOB;

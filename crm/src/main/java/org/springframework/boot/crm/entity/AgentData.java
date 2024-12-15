@@ -2,9 +2,11 @@ package org.springframework.boot.crm.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 @Data
 @Entity(name = "agent_data")
+@EntityListeners(AuditingEntityListener.class)
 public class AgentData {
 
     @Id

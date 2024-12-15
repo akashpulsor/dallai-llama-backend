@@ -34,6 +34,7 @@ public class AgentManagerImpl implements AgentManager {
 
     private AgentData dtoToModel(AgentRequestDto agentRequestDto) {
         AgentData agentData = new AgentData();
+        agentData.setAgentId(agentRequestDto.getAgentId());
         agentData.setBusinessId(agentRequestDto.getBusinessId());
         agentData.setAgentName(agentRequestDto.getAgentName());
         agentData.setRole(agentRequestDto.getRole());
@@ -51,6 +52,7 @@ public class AgentManagerImpl implements AgentManager {
         agentResponseDto.setPersona(agentData.getPersona());
         agentResponseDto.setVoice(agentData.getVoice());
         agentResponseDto.setActive(agentData.isActive());
+        agentResponseDto.setAgentId(agentData.getAgentId());
         return agentResponseDto;
     }
 }

@@ -39,13 +39,15 @@ public class LeadController {
         return this.leadManager.getLead(businessId);
     }
 
+
     @GetMapping("/{businessId}/leads/paginated")
     public Page<LeadResponseDto> getLeadsByBusinessIdPaginated(
             @PathVariable int businessId,
             @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "false") boolean test,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "leadId") String sortBy) {
-        return this.leadManager.getLeadsByBusinessIdPaginated(businessId,page, size, sortBy);
+        return this.leadManager.getLeadsByBusinessIdPaginated(businessId,page, size, sortBy,test);
     }
 
 

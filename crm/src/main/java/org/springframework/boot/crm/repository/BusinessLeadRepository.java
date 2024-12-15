@@ -24,6 +24,12 @@ public interface BusinessLeadRepository  extends JpaRepository<BusinessLead, Int
             "WHERE lbm.businessId = :businessId")
     Page<LeadData> findLeadsByBusinessId(@Param("businessId") int businessId, Pageable pageable);
 
+
+    @Query("SELECT ld FROM lead_data ld " +
+            "JOIN business_lead lbm ON ld.leadId = lbm.leadId " +
+            "WHERE lbm.businessId = :businessId and ld.test=true")
+    Page<LeadData> findTestLeadsByBusinessId(@Param("businessId") int businessId, Pageable pageable);
+
     @Query("SELECT ld FROM lead_data ld " +
             "JOIN business_lead lbm ON ld.leadId = lbm.leadId " +
             "WHERE lbm.businessId = :businessId and ld.leadId =:leadId")

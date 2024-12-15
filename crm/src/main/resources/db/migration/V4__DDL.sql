@@ -4,7 +4,7 @@ CREATE TABLE reset_password_verification_code
     verification_code    INT                NULL,
     user_id              INT                NULL,
     expiry_time          INT                NULL,
-    created_at           datetime           NULL,
+    created_at           datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at           datetime           NULL,
     CONSTRAINT pk_reset_password_verification_code PRIMARY KEY (verification_code_id)
 );

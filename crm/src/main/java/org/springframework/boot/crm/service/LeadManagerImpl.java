@@ -40,10 +40,15 @@ public class LeadManagerImpl implements LeadManager {
                 collect(Collectors.toList());
     }
 
+
+
     @Override
-    public Page<LeadResponseDto> getLeadsByBusinessIdPaginated(int businessId, int page, int size, String sortBy) {
+    public Page<LeadResponseDto> getLeadsByBusinessIdPaginated(int businessId, int page, int size, String sortBy, boolean test) {
         log.info("Fetching paginated leads for business: {}, page: {}, size: {}", businessId, page, size);
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy));
+        if(test){
+            return leadDataService.getTestLeadsByBusinessIdPaginated(businessId, pageable).map(this::convertModelToDto);
+        }
         return leadDataService.getLeadsByBusinessIdPaginated(businessId, pageable).map(this::convertModelToDto);
     }
 
@@ -54,20 +59,23 @@ public class LeadManagerImpl implements LeadManager {
     private LeadResponseDto convertModelToDto(LeadData leadData) {
         LeadResponseDto leadResponseDto = new LeadResponseDto();
         leadResponseDto.setLeadName(leadData.getLeadName());
+        leadResponseDto.setLeadEmail(leadData.getLeadEmail());
+        leadResponseDto.setLeadPhone(leadData.getLeadPhone());
         leadResponseDto.setLeadGender(leadResponseDto.getLeadGender());
         return leadResponseDto;
     }
 
     private LeadData convertDtoToModel(LeadRequestDto leadRequestDto) {
         LeadData leadData = new LeadData();
-        leadData.setLeadEmail(leadRequestDto.getLeadEmail());
-        leadData.setLeadName(leadRequestDto.getLeadName());
-        leadData.setLeadLongLocation(leadRequestDto.getLeadLongLocation());
-        leadData.setLeadLatLocation(leadRequestDto.getLeadLatLocation());
-        leadData.setLeadPhone(leadRequestDto.getLeadPhone());
-        leadData.setLeadWatsApp(leadRequestDto.getLeadWatsApp());
+        leadData.setLeadEmail(leadRequestDto.getEmail());
+        leadData.setLeadName(leadRequestDto.getName());
+        leadData.setLeadPhone(leadRequestDto.getPhone());
+        leadData.setPhoneCountryCode(leadRequestDto.getPhoneCountryCode());
+        leadData.setWhatsappCountryCode(leadRequestDto.getWhatsappCountryCode());
+        leadData.setLeadWatsApp(leadRequestDto.getWhatsapp());
         leadData.setGender(leadRequestDto.getGender());
         leadData.setAddress(addressDtoToModel(leadRequestDto.getAddress()));
+        leadData.setTest(leadRequestDto.isTest());
         return leadData;
     }
 

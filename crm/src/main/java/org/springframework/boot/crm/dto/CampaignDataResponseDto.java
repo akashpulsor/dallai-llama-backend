@@ -24,6 +24,7 @@ public class CampaignDataResponseDto {
     private String firstMessage;
     private String handlingFaq;
     private String placingOrder;
+    private String language;
     private boolean isActive;
     private int duration;
     private LocalDateTime createdAt;

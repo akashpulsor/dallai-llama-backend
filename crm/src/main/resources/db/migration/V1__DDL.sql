@@ -3,7 +3,7 @@ CREATE TABLE business_classification
     id         INT AUTO_INCREMENT NOT NULL,
     criteria   VARCHAR(255) NULL,
     country_id INT NULL,
-    created_at datetime NULL,
+    created_at datetime DEFAULT CURRENT_TIMESTAMP,
     updated_at datetime NULL,
     CONSTRAINT pk_business_classification PRIMARY KEY (id)
 );
@@ -29,7 +29,7 @@ CREATE TABLE business_data
     instagram_handle           BIGINT             NULL,
     linked_in_handle           BIGINT             NULL,
     is_active                  BIT(1)             NULL,
-    created_at                 datetime           NULL,
+    created_at                 datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at                 datetime           NULL,
     CONSTRAINT pk_business_data PRIMARY KEY (business_id)
 );
@@ -57,7 +57,7 @@ CREATE TABLE business_data_india
     bank_name                 VARCHAR(255)       NULL,
     bank_branch               VARCHAR(255)       NULL,
     ifsc_code                 VARCHAR(255)       NULL,
-    created_at                datetime           NULL,
+    created_at                datetime           DEFAULT CURRENT_TIMESTAMP,
     updated_at                datetime           NULL,
     CONSTRAINT pk_business_data_india PRIMARY KEY (business_id)
 );
@@ -66,7 +66,7 @@ CREATE TABLE company_types
     company_type_id            INT AUTO_INCREMENT NOT NULL,
     company_type_name          VARCHAR(255) NULL,
     business_classification_id INT NULL,
-    created_at                 datetime NULL,
+    created_at                 datetime DEFAULT CURRENT_TIMESTAMP,
     updated_at                 datetime NULL,
     CONSTRAINT pk_company_types PRIMARY KEY (company_type_id)
 );
@@ -78,7 +78,7 @@ CREATE TABLE country_master_data
     code       VARCHAR(255) NULL,
     phone_code VARCHAR(255) NULL,
     image_url  VARCHAR(255) NULL,
-    created_at datetime NULL,
+    created_at datetime DEFAULT CURRENT_TIMESTAMP,
     updated_at datetime NULL,
     CONSTRAINT pk_country_master_data PRIMARY KEY (id)
 );
@@ -87,5 +87,7 @@ CREATE TABLE business_size
 (
     id    INT AUTO_INCREMENT NOT NULL,
     label VARCHAR(255)       NULL,
+    created_at datetime DEFAULT CURRENT_TIMESTAMP,
+    updated_at datetime NULL,
     CONSTRAINT pk_business_size PRIMARY KEY (id)
 );
