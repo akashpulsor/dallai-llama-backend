@@ -9,11 +9,14 @@ public class TwilioData {
 
     @Id
     @GeneratedValue(strategy= GenerationType.IDENTITY)
-    @Column(name="twilio_id")
-    private int twilioId;
+    @Column(name="phone_id")
+    private int phoneId;
 
     @Column(name="business_id")
     private int businessId;
+
+    @Column(name="vendor_name")
+    private String vendorName;
 
     @Column(name="account_auth_token")
     private String accountAuthToken;
@@ -29,6 +32,9 @@ public class TwilioData {
 
     @Column(name="call_secret")
     private String callSecret;
+
+    @Column(name="logo_image")
+    private String logoImage;
 
     @Column(name="status")
     private String status;

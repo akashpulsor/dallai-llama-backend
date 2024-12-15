@@ -19,5 +19,7 @@ public interface PhoneService {
 
     TwilioSubAccountDto getSubAccount(int parentBusinessId);
 
+    TwilioData addTwilioData(TwilioData twilioData);
 
+    List<TwilioData> getTwilioData(int businessId);
 }

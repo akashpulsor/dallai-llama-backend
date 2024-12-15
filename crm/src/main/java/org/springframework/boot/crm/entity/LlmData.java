@@ -21,6 +21,15 @@ public class LlmData {
     @Column(name="vendor_name")
     private String vendorName;
 
+    @Column(name="friendly_name")
+    private String friendlyName;
+
+    @Column(name="active")
+    private boolean active;
+
+    @Column(name="logo_image")
+    private String logoImage;
+
     @Embedded
     private SanitaryColumn sanitaryColumn;
 }

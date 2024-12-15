@@ -42,4 +42,13 @@ public class CampaignController {
     }
 
 
+    @PostMapping("/start")
+    public CampaignStartResponseDto startCampaign(@RequestBody @Valid CampaignStartRequestDto campaignDataRequestDto) {
+        return this.campaignManager.start(campaignDataRequestDto);
+    }
+
+    @PostMapping("/run")
+    public CampaignRunResponseDto runCampaign(@RequestBody @Valid CampaignRunRequestDto campaignDataRequestDto) {
+        return null;
+    }
 }

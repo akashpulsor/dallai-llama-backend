@@ -85,12 +85,18 @@ public class TwilioService implements  PhoneService {
 
     @Override
     public TwilioSubAccountDto getSubAccount(int parentBusinessId) {
-        TwilioData twilioData = this.twilioDataRepository.
-                findByBusinessId(parentBusinessId).
-                orElse(new TwilioData());
-        return convertToDto(twilioData);
+
+        return convertToDto(new TwilioData());
     }
 
+    @Override
+    public TwilioData addTwilioData(TwilioData twilioData) {
+        return this.twilioDataRepository.save(twilioData);
+    }
+
+    public List<TwilioData> getTwilioData(int businessId) {
+        return this.twilioDataRepository.findByBusinessId(businessId);
+    }
 
 
     private TwilioSubAccountDto convertToDto(Account account) {
@@ -122,7 +128,7 @@ public class TwilioService implements  PhoneService {
         dto.setStatus(twilioData.getStatus());
         if(twilioData.getSanitaryColumn()!=null) dto.setDateCreated(twilioData.getSanitaryColumn().getCreatedAt().toString());
         dto.setBusinessId(twilioData.getBusinessId());
-        dto.setPhoneId(twilioData.getTwilioId());
+        dto.setPhoneId(twilioData.getPhoneId());
         return dto;
     }
 

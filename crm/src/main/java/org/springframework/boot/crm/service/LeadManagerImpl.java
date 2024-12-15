@@ -13,7 +13,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 @Component
@@ -52,9 +54,21 @@ public class LeadManagerImpl implements LeadManager {
         return leadDataService.getLeadsByBusinessIdPaginated(businessId, pageable).map(this::convertModelToDto);
     }
 
+    @Override
+    public Stream<LeadData> getLeadDataByStream(int businessId) {
+        return this.leadDataService.getLeadDataByStream(businessId);
+    }
+
     public LeadResponseDto getLead(int businessId, int leadId) {
         return convertModelToDto(this.leadDataService.getBusinessLead(businessId,leadId));
     }
+
+    @Override
+    public List<LeadData> getLeadDataByList( Integer businessId,  Set<Integer> leadIds) {
+        return this.leadDataService.getLeadDataByStream(businessId, leadIds);
+    }
+
+
 
     private LeadResponseDto convertModelToDto(LeadData leadData) {
         LeadResponseDto leadResponseDto = new LeadResponseDto();

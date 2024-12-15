@@ -8,10 +8,13 @@ import org.springframework.boot.crm.repository.BusinessLeadRepository;
 import org.springframework.boot.crm.repository.LeadDataRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -65,6 +68,15 @@ public class LeadDataService {
         return this.businessLeadRepository.
                 findByLeadIdAndBusinessId(leadId, businessId).
                 orElseThrow(()-> new LeadNotFoundException("Lead not found"));
+    }
+
+
+    public List<LeadData> getLeadDataByStream( Integer businessId,  Set<Integer> leadIds) {
+        return this.businessLeadRepository.findExistingLeadIds(businessId, leadIds);
+    }
+
+    public Stream<LeadData> getLeadDataByStream(int businessId) {
+        return this.businessLeadRepository.findByLeadIdAndBusinessIdStream(businessId);
     }
 
 

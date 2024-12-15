@@ -23,18 +23,6 @@ public class BusinessApiKeyService {
         this.twilioDataRepository = twilioDataRepository;
     }
 
-    public TwilioData getTwilioKey(int businessId){
-        log.info("getTwilioKey: businessId={}", businessId);
-        return this.twilioDataRepository.findByBusinessId(businessId).orElseThrow(()->new TwilioDataNotFoundException("Twilio Data Not Found"));
-    }
-
-
-
-    public LlmData getOpenAiKey(int businessId){
-        log.info("getOpenAiKey: businessId={}", businessId);
-        return this.llmDataRepository.findByBusinessId(businessId).orElseThrow(()->new LlmDataNotFoundException("Llm Data Not Found"));
-    }
-
 
     public List<LlmData> getLlmData(){
         return llmDataRepository.findAll();
