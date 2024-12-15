@@ -20,7 +20,7 @@ import java.util.concurrent.CountDownLatch;
 public class RealTimeSession {
 
     private static final String SERVER_URI = "ws://example.com/websocket"; // replace with your server URI
-    private static final String AUTH_TOKEN = "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"; // replace with your actual token
+    private static final String AUTH_TOKEN = ""; // replace with your actual token
     private WebSocket webSocket;
 
     private String streamId;
