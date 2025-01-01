@@ -12,4 +12,6 @@ import java.util.Optional;
 public interface LlmDataRepository extends JpaRepository<LlmData, Integer> {
 
     List<LlmData> findByBusinessId(Integer businessId);
+
+    Optional<LlmData> findByLlmIdAndBusinessId(Integer llmId, Integer businessId);
 }

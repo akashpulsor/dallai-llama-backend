@@ -17,4 +17,6 @@ public interface CampaignManager {
     List<CampaignDataResponseDto> getByBusinessId(int customerId);
 
     CampaignStartResponseDto start(CampaignStartRequestDto campaignStartRequestDto);
+
+    void runCampaign(int campaignRunId, int BusinessId);
 }

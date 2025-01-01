@@ -48,7 +48,20 @@ public class CampaignController {
     }
 
     @PostMapping("/run")
-    public CampaignRunResponseDto runCampaign(@RequestBody @Valid CampaignRunRequestDto campaignDataRequestDto) {
+    public void runCampaign(@RequestParam(value = "businessId") int businessId,
+                                              @RequestParam(value = "campaignRunId") int campaignRunId) {
+
+        this.campaignManager.runCampaign( campaignRunId, businessId );
+    }
+
+    public CampaignRunResponseDto runCallback(@RequestBody @Valid CampaignRunRequestDto campaignDataRequestDto) {
+
+        /*
+        * on call back , system will create open ai session using llmData, the create method update status by adding campaign data,leads data, campaign data, agent data, language, lead data,
+        * send first message to twilio, and the do all the conversation,
+        * log message and callback from twilio in call status, conversation, after loging the status send event to ui, using spring sse, for visibility
+        *
+        * */
         return null;
     }
 }

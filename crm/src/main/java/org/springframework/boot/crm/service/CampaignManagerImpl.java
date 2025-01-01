@@ -1,11 +1,11 @@
 package org.springframework.boot.crm.service;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.crm.dto.*;
-import org.springframework.boot.crm.entity.CampaignData;
-import org.springframework.boot.crm.entity.CampaignRunData;
-import org.springframework.boot.crm.entity.LeadData;
+import org.springframework.boot.crm.entity.*;
 import org.springframework.stereotype.Component;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.HashSet;
 import java.util.List;
@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@Slf4j
 @Component
 public class CampaignManagerImpl implements  CampaignManager {
     private final CampaignService campaignService;
@@ -26,17 +27,20 @@ public class CampaignManagerImpl implements  CampaignManager {
 
     private final CallManager callManager;
 
+    private final MetaManager metaManager;
+
     private static final int BATCH_SIZE = 1000;
 
     public CampaignManagerImpl(CampaignService campaignService,
                                BusinessManager businessManager,
                                LeadManager leadManager,
-                               CampaignRunService campaignRunService, CallManager callManager) {
+                               CampaignRunService campaignRunService, CallManager callManager, MetaManager metaManager) {
         this.campaignService = campaignService;
         this.businessManager = businessManager;
         this.leadManager = leadManager;
         this.campaignRunService = campaignRunService;
         this.callManager = callManager;
+        this.metaManager = metaManager;
     }
         @Override
     public CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto) {
@@ -52,6 +56,10 @@ public class CampaignManagerImpl implements  CampaignManager {
         return modelToDto(campaignData);
     }
 
+    public CampaignData getCampaignData(int campaignId, int businessId) {
+        return this.campaignService.findByCampaignIdAndBusinessId(campaignId, businessId);
+    }
+
     @Override
     public List<CampaignDataResponseDto> getByBusinessId(int  businessId) {
         this.businessManager.getBusinessData(businessId);
@@ -64,13 +72,13 @@ public class CampaignManagerImpl implements  CampaignManager {
         get(campaignStartRequestDto.getCampaignId(), campaignStartRequestDto.getBusinessId());
         CampaignRunData campaignRunData = dtoToModel(campaignStartRequestDto);
         campaignRunData.setStatus(CampaignRunEnum.STARTED);
-        this.campaignRunService.addCampaignRun(campaignRunData);
+        campaignRunData = this.campaignRunService.addCampaignRun(campaignRunData);
         if ( campaignRunData.isAll() ){
             startAll(campaignRunData);
             campaignRunData.setStatus(CampaignRunEnum.LEADS_COPIED);
         }
         else {
-             campaignRunData = this.campaignRunService.addLeads(campaignStartRequestDto.getBusinessId(),
+             campaignRunData = this.campaignRunService.addLeads(campaignRunData,
                      campaignStartRequestDto.getLeadList());
              campaignRunData.setStatus(CampaignRunEnum.LEADS_COPIED);
 
@@ -79,13 +87,30 @@ public class CampaignManagerImpl implements  CampaignManager {
         return modelToDto(campaignRunData);
     }
 
+    @Override
+    public void runCampaign(int campaignRunId, int businessId) {
+        CampaignRunData campaignRunData = this.campaignRunService.getCampaignRunData(campaignRunId, businessId);
+        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
+        LlmData llmData =this.metaManager.getLlmData(campaignRunData.getBusinessId(), campaignRunData.getLlmId());
+        CampaignData campaignData =getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
+        List<Integer> leadList =this.campaignRunService.getLeadListByCampaignRunId(campaignRunData.getCampaignRunId());
+        List<LeadData> leadDataList = this.leadManager.getLeadDataByList(businessId, new HashSet<>(leadList));
 
-    public CampaignStartResponseDto run(CampaignStartRequestDto campaignStartRequestDto) {
+        for(LeadData leadData: leadDataList) {
+            try{
+                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData );
+            }
+            catch (Exception e){
+                log.error("Failed to call log ", e);
+            }
+        }
 
-        return new CampaignStartResponseDto();
     }
 
-        public void startAll(CampaignRunData campaignRunData) {
+
+
+
+    public void startAll(CampaignRunData campaignRunData) {
         Stream<LeadData> leadDataStream = this.leadManager.getLeadDataByStream(campaignRunData.getBusinessId());
         try (leadDataStream){
             Set<Integer> batchLeads = new HashSet<>(BATCH_SIZE);
@@ -122,7 +147,7 @@ public class CampaignManagerImpl implements  CampaignManager {
 
     private CampaignStartResponseDto modelToDto(CampaignRunData campaignRunData){
         CampaignStartResponseDto campaignStartResponseDto = new CampaignStartResponseDto();
-        campaignStartResponseDto.setCampaignRunId(campaignRunData.getBusinessId());
+        campaignStartResponseDto.setCampaignRunId(campaignRunData.getCampaignRunId());
         return campaignStartResponseDto;
     }
 

@@ -20,7 +20,6 @@ public class BusinessManagerImpl implements BusinessManager {
     private final PhoneService phoneService;
 
     private final BusinessIndiaService businessIndiaService;
-    private String number;
 
     public BusinessManagerImpl( BusinessService businessService,
                                BusinessApiKeyService businessApiKeyService,
@@ -32,7 +31,6 @@ public class BusinessManagerImpl implements BusinessManager {
         this.masterDataService = masterDataService;
         this.phoneService = phoneService;
         this.businessIndiaService = businessIndiaService;
-        this.number = "+1 901 979 1433";
     }
     @Override
     public BusinessData getBusinessData(int businessId) {
@@ -141,6 +139,8 @@ public class BusinessManagerImpl implements BusinessManager {
     public boolean checkEmailExists(String email) {
         return this.businessService.checkEmailExists(email);
     }
+
+
 
     @Override
     public boolean checkPhoneExists(String phone) {

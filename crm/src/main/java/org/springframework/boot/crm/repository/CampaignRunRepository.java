@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -24,6 +25,13 @@ public interface CampaignRunRepository  extends JpaRepository<CampaignRunData, I
     }
 
 
+    CampaignRunData save(CampaignRunData campaignRunData);
 
     Optional<CampaignRunData> findByBusinessId(Integer businessId);
+
+    @Query(value = "SELECT crl.lead_id FROM campaign_run_leads crl WHERE crl.campaign_run_id = :campaignRunId",
+            nativeQuery = true)
+    List<Integer> getLeadList(@Param("campaignRunId") Integer campaignRunId);
+
+    Optional<CampaignRunData> findByCampaignRunIdAndBusinessId(Integer campaignRunId,Integer businessId);
 }

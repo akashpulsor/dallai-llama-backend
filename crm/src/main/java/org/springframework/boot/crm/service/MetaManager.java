@@ -17,4 +17,8 @@ public interface MetaManager {
     TwilioData addTwilioData(TwilioData twilioData);
 
     List<TwilioData> getTwilioData(int businessId);
+
+    LlmData getLlmData(int businessId, int llmId);
+
+    TwilioData getTwilioData(int businessId, int phoneId);
 }

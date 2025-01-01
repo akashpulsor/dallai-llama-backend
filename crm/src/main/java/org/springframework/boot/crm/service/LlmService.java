@@ -3,6 +3,7 @@ package org.springframework.boot.crm.service;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.entity.LlmData;
+import org.springframework.boot.crm.exceptions.LlmDataNotFoundException;
 import org.springframework.boot.crm.repository.LlmDataRepository;
 import org.springframework.stereotype.Service;
 
@@ -25,5 +26,9 @@ public class LlmService {
 
     public List<LlmData> getLlmData(int businessId) {
         return llmDataRepository.findByBusinessId(businessId);
+    }
+
+    public LlmData getLlmData(int businessId, int llmId) {
+        return llmDataRepository.findByLlmIdAndBusinessId(businessId,llmId).orElseThrow(() -> new LlmDataNotFoundException("Large language model not found"));
     }
 }

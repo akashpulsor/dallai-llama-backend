@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.TwilioSubAccountDto;
 
 import org.springframework.boot.crm.entity.TwilioData;
+import org.springframework.boot.crm.exceptions.TwilioDataNotFoundException;
 import org.springframework.boot.crm.repository.TwilioDataRepository;
 import org.springframework.stereotype.Service;
 import com.twilio.Twilio;
@@ -96,6 +97,10 @@ public class TwilioService implements  PhoneService {
 
     public List<TwilioData> getTwilioData(int businessId) {
         return this.twilioDataRepository.findByBusinessId(businessId);
+    }
+
+    public TwilioData getTwilioData(int businessId, int phoneId) {
+        return this.twilioDataRepository.findByBusinessIdAndPhoneId(businessId,phoneId).orElseThrow(()-> new TwilioDataNotFoundException("Phone Data not found"));
     }
 
 

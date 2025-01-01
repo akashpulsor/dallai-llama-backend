@@ -34,7 +34,5 @@ public interface BusinessManager {
     OnBoardingResponseDto onBoardBusiness(OnBoardingDto onBoardingDto);
     OnBoardingResponseDto getOnBoardBusiness(int businessId);
 
-
     TwilioSubAccountDto generateNumber(GenerateNumberRequestDto generateNumberRequestDto);
-
 }

@@ -22,6 +22,13 @@ public class MetaManagerImpl implements  MetaManager {
         return this.llmService.addLlmData(llmData);
     }
 
+    public LlmData getLlmData(int businessId, int llmId) {
+        return this.llmService.getLlmData(businessId, llmId);
+    }
+
+    public TwilioData getTwilioData(int businessId, int phoneId) {
+        return this.twilioService.getTwilioData(businessId, phoneId);
+    }
 
     public List<LlmData> getLlmData(int businessId) {
         return this.llmService.getLlmData(businessId);

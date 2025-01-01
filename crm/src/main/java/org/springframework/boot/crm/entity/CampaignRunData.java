@@ -25,7 +25,7 @@ public class CampaignRunData {
     @NotNull(message = "Campaign Id is mandatory")
     private int campaignId;
 
-    @Column(name="all")
+    @Column(name="`all`")
     private boolean all;
 
 
@@ -42,7 +42,7 @@ public class CampaignRunData {
     @NotNull(message = "Agent Id is mandatory")
     private int agentId;
 
-    @Column(name="language")
+    @Column(name="`language`")
     private String language;
 
     @Enumerated(EnumType.STRING)

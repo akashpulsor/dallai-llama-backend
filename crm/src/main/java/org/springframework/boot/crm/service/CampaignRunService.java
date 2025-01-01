@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 @Service
@@ -29,17 +30,29 @@ public class CampaignRunService {
         return this.campaignRunRepository.save(campaignRunData);
     }
 
+    public List<Integer> getLeadListByCampaignRunId(int campaignRunId) {
+        return this.campaignRunRepository.getLeadList(campaignRunId);
+    }
+
 
     public CampaignRunData addLeads(int businessId, Set<Integer> leads) {
-        CampaignRunData campaignRunData = this.campaignRunRepository.findByBusinessId(businessId).
-                orElseThrow(() -> new CampaignRunNotFoundExceptions("Campaign Run Not Found"));
-        campaignRunData.setLeads(leads);
-        return addCampaignRun(campaignRunData);
+        //CampaignRunData campaignRunData = this.campaignRunRepository.findByBusinessId(businessId).
+       //         orElseThrow(() -> new CampaignRunNotFoundExceptions("Campaign Run Not Found"));
+        //campaignRunData.setLeads(leads);
+        //return addCampaignRun(campaignRunData);
+        return new CampaignRunData();
     }
 
     public CampaignRunData addLeads(CampaignRunData campaignRunData, Set<Integer> leads) {
         campaignRunData.setLeads(leads);
         return addCampaignRun(campaignRunData);
+    }
+
+
+    public CampaignRunData  getCampaignRunData(int campaignRunId, int businessId){
+        return this.campaignRunRepository.findByCampaignRunIdAndBusinessId(campaignRunId, businessId).orElseThrow(
+                () -> new CampaignRunNotFoundExceptions("Campaign run not found")
+        );
     }
 
 

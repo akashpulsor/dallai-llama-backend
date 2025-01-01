@@ -22,4 +22,6 @@ public interface PhoneService {
     TwilioData addTwilioData(TwilioData twilioData);
 
     List<TwilioData> getTwilioData(int businessId);
+
+    TwilioData getTwilioData(int businessId, int phoneId);
 }

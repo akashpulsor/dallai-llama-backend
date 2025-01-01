@@ -49,9 +49,9 @@ public class LeadManagerImpl implements LeadManager {
         log.info("Fetching paginated leads for business: {}, page: {}, size: {}", businessId, page, size);
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy));
         if(test){
-            return leadDataService.getTestLeadsByBusinessIdPaginated(businessId, pageable).map(this::convertModelToDto);
+            return leadDataService.getTestLeadsByBusinessIdPaginated(businessId, pageable).map(lead -> convertModelToDto1(lead, businessId));
         }
-        return leadDataService.getLeadsByBusinessIdPaginated(businessId, pageable).map(this::convertModelToDto);
+        return leadDataService.getLeadsByBusinessIdPaginated(businessId, pageable).map(lead -> convertModelToDto1(lead, businessId));
     }
 
     @Override
@@ -72,6 +72,18 @@ public class LeadManagerImpl implements LeadManager {
 
     private LeadResponseDto convertModelToDto(LeadData leadData) {
         LeadResponseDto leadResponseDto = new LeadResponseDto();
+        leadResponseDto.setLeadId(leadData.getLeadId());
+        leadResponseDto.setLeadName(leadData.getLeadName());
+        leadResponseDto.setLeadEmail(leadData.getLeadEmail());
+        leadResponseDto.setLeadPhone(leadData.getLeadPhone());
+        leadResponseDto.setLeadGender(leadResponseDto.getLeadGender());
+        return leadResponseDto;
+    }
+
+    private LeadResponseDto convertModelToDto1(LeadData leadData, int businessId) {
+        LeadResponseDto leadResponseDto = new LeadResponseDto();
+        leadResponseDto.setBusinessId(businessId);
+        leadResponseDto.setLeadId(leadData.getLeadId());
         leadResponseDto.setLeadName(leadData.getLeadName());
         leadResponseDto.setLeadEmail(leadData.getLeadEmail());
         leadResponseDto.setLeadPhone(leadData.getLeadPhone());

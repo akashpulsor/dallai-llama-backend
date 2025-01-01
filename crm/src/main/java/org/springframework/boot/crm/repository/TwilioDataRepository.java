@@ -11,4 +11,6 @@ import java.util.Optional;
 public interface TwilioDataRepository extends JpaRepository<TwilioData, Integer> {
 
     List<TwilioData> findByBusinessId(Integer businessId);
+
+    Optional<TwilioData> findByBusinessIdAndPhoneId(Integer businessId, Integer phoneId);
 }
