@@ -20,14 +20,15 @@ public class CallController {
 
 
     @PostMapping("/incoming")
-    public String incomingCall(@RequestHeader("host") String host,@RequestHeader("campaignRunId") int campaignRunId,
-                               @RequestHeader("authtoken") String authToken){
+    public String incomingCall(@RequestHeader("host") String host,@RequestParam("campaignRunId") int campaignRunId,
+                               @RequestParam("authToken") String authToken){
         return this.callManager.incomingCall(host,campaignRunId,authToken);
     }
 
 
-    @PostMapping("/satuts")
+    @PostMapping("/status")
     public String status( String status){
+        log.info("Status received - {}", status);
         return status;
     }
 

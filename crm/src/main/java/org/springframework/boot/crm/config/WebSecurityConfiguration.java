@@ -57,6 +57,7 @@ public class WebSecurityConfiguration {
                         .requestMatchers("/liveness_check").permitAll()
                         .requestMatchers("/_ah/start").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/call/**").permitAll()
                         .anyRequest()
                         .authenticated());
 

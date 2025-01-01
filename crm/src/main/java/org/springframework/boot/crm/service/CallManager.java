@@ -30,7 +30,6 @@ public class CallManager {
 
     private final CallLogService callLogService;
 
-    private final BusinessApiKeyService businessApiKeyService;
 
     private final AgentManager agentManager;
 
@@ -41,13 +40,12 @@ public class CallManager {
     private final BusinessManager businessManager;
 
     public CallManager(ApplicationEventPublisher applicationEventPublisher, ToolsService toolsService,
-                        CallLogService callLogService, BusinessApiKeyService businessApiKeyService, AgentManager agentManager,
+                        CallLogService callLogService,  AgentManager agentManager,
                         LeadManager leadManager,  BusinessManager businessManager) {
         this.applicationEventPublisher = applicationEventPublisher;
         twilioOpenAiMap = new ConcurrentHashMap<>();
         this.toolsService = toolsService;
         this.callLogService = callLogService;
-        this.businessApiKeyService=businessApiKeyService;
         this.agentManager = agentManager;
         this.leadManager = leadManager;
         this.businessManager = businessManager;
@@ -81,6 +79,8 @@ public class CallManager {
                 .setStatusCallbackMethod(HttpMethod.POST)
                 .create();
 
+
+        campaignRunData.setCallSId(call.getSid());
         return this.callLogService.createCallLog("OUT_BOUND",
                 campaignRunData.getCampaignRunId(),
                 leadData.getLeadId(),  call.getSid(),
@@ -92,7 +92,7 @@ public class CallManager {
                                String authToken ) {
         //TODO decrypt the auth token
         String url = "wss://"+host+"/media-stream?"+ "authToken="+authToken+"&campaignRunId="+campaignRunId;
-        url = "wss://"+host+"/media-stream";
+        url = "wss://"+host+"/api/call/media-stream";
         return  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<Response>"
                 + "<Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>"

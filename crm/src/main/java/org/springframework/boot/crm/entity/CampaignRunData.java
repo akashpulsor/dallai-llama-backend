@@ -56,6 +56,8 @@ public class CampaignRunData {
     @NotNull(message = "Phone Id is mandatory")
     private int phoneId;
 
+    @Column(name="call_sid")
+    private String callSId;
     @Embedded
     private SanitaryColumn sanitaryColumn;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE campaign_run_data ADD call_sid VARCHAR(255)  DEFAULT  NULL;

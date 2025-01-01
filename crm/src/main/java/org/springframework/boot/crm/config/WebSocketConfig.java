@@ -18,6 +18,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(new MediaStreamHandler(this.applicationEventPublisher), "/media-stream").setAllowedOrigins("*");
+        registry.addHandler(new MediaStreamHandler(this.applicationEventPublisher), "/api/call/media-stream").setAllowedOrigins("*");
     }
 }

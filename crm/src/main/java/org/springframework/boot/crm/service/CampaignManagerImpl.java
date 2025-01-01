@@ -99,6 +99,7 @@ public class CampaignManagerImpl implements  CampaignManager {
         for(LeadData leadData: leadDataList) {
             try{
                 this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData );
+                this.campaignRunService.addCampaignRun(campaignRunData);
             }
             catch (Exception e){
                 log.error("Failed to call log ", e);
