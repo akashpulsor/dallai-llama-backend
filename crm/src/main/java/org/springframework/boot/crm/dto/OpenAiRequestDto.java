@@ -25,4 +25,6 @@ public class OpenAiRequestDto {
         private double temperature;
 
     }
+
+
 }

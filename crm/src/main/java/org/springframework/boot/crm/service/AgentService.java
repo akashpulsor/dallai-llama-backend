@@ -1,6 +1,7 @@
 package org.springframework.boot.crm.service;
 
 
+import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.entity.AgentData;
 import org.springframework.boot.crm.repository.AgentDataRepository;
@@ -26,6 +27,10 @@ public class AgentService {
 
     public List<AgentData> findByBusinessId(int businessId) {
         return this.agentDataRepository.findByBusinessId(businessId);
+    }
+
+    public AgentData findByBusinessIdAndAgentId(int businessId, int agentId) {
+        return agentDataRepository.findByBusinessIdAndAgentId(businessId, agentId).orElseThrow(() -> new EntityNotFoundException("AgentId not found"));
     }
 
 }

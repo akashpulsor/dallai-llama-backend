@@ -7,19 +7,13 @@ import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 public interface BusinessManager {
     BusinessData getBusinessData(int businessId);
 
     BusinessData addBusiness(BusinessData businessData);
 
-    LlmData addLlmData(LlmData llmData);
-
-    TwilioData addTwilioData(TwilioData twilioData);
-
-    List<LlmData> getAllLlmData();
-
-    List<TwilioData> getAllTwilioData();
 
     BusinessData getBusinessByEmail(String email);
 
@@ -35,4 +29,32 @@ public interface BusinessManager {
     OnBoardingResponseDto getOnBoardBusiness(int businessId);
 
     TwilioSubAccountDto generateNumber(GenerateNumberRequestDto generateNumberRequestDto);
+
+    CampaignManager getCampaignManager();
+
+    AgentManager getAgentManager();
+
+    LeadManager getLeadManager();
+
+    LlmData addLlmData(LlmData llmData);
+
+    TwilioData addTwilioData(TwilioData twilioData);
+
+    List<LlmData> getAllLlmData(int businessId);
+
+    List<TwilioData> getAllTwilioData(int businessId);
+
+    MetaManager getMetaManager();
+
+    CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto);
+
+    CampaignDataResponseDto get(int campaignId, int businessId);
+
+    List<CampaignDataResponseDto> getByBusinessId(int  businessId);
+
+    void runCampaign(int campaignRunId, int businessId);
+
+    AgentResponseDto addAgent(AgentRequestDto agentRequestDto);
+
+    List<AgentResponseDto> findByBusinessId(int businessId);
 }

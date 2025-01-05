@@ -1,12 +1,16 @@
 package org.springframework.boot.crm.dto;
 
+import lombok.Data;
 import org.springframework.web.socket.WebSocketSession;
 
-public class TwilioStartEventDto extends TwilioEventDto {
+@Data
+public class TwilioStartEventDto  {
     private final WebSocketSession session;
-    public TwilioStartEventDto(Object source, int userId, TwilioMediaMessage twilioMediaMessage,
+    private final TwilioStartMessageDto twilioStartMediaMessage;
+
+    public TwilioStartEventDto(Object source,  TwilioStartMessageDto twilioStartMediaMessage,
                                WebSocketSession session) {
-        super(source, userId, twilioMediaMessage);
         this.session = session;
+        this.twilioStartMediaMessage = twilioStartMediaMessage;
     }
 }

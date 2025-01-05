@@ -18,19 +18,19 @@ import java.util.List;
 @RequestMapping("/api/campaign")
 public class CampaignController {
 
-    private final CampaignManager campaignManager;
+    private final BusinessManager businessManager;
 
-    public CampaignController(CampaignManager campaignManager) {
-        this.campaignManager = campaignManager;
+    public CampaignController(BusinessManager businessManager) {
+        this.businessManager = businessManager;
     }
     @PostMapping("/add")
     public CampaignDataResponseDto addCampaignData(@RequestBody @Valid CampaignDataRequestDto campaignDataRequestDto) {
-        return this.campaignManager.add(campaignDataRequestDto);
+        return this.businessManager.getCampaignManager().add(campaignDataRequestDto);
     }
 
     @GetMapping("/list")
     public List<CampaignDataResponseDto> getCampaignDataList(@RequestParam(value = "businessId") int businessId) {
-        return this.campaignManager.getByBusinessId(businessId);
+        return this.businessManager.getCampaignManager().getByBusinessId(businessId);
     }
 
 
@@ -38,30 +38,21 @@ public class CampaignController {
     @GetMapping("/get")
     public CampaignDataResponseDto getBusinessData(@RequestParam(value = "businessId") int businessId,
                                         @RequestParam(value = "campaignId") int campaignId) {
-        return this.campaignManager.get(businessId, campaignId);
+        return this.businessManager.get(businessId, campaignId);
     }
 
 
     @PostMapping("/start")
     public CampaignStartResponseDto startCampaign(@RequestBody @Valid CampaignStartRequestDto campaignDataRequestDto) {
-        return this.campaignManager.start(campaignDataRequestDto);
+        return this.businessManager.getCampaignManager().start(campaignDataRequestDto);
     }
 
     @PostMapping("/run")
     public void runCampaign(@RequestParam(value = "businessId") int businessId,
                                               @RequestParam(value = "campaignRunId") int campaignRunId) {
 
-        this.campaignManager.runCampaign( campaignRunId, businessId );
+        this.businessManager.runCampaign( campaignRunId, businessId );
     }
 
-    public CampaignRunResponseDto runCallback(@RequestBody @Valid CampaignRunRequestDto campaignDataRequestDto) {
 
-        /*
-        * on call back , system will create open ai session using llmData, the create method update status by adding campaign data,leads data, campaign data, agent data, language, lead data,
-        * send first message to twilio, and the do all the conversation,
-        * log message and callback from twilio in call status, conversation, after loging the status send event to ui, using spring sse, for visibility
-        *
-        * */
-        return null;
-    }
 }

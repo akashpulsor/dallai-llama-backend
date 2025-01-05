@@ -11,4 +11,6 @@ public interface AgentManager {
      AgentResponseDto addAgent(AgentRequestDto agentRequestDto) ;
 
      List<AgentResponseDto> findByBusinessId(int businessId) ;
+
+     AgentData findByBusinessIdAndAgentId(int businessId, int agentId) ;
 }

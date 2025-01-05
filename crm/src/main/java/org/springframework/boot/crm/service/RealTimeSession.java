@@ -4,7 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.crm.dto.OpenAiResponseDto;
+import org.springframework.boot.crm.dto.*;
+import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -18,40 +19,61 @@ import java.util.concurrent.CountDownLatch;
 
 @Slf4j
 public class RealTimeSession {
-
-    private static final String SERVER_URI = "ws://example.com/websocket"; // replace with your server URI
-    private static final String AUTH_TOKEN = ""; // replace with your actual token
     private WebSocket webSocket;
-
-    private String streamId;
-
     private CountDownLatch latch;
     private final ApplicationEventPublisher applicationEventPublisher;
     private WebSocketSession twilioSession;
 
-    public RealTimeSession(String json, WebSocketSession twilioSession, String streamId, ApplicationEventPublisher applicationEventPublisher) throws InterruptedException, JsonProcessingException {
-        this.streamId = streamId;
-        this.twilioSession = twilioSession;
+    private final TwilioStartEventDto twilioStartEventDto;
+
+    private final LlmData llmData;
+
+    public RealTimeSession(String json, TwilioStartEventDto twilioStartEventDto, ApplicationEventPublisher applicationEventPublisher,LlmData llmData) throws InterruptedException, JsonProcessingException {
         this.applicationEventPublisher=applicationEventPublisher;
-        //connect(json, applicationEventPublisher, streamId);
+        this.twilioStartEventDto=twilioStartEventDto;
+        this.llmData=llmData;
+        connect(json, applicationEventPublisher, twilioStartEventDto, llmData);
     }
 
-    private void connect(String json, ApplicationEventPublisher applicationEventPublisher, String streamId) throws InterruptedException, JsonProcessingException {
+    public WebSocket getWebSocket(){
+        return this.webSocket;
+    }
+
+    public TwilioStartEventDto getTwilioStartEventDto(){
+        return this.twilioStartEventDto;
+    }
+
+
+    private void connect(String json, ApplicationEventPublisher applicationEventPublisher, TwilioStartEventDto twilioStartEventDto,LlmData llmData) throws InterruptedException, JsonProcessingException {
         this.latch = new CountDownLatch(1);
+        String OPENAI_API_KEY = llmData.getApiKey();
+
+        WebSocket ws = HttpClient
+                .newHttpClient()
+                .newWebSocketBuilder().header("Authorization", "Bearer " + OPENAI_API_KEY).
+                header("OpenAI-Beta", "realtime=v1")
+                .buildAsync(URI.create("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"), new WebSocketClient(latch, applicationEventPublisher,twilioStartEventDto, json))
+                .join();
+        this.webSocket = ws;
 
         latch.await();
     }
 
+
+
+
+
+
     private static class WebSocketClient implements WebSocket.Listener {
         private final CountDownLatch latch;
         private  final ApplicationEventPublisher applicationEventPublisher;
-        private final String streamId;
+        private final TwilioStartEventDto twilioStartEventDto;
         private final String json;
 
-        public WebSocketClient(CountDownLatch latch, ApplicationEventPublisher applicationEventPublisher, String streamId, String json) {
+        public WebSocketClient(CountDownLatch latch, ApplicationEventPublisher applicationEventPublisher, TwilioStartEventDto twilioStartEventDto, String json) {
             this.latch = latch;
             this.applicationEventPublisher = applicationEventPublisher;
-            this.streamId = streamId;
+            this.twilioStartEventDto = twilioStartEventDto;
             this.json = json;
         }
 
@@ -88,7 +110,34 @@ public class RealTimeSession {
 
         protected void handleTextMessage(String message)  {
             log.info("AKASH OPEN AI: " + message);
-
+            ObjectMapper objectMapper = new ObjectMapper();
+            objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            try {
+                OpenAiResponseDto openAiResponse = objectMapper.readValue(message, OpenAiResponseDto.class);
+                if (openAiResponse.getType().equals("session.created")) {
+                    OpenAiSessionCreateEvent sessionCreateEvent = new OpenAiSessionCreateEvent(this, openAiResponse);
+                    this.applicationEventPublisher.publishEvent(sessionCreateEvent);
+                    log.info("Session updated successfully: {}", sessionCreateEvent);
+                }
+                else if (openAiResponse.getType().equals("session.updated")) {
+                    OpenAiSessionUpdateEvent sessionUpdateEvent = new OpenAiSessionUpdateEvent(this, openAiResponse);
+                    this.applicationEventPublisher.publishEvent(sessionUpdateEvent);
+                    log.info("Session updated successfully: {}", openAiResponse);
+                }
+                else if (openAiResponse.getType().equals("response.audio.delta")) {
+                    OpenAiAudioDto openAiAudioDto = objectMapper.readValue(message, OpenAiAudioDto.class);
+                    OpenAiAudioEvent openAiAudioEvent = new OpenAiAudioEvent(this, openAiAudioDto,this.twilioStartEventDto);
+                    this.applicationEventPublisher.publishEvent(openAiAudioEvent);
+                    log.info("response.audio.delta successfully: {}", openAiResponse);
+                }
+                else if (getLogEventTypes().contains(openAiResponse.getType())) {
+                    OpenAiEventDto openAiEventDto = new OpenAiEventDto(this, openAiResponse);
+                    this.applicationEventPublisher.publishEvent(openAiEventDto);
+                    log.info("Received event: {}", openAiResponse.getType());
+                }
+            } catch (JsonProcessingException e) {
+                log.error("Failed while getting OpenAI response", e);
+            }
         }
 
 

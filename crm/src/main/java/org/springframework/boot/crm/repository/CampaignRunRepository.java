@@ -34,4 +34,6 @@ public interface CampaignRunRepository  extends JpaRepository<CampaignRunData, I
     List<Integer> getLeadList(@Param("campaignRunId") Integer campaignRunId);
 
     Optional<CampaignRunData> findByCampaignRunIdAndBusinessId(Integer campaignRunId,Integer businessId);
+
+
 }

@@ -55,10 +55,7 @@ public class BusinessController {
         return this.businessManager.addLlmData(LlmData);
     }
 
-    @GetMapping("/llm")
-    public List<LlmData> getLlmData() {
-        return this.businessManager.getAllLlmData();
-    }
+
 
     @PostMapping("/add-twilio")
     public TwilioData addBusinessData(@RequestBody TwilioData twilioData) {
@@ -70,8 +67,5 @@ public class BusinessController {
         return this.businessManager.addTwilioData(twilioData);
     }
 
-    @GetMapping("/twilio")
-    public List<TwilioData> getTwilioData() {
-        return this.businessManager.getAllTwilioData();
-    }
+
 }

@@ -40,7 +40,8 @@ public class MediaStreamHandler extends TextWebSocketHandler {
                 applicationEventPublisher.publishEvent(new TwilioMediaEventDto(this, 1,mediaEventDto));
                 break;
             case "start":
-                applicationEventPublisher.publishEvent(new TwilioStartEventDto(this, 1, twilioMediaMessage, session));
+                TwilioStartMessageDto twilioStartMediaMessage = objectMapper.readValue(message.getPayload(), TwilioStartMessageDto.class);
+                applicationEventPublisher.publishEvent(new TwilioStartEventDto(this,  twilioStartMediaMessage, session));
                 log.info("Incoming Stream has started -{}",twilioMediaMessage.getStreamSid() );
                 break;
             default:

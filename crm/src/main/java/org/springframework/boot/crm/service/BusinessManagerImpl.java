@@ -1,19 +1,23 @@
 package org.springframework.boot.crm.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
 public class BusinessManagerImpl implements BusinessManager {
     private final BusinessService businessService;
 
-    private final BusinessApiKeyService businessApiKeyService;
 
     private final MasterDataService masterDataService;
 
@@ -21,17 +25,75 @@ public class BusinessManagerImpl implements BusinessManager {
 
     private final BusinessIndiaService businessIndiaService;
 
+    private final CampaignManager campaignManager;
+
+    private final AgentManager agentManager;
+
+    private final LeadManager leadManager;
+
+    private final MetaManager metaManager;
+
+    private final CallManager callManager;
+
     public BusinessManagerImpl( BusinessService businessService,
-                               BusinessApiKeyService businessApiKeyService,
                                 MasterDataService masterDataService,
                                 PhoneService phoneService,
-                                BusinessIndiaService businessIndiaService){
+                                BusinessIndiaService businessIndiaService,
+                                CampaignManager campaignManager,
+                                AgentManager agentManager,
+                                LeadManager leadManager,
+                                MetaManager metaManager,CallManager callManager){
         this.businessService = businessService;
-        this.businessApiKeyService = businessApiKeyService;
         this.masterDataService = masterDataService;
         this.phoneService = phoneService;
         this.businessIndiaService = businessIndiaService;
+        this.campaignManager = campaignManager;
+        this.agentManager = agentManager;
+        this.leadManager = leadManager;
+        this.metaManager = metaManager;
+        this.callManager = callManager;
     }
+
+    @Override
+    public CampaignManager getCampaignManager() {
+        return this.campaignManager;
+    }
+
+    @Override
+    public AgentManager getAgentManager() {
+        return this.agentManager;
+    }
+
+    @Override
+    public LeadManager getLeadManager() {
+        return this.leadManager;
+    }
+
+    @Override
+    public LlmData addLlmData(LlmData llmData) {
+        return this.metaManager.addLlmData(llmData);
+    }
+
+    @Override
+    public TwilioData addTwilioData(TwilioData twilioData) {
+        return this.metaManager.addTwilioData(twilioData);
+    }
+
+    @Override
+    public List<LlmData> getAllLlmData(int businessId) {
+        return this.metaManager.getLlmData(businessId);
+    }
+
+    @Override
+    public List<TwilioData> getAllTwilioData(int businessId) {
+        return this.metaManager.getTwilioData(businessId);
+    }
+
+    @Override
+    public MetaManager getMetaManager() {
+        return this.metaManager;
+    }
+
     @Override
     public BusinessData getBusinessData(int businessId) {
         return this.businessService.getBusinessDataById(businessId);
@@ -40,6 +102,122 @@ public class BusinessManagerImpl implements BusinessManager {
     @Override
     public BusinessData addBusiness(BusinessData businessData) {
         return this.businessService.addBusiness(businessData);
+    }
+
+    @Override
+    public CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto) {
+        this.getBusinessData(campaignDataRequestDto.getBusinessId());
+        return getCampaignManager().add(campaignDataRequestDto);
+    }
+
+    @Override
+    public CampaignDataResponseDto get(int campaignId, int businessId) {
+        this.getBusinessData(businessId);
+        return getCampaignManager().get(campaignId, businessId);
+    }
+
+    @Override
+    public List<CampaignDataResponseDto> getByBusinessId(int  businessId) {
+        this.getBusinessData(businessId);
+        return getCampaignManager().getByBusinessId(businessId);
+    }
+
+
+    @EventListener
+    public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto) throws IOException, InterruptedException {
+        log.info("twilio start event Received - {}", twilioStartEventDto);
+        int businessId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getBusinessId();
+        int campaignRunId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId();
+        int leadId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getLeadId();
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(businessId, campaignRunId);
+        LlmData llmData = this.metaManager.getLlmData(businessId,campaignRunData.getLlmId());
+        TwilioData twilioData = this.metaManager.getTwilioData(businessId,campaignRunData.getPhoneId());
+        AgentData agentData = this.agentManager.findByBusinessIdAndAgentId(businessId, campaignRunData.getAgentId());
+        CampaignData campaignData = this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
+        LeadData leadData = this.leadManager.getLeadData(businessId,leadId);
+        BusinessData businessData = this.getBusinessData(businessId);
+        String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData);
+        this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData);
+    }
+
+    @EventListener
+    public  void handleTwilioEvent(TwilioMediaEventDto twilioMediaEventDto) throws JsonProcessingException {
+        log.info("twilio event Received - {}", twilioMediaEventDto);
+        MediaEventDto twilioMediaMessage = twilioMediaEventDto.getMediaEventDto();
+        Map<String,Object> map = new HashMap<>();
+        map.put("type", "input_audio_buffer.append");
+        map.put("audio", twilioMediaMessage.getMedia().getPayload());
+        ObjectMapper objectMapper = new ObjectMapper();
+        String json = objectMapper.writeValueAsString(map);
+        this.callManager.sendOpenAiRealtimeSession(twilioMediaEventDto, json);
+    }
+
+    @EventListener
+    public  void handleOpenAiEvent(OpenAiAudioEvent openAiAudioEvent) throws IOException {
+        log.info("open Ai audio event Received - {}", openAiAudioEvent);
+        OpenAiAudioDto openAiAudioDto = openAiAudioEvent.getOpenAiAudioDto();
+        Map<String,Object> audioDelta = new HashMap<>();
+        audioDelta.put("event","media");
+        audioDelta.put("streamSid",openAiAudioEvent.getTwilioStartEventDto().getTwilioStartMediaMessage().getStreamSid());
+        Map<String, String> audioData = new HashMap<>();
+        byte[] audioBytes = Base64.getDecoder().decode(openAiAudioDto.getDelta());
+        String reEncodedBase64AudioBuffer = Base64.getEncoder().encodeToString(audioBytes);
+        audioData.put("payload", reEncodedBase64AudioBuffer);
+        this.callManager.sendTwilioRealtimeSession(openAiAudioEvent, audioDelta, audioData);
+    }
+
+    @EventListener
+    public  void handleOpenAiEvent(OpenAiEventDto openAiEventDto) {
+        log.info("open Ai event Received - {}", openAiEventDto);
+    }
+
+    @EventListener
+    public  void handleOpenAiEvent(OpenAiSessionCreateEvent sessionCreateEvent) {
+        log.info("open Ai create event Received - {}", sessionCreateEvent);
+    }
+
+    @EventListener
+    public void handleTwilioSessionEvent(TwilioSessionEvent twilioSessionEvent) {
+
+
+    }
+
+
+    @EventListener
+    public  void handleOpenAiEvent(OpenAiSessionUpdateEvent sessionUpdateEvent) {
+        log.info("open Ai update event Received - {}", sessionUpdateEvent);
+    }
+
+    public void runCampaign(int campaignRunId, int businessId) {
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(campaignRunId, businessId);
+        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
+        CampaignData campaignData =this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
+        List<Integer> leadList =this.campaignManager.getLeadListByCampaignRunId(campaignRunData.getCampaignRunId());
+        List<LeadData> leadDataList = this.leadManager.getLeadDataByList(businessId, new HashSet<>(leadList));
+
+        for(LeadData leadData: leadDataList) {
+            try{
+                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData );
+                this.campaignManager.addCampaignRunData(campaignRunData);
+            }
+            catch (Exception e){
+                log.error("Failed to call log ", e);
+            }
+        }
+
+    }
+
+    @Override
+    public AgentResponseDto addAgent(AgentRequestDto agentRequestDto) {
+        this.getBusinessData(agentRequestDto.getBusinessId());
+        return this.agentManager.addAgent(agentRequestDto);
+    }
+
+
+    @Override
+    public List<AgentResponseDto> findByBusinessId(int businessId) {
+        this.getBusinessData(businessId);
+        return this.agentManager.findByBusinessId(businessId);
     }
 
     @Transactional
@@ -117,16 +295,6 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
 
-    @Override
-    public LlmData addLlmData(LlmData llmData) {
-        return this.businessApiKeyService.addLlmData(llmData);
-    }
-
-    @Override
-    public TwilioData addTwilioData(TwilioData twilioData) {
-        return this.businessApiKeyService.addTwilioData(twilioData);
-    }
-
     public BusinessData getBusinessByEmail(String email) {
         return this.businessService.getBusinessDataByEmail(email);
     }
@@ -160,15 +328,7 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
 
-    @Override
-    public List<LlmData> getAllLlmData() {
-        return this.businessApiKeyService.getLlmData();
-    }
 
-    @Override
-    public List<TwilioData> getAllTwilioData() {
-        return this.businessApiKeyService.getTwilioData();
-    }
 
     private BusinessDataIndia businessDataIndiaModelToModel(OnBoardingDto onBoardingDto) {
         BusinessDataIndia businessDataIndiaModel =this.businessIndiaService.getBusinessData(onBoardingDto.getParentBusinessId());

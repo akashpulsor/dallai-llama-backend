@@ -17,6 +17,8 @@ public interface LeadManager {
 
     LeadResponseDto getLead(int businessId, int leadId);
 
+    LeadData getLeadData(int businessId, int leadId);
+
     Page<LeadResponseDto> getLeadsByBusinessIdPaginated(int businessId,int page,int size,String sortBy, boolean test);
 
     Stream<LeadData> getLeadDataByStream(int businessId);

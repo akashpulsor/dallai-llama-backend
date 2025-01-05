@@ -21,37 +21,28 @@ public class CampaignManagerImpl implements  CampaignManager {
 
     private final CampaignRunService campaignRunService;
 
-    private final BusinessManager businessManager;
 
     private final LeadManager leadManager;
 
-    private final CallManager callManager;
 
-    private final MetaManager metaManager;
 
     private static final int BATCH_SIZE = 1000;
 
     public CampaignManagerImpl(CampaignService campaignService,
-                               BusinessManager businessManager,
                                LeadManager leadManager,
-                               CampaignRunService campaignRunService, CallManager callManager, MetaManager metaManager) {
+                               CampaignRunService campaignRunService) {
         this.campaignService = campaignService;
-        this.businessManager = businessManager;
         this.leadManager = leadManager;
         this.campaignRunService = campaignRunService;
-        this.callManager = callManager;
-        this.metaManager = metaManager;
     }
-        @Override
+    @Override
     public CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto) {
-        this.businessManager.getBusinessData(campaignDataRequestDto.getBusinessId());
         CampaignData campaignData = this.campaignService.save(dtoToModel(campaignDataRequestDto));
         return modelToDto(campaignData);
     }
 
     @Override
     public CampaignDataResponseDto get(int campaignId, int businessId) {
-        this.businessManager.getBusinessData(businessId);
         CampaignData campaignData = this.campaignService.findByCampaignIdAndBusinessId(campaignId, businessId);
         return modelToDto(campaignData);
     }
@@ -62,7 +53,6 @@ public class CampaignManagerImpl implements  CampaignManager {
 
     @Override
     public List<CampaignDataResponseDto> getByBusinessId(int  businessId) {
-        this.businessManager.getBusinessData(businessId);
         return this.campaignService.getAllByBusinessId(businessId).stream().
                 map(this::modelToDto).collect(Collectors.toList());
     }
@@ -87,27 +77,20 @@ public class CampaignManagerImpl implements  CampaignManager {
         return modelToDto(campaignRunData);
     }
 
-    @Override
-    public void runCampaign(int campaignRunId, int businessId) {
-        CampaignRunData campaignRunData = this.campaignRunService.getCampaignRunData(campaignRunId, businessId);
-        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
-        LlmData llmData =this.metaManager.getLlmData(campaignRunData.getBusinessId(), campaignRunData.getLlmId());
-        CampaignData campaignData =getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
-        List<Integer> leadList =this.campaignRunService.getLeadListByCampaignRunId(campaignRunData.getCampaignRunId());
-        List<LeadData> leadDataList = this.leadManager.getLeadDataByList(businessId, new HashSet<>(leadList));
 
-        for(LeadData leadData: leadDataList) {
-            try{
-                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData );
-                this.campaignRunService.addCampaignRun(campaignRunData);
-            }
-            catch (Exception e){
-                log.error("Failed to call log ", e);
-            }
-        }
 
+
+    public CampaignRunData getCampaignRunData(int campaignRunId, int businessId) {
+        return this.campaignRunService.getCampaignRunData(campaignRunId, businessId);
     }
 
+    public CampaignRunData addCampaignRunData(CampaignRunData campaignRunData) {
+        return this.campaignRunService.addCampaignRun(campaignRunData);
+    }
+
+    public List<Integer> getLeadListByCampaignRunId(int campaignRunId) {
+        return this.campaignRunService.getLeadListByCampaignRunId(campaignRunId);
+    }
 
 
 

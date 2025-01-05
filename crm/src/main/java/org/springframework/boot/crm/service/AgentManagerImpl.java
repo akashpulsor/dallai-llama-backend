@@ -13,23 +13,24 @@ public class AgentManagerImpl implements AgentManager {
 
     private final AgentService agentService;
 
-    private final BusinessManager businessManager;
 
-    public AgentManagerImpl(AgentService agentService, BusinessManager businessManager) {
+    public AgentManagerImpl(AgentService agentService) {
         this.agentService = agentService;
-        this.businessManager = businessManager;
     }
     @Override
     public AgentResponseDto addAgent(AgentRequestDto agentRequestDto) {
-        businessManager.getBusinessData(agentRequestDto.getBusinessId());
         return modelToDto(this.agentService.save(dtoToModel(agentRequestDto)));
     }
 
     @Override
     public List<AgentResponseDto> findByBusinessId(int businessId) {
-        businessManager.getBusinessData(businessId);
         return this.agentService.findByBusinessId(businessId).stream().
                 map(this::modelToDto).collect(Collectors.toList());
+    }
+
+    @Override
+    public AgentData findByBusinessIdAndAgentId(int businessId, int agentId) {
+        return this.agentService.findByBusinessIdAndAgentId(businessId, agentId);
     }
 
     private AgentData dtoToModel(AgentRequestDto agentRequestDto) {
