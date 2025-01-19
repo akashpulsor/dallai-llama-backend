@@ -6,11 +6,12 @@ import org.springframework.context.ApplicationEvent;
 @Data
 public class BillingDataEvent  extends ApplicationEvent {
 
-    private final BillingResponse billingResponse;
-    private final String messageId;
-    public BillingDataEvent(Object source, BillingResponse billingResponse, String messageId) {
+    private final OpenAiResponseDoneDto.Usage usage;
+    private final int callLogId;
+
+    public BillingDataEvent(Object source, OpenAiResponseDoneDto.Usage usage,int callLogId) {
         super(source);
-        this.billingResponse=billingResponse;
-        this.messageId=messageId;
+        this.usage = usage;
+        this.callLogId= callLogId;
     }
 }

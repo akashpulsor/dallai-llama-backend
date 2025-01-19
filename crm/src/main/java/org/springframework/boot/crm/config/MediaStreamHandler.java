@@ -65,7 +65,7 @@ public class MediaStreamHandler extends TextWebSocketHandler {
         switch (twilioMediaMessage.getEvent()) {
             case "media":
                 MediaEventDto mediaEventDto = objectMapper.readValue(message.getPayload(), MediaEventDto.class);
-                log.info("Twilio and  open AI websocket connection established - {}",mediaEventDto);
+                //log.info("Twilio and  open AI websocket connection established - {}",mediaEventDto);
                 applicationEventPublisher.publishEvent(new TwilioMediaEventDto(this, 1,mediaEventDto));
                 break;
             case "start":
@@ -73,10 +73,10 @@ public class MediaStreamHandler extends TextWebSocketHandler {
                 WebSocketSession webSocketSession = addDataInWebSocketSession(session, twilioStartMediaMessage);
                 super.handleTextMessage(webSocketSession,message);
                 applicationEventPublisher.publishEvent(new TwilioStartEventDto(this,  twilioStartMediaMessage, session));
-                log.info("Incoming Stream has started -{}",twilioMediaMessage.getStreamSid() );
+                //log.info("Incoming Stream has started -{}",twilioMediaMessage.getStreamSid() );
                 break;
             default:
-                log.info("Received non-media event -{}",twilioMediaMessage.getEvent() );
+                //log.info("Received non-media event -{}",twilioMediaMessage.getEvent() );
                 break;
         }
     }

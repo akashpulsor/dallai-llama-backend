@@ -193,6 +193,16 @@ public class CallManager {
 
     }
 
+    public void addBillingInformation(OpenAiResponseDoneDto openAiResponseDoneDto, TwilioStartEventDto twilioStartEventDto) {
+        CallLog callLog = getCallLog(twilioStartEventDto.
+                        getTwilioStartMediaMessage().getStart().getCustomParameters().getCallType(),
+                twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId(),
+                twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getLeadId()
+        );
+        BillingDataEvent billingDataEvent = new BillingDataEvent(this,openAiResponseDoneDto.getResponse().getUsage(),
+                callLog.getCallLogId());
+        this.applicationEventPublisher.publishEvent(billingDataEvent);
+    }
 
     private void sendUserInformation(RealTimeSession openAiRealTimeSession,TwilioStartMessageDto twilioStartMessageDto,LeadData leadData, CampaignData campaignData) throws JsonProcessingException {
         OpenAiCreateConversationDto openAiCreateConversationDto = new OpenAiCreateConversationDto();
@@ -290,7 +300,7 @@ public class CallManager {
                 "### Send Invoice and Bill r\n" +
                 "if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."+
                 "### Send information about Input and output Token, and total charger\n" +
-                "give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses in the form of json\n";
+                "give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses\n";
     }
 
 

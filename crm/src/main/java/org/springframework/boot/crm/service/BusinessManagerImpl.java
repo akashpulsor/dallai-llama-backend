@@ -148,7 +148,7 @@ public class BusinessManagerImpl implements BusinessManager {
 
     @EventListener
     public  void handleTwilioEvent(TwilioMediaEventDto twilioMediaEventDto) throws JsonProcessingException {
-        log.info("twilio event Received - {}", twilioMediaEventDto);
+        //log.info("twilio event Received - {}", twilioMediaEventDto);
         MediaEventDto twilioMediaMessage = twilioMediaEventDto.getMediaEventDto();
         Map<String,Object> map = new HashMap<>();
         map.put("type", "input_audio_buffer.append");
@@ -170,6 +170,13 @@ public class BusinessManagerImpl implements BusinessManager {
         String reEncodedBase64AudioBuffer = Base64.getEncoder().encodeToString(audioBytes);
         audioData.put("payload", reEncodedBase64AudioBuffer);
         this.callManager.sendTwilioRealtimeSession(openAiAudioEvent, audioDelta, audioData);
+    }
+
+    @EventListener
+    public  void handleOpenResponseDoneAiEvent(OpenAiResponseDoneEvent openAiResponseDoneEventDto) {
+        log.info("open Ai event Received - {}", openAiResponseDoneEventDto);
+        this.callManager.addBillingInformation(openAiResponseDoneEventDto.getOpenAiResponseDoneDto(),
+                openAiResponseDoneEventDto.getTwilioStartEventDto());
     }
 
     @EventListener

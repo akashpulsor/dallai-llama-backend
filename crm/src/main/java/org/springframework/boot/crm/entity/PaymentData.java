@@ -34,4 +34,27 @@ public class PaymentData {
 
     @Column(name = "call_time")
     private int callTime;
+
+    @Column(name = "input_text_token")
+    private int inputTextToken;
+
+    @Column(name = "input_audio_token")
+    private int inputAudioToken;
+
+    @Column(name = "input_cached_token")
+    private int inputCachedToken;
+
+    @Column(name = "input_cached_text_token")
+    private int inputCachedTextToken;
+
+    @Column(name = "input_cached_audio_token")
+    private int inputCachedAudioToken;
+
+    @Column(name = "output_text_token")
+    private int outputTextToken;
+
+    @Column(name = "output_audio_token")
+    private int outputAudioToken;
+
+
 }

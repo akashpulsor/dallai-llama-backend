@@ -109,7 +109,7 @@ public class RealTimeSession {
         }
 
         protected void handleTextMessage(String message)  {
-            log.info("TTTT - {}", message);
+            log.info("ABCD - {}", message);
             ObjectMapper objectMapper = new ObjectMapper();
             objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
             try {
@@ -117,23 +117,29 @@ public class RealTimeSession {
                 if (openAiResponse.getType().equals("session.created")) {
                     OpenAiSessionCreateEvent sessionCreateEvent = new OpenAiSessionCreateEvent(this, openAiResponse);
                     this.applicationEventPublisher.publishEvent(sessionCreateEvent);
-                    log.info("Session updated successfully: {}", sessionCreateEvent);
+                    //log.info("Session updated successfully: {}", sessionCreateEvent);
                 }
                 else if (openAiResponse.getType().equals("session.updated")) {
                     OpenAiSessionUpdateEvent sessionUpdateEvent = new OpenAiSessionUpdateEvent(this, openAiResponse);
                     this.applicationEventPublisher.publishEvent(sessionUpdateEvent);
-                    log.info("Session updated successfully: {}", openAiResponse);
+                    //log.info("Session updated successfully: {}", openAiResponse);
+                }
+                else if (openAiResponse.getType().equals("response.done")) {
+                    OpenAiResponseDoneDto responseDoneDto = objectMapper.readValue(message, OpenAiResponseDoneDto.class);
+                    OpenAiResponseDoneEvent openAiResponseDoneEvent = new OpenAiResponseDoneEvent(this, responseDoneDto, twilioStartEventDto);
+                    this.applicationEventPublisher.publishEvent(openAiResponseDoneEvent);
+                    //log.info("Response done : {}", responseDoneDto);
                 }
                 else if (openAiResponse.getType().equals("response.audio.delta")) {
                     OpenAiAudioDto openAiAudioDto = objectMapper.readValue(message, OpenAiAudioDto.class);
                     OpenAiAudioEvent openAiAudioEvent = new OpenAiAudioEvent(this, openAiAudioDto,this.twilioStartEventDto);
                     this.applicationEventPublisher.publishEvent(openAiAudioEvent);
-                    log.info("response.audio.delta successfully: {}", openAiResponse);
+                    //log.info("response.audio.delta successfully: {}", openAiResponse);
                 }
                 else if (getLogEventTypes().contains(openAiResponse.getType())) {
                     OpenAiEventDto openAiEventDto = new OpenAiEventDto(this, openAiResponse);
                     this.applicationEventPublisher.publishEvent(openAiEventDto);
-                    log.info("Received event: {}", openAiResponse.getType());
+                    //log.info("Received event: {}", openAiResponse.getType());
                 }
             } catch (JsonProcessingException e) {
                 log.error("Failed while getting OpenAI response", e);
@@ -141,13 +147,7 @@ public class RealTimeSession {
         }
 
 
-        private void handleFunctionCall(String message, ObjectMapper objectMapper) throws JsonProcessingException {
-            FunctionCallDto functionCallDto = objectMapper.readValue(message, FunctionCallDto.class);
 
-            if ("sendBillingInformation".equals(functionCallDto.getFunctionCall().getName())) {
-                handleBillingInformation(functionCallDto);
-            }
-        }
         private HashSet<String> getLogEventTypes() {
 
             return new HashSet<>(Arrays.asList(
@@ -162,49 +162,5 @@ public class RealTimeSession {
             ));
         }
 
-        private void handleBillingInformation(FunctionCallDto functionCallDto) {
-            try {
-                ObjectMapper mapper = new ObjectMapper();
-                // Directly map the JSON arguments to BillingRequest class
-                BillingRequest billingRequest = mapper.readValue(
-                        functionCallDto.getFunctionCall().getArguments(),
-                        BillingRequest.class
-                );
-
-                // Create response using the same values from the request
-                BillingResponse billingResponse = BillingResponse.builder()
-                        .callLogId(billingRequest.getCallLogId())
-                        .inputTokens(billingRequest.getInput_token())
-                        .outputTokens(billingRequest.getOutput_token())
-                        .totalTokens(billingRequest.getTotalToken())
-                        .totalCharges(billingRequest.getTotalCharges())
-                        .build();
-
-                // Log the billing information
-                logBillingInformation(billingResponse);
-
-                // Create and publish billing event
-                BillingDataEvent billingEvent = new BillingDataEvent(
-                        this,
-                        billingResponse,
-                        functionCallDto.getMessageId()
-                );
-                this.applicationEventPublisher.publishEvent(billingEvent);
-
-            } catch (JsonProcessingException e) {
-                log.error("Failed to process billing function call", e);
-            }
-        }
-
-        // Update logging method
-        private void logBillingInformation(BillingResponse response) {
-            log.info("Billing Information - CallLogId: {}, Input Tokens: {}, Output Tokens: {}, Total Tokens: {}, Total Charges: ${}",
-                    response.getCallLogId(),
-                    response.getInputTokens(),
-                    response.getOutputTokens(),
-                    response.getTotalTokens(),
-                    String.format("%.4f", response.getTotalCharges())
-            );
-        }
     }
 }
