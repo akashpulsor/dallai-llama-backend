@@ -1,0 +1,1 @@
+ALTER TABLE call_log ADD stream_sid VARCHAR(255)  DEFAULT  NULL;

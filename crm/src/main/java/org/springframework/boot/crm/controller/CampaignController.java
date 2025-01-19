@@ -54,5 +54,14 @@ public class CampaignController {
         this.businessManager.runCampaign( campaignRunId, businessId );
     }
 
+    @GetMapping("/run")
+    public void getRunCampaign(@RequestParam(value = "businessId") int businessId,
+                            @RequestParam(value = "campaignRunId") int campaignRunId) {
+
+        this.businessManager.getCampaignManager().getCampaignRunData(campaignRunId, businessId);
+    }
+
+
+
 
 }

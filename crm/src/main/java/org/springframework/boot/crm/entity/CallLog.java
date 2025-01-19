@@ -2,12 +2,17 @@ package org.springframework.boot.crm.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-@Data
+@Getter
+@Setter
+@NoArgsConstructor
 @Entity(name = "call_log")
 public class CallLog {
     @Id
@@ -27,6 +32,9 @@ public class CallLog {
     @Column(name = "call_sid")
     private String callSid;
 
+    @Column(name = "stream_sid")
+    private String streamId;
+
     @Column(name = "from_number")
     private String fromNumber;
 
@@ -43,5 +51,15 @@ public class CallLog {
     @OrderBy("timestamp ASC")
     private List<CallStatus> statusHistory = new ArrayList<>();
 
-
+    @Override
+    public String toString() {
+        return "CallStatus{" +
+                "id=" + callLogId +
+                "callType=" + callType+
+                "campaign_run_id=" + campaignRunId+
+                "lead_id=" + leadId+
+                "stream_sid=" + streamId+
+                "callSid=" + callSid+
+                '}';
+    }
 }

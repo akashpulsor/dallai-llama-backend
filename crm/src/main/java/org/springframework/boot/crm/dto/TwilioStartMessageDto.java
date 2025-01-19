@@ -24,6 +24,7 @@ public class TwilioStartMessageDto {
         private int campaignRunId;
         private int businessId;
         private int leadId;
+        private String callType;
         private String authToken;
     }
 }

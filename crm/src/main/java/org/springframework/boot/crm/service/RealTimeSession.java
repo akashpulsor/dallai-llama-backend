@@ -109,7 +109,7 @@ public class RealTimeSession {
         }
 
         protected void handleTextMessage(String message)  {
-            log.info("AKASH OPEN AI: " + message);
+            log.info("TTTT - {}", message);
             ObjectMapper objectMapper = new ObjectMapper();
             objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
             try {
@@ -141,6 +141,13 @@ public class RealTimeSession {
         }
 
 
+        private void handleFunctionCall(String message, ObjectMapper objectMapper) throws JsonProcessingException {
+            FunctionCallDto functionCallDto = objectMapper.readValue(message, FunctionCallDto.class);
+
+            if ("sendBillingInformation".equals(functionCallDto.getFunctionCall().getName())) {
+                handleBillingInformation(functionCallDto);
+            }
+        }
         private HashSet<String> getLogEventTypes() {
 
             return new HashSet<>(Arrays.asList(
@@ -150,8 +157,54 @@ public class RealTimeSession {
                     "input_audio_buffer.committed",
                     "input_audio_buffer.speech_stopped",
                     "input_audio_buffer.speech_started",
-                    "session.created"
+                    "session.created",
+                    "function.call"
             ));
+        }
+
+        private void handleBillingInformation(FunctionCallDto functionCallDto) {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                // Directly map the JSON arguments to BillingRequest class
+                BillingRequest billingRequest = mapper.readValue(
+                        functionCallDto.getFunctionCall().getArguments(),
+                        BillingRequest.class
+                );
+
+                // Create response using the same values from the request
+                BillingResponse billingResponse = BillingResponse.builder()
+                        .callLogId(billingRequest.getCallLogId())
+                        .inputTokens(billingRequest.getInput_token())
+                        .outputTokens(billingRequest.getOutput_token())
+                        .totalTokens(billingRequest.getTotalToken())
+                        .totalCharges(billingRequest.getTotalCharges())
+                        .build();
+
+                // Log the billing information
+                logBillingInformation(billingResponse);
+
+                // Create and publish billing event
+                BillingDataEvent billingEvent = new BillingDataEvent(
+                        this,
+                        billingResponse,
+                        functionCallDto.getMessageId()
+                );
+                this.applicationEventPublisher.publishEvent(billingEvent);
+
+            } catch (JsonProcessingException e) {
+                log.error("Failed to process billing function call", e);
+            }
+        }
+
+        // Update logging method
+        private void logBillingInformation(BillingResponse response) {
+            log.info("Billing Information - CallLogId: {}, Input Tokens: {}, Output Tokens: {}, Total Tokens: {}, Total Charges: ${}",
+                    response.getCallLogId(),
+                    response.getInputTokens(),
+                    response.getOutputTokens(),
+                    response.getTotalTokens(),
+                    String.format("%.4f", response.getTotalCharges())
+            );
         }
     }
 }

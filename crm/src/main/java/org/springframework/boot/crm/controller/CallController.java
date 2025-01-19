@@ -21,8 +21,9 @@ public class CallController {
 
     @PostMapping("/incoming")
     public String incomingCall(@RequestHeader("host") String host,@RequestParam("campaignRunId") int campaignRunId,
-                               @RequestParam("authToken") String authToken,@RequestParam("businessId") int businessId,@RequestParam("leadId") int leadId){
-        return this.callManager.incomingCall(host,campaignRunId,authToken,businessId,leadId);
+                               @RequestParam("authToken") String authToken,@RequestParam("businessId") int businessId,@RequestParam("leadId") int leadId,
+                               @RequestParam("callType") String callType){
+        return this.callManager.incomingCall(host,campaignRunId,authToken,businessId,leadId,callType);
     }
 
 

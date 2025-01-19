@@ -20,7 +20,7 @@ public class OpenAiRequestDto {
         private String output_audio_format;
         private String input_audio_transcription;
         private Map<String, String> turn_detection;
-        private List<String> tools;
+        private List<Map<String, Object>> tools;
         private String tool_choice;
         private double temperature;
 

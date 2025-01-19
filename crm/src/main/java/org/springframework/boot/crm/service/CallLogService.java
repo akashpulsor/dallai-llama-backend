@@ -3,6 +3,8 @@ package org.springframework.boot.crm.service;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.boot.crm.entity.CallLog;
 import org.springframework.boot.crm.entity.CallStatus;
+import org.springframework.boot.crm.exceptions.CallLogNotFoundException;
+import org.springframework.boot.crm.exceptions.CampaignRunNotFoundExceptions;
 import org.springframework.boot.crm.repository.CallLogRepository;
 import org.springframework.boot.crm.repository.CallStatusRepository;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,10 @@ public class CallLogService {
         return callLogRepository.save(callLog);
     }
 
+    public CallLog getByCampaignRunIdAndLeadId(int campaignRunId, int leadId) {
+        return new CallLog();
+    }
+
     public CallLog updateStatus(int callLogId, String newStatus) {
         CallLog callLog = callLogRepository.findById(callLogId)
                 .orElseThrow(() -> new EntityNotFoundException("CallLog not found"));
@@ -68,5 +74,15 @@ public class CallLogService {
     public CallLog getCallLog(int callLogId) {
         return callLogRepository.findById(callLogId)
                 .orElseThrow(() -> new EntityNotFoundException("CallLog not found"));
+    }
+
+
+    public CallLog getCallLog(String callType, int campaignRunId, int leadId) {
+        return this.callLogRepository.findByCallTypeAndCampaignRunIdAndLeadId(callType,campaignRunId,  leadId).
+                orElseThrow(() -> new CallLogNotFoundException("Call log not found"));
+    }
+
+    public CallLog saveCallLog(CallLog callLog) {
+        return callLogRepository.save(callLog);
     }
 }

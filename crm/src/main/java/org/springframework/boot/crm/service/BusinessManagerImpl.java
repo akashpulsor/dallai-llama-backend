@@ -6,8 +6,10 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
 import java.util.*;
@@ -34,6 +36,7 @@ public class BusinessManagerImpl implements BusinessManager {
     private final MetaManager metaManager;
 
     private final CallManager callManager;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     public BusinessManagerImpl( BusinessService businessService,
                                 MasterDataService masterDataService,
@@ -42,7 +45,7 @@ public class BusinessManagerImpl implements BusinessManager {
                                 CampaignManager campaignManager,
                                 AgentManager agentManager,
                                 LeadManager leadManager,
-                                MetaManager metaManager,CallManager callManager){
+                                MetaManager metaManager,CallManager callManager,ApplicationEventPublisher applicationEventPublisher){
         this.businessService = businessService;
         this.masterDataService = masterDataService;
         this.phoneService = phoneService;
@@ -52,6 +55,7 @@ public class BusinessManagerImpl implements BusinessManager {
         this.leadManager = leadManager;
         this.metaManager = metaManager;
         this.callManager = callManager;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -129,15 +133,17 @@ public class BusinessManagerImpl implements BusinessManager {
         int businessId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getBusinessId();
         int campaignRunId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId();
         int leadId = twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getLeadId();
-        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(businessId, campaignRunId);
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData( campaignRunId,businessId);
         LlmData llmData = this.metaManager.getLlmData(businessId,campaignRunData.getLlmId());
         TwilioData twilioData = this.metaManager.getTwilioData(businessId,campaignRunData.getPhoneId());
         AgentData agentData = this.agentManager.findByBusinessIdAndAgentId(businessId, campaignRunData.getAgentId());
         CampaignData campaignData = this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
         LeadData leadData = this.leadManager.getLeadData(businessId,leadId);
         BusinessData businessData = this.getBusinessData(businessId);
-        String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData);
+        String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData, campaignRunData);
         this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData);
+        StartCallEvent startCallEvent = new StartCallEvent(this,twilioStartEventDto);
+        this.applicationEventPublisher.publishEvent(startCallEvent);
     }
 
     @EventListener
@@ -182,6 +188,16 @@ public class BusinessManagerImpl implements BusinessManager {
 
     }
 
+    @EventListener
+    public void handleTwilioCloseEvent(TwilioCloseEvent twilioSessionEvent) {
+        WebSocketSession websocketSession = twilioSessionEvent.getSession();
+        Map<String, Object> attributes = websocketSession.getAttributes();
+        int leadId = (int) attributes.get("leadId");
+        int campaignRunId = (int) attributes.get("campaignRunId");
+        String callType = (String) attributes.get("callType");
+        this.callManager.removeSession(leadId,campaignRunId,callType);
+    }
+
 
     @EventListener
     public  void handleOpenAiEvent(OpenAiSessionUpdateEvent sessionUpdateEvent) {
@@ -197,8 +213,7 @@ public class BusinessManagerImpl implements BusinessManager {
 
         for(LeadData leadData: leadDataList) {
             try{
-                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData );
-                this.campaignManager.addCampaignRunData(campaignRunData);
+                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData,"OUT_BOUND" );
             }
             catch (Exception e){
                 log.error("Failed to call log ", e);

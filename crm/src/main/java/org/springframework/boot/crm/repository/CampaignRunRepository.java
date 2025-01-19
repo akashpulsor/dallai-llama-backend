@@ -33,7 +33,9 @@ public interface CampaignRunRepository  extends JpaRepository<CampaignRunData, I
             nativeQuery = true)
     List<Integer> getLeadList(@Param("campaignRunId") Integer campaignRunId);
 
-    Optional<CampaignRunData> findByCampaignRunIdAndBusinessId(Integer campaignRunId,Integer businessId);
+    @Query(value = "SELECT * FROM campaign_run_data crl WHERE crl.campaign_run_id = :campaignRunId and crl.business_id = :business_id",
+            nativeQuery = true)
+    Optional<CampaignRunData> findByCampaignRunIdAndBusinessId(@Param("campaignRunId") Integer campaignRunId,@Param("business_id") Integer businessId);
 
 
 }

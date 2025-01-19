@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.service;
 
+import ch.qos.logback.classic.spi.CallerData;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.twilio.Twilio;
@@ -37,27 +38,21 @@ public class CallManager {
 
     private final CallLogService callLogService;
 
-    private final CampaignRunService campaignRunService;
-
-
-
-
     @Value("${app.hostname}")
     private String hostname;
 
     public CallManager(ApplicationEventPublisher applicationEventPublisher, ToolsService toolsService,
-                        CallLogService callLogService,   CampaignRunService campaignRunService) {
+                        CallLogService callLogService) {
         this.applicationEventPublisher = applicationEventPublisher;
         twilioOpenAiMap = new ConcurrentHashMap<>();
         this.toolsService = toolsService;
         this.callLogService = callLogService;
-        this.campaignRunService = campaignRunService;
     }
 
 
 
 
-    public CallLog makeCall(TwilioData twilioData, LeadData leadData, CampaignData campaignData, CampaignRunData campaignRunData) throws URISyntaxException {
+    public CallLog makeCall(TwilioData twilioData, LeadData leadData, CampaignData campaignData, CampaignRunData campaignRunData, String callType) throws URISyntaxException {
         Twilio.init(twilioData.getAccountSid(), twilioData.getAccountAuthToken());
 
         // Create auth token for webhook
@@ -69,7 +64,7 @@ public class CallManager {
         );
 
         // Build webhook URL with auth token
-        String webhookUrl = hostname + "/api/call/incoming?authToken=" + authToken+ "&campaignRunId="+campaignRunData.getCampaignRunId()+ "&businessId="+campaignRunData.getBusinessId()+ "&leadId="+leadData.getLeadId();
+        String webhookUrl = hostname + "/api/call/incoming?authToken=" + authToken+ "&campaignRunId="+campaignRunData.getCampaignRunId()+ "&businessId="+campaignRunData.getBusinessId()+ "&leadId="+leadData.getLeadId()+ "&callType="+callType;
 
         // Create call with Twilio
         Call call = Call.creator(
@@ -84,7 +79,7 @@ public class CallManager {
 
 
         campaignRunData.setCallSId(call.getSid());
-        return this.callLogService.createCallLog("OUT_BOUND",
+        return this.callLogService.createCallLog(callType,
                 campaignRunData.getCampaignRunId(),
                 leadData.getLeadId(),  call.getSid(),
                 twilioData.getBusinessNumber(), leadData.getLeadPhone() );
@@ -92,9 +87,10 @@ public class CallManager {
     }
 
     public String incomingCall(String host,int campaignRunId,
-                               String authToken,int businessId, int leadId )  {
+                               String authToken,int businessId, int leadId, String callType )  {
         //TODO decrypt the auth token
         String url = "wss://"+host+"/media-stream?"+ "authToken="+authToken+"&campaignRunId="+campaignRunId;
+        url = "wss://"+host+"/api/call/media-stream?"+ "authToken="+authToken+"&campaignRunId="+campaignRunId+"&leadId="+leadId+"&callType="+callType;
         url = "wss://"+host+"/api/call/media-stream";
         return  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<Response>"
@@ -107,6 +103,7 @@ public class CallManager {
                 + "<Parameter name=\"campaignRunId\" value=\"" + campaignRunId + "\" />"
                 + "<Parameter name=\"businessId\" value=\"" + businessId + "\" />"
                 + "<Parameter name=\"leadId\" value=\"" + leadId + "\" />"
+                + "<Parameter name=\"callType\" value=\"" + callType + "\" />"
                 +"</Stream>"
                 + "</Connect>"
                 + "</Response>";
@@ -119,7 +116,31 @@ public class CallManager {
         return "jwtToken";
     }
 
+    public void removeSession(int leadId, int campaignRunId, String callType) {
+        CallLog callLog = this.callLogService.getCallLog(callType,
+                campaignRunId,
+                leadId
+        );
+        log.info("Size before removing stream Id - {}", twilioOpenAiMap.size());
+        twilioOpenAiMap.remove(callLog.getStreamId());
+        log.info("Size After removing stream Id  - {}", twilioOpenAiMap.size());
+        StopCallEvent stopCallEvent = new StopCallEvent(this, callLog.getCallLogId());
+        this.applicationEventPublisher.publishEvent(stopCallEvent);
+        //CallStatus callStatus = new CallStatus();
+        //callStatus.setStatus("ENDED");
+        //callStatus.setCallLog(callLog);
+        //callLog.getStatusHistory().add(callStatus);
+        //this.callLogService.saveCallLog(callLog);
+    }
+
     public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto,String systemMessage, LlmData llmData, LeadData leadData, CampaignData campaignData) throws IOException, InterruptedException {
+        CallLog callLog = getCallLog(twilioStartEventDto.
+                        getTwilioStartMediaMessage().getStart().getCustomParameters().getCallType(),
+                twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId(),
+                twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getLeadId()
+        );
+        systemMessage +="### Call log id\n" +
+                callLog.getCallLogId();
         log.info("twilio start event Received - {}", twilioStartEventDto);
         OpenAiRequestDto openAiRequestDto = createOpenAiInit(twilioStartEventDto.getTwilioStartMediaMessage(), systemMessage);
         ObjectMapper objectMapper = new ObjectMapper();
@@ -128,6 +149,24 @@ public class CallManager {
         RealTimeSession realTimeSession = new RealTimeSession(json, twilioStartEventDto, this.applicationEventPublisher,llmData);
         this.twilioOpenAiMap.put(twilioStartEventDto.getTwilioStartMediaMessage().getStreamSid(), realTimeSession);
         sendUserInformation(realTimeSession,twilioStartEventDto.getTwilioStartMediaMessage(),leadData, campaignData);
+        callLog = updateStreamId(twilioStartEventDto,callLog);
+        log.info("Call log is - {}", callLog);
+    }
+
+    private CallLog updateStreamId(TwilioStartEventDto twilioStartEventDto,CallLog callLog){
+        callLog.setStreamId(twilioStartEventDto.getTwilioStartMediaMessage().getStreamSid());
+        return this.callLogService.saveCallLog(callLog);
+    }
+
+    public CallLog getCallLog(String callType, int campaignRunId, int leadId){
+        return this.callLogService.getCallLog(callType,
+                campaignRunId,
+                leadId
+        );
+    }
+
+    public CallLog getCallLog(int callId){
+        return this.callLogService.getCallLog(callId);
     }
 
     public void sendOpenAiRealtimeSession(TwilioMediaEventDto twilioMediaEventDto, String json) {
@@ -203,7 +242,8 @@ public class CallManager {
         openAiSession.setTurn_detection(map);
         return openAiSession;
     }
-    public String createSystemMessage(AgentData agentData, CampaignData campaignData, BusinessData businessData) {
+    public String createSystemMessage(AgentData agentData, CampaignData campaignData, BusinessData businessData, CampaignRunData campaignRunData
+                                      ) {
         return "### Agent Id\n" +
                 agentData.getAgentId() +
                 "### Role\n" +
@@ -212,6 +252,9 @@ public class CallManager {
                 agentData.getPersona() +
                 "### Conversation Guidelines\n" +
                 campaignData.getConversationGuideLines() +
+                "When ever user speaks stop speaking and listen to customer then respond, you should sound human, not machine, do not repeat information again till the time customer ask, close the call, do not irritate customer \n" +
+                "If voice is feeble, gracefully cut the call" +
+                "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call" +
                 "### Business Id\n" +
                 businessData.getBusinessId() +
                 "### Company Details\n" +
@@ -231,8 +274,12 @@ public class CallManager {
                 campaignData.getCampaignPrompt() +
                 "### Campaign Aim\n" +
                 campaignData.getCampaignAim() +
+                "### Language of conversation\n" +
+                campaignRunData.getLanguage()+
                 "### First Message\n" +
                 campaignData.getFirstMessage() +
+                "### Campaign Run id\n" +
+                campaignRunData.getCampaignRunId() +
                 "### Handling FAQs\n" +
                 "Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
                 "Use the function \\`queries\\` to respond to common customer queries." +
@@ -241,8 +288,9 @@ public class CallManager {
                 "### Place orders \n" +
                 "if not asked,  Before getting product list ask for whats app number then Use the function \\`placeOrders\\` to respond to common customer queries."+
                 "### Send Invoice and Bill r\n" +
-                "if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."
-                ;
+                "if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."+
+                "### Send information about Input and output Token, and total charger\n" +
+                "give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses in the form of json\n";
     }
 
 
