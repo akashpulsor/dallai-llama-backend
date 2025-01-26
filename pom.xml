@@ -23,7 +23,7 @@
     </properties>
 
     <modules>
-        <module>content</module>
+
         <module>crm</module>
     </modules>
 
