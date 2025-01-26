@@ -31,7 +31,41 @@ public class ToolsService {
         //billingFunction.put("function", createBillingFunctionSpec());
         //tools.add(billingFunction);
 
+        // Add get lead details function
+        Map<String, Object> leadFunction = new HashMap<>();
+        leadFunction.put("type", "function");
+        leadFunction.put("function", createLeadFunctionSpec());
+        //tools.add(leadFunction);
         return tools;
+    }
+
+    private Map<String, Object> createLeadFunctionSpec() {
+        Map<String, Object> functionSpec = new HashMap<>();
+        functionSpec.put("name", "updateWhatsApp");
+        functionSpec.put("description", "Get lead information including contact details");
+
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("type", "object");
+        parameters.put("required", Arrays.asList("lead_id", "whatsapp_number"));
+
+        Map<String, Object> properties = new HashMap<>();
+
+        // Lead ID property
+        Map<String, Object> leadIdProp = new HashMap<>();
+        leadIdProp.put("type", "integer");
+        leadIdProp.put("description", "The unique identifier for the lead");
+        properties.put("lead_id", leadIdProp);
+
+        // WhatsApp number property
+        Map<String, Object> whatsappProp = new HashMap<>();
+        whatsappProp.put("type", "string");
+        whatsappProp.put("description", "WhatsApp contact number of the lead");
+        properties.put("whatsapp_number", whatsappProp);
+
+        parameters.put("properties", properties);
+        functionSpec.put("parameters", parameters);
+
+        return functionSpec;
     }
 
     private Map<String, Object> createBillingFunctionSpec() {

@@ -1,15 +1,14 @@
 package org.springframework.boot.crm.service;
 
 import org.springframework.boot.crm.dto.*;
-import org.springframework.boot.crm.entity.BusinessData;
-import org.springframework.boot.crm.entity.BusinessSizeMasterData;
-import org.springframework.boot.crm.entity.LlmData;
-import org.springframework.boot.crm.entity.TwilioData;
+import org.springframework.boot.crm.entity.*;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 public interface BusinessManager {
+
+    DalaiLlamaLeads addDalaiLLamaLeads(DalaiLlamaLeadsDto dalaiLlamaLeadsDto);
     BusinessData getBusinessData(int businessId);
 
     BusinessData addBusiness(BusinessData businessData);

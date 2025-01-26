@@ -1,6 +1,7 @@
 package org.springframework.boot.crm.dto;
 
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.util.List;
@@ -47,31 +48,54 @@ public class OpenAiResponseDoneDto {
 
     @Data
     public static class Usage {
+        @JsonProperty("total_tokens")
         private int totalTokens;
+
+        @JsonProperty("input_tokens")
         private int inputTokens;
+
+        @JsonProperty("output_tokens")
         private int outputTokens;
+
+        @JsonProperty("input_token_details")
         private InputTokenDetails inputTokenDetails;
+
+        @JsonProperty("output_token_details")
         private OutputTokenDetails outputTokenDetails;
     }
 
     @Data
     public static class InputTokenDetails {
+        @JsonProperty("text_tokens")
         private int textTokens;
+
+        @JsonProperty("audio_tokens")
         private int audioTokens;
+
+        @JsonProperty("cached_tokens")
         private int cachedTokens;
+
+        @JsonProperty("cached_tokens_details")
         private CachedTokensDetails cachedTokensDetails;
     }
 
     @Data
     public static class OutputTokenDetails {
+
+        @JsonProperty("text_tokens")
         private int textTokens;
+
+        @JsonProperty("audio_tokens")
         private int audioTokens;
 
     }
 
     @Data
     public static class CachedTokensDetails {
+        @JsonProperty("text_tokens")
         private int textTokens;
+
+        @JsonProperty("audio_tokens")
         private int audioTokens;
     }
 }

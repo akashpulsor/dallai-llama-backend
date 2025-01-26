@@ -3,6 +3,7 @@ package org.springframework.boot.crm.controller;
 import jakarta.validation.Valid;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.BusinessSizeMasterData;
+import org.springframework.boot.crm.entity.DalaiLlamaLeads;
 import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.UserManager;
 import org.springframework.http.HttpHeaders;
@@ -23,6 +24,11 @@ public class AuthController {
     public AuthController(UserManager userManager, BusinessManager businessManager) {
         this.userManager = userManager;
         this.businessManager = businessManager;
+    }
+
+    @PostMapping("/interest")
+    public DalaiLlamaLeads interest(@Valid @RequestBody DalaiLlamaLeadsDto dalaiLlamaLeadsDto){
+        return this.businessManager.addDalaiLLamaLeads(dalaiLlamaLeadsDto);
     }
 
     @PostMapping("/login")

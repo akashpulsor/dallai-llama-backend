@@ -133,7 +133,8 @@ public class CallManager {
         //this.callLogService.saveCallLog(callLog);
     }
 
-    public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto,String systemMessage, LlmData llmData, LeadData leadData, CampaignData campaignData) throws IOException, InterruptedException {
+    public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto,String systemMessage, LlmData llmData, LeadData leadData,
+                                   CampaignData campaignData) throws IOException, InterruptedException {
         CallLog callLog = getCallLog(twilioStartEventDto.
                         getTwilioStartMediaMessage().getStart().getCustomParameters().getCallType(),
                 twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId(),
@@ -290,17 +291,17 @@ public class CallManager {
                 campaignData.getFirstMessage() +
                 "### Campaign Run id\n" +
                 campaignRunData.getCampaignRunId() +
-                "### Handling FAQs\n" +
-                "Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
-                "Use the function \\`queries\\` to respond to common customer queries." +
-                "### Send product list \n" +
-                "if not asked,  Before getting product list ask for whats app number then Use the function \\`getProductList\\` to respond to common customer queries."+
-                "### Place orders \n" +
-                "if not asked,  Before getting product list ask for whats app number then Use the function \\`placeOrders\\` to respond to common customer queries."+
-                "### Send Invoice and Bill r\n" +
-                "if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."+
-                "### Send information about Input and output Token, and total charger\n" +
-                "give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses\n";
+                "### Handling FAQs\n";// +
+                //"Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
+                //"Use the function \\`queries\\` to respond to common customer queries." +
+                //"### Send product list \n" +
+                //"if not asked,  Before getting product list ask for whats app number then Use the function \\`getProductList\\` to respond to common customer queries."+
+                //"### Place orders \n" +
+               // "if not asked,  Before getting product list ask for whats app number then Use the function \\`placeOrders\\` to respond to common customer queries."+
+                //"### Send Invoice and Bill r\n" +
+                //"if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."+
+                //"### Send information about Input and output Token, and total charger\n" +
+                //"give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses\n";
     }
 
 

@@ -25,6 +25,8 @@ public class BusinessManagerImpl implements BusinessManager {
 
     private final PhoneService phoneService;
 
+    private final DalaiLLamaLeadDataService dalaiLLamaLeadDataService;
+
     private final BusinessIndiaService businessIndiaService;
 
     private final CampaignManager campaignManager;
@@ -45,7 +47,8 @@ public class BusinessManagerImpl implements BusinessManager {
                                 CampaignManager campaignManager,
                                 AgentManager agentManager,
                                 LeadManager leadManager,
-                                MetaManager metaManager,CallManager callManager,ApplicationEventPublisher applicationEventPublisher){
+                                MetaManager metaManager,CallManager callManager,ApplicationEventPublisher applicationEventPublisher,
+                                DalaiLLamaLeadDataService dalaiLLamaLeadDataService){
         this.businessService = businessService;
         this.masterDataService = masterDataService;
         this.phoneService = phoneService;
@@ -55,6 +58,7 @@ public class BusinessManagerImpl implements BusinessManager {
         this.leadManager = leadManager;
         this.metaManager = metaManager;
         this.callManager = callManager;
+        this.dalaiLLamaLeadDataService = dalaiLLamaLeadDataService;
         this.applicationEventPublisher = applicationEventPublisher;
     }
 
@@ -97,6 +101,15 @@ public class BusinessManagerImpl implements BusinessManager {
     public MetaManager getMetaManager() {
         return this.metaManager;
     }
+
+    @Override
+    public DalaiLlamaLeads addDalaiLLamaLeads(DalaiLlamaLeadsDto dalaiLlamaLeads) {
+        log.info("Dalai llama leads - {}", dalaiLlamaLeads);
+        return this.dalaiLLamaLeadDataService.save(leadDtoToModel(dalaiLlamaLeads));
+    }
+
+
+
 
     @Override
     public BusinessData getBusinessData(int businessId) {
@@ -397,5 +410,16 @@ public class BusinessManagerImpl implements BusinessManager {
         return bankDetails;
     }
 
+    private DalaiLlamaLeads leadDtoToModel(DalaiLlamaLeadsDto dalaiLlamaLeadsDto){
+        DalaiLlamaLeads dalaiLlamaLeads = new DalaiLlamaLeads();
+        if(dalaiLlamaLeadsDto.getName()!= null) dalaiLlamaLeads.setName(dalaiLlamaLeadsDto.getName());
+        if(dalaiLlamaLeadsDto.getEmail()!= null) dalaiLlamaLeads.setEmail(dalaiLlamaLeadsDto.getEmail());
+        if(dalaiLlamaLeadsDto.getMobileNumber()!= null) dalaiLlamaLeads.setPhone(dalaiLlamaLeadsDto.getMobileNumber());
+        if(dalaiLlamaLeadsDto.getCountryCode()!= null) dalaiLlamaLeads.setCountryCode(dalaiLlamaLeadsDto.getCountryCode());
+        if(dalaiLlamaLeadsDto.getCompanySize()!= null) dalaiLlamaLeads.setCompanySize(dalaiLlamaLeadsDto.getCompanySize());
+        if(dalaiLlamaLeadsDto.getCountryCallingCode()!= null) dalaiLlamaLeads.setCountryCallingCode(dalaiLlamaLeadsDto.getCountryCallingCode());
+        //if(dalaiLlamaLeadsDto.getDescription()!= null) dalaiLlamaLeads.setDescription(dalaiLlamaLeadsDto.getDescription());
+        return dalaiLlamaLeads;
+    }
 
 }

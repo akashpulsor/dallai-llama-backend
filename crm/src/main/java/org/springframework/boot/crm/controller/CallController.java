@@ -1,10 +1,15 @@
 package org.springframework.boot.crm.controller;
 
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.entity.CallLog;
 import org.springframework.boot.crm.service.CallManager;
 import org.springframework.boot.crm.service.MetaManager;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @Slf4j
 @CrossOrigin(origins = "*", maxAge = 3600)
@@ -19,6 +24,8 @@ public class CallController {
     }
 
 
+
+
     @PostMapping("/incoming")
     public String incomingCall(@RequestHeader("host") String host,@RequestParam("campaignRunId") int campaignRunId,
                                @RequestParam("authToken") String authToken,@RequestParam("businessId") int businessId,@RequestParam("leadId") int leadId,
@@ -28,9 +35,22 @@ public class CallController {
 
 
     @PostMapping("/status")
-    public String status( String status){
-        log.info("Status received - {}", status);
-        return status;
+    public String status(@RequestHeader("X-Twilio-Signature") String twilioSignature,
+                                         @RequestParam Map<String, String> params,
+                                         HttpServletRequest request){
+        // Extract call details
+        String callSid = params.get("CallSid");
+        String callStatus = params.get("CallStatus");
+        String callDuration = params.get("CallDuration");
+        String timestamp = params.get("Timestamp");
+        String fromNumber = params.get("From");
+        String toNumber = params.get("To");
+        String direction = params.get("Direction");
+        String queueTime = params.get("QueueTime");
+
+        log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{}",callSid,
+                callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime);
+        return "ok";
     }
 
 

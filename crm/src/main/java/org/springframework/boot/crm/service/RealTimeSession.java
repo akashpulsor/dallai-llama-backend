@@ -95,6 +95,7 @@ public class RealTimeSession {
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             System.out.println("Bad day! " + webSocket.toString());
+            log.error("Websocket connection on open ai failed", error);
             WebSocket.Listener.super.onError(webSocket, error);
         }
 
