@@ -77,7 +77,7 @@ public class AuthController {
         return this.userManager.updatePassword(updatePasswordRequestDto);
     }
 
-    @PostMapping("/test")
+    @GetMapping("/test")
     public String test(){
         return "app running";
     }
