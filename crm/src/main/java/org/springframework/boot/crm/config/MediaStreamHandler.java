@@ -88,7 +88,7 @@ public class MediaStreamHandler extends TextWebSocketHandler {
                 sessionAttributes.get("businessId"),
                 sessionAttributes.get("callType"));
         super.afterConnectionEstablished(session);
-        applicationEventPublisher.publishEvent(new TwilioCloseEvent(this, session, status));
+        applicationEventPublisher.publishEvent(new TwilioCloseEvent(this, session));
         log.info("Client disconnected");
     }
 

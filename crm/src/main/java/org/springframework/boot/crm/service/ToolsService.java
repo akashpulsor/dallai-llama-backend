@@ -1,126 +1,96 @@
 package org.springframework.boot.crm.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.advice.ToolComponent;
 import org.springframework.boot.crm.dto.OpenAiRequestDto;
 import org.springframework.boot.crm.entity.CampaignData;
+import org.springframework.boot.crm.exceptions.ToolExecutionException;
+import org.springframework.boot.crm.exceptions.ToolNotFoundException;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class ToolsService {
 
-    private final LeadManager leadManager;
 
-    private final CampaignManager   campaignManager;
 
-    public ToolsService(LeadManager leadManager,CampaignManager campaignManager) {
-        this.leadManager = leadManager;
-        this.campaignManager = campaignManager;
+    private final Map<String, Tool> tools;
+    private final ApplicationContext applicationContext;
+    public ToolsService(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+        this.tools = discoveryTools();
+        log.info("Discovered {} tools: {}", tools.size(),
+                tools.keySet().stream().collect(Collectors.joining(", ")));
+    }
+
+    private Map<String, Tool> discoveryTools() {
+        // Find all beans of type Tool in the application context
+        Map<String, Object> toolBeans = applicationContext.getBeansWithAnnotation(ToolComponent.class);
+
+        return toolBeans.values().stream()
+                .filter(bean -> bean instanceof Tool)
+                .map(bean -> (Tool) bean)
+                .collect(Collectors.toMap(
+                        Tool::getName,
+                        Function.identity(),
+                        (existing, replacement) -> {
+                            log.warn("Duplicate tool name found: {}. Keeping existing implementation.",
+                                    existing.getName());
+                            return existing;
+                        }
+                ));
     }
 
 
+    public List<Tool> getAllTools() {
+        return  tools.values().stream().toList(); // Return a read-only list
+    }
 
     public List<Map<String, Object>> getTools() {
-        List<Map<String, Object>> tools = new ArrayList<>();
-
-        // Add billing information function
-        //Map<String, Object> billingFunction = new HashMap<>();
-        //billingFunction.put("type", "function");
-        //billingFunction.put("function", createBillingFunctionSpec());
-        //tools.add(billingFunction);
-
-        // Add get lead details function
-        Map<String, Object> leadFunction = new HashMap<>();
-        leadFunction.put("type", "function");
-        leadFunction.put("function", createLeadFunctionSpec());
-        //tools.add(leadFunction);
-        return tools;
+        List<Map<String, Object>> toolList = new ArrayList<>();
+        for (Tool tool : tools.values()) {
+            Map<String, Object> toolDefinition = new HashMap<>();
+            toolDefinition.put("type", "function");
+            toolDefinition.put("name", tool.getName());
+            toolDefinition.put("description", tool.getDescription());
+            toolDefinition.put("parameters", tool.getFunctionDefinition());
+            toolList.add(toolDefinition);
+        }
+        return toolList;
     }
 
-    private Map<String, Object> createLeadFunctionSpec() {
-        Map<String, Object> functionSpec = new HashMap<>();
-        functionSpec.put("name", "updateWhatsApp");
-        functionSpec.put("description", "Get lead information including contact details");
-
-        Map<String, Object> parameters = new HashMap<>();
-        parameters.put("type", "object");
-        parameters.put("required", Arrays.asList("lead_id", "whatsapp_number"));
-
-        Map<String, Object> properties = new HashMap<>();
-
-        // Lead ID property
-        Map<String, Object> leadIdProp = new HashMap<>();
-        leadIdProp.put("type", "integer");
-        leadIdProp.put("description", "The unique identifier for the lead");
-        properties.put("lead_id", leadIdProp);
-
-        // WhatsApp number property
-        Map<String, Object> whatsappProp = new HashMap<>();
-        whatsappProp.put("type", "string");
-        whatsappProp.put("description", "WhatsApp contact number of the lead");
-        properties.put("whatsapp_number", whatsappProp);
-
-        parameters.put("properties", properties);
-        functionSpec.put("parameters", parameters);
-
-        return functionSpec;
+    public Map<String, Object> createToolResponse(String toolCallId, Object result) throws JsonProcessingException {
+        Map<String, Object> response = new HashMap<>();
+        response.put("role", "tool");
+        response.put("content", new ObjectMapper().writeValueAsString(result));
+        response.put("tool_call_id", toolCallId);
+        return response;
     }
 
-    private Map<String, Object> createBillingFunctionSpec() {
-        Map<String, Object> functionSpec = new HashMap<>();
-        functionSpec.put("name", "sendBillingInformation");
-        functionSpec.put("description", "Send billing information for the conversation including tokens and charges");
+    public String executeTool(String toolName, Object... args) {
+        Tool tool = getToolByName(toolName);
+        if (tool == null) {
+            throw new IllegalArgumentException("Tool not found: " + toolName);
+        }
 
-        Map<String, Object> parameters = new HashMap<>();
-        parameters.put("type", "object");
-        parameters.put("required", Arrays.asList(
-                "callLogId",
-                "input_token",
-                "output_token",
-                "totalToken",
-                "totalCharges"
-        ));
-
-        Map<String, Object> properties = new HashMap<>();
-
-        // CallLogId property
-        Map<String, Object> callLogIdProp = new HashMap<>();
-        callLogIdProp.put("type", "integer");
-        callLogIdProp.put("description", "The ID of the call log");
-        properties.put("callLogId", callLogIdProp);
-
-        // Input token property
-        Map<String, Object> inputTokenProp = new HashMap<>();
-        inputTokenProp.put("type", "integer");
-        inputTokenProp.put("description", "Number of input tokens used");
-        properties.put("input_token", inputTokenProp);
-
-        // Output token property
-        Map<String, Object> outputTokenProp = new HashMap<>();
-        outputTokenProp.put("type", "integer");
-        outputTokenProp.put("description", "Number of output tokens used");
-        properties.put("output_token", outputTokenProp);
-
-        // Total token property
-        Map<String, Object> totalTokenProp = new HashMap<>();
-        totalTokenProp.put("type", "integer");
-        totalTokenProp.put("description", "Total number of tokens used");
-        properties.put("totalToken", totalTokenProp);
-
-        // Total charges property
-        Map<String, Object> totalChargesProp = new HashMap<>();
-        totalChargesProp.put("type", "number");
-        totalChargesProp.put("description", "Total charges for the conversation");
-        properties.put("totalCharges", totalChargesProp);
-
-        parameters.put("properties", properties);
-        functionSpec.put("parameters", parameters);
-
-        return functionSpec;
+        try {
+            return tool.functionImplementation(args);
+        } catch (Exception e) {
+            log.error("Error executing tool {}: {}", toolName, e.getMessage());
+            throw new ToolExecutionException("Failed to execute tool: " + toolName, e);
+        }
     }
 
+    public Tool getToolByName(String functionName) {
+        return tools.get(functionName);
+    }
 
 
 

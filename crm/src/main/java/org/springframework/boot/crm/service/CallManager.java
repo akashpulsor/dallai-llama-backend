@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.boot.crm.exceptions.ToolExecutionException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -86,6 +87,9 @@ public class CallManager {
 
     }
 
+    public String callTool(FunctionCallDto functionCallDto, TwilioStartEventDto twilioStartEventDto) {
+        return this.toolsService.executeTool(functionCallDto.getName(),functionCallDto,twilioStartEventDto);
+    }
     public String incomingCall(String host,int campaignRunId,
                                String authToken,int businessId, int leadId, String callType )  {
         //TODO decrypt the auth token
@@ -166,13 +170,34 @@ public class CallManager {
         );
     }
 
+    public void sendToolResponse(FunctionCallDto functionCallDto, String functionResponse) throws IOException {
+        Map<String, Object> toolCall = toolsService.createToolResponse(functionCallDto.getCallId(), functionResponse);
+        Map<String, String> argumentMap = functionCallDto.getParsedArguments();
+        if( argumentMap!=null && !argumentMap.containsKey("streamId") ) {
+            throw new ToolExecutionException("Stream id Not found");
+        }
+        assert argumentMap != null;
+        String streamId = argumentMap.get("streamId");
+        ObjectMapper objectMapper = new ObjectMapper();
+        String json = objectMapper.writeValueAsString(toolCall);
+        RealTimeSession realTimeSession = this.twilioOpenAiMap.get(streamId);
+        realTimeSession.getWebSocket().sendText(json, true);
+        if(functionCallDto.getName().equals("disconnect_call")) {
+            TwilioCloseEvent twilioCloseEvent = new TwilioCloseEvent(this, realTimeSession.getTwilioStartEventDto().getSession());
+            this.applicationEventPublisher.publishEvent(twilioCloseEvent);
+        }
+
+    }
     public CallLog getCallLog(int callId){
         return this.callLogService.getCallLog(callId);
     }
 
     public void sendOpenAiRealtimeSession(TwilioMediaEventDto twilioMediaEventDto, String json) {
         RealTimeSession openAiRealTimeSession = twilioOpenAiMap.get(twilioMediaEventDto.getMediaEventDto().getStreamSid());
-        openAiRealTimeSession.getWebSocket().sendText(json, true);
+        if(openAiRealTimeSession!=null) {
+            openAiRealTimeSession.getWebSocket().sendText(json, true);
+        }
+
     }
 
     public void sendTwilioRealtimeSession(OpenAiAudioEvent openAiAudioEvent,Map<String,Object> audioDelta,Map<String, String> audioData) throws IOException {
@@ -248,7 +273,10 @@ public class CallManager {
         modals.add("audio");
         openAiSession.setModalities(modals);
         Map<String, String> map = new HashMap<>();
-        openAiSession.setTools(this.getToolsService().getTools());
+        // Get tools from ToolService and set them in the session
+        List<Map<String, Object>> tools = this.getToolsService().getTools();
+
+        openAiSession.setTools(tools);
         map.put("type", "server_vad");
         openAiSession.setTurn_detection(map);
         return openAiSession;
@@ -257,6 +285,8 @@ public class CallManager {
                                       ) {
         return "### Agent Id\n" +
                 agentData.getAgentId() +
+                "### Agent Name\n" +
+                agentData.getAgentName() +
                 "### Role\n" +
                 agentData.getRole() +
                 "### Persona\n" +
@@ -291,7 +321,9 @@ public class CallManager {
                 campaignData.getFirstMessage() +
                 "### Campaign Run id\n" +
                 campaignRunData.getCampaignRunId() +
-                "### Handling FAQs\n";// +
+                "### Handling FAQs\n" +
+                "Use the function \\`get_metadata\\` to get metadata, the required parameter of this function is natural language query which you can pass.\n"+
+                "Use the function \\`disconnect_call\\` Call this function after the call of  function \\`get_metadata\\` you will get stream Id from it's response,pass stream id returned from \\`get_metadata\\`  to disconnect call\n";
                 //"Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
                 //"Use the function \\`queries\\` to respond to common customer queries." +
                 //"### Send product list \n" +

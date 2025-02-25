@@ -10,7 +10,7 @@ public class TwilioCloseEvent extends ApplicationEvent {
 
     WebSocketSession session;
     CloseStatus status;
-    public TwilioCloseEvent(Object source, WebSocketSession session, CloseStatus status) {
+    public TwilioCloseEvent(Object source, WebSocketSession session) {
         super(source);
         this.session = session;
         this.status = status;

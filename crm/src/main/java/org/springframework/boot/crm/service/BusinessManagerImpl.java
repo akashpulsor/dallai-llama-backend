@@ -154,6 +154,7 @@ public class BusinessManagerImpl implements BusinessManager {
         LeadData leadData = this.leadManager.getLeadData(businessId,leadId);
         BusinessData businessData = this.getBusinessData(businessId);
         String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData, campaignRunData);
+        systemMessage = addCallMetaData(systemMessage, twilioStartEventDto);
         this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData);
         StartCallEvent startCallEvent = new StartCallEvent(this,twilioStartEventDto);
         this.applicationEventPublisher.publishEvent(startCallEvent);
@@ -193,8 +194,10 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     @EventListener
-    public  void handleOpenAiEvent(OpenAiEventDto openAiEventDto) {
-        log.info("open Ai event Received - {}", openAiEventDto);
+    public  void handleOpenAiEvent(FunctionCallEvent functionCallEvent) throws IOException {
+        log.info("open Ai event Received - {}", functionCallEvent);
+        String functionResponse = this.callManager.callTool(functionCallEvent.getFunctionCallDto(), functionCallEvent.getTwilioStartEventDto());
+        this.callManager.sendToolResponse(functionCallEvent.getFunctionCallDto(), functionResponse);
     }
 
     @EventListener
@@ -209,12 +212,13 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     @EventListener
-    public void handleTwilioCloseEvent(TwilioCloseEvent twilioSessionEvent) {
+    public void handleTwilioCloseEvent(TwilioCloseEvent twilioSessionEvent) throws IOException {
         WebSocketSession websocketSession = twilioSessionEvent.getSession();
         Map<String, Object> attributes = websocketSession.getAttributes();
         int leadId = (int) attributes.get("leadId");
         int campaignRunId = (int) attributes.get("campaignRunId");
         String callType = (String) attributes.get("callType");
+        websocketSession.close();
         this.callManager.removeSession(leadId,campaignRunId,callType);
     }
 
@@ -275,6 +279,12 @@ public class BusinessManagerImpl implements BusinessManager {
         TwilioData twilioData = new TwilioData();
         twilioData.setFriendlyName(businessData.getBusinessName());
         return this.phoneService.createSubAccount(twilioData);
+    }
+
+    private String addCallMetaData(String systemMessage,TwilioStartEventDto twilioStartEventDto) {
+        systemMessage += "### Stream Id\n" +
+                twilioStartEventDto.getTwilioStartMediaMessage().getStreamSid();
+        return systemMessage;
     }
 
 
