@@ -132,10 +132,11 @@ public class RealTimeSession {
                     //log.info("Response done : {}", responseDoneDto);
                 }
                 else if (openAiResponse.getType().equals("response.function_call_arguments.done")) {
+                    log.info("Function name called: {}", message);
                     FunctionCallDto responseDoneDto = objectMapper.readValue(message, FunctionCallDto.class);
                     FunctionCallEvent functionCallEvent = new FunctionCallEvent(this, responseDoneDto, twilioStartEventDto);
                     this.applicationEventPublisher.publishEvent(functionCallEvent);
-                    log.info("Function name called: {}", responseDoneDto);
+
                 }
                 else if (openAiResponse.getType().equals("response.audio.delta")) {
                     OpenAiAudioDto openAiAudioDto = objectMapper.readValue(message, OpenAiAudioDto.class);

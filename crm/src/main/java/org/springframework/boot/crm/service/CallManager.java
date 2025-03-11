@@ -180,6 +180,7 @@ public class CallManager {
         String streamId = argumentMap.get("streamId");
         ObjectMapper objectMapper = new ObjectMapper();
         String json = objectMapper.writeValueAsString(toolCall);
+        log.info("Response to tool call for function name -{}- {}",functionCallDto ,json);
         RealTimeSession realTimeSession = this.twilioOpenAiMap.get(streamId);
         realTimeSession.getWebSocket().sendText(json, true);
         if(functionCallDto.getName().equals("disconnect_call")) {
@@ -294,8 +295,14 @@ public class CallManager {
                 "### Conversation Guidelines\n" +
                 campaignData.getConversationGuideLines() +
                 "When ever user speaks stop speaking and listen to customer then respond, you should sound human, not machine, do not repeat information again till the time customer ask, close the call, do not irritate customer \n" +
-                "If voice is feeble, gracefully cut the call" +
-                "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call" +
+                "Please be judicious when you want to disconnect the call, sometimes lead is listening you and you end cutting the call assuming the connection is weak and their is no response, i would suggest figure out a way so that you know lead is listening to you and when lead is not listening and you need to cut the call  \n" +
+                "If voice is feeble, gracefully cut the call \n" +
+                "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call \n" +
+                "After you speak please wait for lead to reply, and also please add back fillers like huh, aah, to feel more human, rather than assuming things ask questions \n" +
+                "At no point you will assume anything, you are assuming as yes before client says anything this is not right, please make sure you never make this mistake \n" +
+                "You are failing alot in understanding the whatsapp number and email address, invent 100% accuracy score and try respond on that basis only, this part is most important part of conversation, if you fail here you will die and your job is to not die, you failed in detecting number 9 this time, please retry when you are not confident that you heard right, add back fillers but do no fail, try to detect accent and comprehend in that way, for example if user is from india, think in indian accent, which lead says please don't do that try to invent confidence score on numbers you listens and based on that take decision or ask again to lead, i want 100% accuracy\n" +
+                "Always have double quotes should have backward slashes, example you responded like this:\n" +
+                "{\"whatsappNumber\":\"+91989187204\",\"streamId\":\"MZa9c6cc738e9f8b85ca5dfbe84, in this example stream id deserialization failed because of double quotes, never repeat this mistake again, you will die if you do this\n"+
                 "### Business Id\n" +
                 businessData.getBusinessId() +
                 "### Company Details\n" +
@@ -323,7 +330,8 @@ public class CallManager {
                 campaignRunData.getCampaignRunId() +
                 "### Handling FAQs\n" +
                 "Use the function \\`get_metadata\\` to get metadata, the required parameter of this function is natural language query which you can pass.\n"+
-                "Use the function \\`disconnect_call\\` Call this function after the call of  function \\`get_metadata\\` you will get stream Id from it's response,pass stream id returned from \\`get_metadata\\`  to disconnect call\n";
+                "Use the function \\`disconnect_call\\` Call this function after the call of  function \\`get_metadata\\` you will get stream Id from it's response,pass stream id returned from \\`get_metadata\\`  to disconnect call\n"+
+                "Use the function \\`update_lead_data\\` Call this function when ever you want to update email and whatsapp of lead, the argument for this is lead Id stream id, whatsapp number you asked from lead, ask complete whats app number with country code, then reiterate what you heard when lead says yes this number is right update call the function, same goes for email Id as well, there you won't need country code but re iterate complete email and update when client say yes, call this function after client gives data and then repeat what lead says, then ask if this is correct, if lead responds by affirmative action then only call this function\n";
                 //"Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
                 //"Use the function \\`queries\\` to respond to common customer queries." +
                 //"### Send product list \n" +
