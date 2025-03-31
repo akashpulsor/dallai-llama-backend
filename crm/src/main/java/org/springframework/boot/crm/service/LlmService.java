@@ -29,6 +29,6 @@ public class LlmService {
     }
 
     public LlmData getLlmData(int businessId, int llmId) {
-        return llmDataRepository.findByLlmIdAndBusinessId(businessId,llmId).orElseThrow(() -> new LlmDataNotFoundException("Large language model not found"));
+        return llmDataRepository.findByLlmIdAndBusinessId(llmId,businessId).orElseThrow(() -> new LlmDataNotFoundException("Large language model not found"));
     }
 }

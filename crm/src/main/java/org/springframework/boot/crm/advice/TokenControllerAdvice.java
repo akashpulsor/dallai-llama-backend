@@ -215,5 +215,19 @@ public class TokenControllerAdvice {
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
+    @ResponseBody
+    @ExceptionHandler(value = ExternalServerException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public ResponseEntity<ErrorMessage> handleUnreachableServerException(ExternalServerException ex, WebRequest request) {
+        ErrorMessage errorResponse  =  new ErrorMessage(
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+        return new ResponseEntity<>(errorResponse, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+
+
 
 }

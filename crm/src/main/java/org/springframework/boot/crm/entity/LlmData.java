@@ -30,6 +30,18 @@ public class LlmData {
     @Column(name="logo_image")
     private String logoImage;
 
+    @Column(name="model_name")
+    private String modelName;
+
+    @Column(name="multi_modal")
+    private boolean multiModal = false;
+
+    @Column(name="model_url")
+    private String modelUrl;
+
+    //Add model name,
+    //Model url
+
     @Embedded
     private SanitaryColumn sanitaryColumn;
 }
