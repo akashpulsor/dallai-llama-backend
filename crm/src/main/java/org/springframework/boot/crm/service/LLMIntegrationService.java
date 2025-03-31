@@ -36,11 +36,11 @@ public class LLMIntegrationService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${openai.api.url}")
+
     private String openaiApiUrl;
 
 
-    @Value("${openai.api.model}")
+
     private String openaiModel;
 
 
