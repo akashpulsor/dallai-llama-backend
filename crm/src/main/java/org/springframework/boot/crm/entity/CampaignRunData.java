@@ -4,7 +4,10 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.boot.crm.dto.CampaignRunEnum;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -58,6 +61,20 @@ public class CampaignRunData {
 
     @Column(name="call_sid")
     private String callSId;
-    @Embedded
-    private SanitaryColumn sanitaryColumn;
+
+    @CreatedDate
+    @Column(name="created_at")
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    @Column(name="updated_at")
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if(createdAt==null){
+            createdAt = LocalDateTime.now();
+        }
+        updatedAt= LocalDateTime.now();
+    }
 }

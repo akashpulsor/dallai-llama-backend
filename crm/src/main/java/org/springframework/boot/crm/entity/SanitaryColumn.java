@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.entity;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Embeddable;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.PrePersist;
@@ -15,9 +16,11 @@ import java.time.LocalDateTime;
 @EntityListeners(AuditingEntityListener.class)
 public class SanitaryColumn {
     @CreatedDate
+    @Column(name="created_at")
     private LocalDateTime createdAt;
 
     @LastModifiedDate
+    @Column(name="updated_at")
     private LocalDateTime updatedAt;
 
     @PrePersist
