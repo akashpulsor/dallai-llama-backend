@@ -12,6 +12,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -73,6 +74,10 @@ public class LeadManagerImpl implements LeadManager {
         return this.leadDataService.getLeadDataByStream(businessId, leadIds);
     }
 
+    @Override
+    public long totalLeads(int businessId, LocalDate startDate, LocalDate endDate) {
+        return this.leadDataService.totalLead(businessId, startDate, endDate);
+    }
 
 
     private LeadResponseDto convertModelToDto(LeadData leadData) {

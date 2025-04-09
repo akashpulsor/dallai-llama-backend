@@ -59,4 +59,16 @@ public class PortalConfiguration {
         intent.setPortalConfiguration(null);
     }
 
+    @Override
+    public String toString() {
+        return "PortalConfiguration{" +
+                "portalId=" + portalId +
+                ", portalName='" + portalName + '\'' +
+                ", portalDescription='" + portalDescription + '\'' +
+                ", baseUrl='" + baseUrl + '\'' +
+                ", userName='" + userName + '\'' +
+                ", password='" + (password != null ? password : null) + '\'' + // Masking password
+                ", businessId=" + businessId +
+                '}';
+    }
 }

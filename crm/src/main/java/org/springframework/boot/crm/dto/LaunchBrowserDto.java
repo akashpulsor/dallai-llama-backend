@@ -11,4 +11,6 @@ public class LaunchBrowserDto {
     private String browserSessionId;
     private String sessionId;
     private String url;
+    private int campaignId;
+    private int businessId;
 }

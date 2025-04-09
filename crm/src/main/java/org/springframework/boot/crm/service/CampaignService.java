@@ -6,6 +6,9 @@ import org.springframework.boot.crm.exceptions.CampaignNotFoundException;
 import org.springframework.boot.crm.repository.CampaignDataRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,5 +32,16 @@ public class CampaignService {
 
     public List<CampaignData> getAllByBusinessId(int businessId) {
         return campaignDataRepository.findByBusinessId(businessId);
+    }
+
+    public int totalCampaigns(int businessId, LocalDate startDate, LocalDate endDate) {
+        if (startDate != null && endDate != null) {
+            LocalDateTime startDateTime = startDate.atStartOfDay();
+            LocalDateTime endDateTime = endDate.atTime(LocalTime.MAX);
+            return 0;//campaignDataRepository.countUniqueCampaignIdsByBusinessIdAndCreatedAtBetween(businessId, startDateTime, endDateTime);
+        } else {
+            LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
+            return 0;//campaignDataRepository.countUniqueCampaignIdsByBusinessIdAndCreatedAtAfter(businessId, sixtyDaysAgo);
+        }
     }
 }

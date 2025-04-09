@@ -22,6 +22,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -191,6 +192,10 @@ public class CallManager {
     }
     public CallLog getCallLog(int callId){
         return this.callLogService.getCallLog(callId);
+    }
+
+    public long totalCalls(int businessId, LocalDate startDate, LocalDate endDate) {
+        return this.callLogService.callLogCount(businessId, startDate, endDate);
     }
 
     public void sendOpenAiRealtimeSession(TwilioMediaEventDto twilioMediaEventDto, String json) {

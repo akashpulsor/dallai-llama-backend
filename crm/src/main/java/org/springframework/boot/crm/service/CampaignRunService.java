@@ -3,6 +3,8 @@ package org.springframework.boot.crm.service;
 import org.springframework.boot.crm.entity.CampaignRunData;
 import org.springframework.boot.crm.exceptions.CampaignRunNotFoundExceptions;
 import org.springframework.boot.crm.repository.CampaignRunRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +55,13 @@ public class CampaignRunService {
         return this.campaignRunRepository.findByCampaignRunIdAndBusinessId(campaignRunId, businessId).orElseThrow(
                 () -> new CampaignRunNotFoundExceptions("Campaign run not found")
         );
+    }
+
+    public Page<CampaignRunData> getCampaignRunsByBusinessAndCampaign(
+            Integer businessId,
+            Integer campaignId,
+            Pageable pageable) {
+        return campaignRunRepository.findByBusinessIdAndCampaignId(businessId, campaignId, pageable);
     }
 
 

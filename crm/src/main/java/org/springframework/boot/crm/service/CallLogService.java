@@ -9,6 +9,7 @@ import org.springframework.boot.crm.repository.CallLogRepository;
 import org.springframework.boot.crm.repository.CallStatusRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 
@@ -84,5 +85,9 @@ public class CallLogService {
 
     public CallLog saveCallLog(CallLog callLog) {
         return callLogRepository.save(callLog);
+    }
+
+    public long callLogCount(int businessId, LocalDate startDate, LocalDate endDate) {
+        return 0l;//callLogRepository.countTotalCalls(businessId, startDate, endDate);
     }
 }

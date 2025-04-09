@@ -4,9 +4,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -78,7 +81,14 @@ public class CampaignManagerImpl implements  CampaignManager {
     }
 
 
+    public int totalCampaigns(int businessId, LocalDate startDate, LocalDate endDate) {
+            return this.campaignService.totalCampaigns(businessId,startDate,endDate);
+    }
 
+    @Override
+    public Page<CampaignRunData> getCampaignRunsByBusinessAndCampaign(int businessId, int campaignId, Pageable pageable) {
+        return this.campaignRunService.getCampaignRunsByBusinessAndCampaign(businessId, campaignId, pageable);
+    }
 
     public CampaignRunData getCampaignRunData(int campaignRunId, int businessId) {
         return this.campaignRunService.getCampaignRunData(campaignRunId, businessId);
@@ -91,6 +101,7 @@ public class CampaignManagerImpl implements  CampaignManager {
     public List<Integer> getLeadListByCampaignRunId(int campaignRunId) {
         return this.campaignRunService.getLeadListByCampaignRunId(campaignRunId);
     }
+
 
 
 

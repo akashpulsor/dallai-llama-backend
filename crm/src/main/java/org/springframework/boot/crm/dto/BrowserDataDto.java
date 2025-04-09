@@ -9,6 +9,8 @@ public class BrowserDataDto {
 
     private String type;
     private String sessionId;
+    private int campaignId;
+    private int businessId;
     private String  launchedUrl;
     private String  timestamp;
     private MetaData metaData;
@@ -19,11 +21,11 @@ public class BrowserDataDto {
 
     @Data
     public static class MetaData {
-        private List<String> clickableElementsInfo;
-        private List<String> formElementsInfo;
+        private String clickableElementsInfo;
+        private String formElementsInfo;
         private String domSnapshot;
         private int totalClickableElementCount;
-        private  int totalFormElementCount;
+        private int totalFormElementCount;
         private String screenshotBase64;
     }
 }

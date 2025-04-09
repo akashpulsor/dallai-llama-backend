@@ -1,6 +1,8 @@
 package org.springframework.boot.crm.repository;
 
 import org.springframework.boot.crm.entity.CampaignRunData;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -37,5 +39,9 @@ public interface CampaignRunRepository  extends JpaRepository<CampaignRunData, I
             nativeQuery = true)
     Optional<CampaignRunData> findByCampaignRunIdAndBusinessId(@Param("campaignRunId") Integer campaignRunId,@Param("business_id") Integer businessId);
 
-
+    Page<CampaignRunData> findByBusinessIdAndCampaignId(
+            Integer businessId,
+            Integer campaignId,
+            Pageable pageable
+    );
 }

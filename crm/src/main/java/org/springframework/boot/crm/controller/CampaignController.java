@@ -4,10 +4,14 @@ import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.BusinessData;
+import org.springframework.boot.crm.entity.CampaignRunData;
 import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.CampaignManager;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -61,7 +65,16 @@ public class CampaignController {
         this.businessManager.getCampaignManager().getCampaignRunData(campaignRunId, businessId);
     }
 
+    @GetMapping("/{businessId}/{campaignId}/runs")
+    public Page<CampaignRunData> getCampaignRuns(
+            @PathVariable Integer businessId,
+            @PathVariable Integer campaignId,
+            Pageable pageable) {
 
+        log.info("Fetching campaign runs for businessId: {} and campaignId: {}", businessId, campaignId);
+        return businessManager.getCampaignManager()
+                .getCampaignRunsByBusinessAndCampaign(businessId, campaignId, pageable);
+    }
 
 
 }

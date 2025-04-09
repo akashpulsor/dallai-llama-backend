@@ -6,7 +6,10 @@ import org.springframework.boot.crm.dto.CampaignStartRequestDto;
 import org.springframework.boot.crm.dto.CampaignStartResponseDto;
 import org.springframework.boot.crm.entity.CampaignData;
 import org.springframework.boot.crm.entity.CampaignRunData;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDate;
 import java.util.List;
 
 public interface CampaignManager {
@@ -28,4 +31,8 @@ public interface CampaignManager {
 
     List<Integer> getLeadListByCampaignRunId(int campaignRunId);
 
+    int totalCampaigns(int businessId, LocalDate startDate, LocalDate endDate);
+
+    Page<CampaignRunData> getCampaignRunsByBusinessAndCampaign(
+            int businessId, int campaignId, Pageable pageable);
 }

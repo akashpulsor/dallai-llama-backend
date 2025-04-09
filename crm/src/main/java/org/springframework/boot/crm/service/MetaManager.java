@@ -21,4 +21,6 @@ public interface MetaManager {
     LlmData getLlmData(int businessId, int llmId);
 
     TwilioData getTwilioData(int businessId, int phoneId);
+
+    BalanceFetcher getUsageData(int businessId, int llmId);
 }

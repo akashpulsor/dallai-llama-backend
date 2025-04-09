@@ -47,9 +47,9 @@ public class CallController {
         String toNumber = params.get("To");
         String direction = params.get("Direction");
         String queueTime = params.get("QueueTime");
-
-        log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{}",callSid,
-                callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime);
+        String streamSid = params.get("StreamSid");
+        log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{} -{}",callSid,
+                callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime, streamSid);
         return "ok";
     }
 

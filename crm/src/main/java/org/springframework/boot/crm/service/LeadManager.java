@@ -5,6 +5,7 @@ import org.springframework.boot.crm.dto.LeadResponseDto;
 import org.springframework.boot.crm.entity.LeadData;
 import org.springframework.data.domain.Page;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -24,4 +25,6 @@ public interface LeadManager {
     Stream<LeadData> getLeadDataByStream(int businessId);
 
     List<LeadData> getLeadDataByList( Integer businessId,  Set<Integer> leadIds);
+
+    long totalLeads(int businessId, LocalDate startDate, LocalDate endDate);
 }

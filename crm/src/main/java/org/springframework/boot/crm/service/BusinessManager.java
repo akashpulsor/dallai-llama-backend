@@ -43,7 +43,6 @@ public interface BusinessManager {
 
     List<TwilioData> getAllTwilioData(int businessId);
 
-    MetaManager getMetaManager();
 
     CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto);
 

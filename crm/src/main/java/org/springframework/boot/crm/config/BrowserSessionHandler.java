@@ -31,10 +31,12 @@ public class BrowserSessionHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         log.info("Message recieved - {}",message);
         ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
         log.info(message.getPayload());
         BrowserDataDto browserDataDto = objectMapper.readValue(message.getPayload(), BrowserDataDto.class);
         //log.info("Deserialized Data - {}",browserDataDto);
+        BrowserDataEvent browserDataEvent = new BrowserDataEvent(this, session, browserDataDto);
+        this.applicationEventPublisher.publishEvent(browserDataEvent);
     }
 
     @Override

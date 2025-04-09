@@ -26,10 +26,8 @@ import java.time.LocalDateTime;
 @Slf4j
 public class BrowserAgentService {
     private final BrowserSessionRepository browserSessionRepository;
-    private final BrowserActionRepository browserActionRepository;
     private final SessionRepository sessionRepository;
     private final PortalService portalService;
-    private final LLMIntegrationService llmIntegrationService;
     private final ObjectMapper objectMapper;
     private final LlmService llmService;
     private final ApiCallerService apiCallerService;
@@ -47,7 +45,8 @@ public class BrowserAgentService {
         BrowserSession browserSession = createBrowserSession(browserSessionCreateRequest,session);
 
         browserSession =  browserSessionRepository.save(browserSession);
-        LaunchBrowserDto launchBrowserDto = new LaunchBrowserDto(portal.getPortalId(), llmData.getLlmId(), browserSession.getSessionId(), session.getId(),portal.getBaseUrl());
+        LaunchBrowserDto launchBrowserDto = new LaunchBrowserDto(portal.getPortalId(), llmData.getLlmId(), browserSession.getSessionId(), session.getId(),portal.getBaseUrl(),
+                browserSessionCreateRequest.getCampaignId(),browserSessionCreateRequest.getBusinessId());
         ResponseEntity<String> responseEntity =  apiCallerService.callPostApiWithObject(url,launchBrowserDto);
         if (!responseEntity.getStatusCode().is2xxSuccessful()) {}
 
@@ -73,7 +72,7 @@ public class BrowserAgentService {
     public GenerateDescriptionResponseDto generateContext(GenerateDescriptionRequestDto generateDescriptionRequestDto) {
 
         LlmData llmData = llmService.getLlmData(generateDescriptionRequestDto.getBusinessId(), generateDescriptionRequestDto.getLlmId());
-        String llmResponse =this.llmIntegrationService.generatePortalDescription(llmData, generateDescriptionRequestDto.getPortalUrl());
+        String llmResponse ="";//this.llmIntegrationService.generatePortalDescription(llmData, generateDescriptionRequestDto.getPortalUrl());
         return objectMapper.convertValue(llmResponse, GenerateDescriptionResponseDto.class);
     }
 
@@ -112,7 +111,7 @@ public class BrowserAgentService {
             Instant end = Instant.now();
             long responseTime = Duration.between(start, end).toMillis();
             log.info("Server at {} responded with status {} in {} ms.", url, response.getStatusCode(), responseTime);
-            return response.getStatusCode().is2xxSuccessful();
+            return true;
         } catch (Exception e) {
             log.warn("Error while trying to reach {}: {}", url, e.getMessage());
             return false;

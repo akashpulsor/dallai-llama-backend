@@ -12,6 +12,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -80,6 +83,20 @@ public class LeadDataService {
     }
 
 
+    public long totalLead(int businessId, LocalDate startDate, LocalDate endDate) {
+        if (startDate != null && endDate != null) {
+            LocalDateTime startDateTime = startDate.atStartOfDay();
+            LocalDateTime endDateTime = endDate.atTime(LocalTime.MAX);
+            return 0;//leadDataRepository.countLeadsByBusinessIdAndCreatedAtBetween(businessId, startDateTime, endDateTime);
+        } else {
+            LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
+            return 0;//leadDataRepository.countLeadsByBusinessIdAndCreatedAtAfter(businessId, sixtyDaysAgo);
+        }
+    }
 
+    public long totalLead(int businessId) {
+        LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
+        return 0;//leadDataRepository.countLeadsByBusinessIdAndCreatedAtAfter(businessId, sixtyDaysAgo);
+    }
 
 }

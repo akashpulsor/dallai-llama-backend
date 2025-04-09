@@ -4,6 +4,7 @@ import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Component
@@ -41,4 +42,12 @@ public class MetaManagerImpl implements  MetaManager {
     public List<TwilioData> getTwilioData(int businessId) {
         return this.twilioService.getTwilioData(businessId);
     }
+
+    public BalanceFetcher getUsageData(int businessId, int llmId) {
+        LlmData llmData =getLlmData(businessId, llmId);
+        return new OpenAIBalanceFetcher(llmData);
+    }
+
+
+
 }
