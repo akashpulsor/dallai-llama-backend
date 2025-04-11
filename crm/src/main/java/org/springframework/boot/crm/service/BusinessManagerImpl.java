@@ -94,6 +94,22 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     @Override
+    public CallManager getCallManager() {
+        return this.callManager;
+    }
+
+    @Override
+    public MetaManager getMetaManager() {
+        return this.metaManager;
+    }
+
+
+    @Override
+    public PaymentManager getPaymentManager() {
+        return this.paymentManager;
+    }
+
+    @Override
     public LlmData addLlmData(LlmData llmData) {
         return this.metaManager.addLlmData(llmData);
     }
@@ -152,14 +168,15 @@ public class BusinessManagerImpl implements BusinessManager {
         return getCampaignManager().getByBusinessId(businessId);
     }
 
-    public DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int llmId, int businessId) throws IOException, InterruptedException {
-        BalanceFetcher usageFetcher = this.metaManager.getUsageData(businessId, llmId);
-        double totalCost = usageFetcher.calculateTotalUsage(startDate);
+    public DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId)  {
+        //BalanceFetcher usageFetcher = this.metaManager.getUsageData(businessId, llmId);
+        //double totalCost = usageFetcher.calculateTotalUsage(startDate);
         int totalCampaign = this.campaignManager.totalCampaigns(businessId, startDate, endDate);
         long totalLeads = this.leadManager.totalLeads(businessId,startDate,endDate);
         long callCount = this.callManager.totalCalls(businessId, startDate,endDate);
-        long totalToken =0l;
-        return new DashBoardDataDto(callCount,totalCost,totalToken ,totalLeads,totalCampaign);
+        PaymentDataDto paymentDataDto = this.paymentManager.getCallChargesByBusinessIdBetweenStartTimeAndEndTime(businessId, startDate, endDate);
+        return new DashBoardDataDto(callCount,paymentDataDto.getTotalToken() ,totalLeads,totalCampaign,
+                paymentDataDto.getTotalCharges());
     }
 
 
@@ -179,7 +196,13 @@ public class BusinessManagerImpl implements BusinessManager {
         String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData, campaignRunData);
         systemMessage = addCallMetaData(systemMessage, twilioStartEventDto);
         this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData);
-        StartCallEvent startCallEvent = new StartCallEvent(this,twilioStartEventDto);
+        StartCallEvent startCallEvent = new StartCallEvent(this,twilioStartEventDto,
+                businessId,
+                leadId,
+                campaignData.getCampaignId(),
+                campaignRunId,
+                agentData.getAgentId(),
+                llmData.getLlmId(),twilioData.getPhoneId());
         this.applicationEventPublisher.publishEvent(startCallEvent);
     }
 
@@ -244,94 +267,6 @@ public class BusinessManagerImpl implements BusinessManager {
         String callType = (String) attributes.get("callType");
         websocketSession.close();
         this.callManager.removeSession(leadId,campaignRunId,callType);
-    }
-
-    @EventListener
-    public void handleBrowserEvent(BrowserDataEvent browserDataEvent) throws Exception {
-        WebSocketSession websocketSession = browserDataEvent.getWebSocketSession();
-        String llmResponseDto = "{" +
-                "  \"data\": [" +
-                "    {" +
-                "      \"actionData\": \"await page.goto('https://naukri.com', { waitUntil: 'networkidle2' });\"," +
-                "      \"description\": \"To open the Naukri home page, the action navigates to the specified base URL with a network idle state ensuring that the page is thoroughly loaded before taking further actions.\"," +
-                "      \"targetElement\": null" +
-                "    }," +
-                "    {" +
-                "      \"actionData\": \"await page.click('.login_Layer');\"," +
-                "      \"description\": \"Clicks on the login button to open the login form. This ensures we can access the login fields since interacting with them requires the login form to be visible.\"," +
-                "      \"targetElement\": \".login_Layer\"" +
-                "    }," +
-                "    {" +
-                "      \"actionData\": \"await page.type('#usernameField', 'akashtripathi.2801@gmail.com');\"," +
-                "      \"description\": \"Types the username into the username field. The field is identified by its unique ID, ensuring reliability in element interaction.\"," +
-                "      \"targetElement\": \"#usernameField\"" +
-                "    }," +
-                "    {" +
-                "      \"actionData\": \"await page.type('#passwordField', 'ruchia');\"," +
-                "      \"description\": \"Types the password into the password field. This element is identified by its ID, leveraging security practices by typing in the credentials necessary for login.\"," +
-                "      \"targetElement\": \"#passwordField\"" +
-                "    }," +
-                "    {" +
-                "      \"actionData\": \"await page.click('.btn_primary.login_btn');\"," +
-                "      \"description\": \"Clicks the log in button to submit the form. This action is identified using a CSS class which typically is specific to the button, ensuring the login is processed.\"," +
-                "      \"targetElement\": \".btn_primary.login_btn\"" +
-                "    }" +
-                "  ]," +
-                "  \"reason\": \"To execute the initial goal of accessing and logging into the Naukri home page, which is the starting point for job searches. Each action is identified and executed respecting precise element selectors to ensure reliability and consistency of navigation and resource access.\"," +
-                "  \"timestamp\": \"2025-04-02 16:17:31\"," +
-                "  \"type\": \"act\"" +
-                "}";
-
-        //String jsonMessage = new ObjectMapper().writeValueAsString(llmResponseDto);
-        websocketSession.sendMessage(new TextMessage(llmResponseDto));
-    }
-
-    //@EventListener
-    public void handleBrowserEvent1() throws Exception {
-        /*BrowserDataEvent browserDataEvent
-        WebSocketSession websocketSession = browserDataEvent.getWebSocketSession();
-        CampaignData campaignData = this.campaignManager.getCampaignData(browserDataEvent.getBrowserDataDto().getCampaignId(),
-                browserDataEvent.getBrowserDataDto().getBusinessId());
-        PortalConfiguration portalData = this.portalService.getPortalConfigurationById(browserDataEvent.getBrowserDataDto().getPortalId());
-
-        LlmData llmData = this.metaManager.getLlmData(browserDataEvent.getBrowserDataDto().getBusinessId(),
-                browserDataEvent.getBrowserDataDto().getLlmId());
-
-
-        if (browserDataEvent.getBrowserDataDto().getType().equals("initialSessionData")){
-            LLMIntegrationService llmIntegrationService = new LLMIntegrationService(
-                    portalData,
-                    llmData,
-                    campaignData,
-                    browserDataEvent.getBrowserDataDto().getSessionId(),
-                    browserDataEvent.getBrowserDataDto().getBusinessId(),
-                    browserDataEvent.getBrowserDataDto().getBrowserRunId(),
-                    browserDataEvent.getBrowserDataDto().getBrowserSessionId()
-            );
-            browserTaskMap.put(browserDataEvent.getBrowserDataDto().getBrowserRunId(), llmIntegrationService);
-        }
-
-        if(!browserTaskMap.containsKey(browserDataEvent.getBrowserDataDto().getBrowserRunId())) {
-            log.error("LLM not started");
-            return;
-        }
-        LLMIntegrationService llmIntegrationService = browserTaskMap.get(browserDataEvent.getBrowserDataDto().getBrowserRunId());
-        Queue<Intent> queue = llmIntegrationService.getIntentQueue();
-        if(!queue.isEmpty()) {
-            Intent currentStep = queue.poll();
-            String response=llmIntegrationService.processMetaDataWithOpenAI(
-                    browserDataEvent.getBrowserDataDto().getMetaData(),
-                    llmIntegrationService.getRootIntent().getDescription(),
-                    currentStep.getDescription()
-            );
-            log.info("Analysis response, {}",response);
-            String llmResponseDto = llmIntegrationService.extractLLMResponseDto(response);
-            //String jsonMessage = new ObjectMapper().writeValueAsString(llmResponseDto);
-            websocketSession.sendMessage(new TextMessage(llmResponseDto));
-            log.info("Data Sent for processing");
-
-        }
-        */
     }
 
 

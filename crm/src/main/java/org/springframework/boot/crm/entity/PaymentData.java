@@ -17,6 +17,27 @@ public class PaymentData {
     @Column(name = "call_id")
     private int callId;
 
+    @Column(name = "business_id")
+    private  int businessId;
+
+    @Column(name = "lead_id")
+    private  int leadId;
+
+    @Column(name = "campaign_id")
+    private  int campaignId;
+
+    @Column(name = "campaign_run_id")
+    private  int campaignRunId;
+
+    @Column(name = "agent_id")
+    private  int agentId;
+
+    @Column(name = "llm_id")
+    private  int llmId;
+
+    @Column(name = "phone_id")
+    private  int phoneId;
+
     @Column(name = "start_time")
     private Date startTime;
 
@@ -55,6 +76,8 @@ public class PaymentData {
 
     @Column(name = "output_audio_token")
     private int outputAudioToken;
+
+
 
 
 }

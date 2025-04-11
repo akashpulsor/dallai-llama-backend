@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.Getter;
@@ -19,6 +20,7 @@ public class CallStatus {
     private int statusId;
 
     @ManyToOne(fetch = FetchType.LAZY)
+    @JsonIgnore
     @JoinColumn(name = "call_log_id", nullable = false)
     private CallLog callLog;
 

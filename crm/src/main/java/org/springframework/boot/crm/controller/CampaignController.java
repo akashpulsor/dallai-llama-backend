@@ -3,10 +3,7 @@ package org.springframework.boot.crm.controller;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.*;
-import org.springframework.boot.crm.entity.BusinessData;
-import org.springframework.boot.crm.entity.CampaignRunData;
-import org.springframework.boot.crm.entity.LlmData;
-import org.springframework.boot.crm.entity.TwilioData;
+import org.springframework.boot.crm.entity.*;
 import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.CampaignManager;
 import org.springframework.data.domain.Page;
@@ -76,5 +73,37 @@ public class CampaignController {
                 .getCampaignRunsByBusinessAndCampaign(businessId, campaignId, pageable);
     }
 
+    @GetMapping("/{campaignRunId}/call-logs")
+    public Page<CallLog> getCallLogs(
+            @PathVariable int campaignRunId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        log.info("Fetching campaign runs for campaign run id: {}", campaignRunId);
+        return this.businessManager.getCallManager().getPaginatedCallLogs(campaignRunId, page, size);
+    }
+
+    @GetMapping("/{callId}/usageData")
+    public PaymentDataDto getUsageData(@PathVariable int callId) {
+        log.info("Fetching usage data for call id: {}", callId);
+        return this.businessManager.getPaymentManager().getCallCharges(callId);
+    }
+
+    @GetMapping("/{campaignId}/usageData")
+    public PaymentDataDto getUsageDataByCampaignId(@PathVariable int campaignId) {
+        log.info("Fetching  usage data  for campaign  id: {}", campaignId);
+        return this.businessManager.getPaymentManager().getCallChargesByCampaignId(campaignId);
+    }
+
+    @GetMapping("/{campaignRunId}/usageData")
+    public PaymentDataDto getUsageDataByCampaignRunId(@PathVariable int campaignRunId) {
+        log.info("Fetching  usage data  for campaign run id: {}", campaignRunId);
+        return this.businessManager.getPaymentManager().getCallChargesByCampaignRunId(campaignRunId);
+    }
+
+    @GetMapping("/{businessId}/usageData")
+    public PaymentDataDto getUsageDataByBusinessId(@PathVariable int businessId) {
+        log.info("Fetching usage data for business id: {}", businessId);
+        return this.businessManager.getPaymentManager().getCallChargesByBusinessId(businessId);
+    }
 
 }

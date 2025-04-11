@@ -2,6 +2,7 @@ package org.springframework.boot.crm.service;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.util.Date;
 
 public interface BalanceFetcher {
 

@@ -9,7 +9,6 @@ public class DashBoardDataDto {
 
     private long totalCall;
 
-    private double totalCost;
 
     private long totalToken;
 
@@ -17,5 +16,7 @@ public class DashBoardDataDto {
 
     private int totalCampaigns;
 
+
+    private double totalCharges;
 
 }

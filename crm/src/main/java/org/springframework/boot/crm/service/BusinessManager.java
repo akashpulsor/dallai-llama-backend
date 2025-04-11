@@ -3,6 +3,7 @@ package org.springframework.boot.crm.service;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -55,4 +56,12 @@ public interface BusinessManager {
     AgentResponseDto addAgent(AgentRequestDto agentRequestDto);
 
     List<AgentResponseDto> findByBusinessId(int businessId);
+
+    CallManager getCallManager();
+
+    PaymentManager getPaymentManager();
+
+    MetaManager getMetaManager();
+
+    DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId);
 }

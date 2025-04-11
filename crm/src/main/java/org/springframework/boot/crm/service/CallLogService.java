@@ -7,11 +7,15 @@ import org.springframework.boot.crm.exceptions.CallLogNotFoundException;
 import org.springframework.boot.crm.exceptions.CampaignRunNotFoundExceptions;
 import org.springframework.boot.crm.repository.CallLogRepository;
 import org.springframework.boot.crm.repository.CallStatusRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.List;
 
 @Service
 public class CallLogService {
@@ -89,5 +93,14 @@ public class CallLogService {
 
     public long callLogCount(int businessId, LocalDate startDate, LocalDate endDate) {
         return 0l;//callLogRepository.countTotalCalls(businessId, startDate, endDate);
+    }
+
+    public Page<CallLog> getPaginatedCallLogs(int campaignRunId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        return callLogRepository.findByCampaignRunIdOrderByCallLogIdAndStartTime(campaignRunId, pageable);
+    }
+
+    public List<CallLog> getPaginatedCallLogsList(int campaignRunId) {
+        return callLogRepository.findByCampaignRunIdOrderByCallLogIdAndStartTime(campaignRunId);
     }
 }

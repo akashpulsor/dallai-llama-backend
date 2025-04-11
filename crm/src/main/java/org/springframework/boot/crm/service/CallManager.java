@@ -15,6 +15,8 @@ import org.springframework.boot.crm.entity.*;
 import org.springframework.boot.crm.exceptions.ToolExecutionException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -131,11 +133,11 @@ public class CallManager {
         log.info("Size After removing stream Id  - {}", twilioOpenAiMap.size());
         StopCallEvent stopCallEvent = new StopCallEvent(this, callLog.getCallLogId());
         this.applicationEventPublisher.publishEvent(stopCallEvent);
-        //CallStatus callStatus = new CallStatus();
-        //callStatus.setStatus("ENDED");
-        //callStatus.setCallLog(callLog);
-        //callLog.getStatusHistory().add(callStatus);
-        //this.callLogService.saveCallLog(callLog);
+        CallStatus callStatus = new CallStatus();
+        callStatus.setStatus("ENDED");
+        callStatus.setCallLog(callLog);
+        callLog.getStatusHistory().add(callStatus);
+        this.callLogService.saveCallLog(callLog);
     }
 
     public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto,String systemMessage, LlmData llmData, LeadData leadData,
@@ -159,10 +161,6 @@ public class CallManager {
         log.info("Call log is - {}", callLog);
     }
 
-    private CallLog updateStreamId(TwilioStartEventDto twilioStartEventDto,CallLog callLog){
-        callLog.setStreamId(twilioStartEventDto.getTwilioStartMediaMessage().getStreamSid());
-        return this.callLogService.saveCallLog(callLog);
-    }
 
     public CallLog getCallLog(String callType, int campaignRunId, int leadId){
         return this.callLogService.getCallLog(callType,
@@ -192,6 +190,15 @@ public class CallManager {
     }
     public CallLog getCallLog(int callId){
         return this.callLogService.getCallLog(callId);
+    }
+
+    public Page<CallLog> getPaginatedCallLogs(int campaignRunId, int page, int size) {
+        return callLogService.getPaginatedCallLogs(campaignRunId, page, size);
+    }
+
+    public List<CallLog> getPaginatedCallLogsList(int campaignRunId) {
+        List<CallLog> temp = callLogService.getPaginatedCallLogsList(campaignRunId);
+        return callLogService.getPaginatedCallLogsList(campaignRunId);
     }
 
     public long totalCalls(int businessId, LocalDate startDate, LocalDate endDate) {
@@ -231,10 +238,15 @@ public class CallManager {
                 twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId(),
                 twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getLeadId()
         );
-        BillingDataEvent billingDataEvent = new BillingDataEvent(this,openAiResponseDoneDto.getResponse().getUsage(),
-                callLog.getCallLogId());
+        BillingDataEvent billingDataEvent = new BillingDataEvent(this,openAiResponseDoneDto.getResponse().getUsage(), callLog.getCallLogId());
         this.applicationEventPublisher.publishEvent(billingDataEvent);
     }
+
+    private CallLog updateStreamId(TwilioStartEventDto twilioStartEventDto,CallLog callLog){
+        callLog.setStreamId(twilioStartEventDto.getTwilioStartMediaMessage().getStreamSid());
+        return this.callLogService.saveCallLog(callLog);
+    }
+
 
     private void sendUserInformation(RealTimeSession openAiRealTimeSession,TwilioStartMessageDto twilioStartMessageDto,LeadData leadData, CampaignData campaignData) throws JsonProcessingException {
         OpenAiCreateConversationDto openAiCreateConversationDto = new OpenAiCreateConversationDto();

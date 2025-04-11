@@ -1,55 +1,59 @@
 package org.springframework.boot.crm.repository;
 
-import org.springframework.boot.crm.entity.CallLog;
+import org.springframework.boot.crm.dto.TokenAggregatesDto;
 import org.springframework.boot.crm.entity.PaymentData;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.data.repository.query.Param;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.util.Date;
 import java.util.Optional;
 
+@EnableJpaRepositories
 public interface PaymentDataRepository  extends JpaRepository<PaymentData, Integer> {
 
 
     Optional<PaymentData> findByCallId(int callId);
-/*
-    @Query("SELECT SUM(pd.totalToken) FROM PaymentData pd " +
-            "JOIN CallLog cl ON pd.callId = cl.callLogId " +
-            "JOIN campaign_run_data cr ON cl.campaignRunId = cr.campaignRunId " +
-            "JOIN CampaignData cd ON cr.campaignId = cd.campaignId " +
-            "WHERE cd.businessId = :businessId " +
-            "AND cl.startTime BETWEEN :startDate AND :endDate")
-    Integer sumTotalTokensWithJoins(
-            @Param("businessId") Integer businessId,
-            @Param("startDate") LocalDateTime startDate,
-            @Param("endDate") LocalDateTime endDate
-    );
 
-    @Query("SELECT SUM(pd.totalToken) FROM PaymentData pd " +
-            "JOIN CallLog cl ON pd.callId = cl.callLogId " +
-            "JOIN campaign_run_data cr ON cl.campaignRunId = cr.campaignRunId " +
-            "JOIN CampaignData cd ON cr.campaignId = cd.campaignId " +
-            "WHERE cd.businessId = :businessId " +
-            "AND cl.startTime >= :startDate")
-    Integer sumTotalTokensWithJoinsAfter(
-            @Param("businessId") Integer businessId,
-            @Param("startDate") LocalDateTime startDate
-    );
 
-    default Integer getTotalTokenUsageWithJoins(Integer businessId, LocalDateTime startDate, LocalDateTime endDate) {
-        if (startDate != null && endDate != null) {
-            return sumTotalTokensWithJoins(businessId, startDate, endDate);
-        } else {
-            LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
-            return sumTotalTokensWithJoinsAfter(businessId, sixtyDaysAgo);
-        }
-    }
+    @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
+            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
+            "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
+            "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
+            "FROM payment_data p WHERE p.businessId = :businessId GROUP BY p.businessId")
+    TokenAggregatesDto findAggregatesByBusinessId(@Param("businessId") int businessId);
 
-    default Integer getTotalTokenUsageWithJoinsLast60Days(Integer businessId) {
-        LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
-        return sumTotalTokensWithJoinsAfter(businessId, sixtyDaysAgo);
-    }
+    @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
+            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
+            "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
+            "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
+            "FROM payment_data p WHERE p.businessId = :businessId AND p.startTime >= :startTime AND p.endTime <= :endTime " +
+            "GROUP BY p.businessId")
+    TokenAggregatesDto findAggregatesByBusinessIdBetweenStartTimeAndEndTime(
+            @Param("businessId") int businessId,
+            @Param("startTime") LocalDate startTime,
+            @Param("endTime") LocalDate endTime);
 
- */
+    @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
+            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
+            "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
+            "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
+            "FROM payment_data p WHERE p.campaignId = :campaignId GROUP BY p.campaignId")
+    TokenAggregatesDto findAggregatesByCampaignId(@Param("campaignId") int campaignId);
+
+    @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
+            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
+            "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
+            "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
+            "FROM payment_data p WHERE p.campaignRunId = :campaignRunId GROUP BY p.campaignRunId")
+    TokenAggregatesDto findAggregatesByCampaignRunId(@Param("campaignRunId") int campaignRunId);
+
+
+
 }
