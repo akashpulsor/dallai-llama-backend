@@ -4,10 +4,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.controller.WebSocketStompController;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -48,6 +52,9 @@ public class BusinessManagerImpl implements BusinessManager {
 
     private final PaymentManager paymentManager;
 
+    private final WebSocketStompController webSocketStompController;
+
+
     private Map<String, LLMIntegrationService> browserTaskMap;
 
     public BusinessManagerImpl( BusinessService businessService,
@@ -60,7 +67,8 @@ public class BusinessManagerImpl implements BusinessManager {
                                 MetaManager metaManager,CallManager callManager,ApplicationEventPublisher applicationEventPublisher,
                                 DalaiLLamaLeadDataService dalaiLLamaLeadDataService,
                                 PortalService portalService,
-                                PaymentManager paymentManager){
+                                PaymentManager paymentManager,
+                                WebSocketStompController webSocketStompController){
 
         this.businessService = businessService;
         this.masterDataService = masterDataService;
@@ -76,6 +84,7 @@ public class BusinessManagerImpl implements BusinessManager {
         this.applicationEventPublisher = applicationEventPublisher;
         browserTaskMap = new ConcurrentHashMap<>();
         this.paymentManager = paymentManager;
+        this.webSocketStompController = webSocketStompController;
     }
 
     @Override
@@ -209,7 +218,7 @@ public class BusinessManagerImpl implements BusinessManager {
 
     @EventListener
     public  void handleTwilioEvent(TwilioMediaEventDto twilioMediaEventDto) throws JsonProcessingException {
-        //log.info("twilio event Received - {}", twilioMediaEventDto);
+        log.info("twilio event Received - {}", twilioMediaEventDto);
         MediaEventDto twilioMediaMessage = twilioMediaEventDto.getMediaEventDto();
         Map<String,Object> map = new HashMap<>();
         map.put("type", "input_audio_buffer.append");
@@ -275,7 +284,94 @@ public class BusinessManagerImpl implements BusinessManager {
         log.info("open Ai update event Received - {}", sessionUpdateEvent);
     }
 
+    @EventListener
+    public  void handleChargesDataEvent(ChargesDataEvent sessionUpdateEvent) {
+        log.info("open Ai update event Received - {}", sessionUpdateEvent);
+        this.webSocketStompController.sendCallChargesUpdate(
+                sessionUpdateEvent.getChargesData().getBusinessId(),
+                sessionUpdateEvent.getChargesData().getCampaignId(),
+                sessionUpdateEvent.getChargesData().getCampaignRunId(),
+                sessionUpdateEvent.getChargesData()
+        );
+    }
+
+    @EventListener
+    public  void handleMakeCallEvent(MakeCallEvent makeCallEvent) {
+        log.info("Make call event Received - {}", makeCallEvent);
+        CampaignRunData campaignRunData = makeCallEvent.getCampaignRunData();
+        TwilioData twilioData = makeCallEvent.getTwilioData();
+        CampaignData campaignData = makeCallEvent.getCampaignData();
+        int businessId = makeCallEvent.getBusinessId();
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<Integer> leadList = this.campaignManager.getPaginatedLeadList(campaignRunData.getCampaignRunId(), pageable);
+        //Call for all pages, while all the pages are not traversed, keep getting the next page
+        while (leadList.hasContent()) {
+            List<Integer> leadIds = leadList.getContent();
+            List<LeadData> leadDataList = this.leadManager.getLeadDataByList(makeCallEvent.getBusinessId(), new HashSet<>(leadIds));
+            for (LeadData leadData : leadDataList) {
+                try {
+                    CallLog callLog = this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData, "OUT_BOUND");
+                    //Send call log to web socket
+                    this.webSocketStompController.sendCallUpdate(
+                            businessId,
+                            campaignData.getCampaignId(),
+                            campaignRunData.getCampaignRunId(),
+                            callLog
+                    );
+
+                } catch (Exception e) {
+                    log.error("Failed to call log ", e);
+                }
+            }
+            //Get next page
+            pageable = leadList.nextPageable();
+            leadList = this.campaignManager.getPaginatedLeadList(campaignRunData.getCampaignRunId(), pageable);
+
+            //add busy waiting
+            this.webSocketStompController.sendCallBusyWaitUpdate(
+                    businessId,
+                    campaignData.getCampaignId(),
+                    campaignRunData.getCampaignRunId(),
+                    true
+            );
+
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                log.error("Thread interrupted", e);
+            }
+
+            this.webSocketStompController.sendCallBusyWaitUpdate(
+                    businessId,
+                    campaignData.getCampaignId(),
+                    campaignRunData.getCampaignRunId(),
+                    false
+            );
+        }
+    
+    }
+
+    @EventListener
+    public  void handleSendCallLog(CallLogEvent callLogEvent) {
+        CallLog callLog = callLogEvent.getCallLog();
+        log.info("Publish call log - {}", callLog);
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunDataById(callLog.getCampaignRunId());
+        this.webSocketStompController.sendCallUpdate(
+                campaignRunData.getBusinessId(),
+                campaignRunData.getCampaignId(),
+                campaignRunData.getCampaignRunId(),
+                callLog
+        );
+    }
+
     public void runCampaign(int campaignRunId, int businessId) {
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(campaignRunId, businessId);
+        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
+        CampaignData campaignData =this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
+        this.applicationEventPublisher.publishEvent(new MakeCallEvent(this, businessId, campaignRunData, twilioData, campaignData));
+    }
+
+    public void runCampaign1(int campaignRunId, int businessId) {
         CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(campaignRunId, businessId);
         TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
         CampaignData campaignData =this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());

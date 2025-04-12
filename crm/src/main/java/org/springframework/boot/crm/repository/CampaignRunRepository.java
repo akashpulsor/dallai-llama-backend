@@ -44,4 +44,9 @@ public interface CampaignRunRepository  extends JpaRepository<CampaignRunData, I
             Integer campaignId,
             Pageable pageable
     );
+
+    @Query(value = "SELECT crl.lead_id FROM campaign_run_leads crl WHERE crl.campaign_run_id = :campaignRunId",
+            countQuery = "SELECT COUNT(crl.lead_id) FROM campaign_run_leads crl WHERE crl.campaign_run_id = :campaignRunId",
+            nativeQuery = true)
+    Page<Integer> getPaginatedLeadList(@Param("campaignRunId") Integer campaignRunId, Pageable pageable);
 }

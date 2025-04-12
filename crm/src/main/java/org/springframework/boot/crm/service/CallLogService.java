@@ -81,6 +81,11 @@ public class CallLogService {
                 .orElseThrow(() -> new EntityNotFoundException("CallLog not found"));
     }
 
+    public CallLog getCallLogByCallSid(String callSid) {
+        return callLogRepository.findByCallSid(callSid)
+                .orElseThrow(() -> new EntityNotFoundException("CallLog not found"));
+    }
+
 
     public CallLog getCallLog(String callType, int campaignRunId, int leadId) {
         return this.callLogRepository.findByCallTypeAndCampaignRunIdAndLeadId(callType,campaignRunId,  leadId).

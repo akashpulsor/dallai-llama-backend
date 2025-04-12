@@ -223,13 +223,28 @@ public class CallManager {
                 String json = objectMapper.writeValueAsString(audioDelta);
                 log.info("Sending data to twilio - {}", json);
                 twilioSession.sendMessage(new TextMessage(json));
-                return;
+            }
+            else {
+                log.info("Session seems closed");
             }
         }
         else {
             log.info("Session Seems unavailable");
         }
 
+    }
+
+    public CallLog updateCallStatus(CallStatusDto callStatusDto) {
+        CallLog callLog=this.callLogService.getCallLogByCallSid(callStatusDto.getCallSid());
+        CallStatus callStatus = new CallStatus();
+        callStatus.setStatus(callStatusDto.getCallStatus());
+        callStatus.setTimestamp(LocalDateTime.now());
+        callLog.getStatusHistory().add(callStatus);
+        callLog.setEndTime(LocalDateTime.now());
+        this.callLogService.saveCallLog(callLog);
+        log.info("Call log updated - {}", callLog);
+        this.applicationEventPublisher.publishEvent(new CallLogEvent(this, callLog));
+        return callLog;
     }
 
     public void addBillingInformation(OpenAiResponseDoneDto openAiResponseDoneDto, TwilioStartEventDto twilioStartEventDto) {

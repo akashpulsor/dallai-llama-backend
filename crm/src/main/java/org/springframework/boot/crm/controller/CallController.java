@@ -3,7 +3,9 @@ package org.springframework.boot.crm.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.dto.CallStatusDto;
 import org.springframework.boot.crm.entity.CallLog;
+import org.springframework.boot.crm.entity.CallStatus;
 import org.springframework.boot.crm.service.CallManager;
 import org.springframework.boot.crm.service.MetaManager;
 import org.springframework.http.ResponseEntity;
@@ -50,6 +52,9 @@ public class CallController {
         String streamSid = params.get("StreamSid");
         log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{} -{}",callSid,
                 callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime, streamSid);
+        // Validate the request
+        CallStatusDto callStatusData = new CallStatusDto(callSid, callStatus, callDuration, timestamp, fromNumber, toNumber, direction, queueTime, streamSid);
+        this.callManager.updateCallStatus(callStatusData);
         return "ok";
     }
 

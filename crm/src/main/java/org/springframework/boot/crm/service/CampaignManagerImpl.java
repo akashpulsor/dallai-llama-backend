@@ -103,7 +103,16 @@ public class CampaignManagerImpl implements  CampaignManager {
     }
 
 
+    // Create method to get list of leads id in paginated way
+    @Override
+    public Page<Integer> getPaginatedLeadList(int campaignRunId, Pageable pageable) {
+        return this.campaignRunService.getPaginatedLeadList(campaignRunId, pageable);
+    }
 
+    @Override
+    public CampaignRunData getCampaignRunDataById(int campaignRunId) {
+        return this.campaignRunService.getDataByCampaignRunId(campaignRunId);
+    }
 
     public void startAll(CampaignRunData campaignRunData) {
         Stream<LeadData> leadDataStream = this.leadManager.getLeadDataByStream(campaignRunData.getBusinessId());

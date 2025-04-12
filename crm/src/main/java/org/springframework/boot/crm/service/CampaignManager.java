@@ -35,4 +35,8 @@ public interface CampaignManager {
 
     Page<CampaignRunData> getCampaignRunsByBusinessAndCampaign(
             int businessId, int campaignId, Pageable pageable);
+
+    Page<Integer> getPaginatedLeadList(int campaignRunId, Pageable pageable);
+
+    CampaignRunData getCampaignRunDataById(int campaignRunId);
 }

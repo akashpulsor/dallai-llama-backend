@@ -36,13 +36,15 @@ public class CampaignRunService {
         return this.campaignRunRepository.getLeadList(campaignRunId);
     }
 
+    public CampaignRunData addLeads(CampaignRunData campaignRunData, List<Integer> leads) {
+        Set<Integer> leadSet = new HashSet<>(leads);
+        campaignRunData.setLeads(leadSet);
+        return addCampaignRun(campaignRunData);
+    }
 
-    public CampaignRunData addLeads(int businessId, Set<Integer> leads) {
-        //CampaignRunData campaignRunData = this.campaignRunRepository.findByBusinessId(businessId).
-       //         orElseThrow(() -> new CampaignRunNotFoundExceptions("Campaign Run Not Found"));
-        //campaignRunData.setLeads(leads);
-        //return addCampaignRun(campaignRunData);
-        return new CampaignRunData();
+    //Create method to get list of leads id in paginated way
+    public Page<Integer> getPaginatedLeadList(int campaignRunId, Pageable pageable) {
+        return this.campaignRunRepository.getPaginatedLeadList(campaignRunId, pageable);
     }
 
     public CampaignRunData addLeads(CampaignRunData campaignRunData, Set<Integer> leads) {
@@ -62,6 +64,12 @@ public class CampaignRunService {
             Integer campaignId,
             Pageable pageable) {
         return campaignRunRepository.findByBusinessIdAndCampaignId(businessId, campaignId, pageable);
+    }
+
+    public  CampaignRunData getDataByCampaignRunId(int campaignRunId) {
+        return this.campaignRunRepository.findById(campaignRunId).orElseThrow(
+                () -> new CampaignRunNotFoundExceptions("Campaign run not found")
+        );
     }
 
 

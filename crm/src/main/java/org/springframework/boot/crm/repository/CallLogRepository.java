@@ -29,40 +29,8 @@ public interface CallLogRepository  extends JpaRepository<CallLog, Integer> {
             @Param("campaignRunId") int campaignRunId
     );
 
-/*
-    @Query("SELECT COUNT(cl) FROM CallLog cl " +
-            "JOIN campaign_run_data cr ON cl.campaignRunId = cr.campaignRunId " +
-            "JOIN CampaignData cd ON cr.campaignId = cd.campaignId " +
-            "WHERE cd.businessId = :businessId " +
-            "AND cl.startTime BETWEEN :startDate AND :endDate")
-    long countTotalCallsWithJoins(
-            @Param("businessId") Integer businessId,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate
-    );
+    //Find by call Sid
+    @Query("SELECT cl FROM call_log cl WHERE cl.callSid = :callSid")
+    Optional<CallLog> findByCallSid(@Param("callSid") String callSid);
 
-    @Query("SELECT COUNT(cl) FROM CallLog cl " +
-            "JOIN campaign_run_data cr ON cl.campaignRunId = cr.campaignRunId " +
-            "JOIN CampaignData cd ON cr.campaignId = cd.campaignId " +
-            "WHERE cd.businessId = :businessId " +
-            "AND cl.startTime >= :startDate")
-    long countTotalCallsWithJoinsAfter(
-            @Param("businessId") Integer businessId,
-            @Param("startDate") LocalDate startDate
-    );
-
-    default long countTotalCalls(Integer businessId, LocalDate startDate, LocalDate endDate) {
-        if (startDate != null && endDate != null) {
-            return countTotalCallsWithJoins(businessId, startDate, endDate);
-        } else {
-            LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
-            return countTotalCallsWithJoinsAfter(businessId, LocalDate.from(sixtyDaysAgo));
-        }
-    }
-
-    default long countTotalCallsLast60Days(Integer businessId) {
-        LocalDateTime sixtyDaysAgo = LocalDateTime.now(java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"))).minusDays(60);
-        return countTotalCallsWithJoinsAfter(businessId, LocalDate.from(sixtyDaysAgo));
-    }*/
-    
 }
