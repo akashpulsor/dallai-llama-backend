@@ -177,9 +177,24 @@ public class BusinessManagerImpl implements BusinessManager {
         return getCampaignManager().getByBusinessId(businessId);
     }
 
+    public CampaignRunResponseDto startCampaign(CampaignStartRequestDto campaignDataRequestDto) {
+        CampaignRunResponseDto campaignRunResponseDto = this.campaignManager.start(campaignDataRequestDto);
+        //send start event to web socket
+        this.webSocketStompController.sendCampaignRunData(
+                campaignRunResponseDto.getBusinessId(),
+                campaignRunResponseDto.getCampaignId(),
+                campaignRunResponseDto
+        );
+
+        return campaignRunResponseDto;
+    }
     public DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId)  {
         //BalanceFetcher usageFetcher = this.metaManager.getUsageData(businessId, llmId);
         //double totalCost = usageFetcher.calculateTotalUsage(startDate);
+        if (startDate == null || endDate == null) {
+            endDate = LocalDate.now();
+            startDate = endDate.minusDays(30);
+        }
         int totalCampaign = this.campaignManager.totalCampaigns(businessId, startDate, endDate);
         long totalLeads = this.leadManager.totalLeads(businessId,startDate,endDate);
         long callCount = this.callManager.totalCalls(businessId, startDate,endDate);
@@ -296,22 +311,34 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     @EventListener
-    public  void handleMakeCallEvent(MakeCallEvent makeCallEvent) {
+    public void handleMakeCallEvent(MakeCallEvent makeCallEvent) {
         log.info("Make call event Received - {}", makeCallEvent);
         CampaignRunData campaignRunData = makeCallEvent.getCampaignRunData();
         TwilioData twilioData = makeCallEvent.getTwilioData();
         CampaignData campaignData = makeCallEvent.getCampaignData();
         int businessId = makeCallEvent.getBusinessId();
-        Pageable pageable = PageRequest.of(0, 10);
+        int pageSize = 10;
+        Pageable pageable = PageRequest.of(0, pageSize);
         Page<Integer> leadList = this.campaignManager.getPaginatedLeadList(campaignRunData.getCampaignRunId(), pageable);
-        //Call for all pages, while all the pages are not traversed, keep getting the next page
-        while (leadList.hasContent()) {
-            List<Integer> leadIds = leadList.getContent();
-            List<LeadData> leadDataList = this.leadManager.getLeadDataByList(makeCallEvent.getBusinessId(), new HashSet<>(leadIds));
-            for (LeadData leadData : leadDataList) {
-                try {
+        int totalPages = leadList.getTotalPages();
+
+        for (int pageNumber = 0; pageNumber < totalPages; pageNumber++) {
+            if(pageNumber!=0) {
+                pageable = PageRequest.of(pageNumber, pageSize);
+                leadList = this.campaignManager.getPaginatedLeadList(campaignRunData.getCampaignRunId(), pageable);
+            }
+
+
+            if (leadList.hasContent()) {
+                List<Integer> leadIds = leadList.getContent();
+                List<LeadData> leadDataList = this.leadManager.getLeadDataByList(makeCallEvent.getBusinessId(), new HashSet<>(leadIds));
+
+                for (LeadData leadData : leadDataList) {
+                    try {
+
                     CallLog callLog = this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData, "OUT_BOUND");
                     //Send call log to web socket
+
                     this.webSocketStompController.sendCallUpdate(
                             businessId,
                             campaignData.getCampaignId(),
@@ -319,15 +346,13 @@ public class BusinessManagerImpl implements BusinessManager {
                             callLog
                     );
 
-                } catch (Exception e) {
-                    log.error("Failed to call log ", e);
+                    } catch (Exception e) {
+                        log.error("Failed to call log ", e);
+                    }
                 }
             }
-            //Get next page
-            pageable = leadList.nextPageable();
-            leadList = this.campaignManager.getPaginatedLeadList(campaignRunData.getCampaignRunId(), pageable);
 
-            //add busy waiting
+            // Add busy waiting
             this.webSocketStompController.sendCallBusyWaitUpdate(
                     businessId,
                     campaignData.getCampaignId(),
@@ -348,8 +373,8 @@ public class BusinessManagerImpl implements BusinessManager {
                     false
             );
         }
-    
     }
+
 
     @EventListener
     public  void handleSendCallLog(CallLogEvent callLogEvent) {
@@ -371,23 +396,6 @@ public class BusinessManagerImpl implements BusinessManager {
         this.applicationEventPublisher.publishEvent(new MakeCallEvent(this, businessId, campaignRunData, twilioData, campaignData));
     }
 
-    public void runCampaign1(int campaignRunId, int businessId) {
-        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(campaignRunId, businessId);
-        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
-        CampaignData campaignData =this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
-        List<Integer> leadList =this.campaignManager.getLeadListByCampaignRunId(campaignRunData.getCampaignRunId());
-        List<LeadData> leadDataList = this.leadManager.getLeadDataByList(businessId, new HashSet<>(leadList));
-
-        for(LeadData leadData: leadDataList) {
-            try{
-                this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData,"OUT_BOUND" );
-            }
-            catch (Exception e){
-                log.error("Failed to call log ", e);
-            }
-        }
-
-    }
 
     @Override
     public AgentResponseDto addAgent(AgentRequestDto agentRequestDto) {

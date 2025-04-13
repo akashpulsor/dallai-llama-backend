@@ -1,8 +1,11 @@
 package org.springframework.boot.crm.controller;
 
+import org.springframework.boot.crm.dto.CampaignRunResponseDto;
+import org.springframework.boot.crm.dto.CampaignStartResponseDto;
 import org.springframework.boot.crm.dto.ChargesSummaryDto;
 import org.springframework.boot.crm.dto.DashBoardDataDto;
 import org.springframework.boot.crm.entity.CallLog;
+import org.springframework.boot.crm.entity.CampaignRunData;
 import org.springframework.boot.crm.entity.ChargesData;
 import org.springframework.boot.crm.service.ChargesDataService;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -58,5 +61,8 @@ public class WebSocketStompController {
         messagingTemplate.convertAndSend("/topic/business/" + businessId + "/charges", chargesSummary);
     }
 
+    public void sendCampaignRunData(int businessId, int campaignId, CampaignRunResponseDto campaignRunResponseDto) {
+        messagingTemplate.convertAndSend("/topic/business/" + businessId + "/campaign/"+campaignId+"/run", campaignRunResponseDto);
+    }
 
 }

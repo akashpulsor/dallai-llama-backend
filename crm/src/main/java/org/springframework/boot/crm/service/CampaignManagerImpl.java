@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.service;
 
+import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.crm.dto.*;
@@ -61,7 +62,7 @@ public class CampaignManagerImpl implements  CampaignManager {
     }
 
     @Override
-    public CampaignStartResponseDto start(CampaignStartRequestDto campaignStartRequestDto) {
+    public CampaignRunResponseDto start(CampaignStartRequestDto campaignStartRequestDto) {
         get(campaignStartRequestDto.getCampaignId(), campaignStartRequestDto.getBusinessId());
         CampaignRunData campaignRunData = dtoToModel(campaignStartRequestDto);
         campaignRunData.setStatus(CampaignRunEnum.STARTED);
@@ -114,20 +115,13 @@ public class CampaignManagerImpl implements  CampaignManager {
         return this.campaignRunService.getDataByCampaignRunId(campaignRunId);
     }
 
+    @Transactional
     public void startAll(CampaignRunData campaignRunData) {
-        Stream<LeadData> leadDataStream = this.leadManager.getLeadDataByStream(campaignRunData.getBusinessId());
-        try (leadDataStream){
-            Set<Integer> batchLeads = new HashSet<>(BATCH_SIZE);
-            AtomicInteger counter = new AtomicInteger(0);
-            leadDataStream.forEach(leadId -> {
-                batchLeads.add(leadId.getLeadId());
-
-                // When batch size is reached, save and clear
-                if (counter.incrementAndGet() % BATCH_SIZE == 0) {
-                    this.campaignRunService.saveBatchOfLeads(campaignRunData.getCampaignRunId(), new HashSet<>(batchLeads));
-                    batchLeads.clear();
-                }
-            });
+        Page<LeadResponseDto> leadDataPage = this.leadManager.getLeadsByBusinessIdPaginated(campaignRunData.getBusinessId(), 0, BATCH_SIZE, "leadId", false);
+        while (leadDataPage.hasContent()) {
+            List<Integer> leadIds = leadDataPage.getContent().stream().map(LeadResponseDto::getLeadId).toList();
+            this.campaignRunService.saveBatchOfLeads(campaignRunData.getCampaignRunId(), new HashSet<>(leadIds));
+            leadDataPage = this.leadManager.getLeadsByBusinessIdPaginated(campaignRunData.getBusinessId(), leadDataPage.getNumber() + 1, BATCH_SIZE, "leadId", false);
         }
     }
 
@@ -149,10 +143,22 @@ public class CampaignManagerImpl implements  CampaignManager {
         return campaignData;
     }
 
-    private CampaignStartResponseDto modelToDto(CampaignRunData campaignRunData){
-        CampaignStartResponseDto campaignStartResponseDto = new CampaignStartResponseDto();
-        campaignStartResponseDto.setCampaignRunId(campaignRunData.getCampaignRunId());
-        return campaignStartResponseDto;
+    private CampaignRunResponseDto modelToDto(CampaignRunData campaignRunData){
+        CampaignRunResponseDto campaignRunResponseDto = new CampaignRunResponseDto();
+        campaignRunResponseDto.setCampaignRunId(campaignRunData.getCampaignRunId());
+        campaignRunResponseDto.setBusinessId(campaignRunData.getBusinessId());
+        campaignRunResponseDto.setCampaignId(campaignRunData.getCampaignId());
+        campaignRunResponseDto.setAll(campaignRunData.isAll());
+        campaignRunResponseDto.setAgentId(campaignRunData.getAgentId());
+        campaignRunResponseDto.setLanguage(campaignRunData.getLanguage());
+        campaignRunResponseDto.setLlmId(campaignRunData.getLlmId());
+        campaignRunResponseDto.setPhoneId(campaignRunData.getPhoneId());
+        campaignRunResponseDto.setCallSId(campaignRunData.getCallSId());
+        campaignRunResponseDto.setStatus(campaignRunData.getStatus());
+        campaignRunResponseDto.setCreatedAt(campaignRunData.getCreatedAt());
+        campaignRunResponseDto.setUpdatedAt(campaignRunData.getUpdatedAt());
+        campaignRunResponseDto.setCallSId(campaignRunData.getCallSId());
+        return campaignRunResponseDto;
     }
 
     private CampaignRunData dtoToModel(CampaignStartRequestDto CampaignStartRequestDto){

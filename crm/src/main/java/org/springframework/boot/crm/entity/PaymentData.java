@@ -3,6 +3,7 @@ package org.springframework.boot.crm.entity;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.util.Date;
 
 @Data
@@ -39,10 +40,10 @@ public class PaymentData {
     private  int phoneId;
 
     @Column(name = "start_time")
-    private Date startTime;
+    private LocalDate startTime;
 
     @Column(name = "end_time")
-    private Date endTime;
+    private LocalDate endTime;
 
     @Column(name = "input_token")
     private int inputToken;

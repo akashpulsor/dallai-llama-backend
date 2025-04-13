@@ -19,15 +19,18 @@ public class WebSocketStompConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws/dashboard", "/ws/calls")
+        registry.addEndpoint("/ws/dashboard")
                 .setAllowedOrigins("*")
-                .withSockJS();
+                .withSockJS()
+                .setClientLibraryUrl("https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js")
+                .setWebSocketEnabled(true)
+                .setSessionCookieNeeded(false);
     }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
+        registry.enableSimpleBroker("/topic", "/queue");
         registry.setApplicationDestinationPrefixes("/app");
-        registry.enableSimpleBroker("/topic/business");
     }
 
     @Override

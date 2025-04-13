@@ -1,24 +1,26 @@
 package org.springframework.boot.crm.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import lombok.*;
 
 @Data
 @AllArgsConstructor
+@Getter
+@Setter
+@NoArgsConstructor
 public class TokenAggregatesDto {
 
     private int id;
-    private int totalInputToken;
-    private int totalOutputToken;
-    private int totalToken;
-    private int totalCallTime;
-    private int totalInputTextToken;
-    private int totalInputAudioToken;
-    private int totalInputCachedToken;
-    private int totalInputCachedTextToken;
-    private int totalInputCachedAudioToken;
-    private int totalOutputTextToken;
-    private int totalOutputAudioToken;
+    private long totalInputToken;
+    private long totalOutputToken;
+    private long totalToken;
+    private long totalCallTime;
+    private long totalInputTextToken;
+    private long totalInputAudioToken;
+    private long totalInputCachedToken;
+    private long totalInputCachedTextToken;
+    private long totalInputCachedAudioToken;
+    private long totalOutputTextToken;
+    private long totalOutputAudioToken;
 
 
 

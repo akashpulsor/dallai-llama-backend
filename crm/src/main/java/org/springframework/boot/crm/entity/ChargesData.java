@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.util.Date;
 
 @Data
@@ -51,10 +52,10 @@ public class ChargesData {
     private int callLastStatus;
 
     @Column(name = "call_start_time")
-    private Date callStartTime;
+    private LocalDate callStartTime;
 
     @Column(name = "call_end_time")
-    private Date callEndTime;
+    private LocalDate callEndTime;
 
     @Column(name = "carrier_id")
     private int carrierId;

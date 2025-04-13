@@ -64,4 +64,6 @@ public interface BusinessManager {
     MetaManager getMetaManager();
 
     DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId);
+
+     CampaignRunResponseDto startCampaign(CampaignStartRequestDto campaignDataRequestDto);
 }

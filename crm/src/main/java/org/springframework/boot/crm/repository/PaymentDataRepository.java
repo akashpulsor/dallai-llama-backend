@@ -12,14 +12,12 @@ import java.util.Date;
 import java.util.Optional;
 
 @EnableJpaRepositories
-public interface PaymentDataRepository  extends JpaRepository<PaymentData, Integer> {
-
+public interface PaymentDataRepository extends JpaRepository<PaymentData, Integer> {
 
     Optional<PaymentData> findByCallId(int callId);
 
-
     @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
-            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "p.businessId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
             "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
             "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
             "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
@@ -27,7 +25,7 @@ public interface PaymentDataRepository  extends JpaRepository<PaymentData, Integ
     TokenAggregatesDto findAggregatesByBusinessId(@Param("businessId") int businessId);
 
     @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
-            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "p.businessId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
             "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
             "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
             "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
@@ -39,7 +37,7 @@ public interface PaymentDataRepository  extends JpaRepository<PaymentData, Integ
             @Param("endTime") LocalDate endTime);
 
     @Query("SELECT new org.springframework.boot.crm.dto.TokenAggregatesDto(" +
-            "p.campaignRunId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
+            "p.campaignId as id, SUM(p.inputToken), SUM(p.outputToken), SUM(p.totalToken), SUM(p.callTime), " +
             "SUM(p.inputTextToken), SUM(p.inputAudioToken), SUM(p.inputCachedToken), " +
             "SUM(p.inputCachedTextToken), SUM(p.inputCachedAudioToken), " +
             "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
@@ -53,7 +51,4 @@ public interface PaymentDataRepository  extends JpaRepository<PaymentData, Integ
             "SUM(p.outputTextToken), SUM(p.outputAudioToken)) " +
             "FROM payment_data p WHERE p.campaignRunId = :campaignRunId GROUP BY p.campaignRunId")
     TokenAggregatesDto findAggregatesByCampaignRunId(@Param("campaignRunId") int campaignRunId);
-
-
-
 }

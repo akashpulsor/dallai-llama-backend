@@ -10,6 +10,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 
 @Slf4j
@@ -57,7 +58,7 @@ public class PaymentManagerImpl implements PaymentManager {
         paymentData.setAgentId(startCallEvent.getAgentId());
         paymentData.setLlmId(startCallEvent.getLlmId());
         paymentData.setPhoneId(startCallEvent.getPhoneId());
-        paymentData.setStartTime(new Date());
+        paymentData.setStartTime(LocalDate.now());
         this.paymentService.addPaymentData(paymentData);
     }
 
@@ -65,14 +66,14 @@ public class PaymentManagerImpl implements PaymentManager {
     @EventListener
     public void stopCall(StopCallEvent stopCallEvent) {
         log.info("Call Stopped for Call id - {}", stopCallEvent);
-        int callId =stopCallEvent.getCallId();
+        int callId = stopCallEvent.getCallId();
         PaymentData paymentData = this.paymentService.getPaymentDataByCallId(callId);
-        paymentData.setEndTime(new Date());
-        int time =calculateCallTime(paymentData.getStartTime(),paymentData.getEndTime());
-        paymentData.setCallTime(time);
+        paymentData.setEndTime(LocalDate.now());
+        long time = calculateCallTime(paymentData.getStartTime(), paymentData.getEndTime());
+        paymentData.setCallTime((int)time);
         this.paymentService.addPaymentData(paymentData);
         ChargesData chargesData = saveChargesData(paymentData);
-        log.info("Total Payment Data - {} - {}",paymentData, chargesData);
+        log.info("Total Payment Data - {} - {}", paymentData, chargesData);
     }
 
     @Override
@@ -102,11 +103,12 @@ public class PaymentManagerImpl implements PaymentManager {
 
 
 
-    public int calculateCallTime(Date startTime, Date endTime) {
+    private long calculateCallTime(LocalDate startTime, LocalDate endTime) {
         if (startTime != null && endTime != null) {
-            // Get time in milliseconds and convert to seconds
-            long diffInMillies = endTime.getTime() - startTime.getTime();
-            return (int) (diffInMillies / 1000);
+            return ChronoUnit.SECONDS.between(
+                    startTime.atStartOfDay(),
+                    endTime.atStartOfDay()
+            );
         }
         log.error("Total Call Time is zero");
         return 0;
@@ -118,7 +120,10 @@ public class PaymentManagerImpl implements PaymentManager {
     public PaymentDataDto getCallCharges(int callId) {
         PaymentData paymentData = this.paymentService.getPaymentDataByCallId(callId);
         ChargesData chargesData = this.chargesDataService.getChargesDataByCallId(callId);
-
+        if (chargesData == null || paymentData == null) {
+            log.error("Call data not found for call id - {}", callId);
+            return new PaymentDataDto(callId);
+        }
         return  new PaymentDataDto(callId,
                 chargesData.getTotalCharges(),
                 chargesData.getServiceCharges(),
@@ -196,23 +201,26 @@ public class PaymentManagerImpl implements PaymentManager {
     public PaymentDataDto getCallChargesByBusinessIdBetweenStartTimeAndEndTime(int businessId, LocalDate startTime, LocalDate endTime) {
         ChargesSummaryDto chargeSummaryDto = this.chargesDataService.getChargesSummaryByBusinessIdBetweenStartTimeAndEndTime(businessId, startTime, endTime);
         TokenAggregatesDto tokenAggregatesDto = this.paymentService.findAggregatesByBusinessIdBetweenStartTimeAndEndTime(businessId, startTime, endTime);
-        return new PaymentDataDto(businessId,
-                chargeSummaryDto.getTotalCharges(),
-                chargeSummaryDto.getTotalServiceCharges(),
-                chargeSummaryDto.getTotalModelCharges(),
-                chargeSummaryDto.getTotalCarrierCharges(),
-                chargeSummaryDto.getTotalEffectiveCost(),
-                tokenAggregatesDto.getTotalInputToken(),
-                tokenAggregatesDto.getTotalOutputToken(),
-                tokenAggregatesDto.getTotalToken(),
-                tokenAggregatesDto.getTotalCallTime(),
-                tokenAggregatesDto.getTotalInputTextToken(),
-                tokenAggregatesDto.getTotalInputAudioToken(),
-                tokenAggregatesDto.getTotalInputCachedToken(),
-                tokenAggregatesDto.getTotalInputCachedTextToken(),
-                tokenAggregatesDto.getTotalInputCachedAudioToken(),
-                tokenAggregatesDto.getTotalOutputTextToken(),
-                tokenAggregatesDto.getTotalOutputAudioToken());
+        if(chargeSummaryDto!=null && tokenAggregatesDto!= null){
+            return new PaymentDataDto(businessId,
+                    chargeSummaryDto.getTotalCharges(),
+                    chargeSummaryDto.getTotalServiceCharges(),
+                    chargeSummaryDto.getTotalModelCharges(),
+                    chargeSummaryDto.getTotalCarrierCharges(),
+                    chargeSummaryDto.getTotalEffectiveCost(),
+                    tokenAggregatesDto.getTotalInputToken(),
+                    tokenAggregatesDto.getTotalOutputToken(),
+                    tokenAggregatesDto.getTotalToken(),
+                    tokenAggregatesDto.getTotalCallTime(),
+                    tokenAggregatesDto.getTotalInputTextToken(),
+                    tokenAggregatesDto.getTotalInputAudioToken(),
+                    tokenAggregatesDto.getTotalInputCachedToken(),
+                    tokenAggregatesDto.getTotalInputCachedTextToken(),
+                    tokenAggregatesDto.getTotalInputCachedAudioToken(),
+                    tokenAggregatesDto.getTotalOutputTextToken(),
+                    tokenAggregatesDto.getTotalOutputAudioToken());
+        }
+        return new PaymentDataDto(businessId);
     }
 
 

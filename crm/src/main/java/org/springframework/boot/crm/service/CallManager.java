@@ -7,6 +7,7 @@ import com.twilio.Twilio;
 import com.twilio.http.HttpMethod;
 import com.twilio.type.PhoneNumber;
 import com.twilio.rest.api.v2010.account.Call;
+import jakarta.transaction.Transactional;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -123,6 +124,7 @@ public class CallManager {
         return "jwtToken";
     }
 
+    @Transactional
     public void removeSession(int leadId, int campaignRunId, String callType) {
         CallLog callLog = this.callLogService.getCallLog(callType,
                 campaignRunId,
@@ -130,12 +132,14 @@ public class CallManager {
         );
         log.info("Size before removing stream Id - {}", twilioOpenAiMap.size());
         twilioOpenAiMap.remove(callLog.getStreamId());
+
         log.info("Size After removing stream Id  - {}", twilioOpenAiMap.size());
         StopCallEvent stopCallEvent = new StopCallEvent(this, callLog.getCallLogId());
         this.applicationEventPublisher.publishEvent(stopCallEvent);
         CallStatus callStatus = new CallStatus();
         callStatus.setStatus("ENDED");
         callStatus.setCallLog(callLog);
+        callStatus.setTimestamp(LocalDateTime.now());
         callLog.getStatusHistory().add(callStatus);
         this.callLogService.saveCallLog(callLog);
     }
@@ -241,6 +245,7 @@ public class CallManager {
         callStatus.setTimestamp(LocalDateTime.now());
         callLog.getStatusHistory().add(callStatus);
         callLog.setEndTime(LocalDateTime.now());
+        callStatus.setCallLog(callLog);
         this.callLogService.saveCallLog(callLog);
         log.info("Call log updated - {}", callLog);
         this.applicationEventPublisher.publishEvent(new CallLogEvent(this, callLog));

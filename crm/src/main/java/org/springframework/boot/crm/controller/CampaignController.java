@@ -44,8 +44,8 @@ public class CampaignController {
 
 
     @PostMapping("/start")
-    public CampaignStartResponseDto startCampaign(@RequestBody @Valid CampaignStartRequestDto campaignDataRequestDto) {
-        return this.businessManager.getCampaignManager().start(campaignDataRequestDto);
+    public CampaignRunResponseDto startCampaign(@RequestBody @Valid CampaignStartRequestDto campaignDataRequestDto) {
+        return this.businessManager.startCampaign(campaignDataRequestDto);
     }
 
     @PostMapping("/run")
@@ -82,7 +82,7 @@ public class CampaignController {
         return this.businessManager.getCallManager().getPaginatedCallLogs(campaignRunId, page, size);
     }
 
-    @GetMapping("/{callId}/usageData")
+    @GetMapping("/{callId}/usage-data")
     public PaymentDataDto getUsageData(@PathVariable int callId) {
         log.info("Fetching usage data for call id: {}", callId);
         return this.businessManager.getPaymentManager().getCallCharges(callId);
