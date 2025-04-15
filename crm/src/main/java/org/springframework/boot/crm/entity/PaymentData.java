@@ -55,7 +55,7 @@ public class PaymentData {
     private int totalToken;
 
     @Column(name = "call_time")
-    private int callTime;
+    private long callTime;
 
     @Column(name = "input_text_token")
     private int inputTextToken;

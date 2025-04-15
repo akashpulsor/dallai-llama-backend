@@ -46,7 +46,7 @@ public class ChargesData {
     private int phoneId;
 
     @Column(name = "call_duration")
-    private int callDuration;
+    private long callDuration;
 
     @Column(name = "call_last_status")
     private int callLastStatus;
