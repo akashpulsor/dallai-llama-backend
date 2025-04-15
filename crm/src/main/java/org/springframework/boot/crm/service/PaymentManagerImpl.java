@@ -73,7 +73,11 @@ public class PaymentManagerImpl implements PaymentManager {
         long time = calculateCallTime(paymentData.getStartTime(), paymentData.getEndTime());
         paymentData.setCallTime((int)time);
         this.paymentService.addPaymentData(paymentData);
-        ChargesData chargesData = saveChargesData(paymentData);
+        ChargesData chargesData = this.chargesDataService.getChargesDataByCallId(callId);
+        if(chargesData == null) {
+            chargesData = new ChargesData();
+        }
+         saveChargesData(paymentData, chargesData);
         log.info("Total Payment Data - {} - {}", paymentData, chargesData);
     }
 
@@ -254,8 +258,7 @@ public class PaymentManagerImpl implements PaymentManager {
     }
 
     //TODO make it dynaminc for type of model and carrier 1 is for Twilio, Model Name
-    public ChargesData saveChargesData(PaymentData paymentData) {
-        ChargesData chargesData = new ChargesData();
+    public ChargesData saveChargesData(PaymentData paymentData,ChargesData chargesData) {
         chargesData.setCallId(paymentData.getCallId());
         chargesData.setCampaignId(paymentData.getCampaignId());
         chargesData.setCampaignRunId(paymentData.getCampaignRunId());

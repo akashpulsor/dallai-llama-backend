@@ -47,12 +47,15 @@ public class CampaignSseController implements ApplicationListener<ApplicationEve
             int campaignRunId = callLogEvent.getCallLog().getCampaignRunId(); // Assuming CallLog has a getUserId() method
             CampaignRunData campaignRunData = this.campaignManager.getCampaignRunDataById(campaignRunId);
             emitEventToUser(campaignRunData.getBusinessId(), "callLogEvent", callLogEvent.getCallLog());
+            log.info("CallLogEvent emitted to userId: {}", campaignRunData.getBusinessId());
         } else if (event instanceof ChargesDataEvent chargesDataEvent) {
             int businessId = chargesDataEvent.getChargesData().getBusinessId(); // Assuming ChargesData has a getUserId() method
             emitEventToUser(businessId, "chargesDataEvent", chargesDataEvent.getChargesData());
+            log.info("ChargesDataEvent emitted to userId: {}", businessId);
         } else if (event instanceof MakeCallEvent makeCallEvent) {
             int businessId = makeCallEvent.getBusinessId(); // Assuming CallDetails has a getUserId() method
             emitEventToUser(businessId, "makeCallEvent", makeCallEvent.getCampaignRunData());
+            log.info("MakeCallEvent emitted to userId: {}", businessId);
         } else {
             log.warn("Unhandled event type: {}", event.getClass().getSimpleName());
         }
