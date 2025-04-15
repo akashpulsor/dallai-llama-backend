@@ -10,6 +10,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 
@@ -105,10 +106,8 @@ public class PaymentManagerImpl implements PaymentManager {
 
     private long calculateCallTime(LocalDate startTime, LocalDate endTime) {
         if (startTime != null && endTime != null) {
-            return ChronoUnit.SECONDS.between(
-                    startTime.atStartOfDay(),
-                    endTime.atStartOfDay()
-            );
+            return endTime.atStartOfDay().toEpochSecond(ZoneOffset.UTC) -
+                    startTime.atStartOfDay().toEpochSecond(ZoneOffset.UTC);
         }
         log.error("Total Call Time is zero");
         return 0;
