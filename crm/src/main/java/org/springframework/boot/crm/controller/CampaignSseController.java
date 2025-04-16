@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @RestController
+@CrossOrigin(origins = "*", maxAge = 3600)
 @RequestMapping("/api/events")
 public class CampaignSseController implements ApplicationListener<ApplicationEvent> {
 
