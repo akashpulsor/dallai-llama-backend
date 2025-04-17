@@ -43,15 +43,18 @@ public class CallManager {
 
     private final CallLogService callLogService;
 
+    private final TranscriptionService transcriptionService;
+
     @Value("${app.hostname}")
     private String hostname;
 
     public CallManager(ApplicationEventPublisher applicationEventPublisher, ToolsService toolsService,
-                        CallLogService callLogService) {
+                        CallLogService callLogService, TranscriptionService transcriptionService) {
         this.applicationEventPublisher = applicationEventPublisher;
         twilioOpenAiMap = new ConcurrentHashMap<>();
         this.toolsService = toolsService;
         this.callLogService = callLogService;
+        this.transcriptionService=transcriptionService;
     }
 
 
@@ -201,7 +204,6 @@ public class CallManager {
     }
 
     public List<CallLog> getPaginatedCallLogsList(int campaignRunId) {
-        List<CallLog> temp = callLogService.getPaginatedCallLogsList(campaignRunId);
         return callLogService.getPaginatedCallLogsList(campaignRunId);
     }
 
@@ -215,6 +217,25 @@ public class CallManager {
             openAiRealTimeSession.getWebSocket().sendText(json, true);
         }
 
+    }
+
+    public void getTranscriptionData(String base64Audio, String streamSid) throws JsonProcessingException {
+        RealTimeSession realTimeSession = twilioOpenAiMap.get(streamSid);
+        if(realTimeSession!=null) {
+            LlmData llmData = realTimeSession.getLlmData();
+            TwilioStartMessageDto.StartDto startDto = realTimeSession.getTwilioStartEventDto().getTwilioStartMediaMessage().getStart();
+            int campaignRunId =startDto.getCustomParameters().getCampaignRunId();
+            int businessId = startDto.getCustomParameters().getBusinessId();
+            int leadId = startDto.getCustomParameters().getLeadId();
+            CallLog callLog = this.callLogService.getCallLog(startDto.getCustomParameters().getCallType(),
+                    campaignRunId,
+                    leadId
+            );
+            log.info("Transcribing audio - {}", base64Audio);
+            String transcribedText = this.transcriptionService.transcribeBase64Audio(base64Audio,llmData);
+            TranscriptionEvent transcriptionEvent = new TranscriptionEvent(this, campaignRunId, businessId, leadId, callLog.getCallLogId(), transcribedText);
+            this.applicationEventPublisher.publishEvent(transcriptionEvent);
+        }
     }
 
     public void sendTwilioRealtimeSession(OpenAiAudioEvent openAiAudioEvent,Map<String,Object> audioDelta,Map<String, String> audioData) throws IOException {

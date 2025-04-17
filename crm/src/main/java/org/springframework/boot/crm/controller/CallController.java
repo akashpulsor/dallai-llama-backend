@@ -50,11 +50,27 @@ public class CallController {
         String direction = params.get("Direction");
         String queueTime = params.get("QueueTime");
         String streamSid = params.get("StreamSid");
+        String eventType = params.get("EventType"); // Get the event type
+        String transcriptionText = params.get("TranscriptionText");
         log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{} -{}",callSid,
                 callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime, streamSid);
         // Validate the request
         CallStatusDto callStatusData = new CallStatusDto(callSid, callStatus, callDuration, timestamp, fromNumber, toNumber, direction, queueTime, streamSid);
         this.callManager.updateCallStatus(callStatusData);
+
+        // Check for transcription completion
+        if ("transcription-completed".equals(eventType)) { //check event type
+            if (transcriptionText != null && callSid != null) {
+
+                log.info("Transcription saved to database for CallSid, text: {} {}", callSid, transcriptionText);
+            } else {
+                log.warn("Transcription text or CallSid is null. Not saving.");
+            }
+        }
+        else if ("transcription-failed".equals(eventType)) {
+            log.error("Transcription failed for CallSid: {}.  ErrorCode: {} , ErrorMessage: {}",callSid,params.get("ErrorCode"),params.get("ErrorMessage"));
+        }
+
         return "ok";
     }
 

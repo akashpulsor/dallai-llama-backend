@@ -43,6 +43,9 @@ public class RealTimeSession {
         return this.twilioStartEventDto;
     }
 
+    public LlmData getLlmData(){
+        return this.llmData;
+    }
 
     private void connect(String json, ApplicationEventPublisher applicationEventPublisher, TwilioStartEventDto twilioStartEventDto,LlmData llmData) throws InterruptedException, JsonProcessingException {
         this.latch = new CountDownLatch(1);
