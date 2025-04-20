@@ -2,6 +2,7 @@ package org.springframework.boot.crm.service;
 
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.PaymentData;
+import org.springframework.boot.crm.entity.TranscriptionData;
 
 import java.time.LocalDate;
 import java.util.Date;
@@ -30,6 +31,6 @@ public interface PaymentManager {
 
     PaymentDataDto getCallChargesByBusinessIdBetweenStartTimeAndEndTime(int businessId, LocalDate startTime, LocalDate endTime);
 
-
+    void addTranscriptionDataEvent(TranscriptionData transcriptionData);
 
 }

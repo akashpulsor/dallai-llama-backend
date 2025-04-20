@@ -2,6 +2,7 @@ package org.springframework.boot.crm.service;
 
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.web.bind.annotation.PathVariable;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -66,4 +67,14 @@ public interface BusinessManager {
     DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId);
 
      CampaignRunResponseDto startCampaign(CampaignStartRequestDto campaignDataRequestDto);
+
+    void getTranscription(String hostname,String callSid,  String recordingSid,
+                          String recordingStatus,
+                          String recordingUrl
+    );
+
+    byte[] downloadCallRecording(
+                                  int callId);
+
+
 }

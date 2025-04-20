@@ -5,6 +5,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.twilio.Twilio;
 import com.twilio.http.HttpMethod;
+import com.twilio.rest.api.v2010.account.Recording;
+import com.twilio.rest.api.v2010.account.Transcription;
 import com.twilio.type.PhoneNumber;
 import com.twilio.rest.api.v2010.account.Call;
 import jakarta.transaction.Transactional;
@@ -19,6 +21,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -83,6 +86,11 @@ public class CallManager {
                 .setStatusCallback(new URI(hostname + "/api/call/status"))
                 .setStatusCallbackEvent(List.of("initiated", "ringing", "answered", "completed"))
                 .setStatusCallbackMethod(HttpMethod.POST)
+                .setRecordingChannels("dual")
+                .setRecord(true)
+                .setRecordingStatusCallback(hostname + "/api/call/recording-status")
+                .setRecordingStatusCallbackMethod(HttpMethod.POST)
+                .setRecordingStatusCallbackEvent(List.of("completed"))
                 .create();
 
 
@@ -100,16 +108,16 @@ public class CallManager {
     public String incomingCall(String host,int campaignRunId,
                                String authToken,int businessId, int leadId, String callType )  {
         //TODO decrypt the auth token
-        String url = "wss://"+host+"/media-stream?"+ "authToken="+authToken+"&campaignRunId="+campaignRunId;
-        url = "wss://"+host+"/api/call/media-stream?"+ "authToken="+authToken+"&campaignRunId="+campaignRunId+"&leadId="+leadId+"&callType="+callType;
-        url = "wss://"+host+"/api/call/media-stream";
+        String url = "wss://"+host+"/api/call/media-stream";
+        String transcriptionCallback = host + "/api/call/transcription-callback";
         return  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<Response>"
                 + "<Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>"
                 + "<Pause length=\"1\"/>"
                 + "<Say>O.K. you can start talking!</Say>"
+
                 + "<Connect>"
-                + "<Stream url=\""+url+"\" >"
+                + "<Stream url=\""+url+"\"  >"
                 + "<Parameter name=\"authToken\" value=\"" + authToken + "\" />"
                 + "<Parameter name=\"campaignRunId\" value=\"" + campaignRunId + "\" />"
                 + "<Parameter name=\"businessId\" value=\"" + businessId + "\" />"
@@ -117,6 +125,7 @@ public class CallManager {
                 + "<Parameter name=\"callType\" value=\"" + callType + "\" />"
                 +"</Stream>"
                 + "</Connect>"
+
                 + "</Response>";
     }
 
@@ -199,6 +208,10 @@ public class CallManager {
         return this.callLogService.getCallLog(callId);
     }
 
+    public CallLog getCallLog(String callSid){
+        return this.callLogService.getCallLogByCallSid(callSid);
+    }
+
     public Page<CallLog> getPaginatedCallLogs(int campaignRunId, int page, int size) {
         return callLogService.getPaginatedCallLogs(campaignRunId, page, size);
     }
@@ -219,23 +232,28 @@ public class CallManager {
 
     }
 
-    public void getTranscriptionData(String base64Audio, String streamSid) throws JsonProcessingException {
-        RealTimeSession realTimeSession = twilioOpenAiMap.get(streamSid);
-        if(realTimeSession!=null) {
-            LlmData llmData = realTimeSession.getLlmData();
-            TwilioStartMessageDto.StartDto startDto = realTimeSession.getTwilioStartEventDto().getTwilioStartMediaMessage().getStart();
-            int campaignRunId =startDto.getCustomParameters().getCampaignRunId();
-            int businessId = startDto.getCustomParameters().getBusinessId();
-            int leadId = startDto.getCustomParameters().getLeadId();
-            CallLog callLog = this.callLogService.getCallLog(startDto.getCustomParameters().getCallType(),
-                    campaignRunId,
-                    leadId
-            );
-            log.info("Transcribing audio - {}", base64Audio);
-            String transcribedText = this.transcriptionService.transcribeBase64Audio(base64Audio,llmData);
-            TranscriptionEvent transcriptionEvent = new TranscriptionEvent(this, campaignRunId, businessId, leadId, callLog.getCallLogId(), transcribedText);
-            this.applicationEventPublisher.publishEvent(transcriptionEvent);
-        }
+    public TranscriptionDto getTranscriptionData(TwilioData twilioData, LlmData llmData,CallLog callLog,String callSid,  String recordingSid,
+                                     String recordingStatus,
+                                     String recordingUrl)  {
+        log.info("Recording status update for call {}: {} - Recording SID: {}",
+                callSid, recordingStatus, recordingSid);
+        Twilio.init(twilioData.getAccountSid(), twilioData.getAccountAuthToken());
+        // Fetch the recording metadata
+        Recording recording = Recording.fetcher(recordingSid).fetch();
+        log.info("Recording metadata: {}", recording);
+
+        String inboundUrl = recordingUrl + ".wav?Download=true&Channels=mono&Channel=0";
+        byte[] inboundAudioData = TranscriptionUtils.downloadAudio(inboundUrl, twilioData);
+        String inboundTranscription =TranscriptionUtils.transcribeAudio(inboundAudioData, llmData);
+        String outboundUrl = recordingUrl + ".wav?Download=true&Channels=mono&Channel=1";
+        byte[] outboundAudioData = TranscriptionUtils.downloadAudio(outboundUrl, twilioData);
+        String outboundTranscription =TranscriptionUtils.transcribeAudio(outboundAudioData, llmData);
+        return new TranscriptionDto(
+                recording,
+                callLog,
+                inboundTranscription,
+                outboundTranscription
+        );
     }
 
     public void sendTwilioRealtimeSession(OpenAiAudioEvent openAiAudioEvent,Map<String,Object> audioDelta,Map<String, String> audioData) throws IOException {
@@ -259,6 +277,7 @@ public class CallManager {
 
     }
 
+
     public CallLog updateCallStatus(CallStatusDto callStatusDto) {
         CallLog callLog=this.callLogService.getCallLogByCallSid(callStatusDto.getCallSid());
         CallStatus callStatus = new CallStatus();
@@ -281,6 +300,14 @@ public class CallManager {
         );
         BillingDataEvent billingDataEvent = new BillingDataEvent(this,openAiResponseDoneDto.getResponse().getUsage(), callLog.getCallLogId());
         this.applicationEventPublisher.publishEvent(billingDataEvent);
+    }
+
+    public byte[] downloadRecording( int businessId,
+                                     int campaignRunId,
+                                     int callId, TwilioData twilioData) {
+        TranscriptionData transcriptionData = this.transcriptionService.getTranscriptionData(businessId, campaignRunId, callId);
+        String inboundUrl = transcriptionData.getMediaUrl() + ".wav";
+        return TranscriptionUtils.downloadAudio(inboundUrl, twilioData);
     }
 
     private CallLog updateStreamId(TwilioStartEventDto twilioStartEventDto,CallLog callLog){

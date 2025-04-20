@@ -24,24 +24,47 @@ public class PaymentDataDto {
     private long totalInputCachedAudioToken;
     private long totalOutputTextToken;
     private long totalOutputAudioToken;
+    private String inBoundText;
+    private int transcriptionId;
 
     public PaymentDataDto(int id) {
         this.id = this.id;
-        this.totalCharges = 0;
-        this.totalServiceCharges = 0;
-        this.totalModelCharges = 0;
-        this.totalCarrierCharges = 0;
-        this.totalEffectiveCost = 0;
-        this.totalInputToken = 0;
-        this.totalOutputToken = 0;
-        this.totalToken = 0;
-        this.totalCallTime = 0;
-        this.totalInputTextToken = 0;
-        this.totalInputAudioToken = 0;
-        this.totalInputCachedToken = 0;
-        this.totalInputCachedTextToken = 0;
-        this.totalInputCachedAudioToken = 0;
-        this.totalOutputTextToken = 0;
-        this.totalOutputAudioToken = 0;
+
+    }
+
+    public PaymentDataDto(     int id,
+     double totalCharges,
+     double totalServiceCharges,
+     double totalModelCharges,
+     double totalCarrierCharges,
+     double totalEffectiveCost,
+     long totalInputToken,
+     long totalOutputToken,
+     long totalToken,
+     long totalCallTime,
+     long totalInputTextToken,
+     long totalInputAudioToken,
+     long totalInputCachedToken,
+     long totalInputCachedTextToken,
+     long totalInputCachedAudioToken,
+     long totalOutputTextToken,
+     long totalOutputAudioToken){
+        this.id = id;
+        this.totalCharges = totalCharges;
+        this.totalServiceCharges = totalServiceCharges;
+        this.totalModelCharges = totalModelCharges;
+        this.totalCarrierCharges = totalCarrierCharges;
+        this.totalEffectiveCost = totalEffectiveCost;
+        this.totalInputToken = totalInputToken;
+        this.totalOutputToken = totalOutputToken;
+        this.totalToken = totalToken;
+        this.totalCallTime = totalCallTime;
+        this.totalInputTextToken = totalInputTextToken;
+        this.totalInputAudioToken = totalInputAudioToken;
+        this.totalInputCachedToken = totalInputCachedToken;
+        this.totalInputCachedTextToken = totalInputCachedTextToken;
+        this.totalInputCachedAudioToken = totalInputCachedAudioToken;
+        this.totalOutputTextToken = totalOutputTextToken;
+        this.totalOutputAudioToken = totalOutputAudioToken;
     }
 }

@@ -4,10 +4,9 @@ package org.springframework.boot.crm.controller;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.dto.CallStatusDto;
-import org.springframework.boot.crm.entity.CallLog;
-import org.springframework.boot.crm.entity.CallStatus;
+import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.CallManager;
-import org.springframework.boot.crm.service.MetaManager;
+import org.springframework.boot.crm.service.TranscriptionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,9 +19,14 @@ import java.util.Map;
 public class CallController {
 
     private final CallManager callManager;
+    private final BusinessManager businessManager;
 
-    public CallController(CallManager callManager) {
+    private  final TranscriptionService transcriptionService;
+
+    public CallController(CallManager callManager, BusinessManager businessManager, TranscriptionService transcriptionService) {
         this.callManager = callManager;
+        this.businessManager = businessManager;
+        this.transcriptionService = transcriptionService;
     }
 
 
@@ -32,7 +36,7 @@ public class CallController {
     public String incomingCall(@RequestHeader("host") String host,@RequestParam("campaignRunId") int campaignRunId,
                                @RequestParam("authToken") String authToken,@RequestParam("businessId") int businessId,@RequestParam("leadId") int leadId,
                                @RequestParam("callType") String callType){
-        return this.callManager.incomingCall(host,campaignRunId,authToken,businessId,leadId,callType);
+        return this.businessManager.getCallManager().incomingCall(host,campaignRunId,authToken,businessId,leadId,callType);
     }
 
 
@@ -50,28 +54,39 @@ public class CallController {
         String direction = params.get("Direction");
         String queueTime = params.get("QueueTime");
         String streamSid = params.get("StreamSid");
-        String eventType = params.get("EventType"); // Get the event type
-        String transcriptionText = params.get("TranscriptionText");
         log.info("Status call back -{} - {} -{} -{} -{} -{} -{} -{} -{}",callSid,
                 callStatus,callDuration,timestamp, fromNumber, toNumber, direction,queueTime, streamSid);
         // Validate the request
         CallStatusDto callStatusData = new CallStatusDto(callSid, callStatus, callDuration, timestamp, fromNumber, toNumber, direction, queueTime, streamSid);
-        this.callManager.updateCallStatus(callStatusData);
+        this.businessManager.getCallManager().updateCallStatus(callStatusData);
 
-        // Check for transcription completion
-        if ("transcription-completed".equals(eventType)) { //check event type
-            if (transcriptionText != null && callSid != null) {
 
-                log.info("Transcription saved to database for CallSid, text: {} {}", callSid, transcriptionText);
-            } else {
-                log.warn("Transcription text or CallSid is null. Not saving.");
-            }
-        }
-        else if ("transcription-failed".equals(eventType)) {
-            log.error("Transcription failed for CallSid: {}.  ErrorCode: {} , ErrorMessage: {}",callSid,params.get("ErrorCode"),params.get("ErrorMessage"));
-        }
 
         return "ok";
+    }
+
+    // Add this new controller method to handle recording status callbacks
+    @PostMapping("/recording-status")
+    public ResponseEntity<String> handleRecordingStatus(
+            @RequestHeader("host") String hostname,
+            @RequestParam("RecordingSid") String recordingSid,
+            @RequestParam("RecordingStatus") String recordingStatus,
+            @RequestParam("RecordingUrl") String recordingUrl,
+            @RequestParam("CallSid") String callSid) {
+
+        log.info("Recording status update for call {}: {} - Recording SID: {} - url -{}",
+                callSid, recordingStatus, recordingSid, recordingUrl);
+
+        if ("completed".equals(recordingStatus)) {
+            try {
+                this.businessManager.getTranscription( hostname,callSid,recordingSid, recordingStatus, recordingUrl);
+            } catch (Exception e) {
+                log.error("Error creating transcription for recording {}: {}",
+                        recordingSid, e.getMessage(), e);
+            }
+        }
+
+        return ResponseEntity.ok("Recording status processed");
     }
 
 

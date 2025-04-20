@@ -6,6 +6,7 @@ import org.springframework.boot.crm.dto.ChargesDataEvent;
 import org.springframework.boot.crm.dto.MakeCallEvent;
 import org.springframework.boot.crm.dto.TranscriptionEvent;
 import org.springframework.boot.crm.entity.CampaignRunData;
+import org.springframework.boot.crm.entity.TranscriptionData;
 import org.springframework.boot.crm.service.CampaignManager;
 import org.springframework.boot.crm.service.CampaignService;
 import org.springframework.context.ApplicationEvent;
@@ -58,11 +59,12 @@ public class CampaignSseController implements ApplicationListener<ApplicationEve
             int businessId = makeCallEvent.getBusinessId(); // Assuming CallDetails has a getUserId() method
             emitEventToUser(businessId, "makeCallEvent", makeCallEvent.getCampaignRunData());
             log.info("MakeCallEvent emitted to userId: {}", businessId);
-        } else if (event instanceof TranscriptionEvent) {
-            TranscriptionEvent transcriptionEvent = (TranscriptionEvent) event;
-            int businessId = transcriptionEvent.getBusinessId(); // Assuming CallDetails has a getUserId() method
-            emitEventToUser(businessId, "transcriptionEvent", transcriptionEvent);
-            log.info("TranscriptionEvent emitted to userId: {}", businessId);
+        } else if (event instanceof TranscriptionEvent transcriptionEvent) {
+            TranscriptionData transcriptionData = transcriptionEvent.getTranscriptionData();
+            int businessId = transcriptionData.getBusinessId(); // Assuming CallDetails has a getUserId() method
+            emitEventToUser(businessId, "transcriptionEvent", transcriptionData);
+            log.info("CampaignRunData emitted to userId: {}", businessId);
+
         } else {
             log.warn("Unhandled event type: {}", event.getClass().getSimpleName());
         }
@@ -73,7 +75,7 @@ public class CampaignSseController implements ApplicationListener<ApplicationEve
         SseEmitter emitter = userEmitters.get(userId);
         if (emitter != null) {
             try {
-                emitter.send(SseEmitter.event()
+                emitter.send(SseEmitter.event().reconnectTime(500)
                         .name(eventName)
                         .data(eventData));
             } catch (IOException e) {

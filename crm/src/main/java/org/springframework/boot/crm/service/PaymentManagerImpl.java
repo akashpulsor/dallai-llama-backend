@@ -6,6 +6,8 @@ import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.CallLog;
 import org.springframework.boot.crm.entity.ChargesData;
 import org.springframework.boot.crm.entity.PaymentData;
+import org.springframework.boot.crm.entity.TranscriptionData;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -31,11 +33,19 @@ public class PaymentManagerImpl implements PaymentManager {
 
     private final ChargesDataService chargesDataService;
 
+    private final TranscriptionService transcriptionService;
+
+    private final ApplicationEventPublisher applicationEventPublisher;
+
     public PaymentManagerImpl(CallManager callManager, PaymentService paymentService,
-                              ChargesDataService chargesDataService) {
+                              ChargesDataService chargesDataService,
+                              TranscriptionService transcriptionService,
+                              ApplicationEventPublisher applicationEventPublisher) {
         this.callManager = callManager;
         this.paymentService = paymentService;
         this.chargesDataService = chargesDataService;
+        this.transcriptionService = transcriptionService;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -77,7 +87,8 @@ public class PaymentManagerImpl implements PaymentManager {
         if(chargesData == null) {
             chargesData = new ChargesData();
         }
-         saveChargesData(paymentData, chargesData);
+        calculatePrice(paymentData, chargesData);
+        saveChargesData(paymentData, chargesData);
         log.info("Total Payment Data - {} - {}", paymentData, chargesData);
     }
 
@@ -90,6 +101,25 @@ public class PaymentManagerImpl implements PaymentManager {
         PaymentData paymentData = this.paymentService.getPaymentDataByCallId(callId);
         paymentData = updateTokenInformation(paymentData,usage);
         log.info("updated Payment Data - {}",paymentData);
+    }
+
+    @Override
+    @EventListener
+    public void addTranscriptionDataEvent(TranscriptionData transcriptionData) {
+        log.info("Adding transcription data - {}", transcriptionData);
+        PaymentData paymentData = this.paymentService.getPaymentDataByCallId(transcriptionData.getCallId());
+        long callTime = Long.parseLong(transcriptionData.getDuration());
+        this.paymentService.addPaymentData(paymentData);
+        ChargesData chargesData = this.chargesDataService.getChargesDataByCallId(transcriptionData.getCallId());
+        chargesData.setCarrierId(transcriptionData.getPhoneId());
+        chargesData.setCarrierCharges(Math.abs(Double.parseDouble(transcriptionData.getPrice())));
+        chargesData.setServiceCharges(chargesData.getModelCharges() * 0.20);
+        paymentData.setCallTime(callTime);
+        chargesData.setTotalCharges(chargesData.getModelCharges() + chargesData.getCarrierCharges() + chargesData.getServiceCharges());
+        chargesData.setCallDuration(callTime);
+        this.chargesDataService.addChargesData(chargesData);
+        this.applicationEventPublisher.publishEvent(new ChargesDataEvent(this, chargesData));
+        this.applicationEventPublisher.publishEvent(new TranscriptionEvent(this, transcriptionData));
     }
 
     public PaymentData updateTokenInformation(PaymentData paymentData, OpenAiResponseDoneDto.Usage usage) {
@@ -123,6 +153,7 @@ public class PaymentManagerImpl implements PaymentManager {
     public PaymentDataDto getCallCharges(int callId) {
         PaymentData paymentData = this.paymentService.getPaymentDataByCallId(callId);
         ChargesData chargesData = this.chargesDataService.getChargesDataByCallId(callId);
+        TranscriptionData transcriptionData = this.transcriptionService.getTranscriptionDataByCallId(callId);
         if (chargesData == null || paymentData == null) {
             log.error("Call data not found for call id - {}", callId);
             return new PaymentDataDto(callId);
@@ -143,7 +174,7 @@ public class PaymentManagerImpl implements PaymentManager {
                 paymentData.getInputCachedTextToken(),
                 paymentData.getInputCachedAudioToken(),
                 paymentData.getOutputTextToken(),
-                paymentData.getOutputAudioToken());
+                paymentData.getOutputAudioToken(),transcriptionData.getInboundTranscriptionText(), transcriptionData.getTranscriptionId());
     }
 
     //create method which will return the charges data by campaign id
@@ -270,12 +301,7 @@ public class PaymentManagerImpl implements PaymentManager {
         chargesData.setCallStartTime(paymentData.getStartTime());
         chargesData.setCallEndTime(paymentData.getEndTime());
         chargesData.setCallDuration(paymentData.getCallTime());
-        chargesData = calculatePrice(paymentData, chargesData);
-        chargesData.setCarrierCharges(paymentData.getCallTime() * 0.0003);
-        chargesData.setServiceCharges(chargesData.getModelCharges() * 0.20);
-        chargesData.setCarrierId(1);
         chargesData.setModelName("gpt-4o-realtime-preview-2024-10-01");
-        chargesData.setTotalCharges(chargesData.getModelCharges() + chargesData.getCarrierCharges() + chargesData.getServiceCharges());
         return this.chargesDataService.addChargesData(chargesData);
 
     }
@@ -284,28 +310,20 @@ public class PaymentManagerImpl implements PaymentManager {
         long effectiveOutputTextTokens = usageData.getOutputTextToken();
         long nonCachedInputAudioTokens = usageData.getInputAudioToken() - usageData.getInputCachedAudioToken();
         long effectiveOutputAudioTokens = usageData.getOutputAudioToken();
-
-        double inputTextCost = (double) usageData.getInputTextToken() / 1_000_000 * INPUT_TEXT_PRICE_PER_MILLION;
-        chargesData.setInputTextCost(inputTextCost);
-        double outputTextCost = (double) usageData.getOutputTextToken() / 1_000_000 * OUTPUT_TEXT_PRICE_PER_MILLION;
-        chargesData.setOutputTextCost(outputTextCost);
-        double inputAudioCost = (double) usageData.getInputAudioToken() / 1_000_000 * INPUT_AUDIO_PRICE_PER_MILLION;
-        chargesData.setInputAudioCost(inputAudioCost);
-        double outputAudioCost = (double) usageData.getOutputAudioToken() / 1_000_000 * OUTPUT_AUDIO_PRICE_PER_MILLION;
-        chargesData.setOutputAudioCost(outputAudioCost);
-        double inputTextCachedCost = (double) usageData.getInputCachedTextToken() / 1_000_000 * INPUT_TEXT_CACHED_PRICE_PER_MILLION;
-        chargesData.setInputTextCachedCost(inputTextCachedCost);
-        double inputAudioCachedCost = (double) usageData.getInputCachedAudioToken() / 1_000_000 * INPUT_AUDIO_CACHED_PRICE_PER_MILLION;
-        chargesData.setInputAudioCachedCost(inputAudioCachedCost);
-        double totalCost = inputTextCost + outputTextCost + inputAudioCost + outputAudioCost;
-        chargesData.setModelCharges(totalCost);
-        double effectiveCost = (double) nonCachedInputTextTokens / 1_000_000 * INPUT_TEXT_PRICE_PER_MILLION +
-                (double) effectiveOutputTextTokens / 1_000_000 * OUTPUT_TEXT_PRICE_PER_MILLION +
-                (double) nonCachedInputAudioTokens / 1_000_000 * INPUT_AUDIO_PRICE_PER_MILLION +
-                (double) usageData.getInputCachedTextToken() / 1_000_000 * INPUT_TEXT_CACHED_PRICE_PER_MILLION +
-                (double) usageData.getInputCachedAudioToken() / 1_000_000 * INPUT_AUDIO_CACHED_PRICE_PER_MILLION +
-                (double) effectiveOutputAudioTokens / 1_000_000 * OUTPUT_AUDIO_PRICE_PER_MILLION;
-        chargesData.setEffectiveCost(effectiveCost);
+        double inputTextPrice = (nonCachedInputTextTokens / 1000000.0) * INPUT_TEXT_PRICE_PER_MILLION;
+        double inputTextCachedPrice = (usageData.getInputCachedTextToken() / 1000000.0) * INPUT_TEXT_CACHED_PRICE_PER_MILLION;
+        double outputTextPrice = (effectiveOutputTextTokens / 1000000.0) * OUTPUT_TEXT_PRICE_PER_MILLION;
+        double inputAudioPrice = (nonCachedInputAudioTokens / 1000000.0) * INPUT_AUDIO_PRICE_PER_MILLION;
+        double inputAudioCachedPrice = (usageData.getInputCachedAudioToken() / 1000000.0) * INPUT_AUDIO_CACHED_PRICE_PER_MILLION;
+        double outputAudioPrice = (effectiveOutputAudioTokens / 1000000.0) * OUTPUT_AUDIO_PRICE_PER_MILLION;
+        double totalModelCharges = inputTextPrice + inputTextCachedPrice + outputTextPrice + inputAudioPrice + inputAudioCachedPrice + outputAudioPrice;
+        chargesData.setInputTextCost(inputTextPrice);
+        chargesData.setInputTextCachedCost(inputTextCachedPrice);
+        chargesData.setOutputTextCost(outputTextPrice);
+        chargesData.setInputAudioCost(inputAudioPrice);
+        chargesData.setInputAudioCachedCost(inputAudioCachedPrice);
+        chargesData.setOutputAudioCost(outputAudioPrice);
+        chargesData.setModelCharges(totalModelCharges);
         return chargesData;
     }
 

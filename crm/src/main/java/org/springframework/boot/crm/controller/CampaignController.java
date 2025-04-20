@@ -52,6 +52,8 @@ public class CampaignController {
     public void runCampaign(@RequestParam(value = "businessId") int businessId,
                                               @RequestParam(value = "campaignRunId") int campaignRunId) {
 
+
+
         this.businessManager.runCampaign( campaignRunId, businessId );
     }
 
@@ -106,4 +108,13 @@ public class CampaignController {
         return this.businessManager.getPaymentManager().getCallChargesByBusinessId(businessId);
     }
 
+
+    //Create controller which takes businessId, campaign runId, callId, transcription Id to download call recording
+    @GetMapping("/{callId}/recording")
+    public byte[] downloadRecording(
+            @PathVariable int callId) {
+        log.info("Fetching recording for  call id: {}",
+                 callId);
+        return this.businessManager.downloadCallRecording(callId);
+    }
 }

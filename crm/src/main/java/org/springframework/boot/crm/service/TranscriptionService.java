@@ -1,66 +1,68 @@
 package org.springframework.boot.crm.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.cloud.speech.v1.*;
-import com.google.protobuf.ByteString;
-import org.springframework.boot.crm.entity.LlmData;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.*;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.dto.TranscriptionDto;
+import org.springframework.boot.crm.entity.TranscriptionData;
+import org.springframework.boot.crm.repository.TranscriptionDataRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestTemplate;
 
-import java.util.Base64;
-
+@Slf4j
 @Service
 public class TranscriptionService {
 
-    public  String transcribeBase64Audio(String base64Audio, LlmData llmData) throws JsonProcessingException {
-        // Decode the Base64 string to binary
-        String API_URL = "https://api.openai.com/v1/audio/transcriptions";
-        byte[] audioBytes = Base64.getDecoder().decode(base64Audio);
+    private final TranscriptionDataRepository transcriptionDataRepository;
 
-        // Create RestTemplate instance
-        RestTemplate restTemplate = new RestTemplate();
-
-        // Set up headers
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-        headers.set("Authorization", "Bearer " + llmData.getApiKey());
-
-        // Create a resource from the audio bytes
-        ByteArrayResource audioResource = new ByteArrayResource(audioBytes) {
-            @Override
-            public String getFilename() {
-                return "audio.mp3"; // Set appropriate filename and extension
-            }
-        };
-
-        // Set up the request body
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("model", "whisper-1");
-        body.add("file", audioResource);
-
-        // Create the request entity
-        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-
-        // Make the API call
-        ResponseEntity<String> response = restTemplate.exchange(
-                API_URL,
-                HttpMethod.POST,
-                requestEntity,
-                String.class);
-
-        // Parse the response
-        if (response.getStatusCode() == HttpStatus.OK) {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(response.getBody());
-            return root.get("text").asText();
-        } else {
-            throw new RuntimeException("Error calling Whisper API: " + response.getStatusCode());
-        }
+    public TranscriptionService(TranscriptionDataRepository transcriptionDataRepository) {
+        this.transcriptionDataRepository = transcriptionDataRepository; // Initialize with actual repository
     }
+
+
+    public TranscriptionData add(TranscriptionDto transcriptionDto) {
+        TranscriptionData transcriptionData = dtoToModel(transcriptionDto);
+        return this.transcriptionDataRepository.save(transcriptionData);
+    }
+
+
+    public TranscriptionData getTranscriptionData(int businessId, int campaignRunId, int callId) {
+        return this.transcriptionDataRepository.findByBusinessIdAndCampaignRunIdAndCallId(businessId, campaignRunId, callId);
+    }
+
+    public TranscriptionData getTranscriptionDataByCallId(int callId) {
+        return this.transcriptionDataRepository.findByCallId(callId);
+    }
+
+    private TranscriptionData dtoToModel(TranscriptionDto transcriptionDto) {
+        // Convert DTO to Model
+        TranscriptionData transcriptionData = new TranscriptionData();
+        transcriptionData.setAccountSid(transcriptionDto.getRecording().getAccountSid());
+        transcriptionData.setCampaignId(transcriptionDto.getCampaignRunData().getCampaignId());
+        transcriptionData.setCampaignRunId(transcriptionDto.getCampaignRunData().getCampaignRunId());
+        transcriptionData.setBusinessId(transcriptionDto.getCampaignRunData().getBusinessId());
+        transcriptionData.setPhoneId(transcriptionDto.getCampaignRunData().getPhoneId());
+        transcriptionData.setLlmId(transcriptionDto.getCampaignRunData().getLlmId());
+        transcriptionData.setCallId(transcriptionDto.getCallLog().getCallLogId());
+        transcriptionData.setApiVersion(transcriptionDto.getRecording().getApiVersion());
+        transcriptionData.setCallSid(transcriptionDto.getRecording().getCallSid());
+        transcriptionData.setConferenceSid(transcriptionDto.getRecording().getConferenceSid());
+        transcriptionData.setDateCreated(transcriptionDto.getRecording().getDateCreated());
+        transcriptionData.setDateUpdated(transcriptionDto.getRecording().getDateUpdated());
+        transcriptionData.setStartTime(transcriptionDto.getRecording().getStartTime());
+        transcriptionData.setChannels(transcriptionDto.getRecording().getChannels());
+        transcriptionData.setDuration(transcriptionDto.getRecording().getDuration());
+        transcriptionData.setSid(transcriptionDto.getRecording().getSid());
+        transcriptionData.setPrice(transcriptionDto.getRecording().getPrice());
+        transcriptionData.setCallSid(transcriptionDto.getRecording().getCallSid());
+        transcriptionData.setPriceUnit(transcriptionDto.getRecording().getPriceUnit());
+        transcriptionData.setStatus(transcriptionDto.getRecording().getStatus().toString());
+        transcriptionData.setSource(transcriptionDto.getRecording().getSource().toString());
+        transcriptionData.setErrorCode(transcriptionDto.getRecording().getErrorCode());
+        transcriptionData.setUri(transcriptionDto.getRecording().getUri());
+        transcriptionData.setMediaUrl(transcriptionDto.getRecording().getMediaUrl().toString());
+        transcriptionData.setCallId(transcriptionDto.getCallLog().getCallLogId());
+        transcriptionData.setInboundTranscriptionText(transcriptionDto.getInboundData());
+        transcriptionData.setOutboundTranscriptionText(transcriptionDto.getOutboundData());
+        transcriptionData.setLeadId(transcriptionDto.getCallLog().getLeadId());
+        return transcriptionData;
+    }
+
 }
