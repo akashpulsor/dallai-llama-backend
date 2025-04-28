@@ -55,7 +55,7 @@ public class RealTimeSession {
                 .newHttpClient()
                 .newWebSocketBuilder().header("Authorization", "Bearer " + OPENAI_API_KEY).
                 header("OpenAI-Beta", "realtime=v1")
-                .buildAsync(URI.create("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"), new WebSocketClient(latch, applicationEventPublisher,twilioStartEventDto, json))
+                .buildAsync(URI.create("wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"), new WebSocketClient(latch, applicationEventPublisher,twilioStartEventDto, json))
                 .join();
         this.webSocket = ws;
 

@@ -24,12 +24,30 @@ public class PaymentManagerImpl implements PaymentManager {
 
     private final PaymentService paymentService;
 
-    private static final double INPUT_TEXT_PRICE_PER_MILLION = 5.00;
-    private static final double INPUT_TEXT_CACHED_PRICE_PER_MILLION = 2.50;
-    private static final double OUTPUT_TEXT_PRICE_PER_MILLION = 20.00;
-    private static final double INPUT_AUDIO_PRICE_PER_MILLION = 40.00;
-    private static final double INPUT_AUDIO_CACHED_PRICE_PER_MILLION = 2.50;
-    private static final double OUTPUT_AUDIO_PRICE_PER_MILLION = 80.00;
+    /*
+    *Input
+$0.60
+Cached input
+$0.30
+Output
+$2.40
+Audio tokens
+Per 1M tokens
+Input
+$10.00
+Cached input
+$0.30
+Output
+$20.00
+    *
+    * */
+
+    private static final double INPUT_TEXT_PRICE_PER_MILLION = 0.60;
+    private static final double INPUT_TEXT_CACHED_PRICE_PER_MILLION = 0.30;
+    private static final double OUTPUT_TEXT_PRICE_PER_MILLION = 2.40;
+    private static final double INPUT_AUDIO_PRICE_PER_MILLION = 10.00;
+    private static final double INPUT_AUDIO_CACHED_PRICE_PER_MILLION = 0.30;
+    private static final double OUTPUT_AUDIO_PRICE_PER_MILLION = 20.00;
 
     private final ChargesDataService chargesDataService;
 
@@ -326,5 +344,7 @@ public class PaymentManagerImpl implements PaymentManager {
         chargesData.setModelCharges(totalModelCharges);
         return chargesData;
     }
+
+
 
 }

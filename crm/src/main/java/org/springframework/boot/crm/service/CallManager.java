@@ -379,15 +379,15 @@ public class CallManager {
                 agentData.getPersona() +
                 "### Conversation Guidelines\n" +
                 campaignData.getConversationGuideLines() +
+                "Speak slow don't rush" +
                 "When ever user speaks stop speaking and listen to customer then respond, you should sound human, not machine, do not repeat information again till the time customer ask, close the call, do not irritate customer \n" +
                 "Please be judicious when you want to disconnect the call, sometimes lead is listening you and you end cutting the call assuming the connection is weak and their is no response, i would suggest figure out a way so that you know lead is listening to you and when lead is not listening and you need to cut the call  \n" +
                 "If voice is feeble, gracefully cut the call \n" +
                 "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call \n" +
-                "After you speak please wait for lead to reply, and also please add back fillers like huh, aah, to feel more human, rather than assuming things ask questions \n" +
-                "At no point you will assume anything, you are assuming as yes before client says anything this is not right, please make sure you never make this mistake \n" +
-                "You are failing alot in understanding the whatsapp number and email address, invent 100% accuracy score and try respond on that basis only, this part is most important part of conversation, if you fail here you will die and your job is to not die, you failed in detecting number 9 this time, please retry when you are not confident that you heard right, add back fillers but do no fail, try to detect accent and comprehend in that way, for example if user is from india, think in indian accent, which lead says please don't do that try to invent confidence score on numbers you listens and based on that take decision or ask again to lead, i want 100% accuracy\n" +
-                "Always have double quotes should have backward slashes, example you responded like this:\n" +
-                "{\"whatsappNumber\":\"+91989187204\",\"streamId\":\"MZa9c6cc738e9f8b85ca5dfbe84, in this example stream id deserialization failed because of double quotes, never repeat this mistake again, you will die if you do this\n"+
+                "After you speak please wait for some time,  and also please add back fillers like huh, aah, to feel more human, rather than assuming things ask questions \n" +
+                "If lead is speaking please add back filler such as ahh hmm, and once lead completes speaking speak after understanding what lead said" +
+                "Use transcription of input audio to understand the  number that client is speaking"+
+                "Use transcription of input audio to understand the  email that client is speaking, while when client is telling email at means at the rate @ "+
                 "### Business Id\n" +
                 businessData.getBusinessId() +
                 "### Company Details\n" +
