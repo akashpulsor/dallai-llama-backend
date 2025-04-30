@@ -6,6 +6,7 @@ import org.springframework.boot.crm.entity.BusinessSizeMasterData;
 import org.springframework.boot.crm.entity.DalaiLlamaLeads;
 import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.UserManager;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,6 +30,16 @@ public class AuthController {
     @PostMapping("/interest")
     public DalaiLlamaLeads interest(@Valid @RequestBody DalaiLlamaLeadsDto dalaiLlamaLeadsDto){
         return this.businessManager.addDalaiLLamaLeads(dalaiLlamaLeadsDto);
+    }
+
+    //create controller to get interest in paginated way
+
+    @GetMapping("/interest")
+    public Page<DalaiLlamaLeads> getInterestPaginated(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Page<DalaiLlamaLeads> dalaiLlamaLeads = this.businessManager.getPaginatedDalaiLlamaLeads(page, size);
+        return dalaiLlamaLeads;
     }
 
     @PostMapping("/login")

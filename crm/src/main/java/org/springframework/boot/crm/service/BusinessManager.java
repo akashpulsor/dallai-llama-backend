@@ -2,6 +2,7 @@ package org.springframework.boot.crm.service;
 
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.*;
+import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.PathVariable;
 
 import java.time.LocalDate;
@@ -12,7 +13,7 @@ public interface BusinessManager {
 
     DalaiLlamaLeads addDalaiLLamaLeads(DalaiLlamaLeadsDto dalaiLlamaLeadsDto);
     BusinessData getBusinessData(int businessId);
-
+    Page<DalaiLlamaLeads> getPaginatedDalaiLlamaLeads(int page, int size);
     BusinessData addBusiness(BusinessData businessData);
 
 

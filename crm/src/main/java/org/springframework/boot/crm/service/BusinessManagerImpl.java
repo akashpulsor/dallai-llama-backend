@@ -152,7 +152,14 @@ public class BusinessManagerImpl implements BusinessManager {
         return this.dalaiLLamaLeadDataService.save(leadDtoToModel(dalaiLlamaLeads));
     }
 
+    //Create a function to get paginated list Dalai llama leads
 
+
+    @Override
+    public Page<DalaiLlamaLeads> getPaginatedDalaiLlamaLeads(int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        return this.dalaiLLamaLeadDataService.getAllLeadsPaginated(pageable);
+    }
 
 
     @Override
