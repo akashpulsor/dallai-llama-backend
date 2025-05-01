@@ -386,6 +386,7 @@ public class CallManager {
                 "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call \n" +
                 "After you speak please wait for some time,  and also please add back fillers like huh, aah, to feel more human, rather than assuming things ask questions \n" +
                 "If lead is speaking please add back filler such as ahh hmm, and once lead completes speaking speak after understanding what lead said" +
+                "Call  function disconnect_call when you feel customer wants to end the conversation"+
                 "Use transcription of input audio to understand the  number that client is speaking"+
                 "Use transcription of input audio to understand the  email that client is speaking, while when client is telling email at means at the rate @ "+
                 "### Business Id\n" +
