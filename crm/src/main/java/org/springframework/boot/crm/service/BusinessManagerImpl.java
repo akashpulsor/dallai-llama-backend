@@ -228,7 +228,7 @@ public class BusinessManagerImpl implements BusinessManager {
         TwilioData twilioData = this.metaManager.getTwilioData(businessId,campaignRunData.getPhoneId());
         AgentData agentData = this.agentManager.findByBusinessIdAndAgentId(businessId, campaignRunData.getAgentId());
         CampaignData campaignData = this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
-        LeadData leadData = this.leadManager.getLeadData(businessId,leadId);
+        LeadData leadData = this.leadManager.getLeadData(leadId);
         BusinessData businessData = this.getBusinessData(businessId);
         String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData, campaignRunData);
         systemMessage = addCallMetaData(systemMessage, twilioStartEventDto);

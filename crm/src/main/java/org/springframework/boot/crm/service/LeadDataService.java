@@ -38,7 +38,7 @@ public class LeadDataService {
     }
 
     public LeadData findById(int leadId) {
-        return leadDataRepository.findByLeadId(leadId);
+        return leadDataRepository.findByLeadId(leadId).orElseThrow(() -> new LeadNotFoundException("Lead not found with id: " + leadId));
     }
 
     public List<LeadData> getLeadByBusinessId(int businessId) {

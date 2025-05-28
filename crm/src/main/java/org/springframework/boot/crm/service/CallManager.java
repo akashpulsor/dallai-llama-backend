@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class CallManager {
 
+    // This map is already thread-safe and supports multiple simultaneous calls.
     private ConcurrentHashMap<String,RealTimeSession> twilioOpenAiMap;
 
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -112,9 +113,6 @@ public class CallManager {
         String transcriptionCallback = host + "/api/call/transcription-callback";
         return  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<Response>"
-                + "<Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>"
-                + "<Pause length=\"1\"/>"
-                + "<Say>O.K. you can start talking!</Say>"
 
                 + "<Connect>"
                 + "<Stream url=\""+url+"\"  >"

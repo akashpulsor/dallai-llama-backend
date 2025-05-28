@@ -39,7 +39,7 @@ public interface BusinessLeadRepository  extends JpaRepository<BusinessLead, Int
     @Query("SELECT ld FROM lead_data ld " +
             "JOIN business_lead lbm ON ld.leadId = lbm.leadId " +
             "WHERE lbm.businessId = :businessId and ld.leadId =:leadId")
-    Optional<LeadData> findByLeadIdAndBusinessId(int leadId, int businessId);
+    Optional<LeadData> findByLeadIdAndBusinessId(@Param("leadId") int leadId, @Param("businessId") int businessId);
 
 
     @QueryHints(value = @QueryHint(name = HINT_FETCH_SIZE, value = "1000"))

@@ -70,6 +70,11 @@ public class LeadManagerImpl implements LeadManager {
     }
 
     @Override
+    public LeadData getLeadData(int leadId) {
+        return this.leadDataService.findById(leadId);
+    }
+
+    @Override
     public List<LeadData> getLeadDataByList( Integer businessId,  Set<Integer> leadIds) {
         return this.leadDataService.getLeadDataByStream(businessId, leadIds);
     }
