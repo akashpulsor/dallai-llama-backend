@@ -25,4 +25,14 @@ public class DalaiLlamaLeadsDto {
 
     @JsonProperty("countryCallingCode")
     private String countryCallingCode;
+
+    @JsonProperty("uniqueId")
+    private String uniqueId;
+
+    @JsonProperty("source")
+    private String source;
+
+    @JsonProperty("campaign")
+    private String campaign;
+
 }

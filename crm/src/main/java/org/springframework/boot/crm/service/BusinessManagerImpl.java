@@ -597,7 +597,11 @@ public class BusinessManagerImpl implements BusinessManager {
         if(dalaiLlamaLeadsDto.getCountryCode()!= null) dalaiLlamaLeads.setCountryCode(dalaiLlamaLeadsDto.getCountryCode());
         if(dalaiLlamaLeadsDto.getCompanySize()!= null) dalaiLlamaLeads.setCompanySize(dalaiLlamaLeadsDto.getCompanySize());
         if(dalaiLlamaLeadsDto.getCountryCallingCode()!= null) dalaiLlamaLeads.setCountryCallingCode(dalaiLlamaLeadsDto.getCountryCallingCode());
-        //if(dalaiLlamaLeadsDto.getDescription()!= null) dalaiLlamaLeads.setDescription(dalaiLlamaLeadsDto.getDescription());
+        if(dalaiLlamaLeadsDto.getDescription()!= null) dalaiLlamaLeads.setActivityDescription(dalaiLlamaLeadsDto.getDescription());
+        if(dalaiLlamaLeadsDto.getCampaign()!= null) dalaiLlamaLeads.setCampaign(dalaiLlamaLeadsDto.getCampaign());
+        if(dalaiLlamaLeadsDto.getSource()!= null) dalaiLlamaLeads.setSource(dalaiLlamaLeadsDto.getSource());
+        if(dalaiLlamaLeadsDto.getUniqueId()!= null) dalaiLlamaLeads.setUniqueId(dalaiLlamaLeadsDto.getUniqueId());
+
         return dalaiLlamaLeads;
     }
 

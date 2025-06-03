@@ -228,6 +228,16 @@ public class TokenControllerAdvice {
     }
 
 
-
+    @ResponseBody
+    @ExceptionHandler(value = ResourceNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ResponseEntity<ErrorMessage> handleResourceNotFoundException(UnregisteredEmailException ex, WebRequest request) {
+        ErrorMessage errorResponse  =    new ErrorMessage(
+                HttpStatus.NOT_FOUND.value(),
+                new Date(),
+                ex.getMessage(),
+                request.getDescription(false));
+        return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);
+    }
 
 }

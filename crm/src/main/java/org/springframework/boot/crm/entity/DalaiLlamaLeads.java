@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -30,6 +31,17 @@ public class DalaiLlamaLeads {
     @Column(name="company_size")
     private String companySize;
 
+    @Column(name="uniqueId")
+    private String uniqueId;
+
+    @Column(name="source")
+    private String source;
+
+    @Column(name="campaign")
+    private String campaign;
+
+    @Column(name="activity_description")
+    private String activityDescription;
 
     @Embedded
     private SanitaryColumn sanitaryColumn;

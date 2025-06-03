@@ -5,6 +5,8 @@ import org.springframework.boot.crm.dto.CampaignDataRequestDto;
 import org.springframework.boot.crm.dto.CampaignDataResponseDto;
 import org.springframework.boot.crm.dto.LeadRequestDto;
 import org.springframework.boot.crm.dto.LeadResponseDto;
+import org.springframework.boot.crm.entity.DalaiLlamaLeads;
+import org.springframework.boot.crm.service.BusinessManager;
 import org.springframework.boot.crm.service.CampaignManager;
 import org.springframework.boot.crm.service.LeadManager;
 import org.springframework.data.domain.Page;
@@ -23,9 +25,11 @@ import java.util.List;
 public class LeadController {
 
     private final LeadManager leadManager;
+    private final BusinessManager businessManager;
 
-    public LeadController(LeadManager leadManager) {
+    public LeadController(LeadManager leadManager, BusinessManager businessManager) {
         this.leadManager = leadManager;
+        this.businessManager = businessManager;
     }
 
 
@@ -50,5 +54,11 @@ public class LeadController {
         return this.leadManager.getLeadsByBusinessIdPaginated(businessId,page, size, sortBy,test);
     }
 
-
+    @GetMapping("/interest")
+    public Page<DalaiLlamaLeads> getInterestPaginated(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Page<DalaiLlamaLeads> dalaiLlamaLeads = this.businessManager.getPaginatedDalaiLlamaLeads(page, size);
+        return dalaiLlamaLeads;
+    }
 }
