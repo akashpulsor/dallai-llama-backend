@@ -56,6 +56,11 @@ public class AuthController {
         return this.businessManager.addDalaiLLamaLeads(dalaiLlamaLeadsDto);
     }
 
+    @PostMapping("/newsletter/subscription")
+    public DalaiLlamaLeads newsletter(@Valid @RequestBody DalaiLlamaLeadsDto dalaiLlamaLeadsDto){
+        return this.businessManager.addDalaiLLamaLeads(dalaiLlamaLeadsDto);
+    }
+
     //create controller to get interest in paginated way
 
     @PostMapping("/login")
