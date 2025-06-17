@@ -36,7 +36,7 @@ public class CallController {
     public String incomingCall(@RequestHeader("host") String host,@RequestParam("campaignRunId") int campaignRunId,
                                @RequestParam("authToken") String authToken,@RequestParam("businessId") int businessId,@RequestParam("leadId") int leadId,
                                @RequestParam("callType") String callType){
-        return this.businessManager.getCallManager().incomingCall(host,campaignRunId,authToken,businessId,leadId,callType);
+        return this.businessManager.incomingCall(host,campaignRunId,authToken,businessId,leadId,callType);
     }
 
 

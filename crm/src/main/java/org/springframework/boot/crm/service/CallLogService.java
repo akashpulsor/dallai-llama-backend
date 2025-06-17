@@ -30,7 +30,7 @@ public class CallLogService {
     }
 
     public CallLog createCallLog(String callType, int campaignRunId, int leadId, String callSid,
-                                 String fromNumber, String toNumber) {
+                                 String fromNumber, String toNumber, String fileName) {
         CallLog callLog = new CallLog();
         callLog.setCallType(callType);
         callLog.setCampaignRunId(campaignRunId);
@@ -39,7 +39,7 @@ public class CallLogService {
         callLog.setFromNumber(fromNumber);
         callLog.setToNumber(toNumber);
         callLog.setStartTime(LocalDateTime.now());
-
+        callLog.setInitialMessageRecordingFileName(fileName);
         // Set initial status
         addStatus(callLog, "INITIATED");
 

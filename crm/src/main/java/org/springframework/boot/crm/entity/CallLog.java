@@ -24,6 +24,9 @@ public class CallLog {
     @Column(name = "campaign_run_id")
     private int campaignRunId;
 
+    @Column(name = "initial_message_recording_file_name")
+    private String initialMessageRecordingFileName;
+
     @Column(name = "lead_id")
     private int leadId;
 

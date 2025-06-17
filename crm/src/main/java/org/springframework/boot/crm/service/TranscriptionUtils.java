@@ -3,16 +3,28 @@ package org.springframework.boot.crm.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.crm.entity.AgentData;
+import org.springframework.boot.crm.entity.CampaignRunData;
 import org.springframework.boot.crm.entity.LlmData;
 import org.springframework.boot.crm.entity.TwilioData;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import java.io.*;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 @Slf4j
 public class TranscriptionUtils {
@@ -59,6 +71,240 @@ public class TranscriptionUtils {
             log.error("Error transcribing audio: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to transcribe audio", e);
         }
+    }
+
+
+    /**
+     * Generate OpenAI audio and convert to Twilio-compatible format
+     */
+    public static byte[] generateOpenAIAudioForTwilio(String initialMessage, LlmData llmData, String voice) {
+        // Step 1: Get MP3 from OpenAI
+        byte[] mp3Audio = generateOpenAIAudio(initialMessage, llmData, voice);
+
+        try {
+            // Step 2: Convert MP3 to Twilio-compatible µ-law format
+            return convertToTwilioFormat(mp3Audio);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to convert audio to Twilio format", e);
+        }
+    }
+
+    /**
+     * Original method with modifications for better Twilio compatibility
+     */
+    public static byte[] generateOpenAIAudio(String initialMessage, LlmData llmData, String voice) {
+        RestTemplate restTemplate = new RestTemplate();
+
+        // Construct request payload
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", "tts-1");
+        requestBody.put("input", initialMessage);
+        requestBody.put("voice", voice);
+
+        // Change 1: Use WAV format instead of MP3 for better conversion quality
+        requestBody.put("response_format", "wav");
+
+        // Change 2: Removed 'instructions' - this is not a valid parameter for OpenAI TTS API
+        // The voice tone is controlled by the 'voice' parameter and input text structure
+
+        // Set headers
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(llmData.getApiKey());
+
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+        // Make the request
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                "https://api.openai.com/v1/audio/speech",
+                HttpMethod.POST,
+                entity,
+                byte[].class
+        );
+
+        return response.getBody();
+    }
+
+    /**
+     * Convert audio to Twilio-compatible G.711 µ-law format
+     */
+    private static byte[] convertToTwilioFormat(byte[] audioData) throws Exception {
+        // Twilio format specifications
+        AudioFormat twilioFormat = new AudioFormat(
+                AudioFormat.Encoding.ULAW,
+                8000.0f,  // 8kHz sample rate
+                8,        // 8-bit
+                1,        // mono
+                1,        // frame size
+                8000.0f,  // frame rate
+                false     // little endian
+        );
+
+        // Create input stream from the audio data
+        ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
+        AudioInputStream sourceStream = AudioSystem.getAudioInputStream(bais);
+
+        // Get source format
+        AudioFormat sourceFormat = sourceStream.getFormat();
+
+        // Convert to mono if stereo
+        if (sourceFormat.getChannels() > 1) {
+            AudioFormat monoFormat = new AudioFormat(
+                    sourceFormat.getEncoding(),
+                    sourceFormat.getSampleRate(),
+                    sourceFormat.getSampleSizeInBits(),
+                    1, // mono
+                    sourceFormat.getFrameSize() / 2,
+                    sourceFormat.getFrameRate(),
+                    sourceFormat.isBigEndian()
+            );
+            sourceStream = AudioSystem.getAudioInputStream(monoFormat, sourceStream);
+            sourceFormat = monoFormat;
+        }
+
+        // Convert to 8kHz if different sample rate
+        if (sourceFormat.getSampleRate() != 8000.0f) {
+            AudioFormat resampledFormat = new AudioFormat(
+                    sourceFormat.getEncoding(),
+                    8000.0f,
+                    sourceFormat.getSampleSizeInBits(),
+                    1,
+                    sourceFormat.getFrameSize(),
+                    8000.0f,
+                    sourceFormat.isBigEndian()
+            );
+            sourceStream = AudioSystem.getAudioInputStream(resampledFormat, sourceStream);
+            sourceFormat = resampledFormat;
+        }
+
+        // Convert to 16-bit PCM first if not already
+        if (!sourceFormat.getEncoding().equals(AudioFormat.Encoding.PCM_SIGNED)) {
+            AudioFormat pcmFormat = new AudioFormat(
+                    AudioFormat.Encoding.PCM_SIGNED,
+                    8000.0f,
+                    16,
+                    1,
+                    2,
+                    8000.0f,
+                    false
+            );
+            sourceStream = AudioSystem.getAudioInputStream(pcmFormat, sourceStream);
+            sourceFormat = pcmFormat;
+        }
+
+        // Finally convert to µ-law
+        AudioInputStream twilioStream = AudioSystem.getAudioInputStream(twilioFormat, sourceStream);
+
+        // Read the converted audio data
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        int bytesRead;
+
+        while ((bytesRead = twilioStream.read(buffer)) != -1) {
+            baos.write(buffer, 0, bytesRead);
+        }
+
+        twilioStream.close();
+        return baos.toByteArray();
+    }
+
+    /**
+     * Save Twilio-compatible audio to file
+     */
+    public static void saveTwilioAudioToFile(byte[] audioData, String fileName) throws IOException {
+        // Save to resources/public/audio directory
+        String resourcePath = TranscriptionUtils.class.getClassLoader().getResource("").getPath();
+        String publicAudioDir = resourcePath + "public" + File.separator + "audio";
+        File dir = new File(publicAudioDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        File outFile = new File(dir, fileName);
+        AudioFormat twilioFormat = new AudioFormat(
+                AudioFormat.Encoding.ULAW,
+                8000.0f, 8, 1, 1, 8000.0f, false
+        );
+
+        try (FileOutputStream fos = new FileOutputStream(outFile)) {
+            // Write WAV header for µ-law
+            writeWavHeader(fos, audioData.length, twilioFormat);
+            fos.write(audioData);
+        }
+    }
+
+    /**
+     * Write WAV header for µ-law format
+     */
+    private static void writeWavHeader(FileOutputStream fos, int dataLength, AudioFormat format) throws IOException {
+        fos.write("RIFF".getBytes());
+        fos.write(intToBytes(dataLength + 36));
+        fos.write("WAVE".getBytes());
+        fos.write("fmt ".getBytes());
+        fos.write(intToBytes(18)); // Format chunk size for µ-law
+        fos.write(shortToBytes((short) 7)); // µ-law format code
+        fos.write(shortToBytes((short) format.getChannels()));
+        fos.write(intToBytes((int) format.getSampleRate()));
+        fos.write(intToBytes((int) format.getSampleRate())); // Byte rate for µ-law
+        fos.write(shortToBytes((short) 1)); // Block align
+        fos.write(shortToBytes((short) 8)); // Bits per sample
+        fos.write(shortToBytes((short) 0)); // Extra format bytes
+        fos.write("data".getBytes());
+        fos.write(intToBytes(dataLength));
+    }
+
+    // Utility methods
+    private static byte[] intToBytes(int value) {
+        return new byte[] {
+                (byte) (value & 0xFF),
+                (byte) ((value >> 8) & 0xFF),
+                (byte) ((value >> 16) & 0xFF),
+                (byte) ((value >> 24) & 0xFF)
+        };
+    }
+
+    private static byte[] shortToBytes(short value) {
+        return new byte[] {
+                (byte) (value & 0xFF),
+                (byte) ((value >> 8) & 0xFF)
+        };
+    }
+
+    /**
+     * Enhanced version with voice tone control through text formatting
+     */
+    public static byte[] generateFriendlyOpenAIAudioForTwilio(String initialMessage, LlmData llmData, String voice) {
+        // Format the message to sound more natural and friendly
+        String enhancedMessage = enhanceMessageForFriendlyTone(initialMessage);
+        return generateOpenAIAudioForTwilio(enhancedMessage, llmData, voice);
+    }
+
+    /**
+     * Enhance the message text to sound more friendly and natural
+     */
+    private static String enhanceMessageForFriendlyTone(String message) {
+        // Add natural pauses and friendly expressions
+        StringBuilder enhanced = new StringBuilder();
+
+        // Add a friendly greeting pause
+
+
+        // Process the original message
+        String[] sentences = message.split("\\. ");
+        for (int i = 0; i < sentences.length; i++) {
+            String sentence = sentences[i].trim();
+
+            // Add natural pauses after questions
+            if (sentence.contains("?")) {
+                enhanced.append(sentence).append("... ");
+            } else {
+                enhanced.append(sentence);
+                if (i < sentences.length - 1) {
+                    enhanced.append(". ");
+                }
+            }
+        }
+
+        return enhanced.toString();
     }
 
     public static byte[] downloadAudio(String url, TwilioData twilioData) {

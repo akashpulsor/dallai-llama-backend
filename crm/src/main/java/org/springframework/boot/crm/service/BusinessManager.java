@@ -77,5 +77,7 @@ public interface BusinessManager {
     byte[] downloadCallRecording(
                                   int callId);
 
+    String incomingCall(String host,int campaignRunId,
+                        String authToken,int businessId, int leadId, String callType );
 
 }

@@ -64,7 +64,8 @@ public class CallManager {
 
 
 
-    public CallLog makeCall(TwilioData twilioData, LeadData leadData, CampaignData campaignData, CampaignRunData campaignRunData, String callType) throws URISyntaxException {
+    public CallLog makeCall(TwilioData twilioData, LeadData leadData, CampaignData campaignData,
+                            CampaignRunData campaignRunData, String callType, AgentData agentData, LlmData llmData) throws URISyntaxException, IOException {
         Twilio.init(twilioData.getAccountSid(), twilioData.getAccountAuthToken());
 
         // Create auth token for webhook
@@ -74,7 +75,8 @@ public class CallManager {
                 campaignData.getCampaignId(),
                 twilioData
         );
-
+        log.info("Calling for leadId - {}, lead name - {}, businessId - {}, campaignRunId - {}, callType - {}",
+                leadData.getLeadId(),leadData.getLeadName(), campaignRunData.getBusinessId(), campaignRunData.getCampaignRunId(), callType);
         // Build webhook URL with auth token
         String webhookUrl = hostname + "/api/call/incoming?authToken=" + authToken+ "&campaignRunId="+campaignRunData.getCampaignRunId()+ "&businessId="+campaignRunData.getBusinessId()+ "&leadId="+leadData.getLeadId()+ "&callType="+callType;
 
@@ -96,35 +98,57 @@ public class CallManager {
 
 
         campaignRunData.setCallSId(call.getSid());
+        String fileName = getInitialMessageRecordingFileName(leadData, campaignData, agentData, llmData);
         return this.callLogService.createCallLog(callType,
                 campaignRunData.getCampaignRunId(),
                 leadData.getLeadId(),  call.getSid(),
-                twilioData.getBusinessNumber(), leadData.getLeadPhone() );
+                twilioData.getBusinessNumber(), leadData.getLeadPhone(), fileName );
 
+    }
+
+    public String getInitialMessageRecordingFileName(LeadData leadData, CampaignData campaignData,  AgentData agentData, LlmData llmData) throws IOException {
+        String initialMessage = campaignData.getFirstMessage();
+        //replace placeholders with actual values
+        initialMessage = initialMessage.replace("[Lead Name]", leadData.getLeadName())
+                .replace("[Agent Name]", agentData.getAgentName());
+        byte[] twilioAudio = TranscriptionUtils
+                .generateFriendlyOpenAIAudioForTwilio(initialMessage, llmData, agentData.getVoice());
+        // create UUID using leadId, campaignRunId and callType
+        String uuid = UUID.randomUUID().toString();
+        String fileName = "initial-message-" + uuid + ".wav";
+        // Save to file for Twilio playback
+        TranscriptionUtils
+                .saveTwilioAudioToFile(twilioAudio, fileName);
+        return fileName;
     }
 
     public String callTool(FunctionCallDto functionCallDto, TwilioStartEventDto twilioStartEventDto) {
         return this.toolsService.executeTool(functionCallDto.getName(),functionCallDto,twilioStartEventDto);
     }
-    public String incomingCall(String host,int campaignRunId,
+    public String incomingCall(String host,String audioUrl,int campaignRunId,
                                String authToken,int businessId, int leadId, String callType )  {
         //TODO decrypt the auth token
+        log.info("Incoming call request received for leadId - {}, businessId - {}, campaignRunId - {}, callType - {}",
+                leadId, businessId, campaignRunId, callType);
+
+        audioUrl = "https://" + audioUrl;
+        log.info("Incoming call request received for audioUrl -{}",
+                audioUrl);
         String url = "wss://"+host+"/api/call/media-stream";
-        String transcriptionCallback = host + "/api/call/transcription-callback";
-        return  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-                + "<Response>"
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+                "<Response>" +
+                "<Play>" + audioUrl + "</Play>" + // This line plays the audio
+                "<Connect>" +
+                "<Stream url=\"" + url + "\">" +
+                "<Parameter name=\"authToken\" value=\"" + authToken + "\" />" +
+                "<Parameter name=\"campaignRunId\" value=\"" + campaignRunId + "\" />" +
+                "<Parameter name=\"businessId\" value=\"" + businessId + "\" />" +
+                "<Parameter name=\"leadId\" value=\"" + leadId + "\" />" +
+                "<Parameter name=\"callType\" value=\"" + callType + "\" />" +
+                "</Stream>" +
+                "</Connect>" +
+                "</Response>";
 
-                + "<Connect>"
-                + "<Stream url=\""+url+"\"  >"
-                + "<Parameter name=\"authToken\" value=\"" + authToken + "\" />"
-                + "<Parameter name=\"campaignRunId\" value=\"" + campaignRunId + "\" />"
-                + "<Parameter name=\"businessId\" value=\"" + businessId + "\" />"
-                + "<Parameter name=\"leadId\" value=\"" + leadId + "\" />"
-                + "<Parameter name=\"callType\" value=\"" + callType + "\" />"
-                +"</Stream>"
-                + "</Connect>"
-
-                + "</Response>";
     }
 
     public String createAuthToken(int leadId, int businessId, int campaignId,
@@ -155,7 +179,7 @@ public class CallManager {
     }
 
     public  void handleTwilioEvent(TwilioStartEventDto twilioStartEventDto,String systemMessage, LlmData llmData, LeadData leadData,
-                                   CampaignData campaignData) throws IOException, InterruptedException {
+                                   CampaignData campaignData,AgentData agentData) throws IOException, InterruptedException {
         CallLog callLog = getCallLog(twilioStartEventDto.
                         getTwilioStartMediaMessage().getStart().getCustomParameters().getCallType(),
                 twilioStartEventDto.getTwilioStartMediaMessage().getStart().getCustomParameters().getCampaignRunId(),
@@ -164,7 +188,7 @@ public class CallManager {
         systemMessage +="### Call log id\n" +
                 callLog.getCallLogId();
         log.info("twilio start event Received - {}", twilioStartEventDto);
-        OpenAiRequestDto openAiRequestDto = createOpenAiInit(twilioStartEventDto.getTwilioStartMediaMessage(), systemMessage);
+        OpenAiRequestDto openAiRequestDto = createOpenAiInit(twilioStartEventDto.getTwilioStartMediaMessage(), systemMessage, agentData);
         ObjectMapper objectMapper = new ObjectMapper();
         String json = objectMapper.writeValueAsString(openAiRequestDto);
         log.info("open ai start event Received - {}", openAiRequestDto);
@@ -334,24 +358,24 @@ public class CallManager {
         openAiRealTimeSession.getWebSocket().sendText(json, true);
     }
 
-    private OpenAiRequestDto createOpenAiInit(TwilioStartMessageDto twilioStartMessageDto, String systemMessage) {
+    private OpenAiRequestDto createOpenAiInit(TwilioStartMessageDto twilioStartMessageDto, String systemMessage,AgentData agentData) {
         OpenAiRequestDto openAiRequestDto = new OpenAiRequestDto();
         openAiRequestDto.setEvent_id(twilioStartMessageDto.getStreamSid());
         openAiRequestDto.setType("session.update");
-        OpenAiRequestDto.OpenAISession openAiSession = getOpenAISession(systemMessage);
+        OpenAiRequestDto.OpenAISession openAiSession = getOpenAISession(systemMessage,agentData.getVoice());
         openAiRequestDto.setSession(openAiSession);
         log.info("Created initial open ai request - {}",openAiRequestDto);
         return openAiRequestDto;
     }
 
-    private OpenAiRequestDto.OpenAISession getOpenAISession(String systemMessage) {
+    private OpenAiRequestDto.OpenAISession getOpenAISession(String systemMessage,String voice) {
         OpenAiRequestDto.OpenAISession openAiSession = new OpenAiRequestDto.OpenAISession();
         openAiSession.setInput_audio_format("g711_ulaw");
         openAiSession.setOutput_audio_format("g711_ulaw");
-        openAiSession.setVoice("alloy");
+        openAiSession.setVoice(voice);
         openAiSession.setInstructions(systemMessage);
         openAiSession.setTool_choice("auto");
-        openAiSession.setTemperature(0.8);
+        openAiSession.setTemperature(0.6);
         List<String> modals = new ArrayList<>();
         modals.add("text");
         modals.add("audio");
@@ -367,65 +391,42 @@ public class CallManager {
     }
     public String createSystemMessage(AgentData agentData, CampaignData campaignData, BusinessData businessData, CampaignRunData campaignRunData
                                       ) {
-        return "### Agent Id\n" +
-                agentData.getAgentId() +
-                "### Agent Name\n" +
-                agentData.getAgentName() +
-                "### Role\n" +
-                agentData.getRole() +
-                "### Persona\n" +
-                agentData.getPersona() +
-                "### Conversation Guidelines\n" +
-                campaignData.getConversationGuideLines() +
-                "Speak slow don't rush" +
-                "When ever user speaks stop speaking and listen to customer then respond, you should sound human, not machine, do not repeat information again till the time customer ask, close the call, do not irritate customer \n" +
-                "Please be judicious when you want to disconnect the call, sometimes lead is listening you and you end cutting the call assuming the connection is weak and their is no response, i would suggest figure out a way so that you know lead is listening to you and when lead is not listening and you need to cut the call  \n" +
-                "If voice is feeble, gracefully cut the call \n" +
-                "At no point of time user should feel you are machine, if he says something like thing tell joke about it and gracefully cut the call \n" +
-                "After you speak please wait for some time,  and also please add back fillers like huh, aah, to feel more human, rather than assuming things ask questions \n" +
-                "If lead is speaking please add back filler such as ahh hmm, and once lead completes speaking speak after understanding what lead said" +
-                "Call  function disconnect_call when you feel customer wants to end the conversation"+
-                "Use transcription of input audio to understand the  number that client is speaking"+
-                "Use transcription of input audio to understand the  email that client is speaking, while when client is telling email at means at the rate @ "+
-                "### Business Id\n" +
-                businessData.getBusinessId() +
-                "### Company Details\n" +
-                businessData.getBusinessName() +
-                "### Business Details\n" +
-                businessData.getBusinessName()+
-                "### Business Activity Description\n" +
-                businessData.getBasicActivityDescription()+
-                "### You are working on campaign\n" +
-                "### Campaign Id\n" +
-                campaignData.getCampaignId()+
-                "### Campaign Name\n" +
-                campaignData.getCampaignName() +
-                "### Campaign Desc\n" +
-                campaignData.getCampaignDesc() +
-                "### Campaign Prompt\n" +
-                campaignData.getCampaignPrompt() +
-                "### Campaign Aim\n" +
-                campaignData.getCampaignAim() +
-                "### Language of conversation\n" +
-                campaignRunData.getLanguage()+
-                "### First Message\n" +
-                campaignData.getFirstMessage() +
-                "### Campaign Run id\n" +
-                campaignRunData.getCampaignRunId() +
-                "### Handling FAQs\n" +
-                "Use the function \\`get_metadata\\` to get metadata, the required parameter of this function is natural language query which you can pass.\n"+
-                "Use the function \\`disconnect_call\\` Call this function after the call of  function \\`get_metadata\\` you will get stream Id from it's response,pass stream id returned from \\`get_metadata\\`  to disconnect call\n"+
-                "Use the function \\`update_lead_data\\` Call this function when ever you want to update email and whatsapp of lead, the argument for this is lead Id stream id, whatsapp number you asked from lead, ask complete whats app number with country code, then reiterate what you heard when lead says yes this number is right update call the function, same goes for email Id as well, there you won't need country code but re iterate complete email and update when client say yes, call this function after client gives data and then repeat what lead says, then ask if this is correct, if lead responds by affirmative action then only call this function\n";
-                //"Use the function \\`updateWhatsApp\\` to respond to update whats app number." +
-                //"Use the function \\`queries\\` to respond to common customer queries." +
-                //"### Send product list \n" +
-                //"if not asked,  Before getting product list ask for whats app number then Use the function \\`getProductList\\` to respond to common customer queries."+
-                //"### Place orders \n" +
-               // "if not asked,  Before getting product list ask for whats app number then Use the function \\`placeOrders\\` to respond to common customer queries."+
-                //"### Send Invoice and Bill r\n" +
-                //"if not asked,getting product list ask for whats app number then Use the function \\`sendInvoice\\` to respond to common customer queries."+
-                //"### Send information about Input and output Token, and total charger\n" +
-                //"give input token, output token and total token, total charges and call Id in response as part of meta data of all the responses\n";
+        return "### Agent Id\n" + agentData.getAgentId() + "\n" +
+                        "### Agent Name\n" + agentData.getAgentName() + "\n" +
+                        "### Role\n" + agentData.getRole() + "\n" +
+                        "### Persona\n" + agentData.getPersona() + "\n" +
+                        "### Conversation Guidelines\n" + campaignData.getConversationGuideLines() + "\n" +
+                        "### First Message\n" + campaignData.getFirstMessage() + "\n" +
+                        "The first message has already been spoken via Whisper. Do not repeat it or reintroduce yourself. " +
+                        "From this point onward, take over the conversation naturally. " +
+                        "After every sentence or idea expressed, incorporate a short natural pause (around 1–2 seconds) to allow the customer time to respond. " +
+                        "If the customer begins speaking, immediately pause and listen without interruption. " +
+                        "Use genuine backfill phrases like 'hmm', 'ahh', or 'I see' during these pauses to show active listening. " +
+                        "Never assume the customer’s answer if they remain silent—instead, ask gently for clarification. For example, you might say, " +
+                        "'I noticed you haven’t shared your thoughts yet. Could you tell me more about what you feel?' " +
+                        "If no response is received, guide the conversation by asking an open-ended question or by shifting the topic gracefully, " +
+                        "using phrases such as 'What are your thoughts on this?' or 'Let me know if you'd like to explore another topic.' " +
+                        "Keep the tone warm, patient, and engaging, as if you’re conversing with a friend. " +
+                        "Avoid sounding scripted or robotic by varying your phrasing and using natural transitional statements like 'Alright…', 'Makes sense…', or 'Let's take a moment to think about that.' " +
+                        "If at any point the customer says 'bye' or signals a desire to end the conversation, respond with a polite farewell and execute disconnect_call(). " +
+                        "Do not ask for personal details like WhatsApp or email unless they are volunteered; if provided, confirm clearly before calling update_lead_data(). " +
+                        "Maintain an adaptive conversation flow: if the customer is silent for too long, either gently prompt them or, if appropriate, redirect to another subject or close the conversation gracefully.\n" +
+                        "### Business Id\n" + businessData.getBusinessId() + "\n" +
+                        "### Company Details\n" + businessData.getBusinessName() + "\n" +
+                        "### Business Activity Description\n" + businessData.getBasicActivityDescription() + "\n" +
+                        "### Campaign Id\n" + campaignData.getCampaignId() + "\n" +
+                        "### Campaign Name\n" + campaignData.getCampaignName() + "\n" +
+                        "### Campaign Desc\n" + campaignData.getCampaignDesc() + "\n" +
+                        "### Campaign Prompt\n" + campaignData.getCampaignPrompt() + "\n" +
+                        "### Campaign Aim\n" + campaignData.getCampaignAim() + "\n" +
+                        "### Language of conversation\n" + campaignRunData.getLanguage() + "\n" +
+                        "### Campaign Run Id\n" + campaignRunData.getCampaignRunId() + "\n" +
+                        "### Handling FAQs\n" +
+                        "For any questions, use get_metadata(\"<natural language query>\") to fetch answers. " +
+                        "If needed, follow up with disconnect_call() using the returned streamId.\n" +
+                        "### Handling Transcribed Contact Info\n" +
+                        "If the customer shares a contact detail (number or email) via voice, repeat it back for confirmation. " +
+                        "Only upon clear affirmation, call update_lead_data(). For emails, convert spoken 'at' into '@' appropriately.\n";
     }
 
 

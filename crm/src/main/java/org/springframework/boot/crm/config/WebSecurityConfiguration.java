@@ -58,6 +58,7 @@ public class WebSecurityConfiguration {
                         .requestMatchers("/_ah/start").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/call/**").permitAll()
+                        .requestMatchers("/audio/**").permitAll()
                         .anyRequest()
                         .authenticated());
 

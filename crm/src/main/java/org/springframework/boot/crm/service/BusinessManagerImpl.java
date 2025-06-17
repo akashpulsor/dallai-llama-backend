@@ -55,7 +55,7 @@ public class BusinessManagerImpl implements BusinessManager {
     private final PaymentManager paymentManager;
 
     private final WebSocketStompController webSocketStompController;
-    
+
     private final TranscriptionService transcriptionService;
 
 
@@ -233,7 +233,7 @@ public class BusinessManagerImpl implements BusinessManager {
         BusinessData businessData = this.getBusinessData(businessId);
         String systemMessage =this.callManager.createSystemMessage(agentData,campaignData,businessData, campaignRunData);
         systemMessage = addCallMetaData(systemMessage, twilioStartEventDto);
-        this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData);
+        this.callManager.handleTwilioEvent(twilioStartEventDto,systemMessage, llmData, leadData, campaignData, agentData);
         StartCallEvent startCallEvent = new StartCallEvent(this,twilioStartEventDto,
                 businessId,
                 leadId,
@@ -325,6 +325,8 @@ public class BusinessManagerImpl implements BusinessManager {
         CampaignRunData campaignRunData = makeCallEvent.getCampaignRunData();
         TwilioData twilioData = makeCallEvent.getTwilioData();
         CampaignData campaignData = makeCallEvent.getCampaignData();
+        AgentData agentData = makeCallEvent.getAgentData();
+        LlmData llmData = makeCallEvent.getLlmData();
         int businessId = makeCallEvent.getBusinessId();
         int pageSize = 10;
         Pageable pageable = PageRequest.of(0, pageSize);
@@ -345,9 +347,9 @@ public class BusinessManagerImpl implements BusinessManager {
                 for (LeadData leadData : leadDataList) {
                     try {
 
-                    CallLog callLog = this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData, "OUT_BOUND");
-                    //Send call log to web socket
-                    this.applicationEventPublisher.publishEvent(new CallLogEvent(this, callLog));
+                        CallLog callLog = this.callManager.makeCall(twilioData, leadData, campaignData, campaignRunData, "OUT_BOUND", agentData, llmData);
+                        //Send call log to web socket
+                        this.applicationEventPublisher.publishEvent(new CallLogEvent(this, callLog));
 
                     } catch (Exception e) {
                         log.error("Failed to call log ", e);
@@ -368,9 +370,9 @@ public class BusinessManagerImpl implements BusinessManager {
     }
 
     public void getTranscription(String hostname,String callSid,  String recordingSid,
-                                  String recordingStatus,
-                                  String recordingUrl
-                                 )  {
+                                 String recordingStatus,
+                                 String recordingUrl
+    )  {
 
         CallLog callLog = this.callManager.getCallLog(callSid);
         CampaignRunData campaignRunData = this.campaignManager.getCampaignRunDataById(callLog.getCampaignRunId());
@@ -400,6 +402,12 @@ public class BusinessManagerImpl implements BusinessManager {
         return this.callManager.downloadRecording( campaignRunData.getBusinessId(),  campaignRunData.getCampaignRunId(),  callId, twilioData);
     }
 
+    @Override
+    public String incomingCall(String host, int campaignRunId, String authToken, int businessId, int leadId, String callType) {
+        CallLog callLog = this.callManager.getCallLog(callType, campaignRunId, leadId);
+        return this.callManager.incomingCall(host, host+"/audio/"+callLog.getInitialMessageRecordingFileName(), campaignRunId,authToken, businessId, leadId, callType);
+    }
+
     @EventListener
     public  void handleSendCallLog(CallLogEvent callLogEvent) {
         CallLog callLog = callLogEvent.getCallLog();
@@ -412,7 +420,9 @@ public class BusinessManagerImpl implements BusinessManager {
         CampaignRunData campaignRunData = this.campaignManager.getCampaignRunData(campaignRunId, businessId);
         TwilioData twilioData = this.metaManager.getTwilioData(campaignRunData.getBusinessId(), campaignRunData.getPhoneId());
         CampaignData campaignData =this.campaignManager.getCampaignData(campaignRunData.getCampaignId(), campaignRunData.getBusinessId());
-        this.applicationEventPublisher.publishEvent(new MakeCallEvent(this, businessId, campaignRunData, twilioData, campaignData));
+        AgentData agentData =this.agentManager.findByBusinessIdAndAgentId(campaignData.getBusinessId(), campaignRunData.getAgentId());
+        LlmData llmData =this.metaManager.getLlmData(campaignRunData.getBusinessId(), campaignRunData.getLlmId());
+        this.applicationEventPublisher.publishEvent(new MakeCallEvent(this, businessId, campaignRunData, twilioData, campaignData, agentData, llmData));
     }
 
 
@@ -550,7 +560,7 @@ public class BusinessManagerImpl implements BusinessManager {
         businessDataIndiaModel.setParentBusinessId(onBoardingDto.getParentBusinessId());
         if(onBoardingDto.getBusinessDetails() != null &&
                 onBoardingDto.getBusinessDetails().getPan()!= null)
-                    businessDataIndiaModel.setPan(onBoardingDto.getBusinessDetails().getPan());
+            businessDataIndiaModel.setPan(onBoardingDto.getBusinessDetails().getPan());
         if(onBoardingDto.getBusinessDetails() != null &&
                 onBoardingDto.getBusinessDetails().getAdhaarNumber()!= null) businessDataIndiaModel.setAdhaarNumber(onBoardingDto.getBusinessDetails().getAdhaarNumber());
         if(onBoardingDto.getBusinessDetails() != null &&
