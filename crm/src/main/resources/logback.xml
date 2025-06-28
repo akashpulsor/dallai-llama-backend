@@ -1,5 +1,6 @@
 <configuration>
-    <property name="LOG_HOME" value="C:/Users/Akash/workspace/dallai-llama-backend/crm/logs" />
+    <!-- Use a relative path for logs so it works on any environment -->
+    <property name="LOG_HOME" value="logs" />
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_HOME}/crm-app.log</file>

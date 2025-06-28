@@ -11,6 +11,11 @@ import org.springframework.web.client.RestTemplate;
 public class CrmApplication {
 
     public static void main(String[] args) {
+        // Ensure logs directory exists at startup (create only if not exists)
+        java.io.File logDir = new java.io.File("logs");
+        if (!logDir.exists()) {
+            logDir.mkdirs();
+        }
         SpringApplication.run(CrmApplication.class, args);
     }
 
