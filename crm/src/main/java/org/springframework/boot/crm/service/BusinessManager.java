@@ -5,6 +5,7 @@ import org.springframework.boot.crm.entity.*;
 import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.PathVariable;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -69,6 +70,7 @@ public interface BusinessManager {
 
      CampaignRunResponseDto startCampaign(CampaignStartRequestDto campaignDataRequestDto);
 
+     CampaignRunResponseDto startInBoundCampaign(CampaignStartRequestDto campaignDataRequestDto);
     void getTranscription(String hostname,String callSid,  String recordingSid,
                           String recordingStatus,
                           String recordingUrl
@@ -80,4 +82,12 @@ public interface BusinessManager {
     String incomingCall(String host,int campaignRunId,
                         String authToken,int businessId, int leadId, String callType );
 
+    String incomingCall(String host, int campaignId, String authToken,
+                 int businessId,
+                 int agentId,
+                 String callType,
+                 int campaignRunId,
+                 String fromNumber,
+                 String toNumber,
+                 String callSid) throws IOException;
 }

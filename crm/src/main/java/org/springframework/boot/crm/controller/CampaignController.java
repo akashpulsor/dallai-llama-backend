@@ -48,12 +48,14 @@ public class CampaignController {
         return this.businessManager.startCampaign(campaignDataRequestDto);
     }
 
+    @PostMapping("/start-inbound")
+    public CampaignRunResponseDto startInBoundCampaign(@RequestBody @Valid CampaignStartRequestDto campaignDataRequestDto) {
+        return this.businessManager.startInBoundCampaign(campaignDataRequestDto);
+    }
+
     @PostMapping("/run")
     public void runCampaign(@RequestParam(value = "businessId") int businessId,
                                               @RequestParam(value = "campaignRunId") int campaignRunId) {
-
-
-
         this.businessManager.runCampaign( campaignRunId, businessId );
     }
 

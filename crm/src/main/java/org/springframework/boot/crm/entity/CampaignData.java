@@ -6,6 +6,9 @@ import lombok.Data;
 
 @Data
 @Entity(name = "campaign_data")
+@Inheritance(strategy = InheritanceType.SINGLE_TABLE)
+@DiscriminatorColumn(name = "campaign_type", discriminatorType = DiscriminatorType.STRING)
+@DiscriminatorValue("OUT_BOUND")
 public class CampaignData {
 
     @Id

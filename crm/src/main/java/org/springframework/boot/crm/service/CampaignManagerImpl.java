@@ -1,5 +1,6 @@
 package org.springframework.boot.crm.service;
 
+import jakarta.persistence.Column;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -41,14 +42,29 @@ public class CampaignManagerImpl implements  CampaignManager {
     }
     @Override
     public CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto) {
+        if("IN_BOUND".equals(campaignDataRequestDto.getCampaignType())){
+            CampaignData campaignData = this.campaignService.save(InBoundDtoToModel(campaignDataRequestDto));
+            return modelToDto(campaignData);
+        }
         CampaignData campaignData = this.campaignService.save(dtoToModel(campaignDataRequestDto));
         return modelToDto(campaignData);
+    }
+
+    @Override
+    public InboundCampaignData add(InboundCampaignData inboundCampaignData) {
+        return this.campaignService.save(inboundCampaignData);
     }
 
     @Override
     public CampaignDataResponseDto get(int campaignId, int businessId) {
         CampaignData campaignData = this.campaignService.findByCampaignIdAndBusinessId(campaignId, businessId);
         return modelToDto(campaignData);
+    }
+
+    @Override
+    public InboundCampaignData getInBoundCampaignData(int campaignId, int businessId) {
+        InboundCampaignData campaignData = this.campaignService.findByInBoundCampaignIdAndBusinessId(campaignId, businessId);
+        return campaignData;
     }
 
     public CampaignData getCampaignData(int campaignId, int businessId) {
@@ -81,6 +97,20 @@ public class CampaignManagerImpl implements  CampaignManager {
         return modelToDto(campaignRunData);
     }
 
+    @Override
+    public CampaignRunResponseDto startInboundCampaign(CampaignStartRequestDto campaignStartRequestDto) {
+        InboundCampaignData inboundCampaignData = getInBoundCampaignData(campaignStartRequestDto.getCampaignId(), campaignStartRequestDto.getBusinessId());
+        CampaignRunData campaignRunData = dtoToModel(campaignStartRequestDto);
+        campaignRunData.setStatus(CampaignRunEnum.STARTED);
+        campaignRunData = this.campaignRunService.addCampaignRun(campaignRunData);
+        return modelToDto(campaignRunData);
+    }
+
+    /*
+    * after saving while making campaign we will save the campaign without incoming url,
+    * after then we will start the campaign with campaign run here while saving if we find that  campaign is
+    * of campaign in bound we will update the  webhook url in inbound campaign data
+    * */
 
     public int totalCampaigns(int businessId, LocalDate startDate, LocalDate endDate) {
             return this.campaignService.totalCampaigns(businessId,startDate,endDate);
@@ -140,6 +170,27 @@ public class CampaignManagerImpl implements  CampaignManager {
         if(!StringUtils.isBlank(campaignDataRequestDto.getPlacingOrder()))campaignData.setPlacingOrder(campaignDataRequestDto.getPlacingOrder());
         if(campaignDataRequestDto.getDuration() > 0 )campaignData.setDuration(campaignDataRequestDto.getDuration());
         campaignData.setActive(campaignDataRequestDto.isActive());
+        return campaignData;
+    }
+
+    private InboundCampaignData InBoundDtoToModel(CampaignDataRequestDto campaignDataRequestDto){
+        InboundCampaignData campaignData = new InboundCampaignData();
+        campaignData.setCampaignId(campaignDataRequestDto.getCampaignId());
+        campaignData.setBusinessId(campaignDataRequestDto.getBusinessId());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignAim())) campaignData.setCampaignAim(campaignDataRequestDto.getCampaignAim());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignDesc())) campaignData.setCampaignDesc(campaignDataRequestDto.getCampaignDesc());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignImgUrl())) campaignData.setCampaignImgUrl(campaignDataRequestDto.getCampaignImgUrl());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getLanguage())) campaignData.setLanguage(campaignDataRequestDto.getLanguage());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getCampaignName())) campaignData.setCampaignName(campaignDataRequestDto.getCampaignName());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getConversationGuideLines())) campaignData.setConversationGuideLines(campaignDataRequestDto.getConversationGuideLines());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getFirstMessage())) campaignData.setFirstMessage(campaignDataRequestDto.getFirstMessage());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getHandlingFaq())) campaignData.setHandlingFaq(campaignDataRequestDto.getHandlingFaq());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getPlacingOrder()))campaignData.setPlacingOrder(campaignDataRequestDto.getPlacingOrder());
+
+        if(!StringUtils.isBlank(campaignDataRequestDto.getFirstMessage())) campaignData.setFirstMessage(campaignDataRequestDto.getFirstMessage());
+        if(campaignDataRequestDto.getDuration() > 0 )campaignData.setDuration(campaignDataRequestDto.getDuration());
+        campaignData.setActive(campaignDataRequestDto.isActive());
+        if(!StringUtils.isBlank(campaignDataRequestDto.getPlacingOrder()))campaignData.setPlacingOrder(campaignDataRequestDto.getPlacingOrder());
         return campaignData;
     }
 

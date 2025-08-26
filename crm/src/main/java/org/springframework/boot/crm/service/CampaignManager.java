@@ -3,6 +3,7 @@ package org.springframework.boot.crm.service;
 import org.springframework.boot.crm.dto.*;
 import org.springframework.boot.crm.entity.CampaignData;
 import org.springframework.boot.crm.entity.CampaignRunData;
+import org.springframework.boot.crm.entity.InboundCampaignData;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -13,12 +14,15 @@ public interface CampaignManager {
 
     CampaignDataResponseDto add(CampaignDataRequestDto campaignDataRequestDto);
 
+    InboundCampaignData add(InboundCampaignData inboundCampaignData);
 
     CampaignDataResponseDto get(int campaignId, int businessId);
-
+    InboundCampaignData getInBoundCampaignData(int campaignId, int businessId);
     List<CampaignDataResponseDto> getByBusinessId(int customerId);
 
     CampaignRunResponseDto start(CampaignStartRequestDto campaignStartRequestDto);
+
+    CampaignRunResponseDto startInboundCampaign(CampaignStartRequestDto campaignStartRequestDto);
 
     CampaignRunData getCampaignRunData(int campaignRunId, int businessId);
 

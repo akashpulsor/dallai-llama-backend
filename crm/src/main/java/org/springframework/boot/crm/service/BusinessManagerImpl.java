@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.twilio.rest.api.v2010.account.Transcription;
 import jakarta.transaction.Transactional;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.crm.controller.WebSocketStompController;
 import org.springframework.boot.crm.dto.*;
@@ -19,6 +20,8 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -202,6 +205,32 @@ public class BusinessManagerImpl implements BusinessManager {
 
         return campaignRunResponseDto;
     }
+
+    @SneakyThrows
+    public CampaignRunResponseDto startInBoundCampaign(CampaignStartRequestDto campaignDataRequestDto) {
+        CampaignRunResponseDto campaignRunResponseDto = this.campaignManager.startInboundCampaign(campaignDataRequestDto);
+        //send start event to web socket
+
+        LlmData llmData = this.metaManager.getLlmData(campaignRunResponseDto.getBusinessId(),campaignRunResponseDto.getLlmId());
+        TwilioData twilioData = this.metaManager.getTwilioData(campaignRunResponseDto.getBusinessId(),campaignRunResponseDto.getPhoneId());
+        AgentData agentData = this.agentManager.findByBusinessIdAndAgentId(campaignRunResponseDto.getBusinessId(), campaignRunResponseDto.getAgentId());
+        CampaignData campaignData = this.campaignManager.getCampaignData(campaignRunResponseDto.getCampaignId(), campaignRunResponseDto.getBusinessId());
+        this.callManager.configureInBoundCampaign(
+                llmData,
+                twilioData,
+                agentData,
+                campaignData,
+                campaignRunResponseDto
+        );
+        this.webSocketStompController.sendCampaignRunData(
+                campaignRunResponseDto.getBusinessId(),
+                campaignRunResponseDto.getCampaignId(),
+                campaignRunResponseDto
+        );
+
+        return campaignRunResponseDto;
+    }
+
     public DashBoardDataDto getDashBoardDto(LocalDate startDate, LocalDate endDate, int businessId)  {
         //BalanceFetcher usageFetcher = this.metaManager.getUsageData(businessId, llmId);
         //double totalCost = usageFetcher.calculateTotalUsage(startDate);
@@ -406,6 +435,57 @@ public class BusinessManagerImpl implements BusinessManager {
     public String incomingCall(String host, int campaignRunId, String authToken, int businessId, int leadId, String callType) {
         CallLog callLog = this.callManager.getCallLog(callType, campaignRunId, leadId);
         return this.callManager.incomingCall(host, host+"/audio/"+callLog.getInitialMessageRecordingFileName(), campaignRunId,authToken, businessId, leadId, callType);
+    }
+
+    public String incomingCall(String host, int campaignId, String authToken,
+                               int businessId,
+                                int agentId,
+                                String callType,
+                                int campaignRunId,
+                                String fromNumber,
+                                String toNumber,
+                                String callSid) throws IOException {
+        CampaignRunData campaignRunData = this.campaignManager.getCampaignRunDataById(campaignRunId);
+        campaignRunData = copyCampaignRun(campaignRunData);
+        
+
+        LlmData llmData = this.metaManager.getLlmData(campaignRunData.getBusinessId(), campaignRunData.getLlmId());
+        LeadData leadData = new LeadData();
+
+        leadData.setLeadPhone(fromNumber);
+
+        String countryCode = fromNumber != null && fromNumber.length() >= 3
+                ? fromNumber.substring(0, 3)
+                : fromNumber;
+        leadData.setPhoneCountryCode(countryCode);
+        leadData = this.leadManager.addLead(leadData,businessId);
+        campaignRunData.setCallSId(callSid);
+        AgentData agentData = this.agentManager.findByBusinessIdAndAgentId(businessId, campaignRunData.getAgentId());
+        InboundCampaignData inboundCampaignData = this.campaignManager.getInBoundCampaignData(campaignId, businessId);
+
+        if(inboundCampaignData.getInitialMessageRecording()==null) {
+            String fileName = this.callManager.getInboundMessageRecordingFileName(leadData, inboundCampaignData, agentData, llmData);
+            inboundCampaignData.setInitialMessageRecording(fileName);
+        }
+        else {
+            String filePath = "/audio/" + inboundCampaignData.getInitialMessageRecording();
+            Path path = Path.of(filePath);
+            if (!Files.exists(path)) {
+                String fileName = this.callManager.getInboundMessageRecordingFileName(leadData, inboundCampaignData, agentData, llmData);
+                inboundCampaignData.setInitialMessageRecording(fileName);
+            }
+        }
+        inboundCampaignData = this.campaignManager.add(inboundCampaignData);
+        CallLog callLog = this.callManager.createCallLogService(
+                callType,
+                campaignRunId,
+                leadData.getLeadId(),
+                callSid,
+                fromNumber,
+                toNumber,
+                inboundCampaignData.getInitialMessageRecording()
+        );
+        return this.callManager.incomingCall(host, host+"/audio/"+callLog.getInitialMessageRecordingFileName(), campaignRunId,authToken, businessId, leadData.getLeadId(), callType);
     }
 
     @EventListener
@@ -615,5 +695,27 @@ public class BusinessManagerImpl implements BusinessManager {
 
         return dalaiLlamaLeads;
     }
+    public CampaignRunData copyCampaignRun(CampaignRunData original) {
+        CampaignRunData copy = new CampaignRunData();
 
+        // Note: Do NOT copy campaignRunId — it will be auto-generated
+        copy.setBusinessId(original.getBusinessId());
+        copy.setCampaignId(original.getCampaignId());
+        copy.setAll(original.isAll());
+
+        // Deep copy the set of leads to avoid shared references
+        if (original.getLeads() != null) {
+            copy.setLeads(new HashSet<>(original.getLeads()));
+        }
+
+        copy.setAgentId(original.getAgentId());
+        copy.setLanguage(original.getLanguage());
+        copy.setStatus(original.getStatus());
+        copy.setLlmId(original.getLlmId());
+        copy.setPhoneId(original.getPhoneId());
+        copy.setCallSId(original.getCallSId());
+
+        // createdAt and updatedAt will be set automatically by @PrePersist
+        return copy;
+    }
 }

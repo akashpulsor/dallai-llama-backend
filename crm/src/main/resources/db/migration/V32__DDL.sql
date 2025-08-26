@@ -1,0 +1,2 @@
+ALTER TABLE campaign_data
+ADD COLUMN campaign_type ENUM('IN_BOUND', 'OUT_BOUND') NOT NULL DEFAULT 'OUT_BOUND';

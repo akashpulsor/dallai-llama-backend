@@ -1,6 +1,7 @@
 package org.springframework.boot.crm.dto;
 
 
+import jakarta.persistence.Column;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -51,6 +52,10 @@ public class CampaignDataRequestDto {
 
     @Positive(message = "duration must be positive and between 2 and 5")
     private int duration = 2;
+
+
+    private String campaignType = "OUT_BOUND";
+
 
     private LocalDateTime createdAt;
 

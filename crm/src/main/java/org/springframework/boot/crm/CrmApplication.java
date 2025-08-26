@@ -23,4 +23,6 @@ public class CrmApplication {
     public RestTemplate restTemplate() {
         return new RestTemplate();
     }
+
+
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.twilio.Twilio;
 import com.twilio.http.HttpMethod;
+import com.twilio.rest.api.v2010.account.IncomingPhoneNumber;
 import com.twilio.rest.api.v2010.account.Recording;
 import com.twilio.rest.api.v2010.account.Transcription;
 import com.twilio.type.PhoneNumber;
@@ -106,11 +107,33 @@ public class CallManager {
 
     }
 
+    public CallLog createCallLogService(String callType, int campaignRunId, int leadId, String callSid,
+                                        String fromNumber, String toNumber, String fileName) {
+        return this.callLogService.createCallLog(callType,
+                campaignRunId,
+                leadId,  callSid,
+                toNumber, fromNumber, fileName );
+    }
+
     public String getInitialMessageRecordingFileName(LeadData leadData, CampaignData campaignData,  AgentData agentData, LlmData llmData) throws IOException {
         String initialMessage = campaignData.getFirstMessage();
         //replace placeholders with actual values
         initialMessage = initialMessage.replace("[Lead Name]", leadData.getLeadName())
                 .replace("[Agent Name]", agentData.getAgentName());
+        byte[] twilioAudio = TranscriptionUtils
+                .generateFriendlyOpenAIAudioForTwilio(initialMessage, llmData, agentData.getVoice());
+        // create UUID using leadId, campaignRunId and callType
+        String uuid = UUID.randomUUID().toString();
+        String fileName = "initial-message-" + uuid + ".wav";
+        // Save to file for Twilio playback
+        TranscriptionUtils
+                .saveTwilioAudioToFile(twilioAudio, fileName);
+        return fileName;
+    }
+
+    public String getInboundMessageRecordingFileName(LeadData leadData, CampaignData campaignData,  AgentData agentData, LlmData llmData) throws IOException {
+        String initialMessage = campaignData.getFirstMessage();
+        //replace placeholders with actual values
         byte[] twilioAudio = TranscriptionUtils
                 .generateFriendlyOpenAIAudioForTwilio(initialMessage, llmData, agentData.getVoice());
         // create UUID using leadId, campaignRunId and callType
@@ -151,6 +174,22 @@ public class CallManager {
 
     }
 
+    public void configureInBoundCampaign(LlmData llmData, TwilioData twilioData,
+                                         AgentData agentData, CampaignData campaignData, CampaignRunResponseDto campaignRunResponseDto) throws URISyntaxException {
+        Twilio.init(twilioData.getAccountSid(), twilioData.getAccountAuthToken());
+        log.info("Received call   campaignId - {}, businessId - {}, callType - {}",
+                campaignData.getBusinessId(), campaignData.getCampaignId(), "IN_BOUND");
+        // Build webhook URL with auth token
+        String webhookUrl = hostname + "/api/call/inbound?authToken=jwtToken&campaignRunId="+campaignRunResponseDto.getCampaignRunId()+ "&campaignId="+campaignData.getCampaignId()+ "&businessId="+campaignData.getBusinessId()+"&agentId="+ agentData.getAgentId()+"&callType=IN_BOUND";
+
+        IncomingPhoneNumber number = IncomingPhoneNumber.updater(twilioData.getPhoneNumberSid()) // number you want to purchase
+                .setVoiceUrl(new URI(webhookUrl))
+                .setVoiceMethod(HttpMethod.POST)
+                .update();
+
+        log.info("Provisioned number: {}", number.getPhoneNumber());
+        log.info("PhoneNumberSid: {}" , number.getSid());
+    }
     public String createAuthToken(int leadId, int businessId, int campaignId,
                                   TwilioData twilioData) {
         //TODO create jwt token

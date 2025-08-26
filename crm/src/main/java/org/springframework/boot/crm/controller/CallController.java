@@ -10,6 +10,7 @@ import org.springframework.boot.crm.service.TranscriptionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.util.Map;
 
 @Slf4j
@@ -40,6 +41,24 @@ public class CallController {
     }
 
 
+
+    @PostMapping("/inbound")
+    public String handleInboundCall(
+            @RequestHeader("host") String host,
+            @RequestParam("authToken") String authToken,
+            @RequestParam("campaignId") int campaignId,
+            @RequestParam("campaignRunId") int campaignRunId,
+            @RequestParam("businessId") int businessId,
+            @RequestParam("agentId") int agentId,
+            @RequestParam("callType") String callType,
+            // Twilio system params
+            @RequestParam("From") String fromNumber,
+            @RequestParam("To") String toNumber,
+            @RequestParam("CallSid") String callSid
+    ) throws IOException {
+        log.info("Inbound call received: Campaign ID: {} Business ID: {} Agent ID: {} Call Type: {}", campaignId, businessId, agentId, callType);
+        return this.businessManager.incomingCall(host,campaignId,authToken,businessId,agentId,callType,campaignRunId,fromNumber,toNumber, callSid);
+    }
     @PostMapping("/status")
     public String status(@RequestHeader("X-Twilio-Signature") String twilioSignature,
                                          @RequestParam Map<String, String> params,

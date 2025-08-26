@@ -36,6 +36,12 @@ public class LeadManagerImpl implements LeadManager {
         return convertModelToDto(leadData);
     }
 
+    public LeadData addLead(LeadData leadData, int businessId) {
+        leadData = this.leadDataService.save(leadData);
+        this.leadDataService.addBusinessLead(leadData.getLeadId(), businessId);
+        return leadData;
+    }
+
     public List<LeadResponseDto> getLead(int businessId) {
         return this.leadDataService.getLeadByBusinessId(businessId).
                 stream().

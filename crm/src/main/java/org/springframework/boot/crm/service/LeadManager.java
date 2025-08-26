@@ -14,6 +14,7 @@ public interface LeadManager {
 
     LeadResponseDto addLead(LeadRequestDto leadRequestDto);
 
+    LeadData addLead(LeadData leadData, int businessId);
     List<LeadResponseDto> getLead(int businessId);
 
     LeadResponseDto getLead(int businessId, int leadId);

@@ -39,6 +39,9 @@ public class TwilioData {
     @Column(name="status")
     private String status;
 
+    @Column(name="phone_number_sid")
+    private String phoneNumberSid;
+
     @Column
     private boolean active;
     @Embedded
