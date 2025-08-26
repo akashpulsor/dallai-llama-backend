@@ -16,6 +16,10 @@ public class CrmApplication {
         if (!logDir.exists()) {
             logDir.mkdirs();
         }
+        java.io.File audioDir = new java.io.File("public/audio");
+        if (!audioDir.exists()) {
+            logDir.mkdirs();
+        }
         SpringApplication.run(CrmApplication.class, args);
     }
 
