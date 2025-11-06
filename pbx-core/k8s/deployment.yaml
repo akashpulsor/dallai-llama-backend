@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pbx-core
+  namespace: telephony
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pbx-core
+  template:
+    metadata:
+      labels:
+        app: pbx-core
+    spec:
+      containers:
+        - name: pbx-core
+          image: ghcr.io/your-org/pbx-core:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          env:
+            - name: JAVA_OPTS
+              value: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 20
