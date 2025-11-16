@@ -4,6 +4,11 @@
     <excludeFromCompile>
       <directory url="file://$PROJECT_DIR$/auth-service/src/main/resources/archetype-resources" includeSubdirectories="true" />
       <directory url="file://$PROJECT_DIR$/pbx/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/agent-service/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/billing-service/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/onboarding-service/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/ai-service/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/blob-manager/src/main/resources/archetype-resources" includeSubdirectories="true" />
     </excludeFromCompile>
     <annotationProcessing>
       <profile default="true" name="Default" enabled="true" />
@@ -14,6 +19,10 @@
         <module name="auth-service" />
         <module name="pbx-core" />
         <module name="prediction-service" />
+        <module name="blob-manager" />
+        <module name="agent-service" />
+        <module name="billing-service" />
+        <module name="onboarding-service" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
@@ -24,9 +33,16 @@
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
-      <module name="auth-service" options="" />
+      <module name="agent-service" options="-parameters" />
+      <module name="ai-service" options="" />
+      <module name="auth-service" options="-parameters" />
+      <module name="billing-service" options="-parameters" />
+      <module name="blob-manager" options="-parameters" />
       <module name="content" options="-parameters" />
       <module name="content (1)" options="-parameters" />
+      <module name="onboarding-service" options="-parameters" />
+      <module name="pbx-core" options="-parameters" />
+      <module name="prediction-service" options="-parameters" />
     </option>
   </component>
 </project>

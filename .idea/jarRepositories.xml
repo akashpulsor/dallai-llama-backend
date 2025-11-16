@@ -36,5 +36,15 @@
       <option name="name" value="JBoss Community repository" />
       <option name="url" value="https://repository.jboss.org/nexus/content/repositories/public/" />
     </remote-repository>
+    <remote-repository>
+      <option name="id" value="mobicents-release" />
+      <option name="name" value="mobicents-release" />
+      <option name="url" value="https://oss.sonatype.org/content/repositories/orgmobicents-1159/" />
+    </remote-repository>
+    <remote-repository>
+      <option name="id" value="nist-release" />
+      <option name="name" value="nist-release" />
+      <option name="url" value="https://github.com/usnistgov/jsip/releases/download/maven/" />
+    </remote-repository>
   </component>
 </project>
