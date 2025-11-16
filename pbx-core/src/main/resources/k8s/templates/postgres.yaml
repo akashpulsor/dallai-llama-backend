@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-${INFRA_PREFIX}
+  namespace: ${NAMESPACE}
+  labels:
+    app: postgres
+    infra: ${INFRA_PREFIX}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      infra: ${INFRA_PREFIX}
+  template:
+    metadata:
+      labels:
+        app: postgres
+        infra: ${INFRA_PREFIX}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          env:
+            - name: POSTGRES_DB
+              value: "pbx"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-${INFRA_PREFIX}-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-${INFRA_PREFIX}-secret
+                  key: password
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          emptyDir: {} # replace with PVC for persistence
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-${INFRA_PREFIX}
+  namespace: ${NAMESPACE}
+  labels:
+    app: postgres
+    infra: ${INFRA_PREFIX}
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+    infra: ${INFRA_PREFIX}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

@@ -1,0 +1,12 @@
+pbx:
+  sip:
+    host: 0.0.0.0
+    port: 5060
+    domain: dev.pbx.local
+
+  security:
+    tls-enabled: false
+
+logging:
+  level:
+    com.dalai.llama.pbx: DEBUG  # More verbose in dev

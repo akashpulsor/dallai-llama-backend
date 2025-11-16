@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-${INFRA_PREFIX}
+  namespace: ${NAMESPACE}
+  labels:
+    app: mysql
+    infra: ${INFRA_PREFIX}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+      infra: ${INFRA_PREFIX}
+  template:
+    metadata:
+      labels:
+        app: mysql
+        infra: ${INFRA_PREFIX}
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_DATABASE
+              value: "pbx"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-${INFRA_PREFIX}-secret
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-${INFRA_PREFIX}-secret
+                  key: password
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-${INFRA_PREFIX}-secret
+                  key: rootpassword
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: mysqldata
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysqldata
+          emptyDir: {} # replace with PVC for persistence
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-${INFRA_PREFIX}
+  namespace: ${NAMESPACE}
+  labels:
+    app: mysql
+    infra: ${INFRA_PREFIX}
+spec:
+  type: ClusterIP
+  selector:
+    app: mysql
+    infra: ${INFRA_PREFIX}
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306

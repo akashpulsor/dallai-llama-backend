@@ -1,0 +1,16 @@
+pbx:
+  sip:
+    host: 0.0.0.0
+    port: 5060
+    domain: pbx.example.com
+
+  security:
+    tls-enabled: true  # Force TLS in production
+    ip-auth-enabled: true
+
+  media:
+    recording-enabled: true  # Enable recording in prod
+
+logging:
+  level:
+    com.dalai.llama.pbx: INFO  # Less verbose in prod

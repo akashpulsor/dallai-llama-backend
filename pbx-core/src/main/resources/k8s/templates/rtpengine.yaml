@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtpengine-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: rtpengine
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtpengine
+      infra: ${INFRA_PREFIX}
+      tenant: ${TENANT_ID}
+  template:
+    metadata:
+      labels:
+        app: rtpengine
+        infra: ${INFRA_PREFIX}
+        tenant: ${TENANT_ID}
+    spec:
+      containers:
+        - name: rtpengine
+          image: drachtio/rtpengine:latest
+          args:
+            - "--listen-ng=0.0.0.0:22222"
+            - "--foreground"
+          ports:
+            - containerPort: 22222
+              name: ng
+              protocol: UDP
+            - containerPort: 10000
+              name: rtp
+              protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rtpengine-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: rtpengine
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  type: ClusterIP
+  selector:
+    app: rtpengine
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+  ports:
+    - name: ng
+      port: 22222
+      targetPort: 22222
+      protocol: UDP
+    - name: rtp
+      port: 10000
+      targetPort: 10000
+      protocol: UDP

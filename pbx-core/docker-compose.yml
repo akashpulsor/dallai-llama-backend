@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pbx-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: pbx_core
+      MYSQL_USER: pbx
+      MYSQL_PASSWORD: pbx123
+    ports:
+      - "3306:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - pbx_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: pbx-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - pbx_redis_data:/data
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: pbx-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@localhost:9093
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    volumes:
+      - pbx_kafka_data:/bitnami/kafka
+
+  pbx-core:
+    build: .
+    container_name: pbx-core
+    depends_on:
+      - mysql
+      - redis
+      - kafka
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/pbx_core?useSSL=false&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: pbx
+      SPRING_DATASOURCE_PASSWORD: pbx123
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_FLYWAY_BASELINE_ON_MIGRATE: "true"
+      SPRING_FLYWAY_LOCATIONS: classpath:db/migration
+      AI_SERVICE_URL: http://ai-service:8000/ai/process
+    ports:
+      - "8080:8080"
+
+volumes:
+  pbx_mysql_data:
+  pbx_redis_data:
+  pbx_kafka_data:

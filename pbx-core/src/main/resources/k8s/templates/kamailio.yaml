@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kamailio-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: kamailio
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kamailio
+      infra: ${INFRA_PREFIX}
+      tenant: ${TENANT_ID}
+  template:
+    metadata:
+      labels:
+        app: kamailio
+        infra: ${INFRA_PREFIX}
+        tenant: ${TENANT_ID}
+    spec:
+      containers:
+        - name: kamailio
+          image: ${KAMAILIO_IMAGE}
+          env:
+            - name: REALM
+              value: "${REALM}"
+            - name: RTPENGINE_SOCK
+              value: "udp:rtpengine-${INFRA_PREFIX}-${TENANT_ID}:22222"
+            - name: SBC_ENABLED
+              value: "${SBC_ENABLED}"
+            - name: KAFKA_BROKERS
+              value: "${KAFKA_BROKERS}"
+            - name: KAFKA_REG_TOPIC
+              value: "${KAFKA_REG_TOPIC}"
+            - name: KAFKA_CALL_TOPIC
+              value: "${KAFKA_CALL_TOPIC}"
+            - name: PBX_CORE_URL
+              value: "${PBX_CORE_URL}"
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: sip-tls
+              containerPort: 5061
+              protocol: TCP
+          volumeMounts:
+            - name: kamailio-config
+              mountPath: /etc/kamailio/kamailio.cfg
+              subPath: kamailio.cfg
+            - name: kamailio-tls
+              mountPath: /etc/kamailio/tls
+              readOnly: true
+      volumes:
+        - name: kamailio-config
+          configMap:
+            name: kamailio-config-${TENANT_ID}
+        - name: kamailio-tls
+          secret:
+            secretName: kamailio-tls-${TENANT_ID}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: kamailio
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  type: LoadBalancer
+  selector:
+    app: kamailio
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+  ports:
+    - name: sip-udp
+      port: 5060
+      protocol: UDP
+      targetPort: 5060
+    - name: sip-tcp
+      port: 5060
+      protocol: TCP
+      targetPort: 5060
+    - name: sip-tls
+      port: 5061
+      protocol: TCP
+      targetPort: 5061

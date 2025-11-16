@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coturn-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: coturn
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coturn
+      infra: ${INFRA_PREFIX}
+      tenant: ${TENANT_ID}
+  template:
+    metadata:
+      labels:
+        app: coturn
+        infra: ${INFRA_PREFIX}
+        tenant: ${TENANT_ID}
+    spec:
+      containers:
+        - name: coturn
+          image: instrumentisto/coturn:latest
+          args:
+            - "--no-tls"
+            - "--listening-port=3478"
+            - "--tls-listening-port=5349"
+            - "--external-ip=${EXTERNAL_IP}"
+            - "--realm=${REALM}"
+          ports:
+            - containerPort: 3478
+              name: turn-udp
+              protocol: UDP
+            - containerPort: 5349
+              name: turns-tcp
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coturn-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: coturn
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  type: LoadBalancer
+  selector:
+    app: coturn
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+  ports:
+    - name: turn-udp
+      port: 3478
+      protocol: UDP
+      targetPort: 3478
+    - name: turns-tcp
+      port: 5349
+      protocol: TCP
+      targetPort: 5349

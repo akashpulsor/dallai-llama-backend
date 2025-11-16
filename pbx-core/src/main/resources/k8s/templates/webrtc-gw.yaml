@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webrtc-gw-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: webrtc-gw
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webrtc-gw
+      infra: ${INFRA_PREFIX}
+      tenant: ${TENANT_ID}
+  template:
+    metadata:
+      labels:
+        app: webrtc-gw
+        infra: ${INFRA_PREFIX}
+        tenant: ${TENANT_ID}
+    spec:
+      containers:
+        - name: webrtc-gw
+          image: ${WEBRTC_IMAGE}
+          env:
+            - name: TENANT_ID
+              value: "${TENANT_ID}"
+            - name: RTPENGINE_SOCK
+              value: "udp:rtpengine-${INFRA_PREFIX}-${TENANT_ID}:22222"
+          ports:
+            - containerPort: 8443
+              name: wss
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webrtc-gw-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app: webrtc-gw
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+spec:
+  type: ClusterIP
+  selector:
+    app: webrtc-gw
+    infra: ${INFRA_PREFIX}
+    tenant: ${TENANT_ID}
+  ports:
+    - name: wss
+      port: 8443
+      targetPort: 8443
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webrtc-gw-${INFRA_PREFIX}-${TENANT_ID}
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  tls:
+    - hosts:
+        - wss.${CLIENT}.dalaillama.${REALM/*\./}
+      secretName: wss-${TENANT_ID}-tls
+  rules:
+    - host: wss.${CLIENT}.dalaillama.${REALM/*\./}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webrtc-gw-${INFRA_PREFIX}-${TENANT_ID}
+                port:
+                  number: 8443

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service-${TENANT_ID}
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-service-${TENANT_ID}
+  template:
+    metadata:
+      labels:
+        app: ai-service-${TENANT_ID}
+    spec:
+      containers:
+        - name: ai-service
+          image: ${AI_IMAGE}
+          env:
+            - name: TENANT_ID
+              value: "${TENANT_ID}"
+            - name: KAFKA_BROKER
+              # NOTE: Changed from KAFKA_BROKER to KAFKA_BROKERS to match the variable in your Java code
+              value: "${KAFKA_BROKERS}"
+            - name: REDIS_URL # <-- **NEW**
+              value: "${REDIS_URL}"
+            - name: KAFKA_REG_TOPIC # <-- **NEW**
+              value: "${KAFKA_REG_TOPIC}"
+            - name: KAFKA_CALL_TOPIC # <-- **NEW**
+              value: "${KAFKA_CALL_TOPIC}"
+            - name: RTP_TOPIC
+              value: "${RTP_TOPIC}"
+            - name: AI_RESULT_TOPIC
+              value: "${AI_RESULT_TOPIC}"
+            - name: WS_PORT
+              value: "8080"
+          ports:
+            - containerPort: 10000
+              protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service-${TENANT_ID}
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ai-service-${TENANT_ID}
+  ports:
+    - port: 10000
+      targetPort: 10000
+      protocol: UDP

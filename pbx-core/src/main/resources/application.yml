@@ -1,12 +1,45 @@
 server:
-  port: 8081
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/pbx_core?useSSL=false&serverTimezone=UTC
+    username: pbx
+    password: pbx123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQL8Dialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+  kafka:
+    bootstrap-servers: kafka.platform.svc.cluster.local:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+  redis:
+    host: localhost
+    port: 6379
+
+registry:
+  container: docker.io/dalaillama
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
-spring:
-  application:
-    name: pbx-core
+pbx:
+  ai:
+    routing:
+      timeout-ms: 60
+  pbx:
+    core:
+      url: http://pbx-core.platform.svc.cluster.local:8080
