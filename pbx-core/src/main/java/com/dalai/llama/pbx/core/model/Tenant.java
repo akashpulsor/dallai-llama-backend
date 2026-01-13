@@ -11,6 +11,7 @@ public class Tenant {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(length = 36)
     private String id;
 
     @Column(unique = true, nullable = false)

@@ -1,0 +1,354 @@
+2025-11-07T17:52:10.012+05:30  INFO 31732 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 31732 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-07T17:52:10.015+05:30 DEBUG 31732 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-07T17:52:10.015+05:30  INFO 31732 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-07T17:52:10.084+05:30  INFO 31732 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-07T17:52:10.085+05:30  INFO 31732 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-07T17:52:10.281+05:30  WARN 31732 --- [pbx-core] [restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.BeanDefinitionStoreException: Failed to parse configuration class [com.dalai.llama.pbx.core.PbxCore]
+2025-11-07T17:52:10.350+05:30 ERROR 31732 --- [pbx-core] [restartedMain] o.s.boot.SpringApplication               : Application run failed
+
+2025-11-07T17:53:17.810+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 28028 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-07T17:53:17.812+05:30 DEBUG 28028 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-07T17:53:17.813+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-07T17:53:17.883+05:30  INFO 28028 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-07T17:53:17.883+05:30  INFO 28028 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-07T17:53:18.883+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:53:18.883+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2025-11-07T17:53:18.896+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 4 ms. Found 0 JPA repository interfaces.
+2025-11-07T17:53:19.466+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:53:19.468+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2025-11-07T17:53:19.489+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 10 ms. Found 0 Redis repository interfaces.
+2025-11-07T17:53:21.152+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2025-11-07T17:53:21.180+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-11-07T17:53:21.180+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2025-11-07T17:53:21.261+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-11-07T17:53:21.262+05:30  INFO 28028 --- [pbx-core] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3379 ms
+2025-11-07T17:53:21.485+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Starting...
+2025-11-07T17:53:21.791+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.zaxxer.hikari.pool.HikariPool        : PBX-H2-Pool - Added connection conn0: url=jdbc:h2:mem:pbxdb user=SA
+2025-11-07T17:53:21.794+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Start completed.
+2025-11-07T17:53:21.794+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:53:21.794+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ⚠ H2 In-Memory Database Active
+2025-11-07T17:53:21.794+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   This is a FALLBACK configuration
+2025-11-07T17:53:21.794+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   For production, configure MySQL or PostgreSQL
+2025-11-07T17:53:21.795+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   Console: http://localhost:8080/h2-console
+2025-11-07T17:53:21.795+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   JDBC URL: jdbc:h2:mem:pbxdb
+2025-11-07T17:53:21.795+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:53:21.845+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.s.b.a.h2.H2ConsoleAutoConfiguration    : H2 console available at '/h2-console'. Database available at 'jdbc:h2:mem:pbxdb'
+2025-11-07T17:53:22.358+05:30  INFO 28028 --- [pbx-core] [restartedMain] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:pbxdb (H2 2.2)
+2025-11-07T17:53:22.363+05:30  WARN 28028 --- [pbx-core] [restartedMain] o.f.c.internal.database.base.Database    : Flyway upgrade recommended: H2 2.2.224 is newer than this version of Flyway and support has not been tested. The latest supported version of H2 is 2.2.220.
+2025-11-07T17:53:22.376+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "PUBLIC"."flyway_schema_history" does not exist yet
+2025-11-07T17:53:22.377+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : Successfully validated 0 migrations (execution time 00:00.006s)
+2025-11-07T17:53:22.378+05:30  WARN 28028 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : No migrations found. Are your locations set up correctly?
+2025-11-07T17:53:22.383+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "PUBLIC"."flyway_schema_history" ...
+2025-11-07T17:53:22.421+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Current version of schema "PUBLIC": << Empty Schema >>
+2025-11-07T17:53:22.426+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Schema "PUBLIC" is up to date. No migration necessary.
+2025-11-07T17:53:22.610+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2025-11-07T17:53:22.706+05:30  INFO 28028 --- [pbx-core] [restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2025-11-07T17:53:22.751+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2025-11-07T17:53:23.113+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2025-11-07T17:53:23.168+05:30  WARN 28028 --- [pbx-core] [restartedMain] org.hibernate.dialect.Dialect            : HHH000511: The 2.2.224 version for [org.hibernate.dialect.MySQLDialect] is no longer supported, hence certain features may not work properly. The minimum supported version is 8.0.0. Check the community dialects project for available legacy versions.
+2025-11-07T17:53:23.173+05:30  WARN 28028 --- [pbx-core] [restartedMain] org.hibernate.orm.deprecation            : HHH90000025: MySQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2025-11-07T17:53:23.531+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2025-11-07T17:53:23.536+05:30  INFO 28028 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ⚠ Caffeine Cache Manager Active (FALLBACK)
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Mode: IN-MEMORY (Development)
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Configuration:
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Max entries: 10,000 per cache
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - TTL: 5 minutes
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Idle timeout: 10 minutes
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Limitations:
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ NOT shared across servers
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Data lost on restart
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Single-server only
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   For production: Configure Redis
+2025-11-07T17:53:23.599+05:30  WARN 28028 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:53:23.619+05:30  WARN 28028 --- [pbx-core] [restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.boot.context.properties.ConfigurationPropertiesBindException: Error creating bean with name 'pbxConfiguration': Could not bind properties to 'PbxConfiguration' : prefix=pbx, ignoreInvalidFields=false, ignoreUnknownFields=true
+2025-11-07T17:53:23.619+05:30  INFO 28028 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:53:23.623+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown initiated...
+2025-11-07T17:53:23.629+05:30  INFO 28028 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown completed.
+2025-11-07T17:53:23.633+05:30  INFO 28028 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Stopping service [Tomcat]
+2025-11-07T17:53:23.657+05:30  INFO 28028 --- [pbx-core] [restartedMain] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+
+2025-11-07T17:56:54.012+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 30220 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-07T17:56:54.014+05:30 DEBUG 30220 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-07T17:56:54.015+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-07T17:56:54.071+05:30  INFO 30220 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-07T17:56:54.071+05:30  INFO 30220 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-07T17:56:55.159+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:56:55.160+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2025-11-07T17:56:55.172+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 4 ms. Found 0 JPA repository interfaces.
+2025-11-07T17:56:55.737+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:56:55.743+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2025-11-07T17:56:55.780+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 16 ms. Found 0 Redis repository interfaces.
+2025-11-07T17:56:57.325+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2025-11-07T17:56:57.343+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-11-07T17:56:57.344+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2025-11-07T17:56:57.409+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-11-07T17:56:57.409+05:30  INFO 30220 --- [pbx-core] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3338 ms
+2025-11-07T17:56:57.572+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Starting...
+2025-11-07T17:56:57.886+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.zaxxer.hikari.pool.HikariPool        : PBX-H2-Pool - Added connection conn0: url=jdbc:h2:mem:pbxdb user=SA
+2025-11-07T17:56:57.891+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Start completed.
+2025-11-07T17:56:57.891+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ⚠ H2 In-Memory Database Active
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   This is a FALLBACK configuration
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   For production, configure MySQL or PostgreSQL
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   Console: http://localhost:8080/h2-console
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   JDBC URL: jdbc:h2:mem:pbxdb
+2025-11-07T17:56:57.892+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:56:57.957+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.s.b.a.h2.H2ConsoleAutoConfiguration    : H2 console available at '/h2-console'. Database available at 'jdbc:h2:mem:pbxdb'
+2025-11-07T17:56:59.784+05:30  INFO 30220 --- [pbx-core] [restartedMain] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:pbxdb (H2 2.2)
+2025-11-07T17:56:59.796+05:30  WARN 30220 --- [pbx-core] [restartedMain] o.f.c.internal.database.base.Database    : Flyway upgrade recommended: H2 2.2.224 is newer than this version of Flyway and support has not been tested. The latest supported version of H2 is 2.2.220.
+2025-11-07T17:56:59.834+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "PUBLIC"."flyway_schema_history" does not exist yet
+2025-11-07T17:56:59.839+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : Successfully validated 0 migrations (execution time 00:00.017s)
+2025-11-07T17:56:59.840+05:30  WARN 30220 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : No migrations found. Are your locations set up correctly?
+2025-11-07T17:56:59.851+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "PUBLIC"."flyway_schema_history" ...
+2025-11-07T17:56:59.941+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Current version of schema "PUBLIC": << Empty Schema >>
+2025-11-07T17:56:59.951+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Schema "PUBLIC" is up to date. No migration necessary.
+2025-11-07T17:57:00.153+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2025-11-07T17:57:00.258+05:30  INFO 30220 --- [pbx-core] [restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2025-11-07T17:57:00.303+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2025-11-07T17:57:00.700+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2025-11-07T17:57:00.755+05:30  WARN 30220 --- [pbx-core] [restartedMain] org.hibernate.dialect.Dialect            : HHH000511: The 2.2.224 version for [org.hibernate.dialect.MySQLDialect] is no longer supported, hence certain features may not work properly. The minimum supported version is 8.0.0. Check the community dialects project for available legacy versions.
+2025-11-07T17:57:00.759+05:30  WARN 30220 --- [pbx-core] [restartedMain] org.hibernate.orm.deprecation            : HHH90000025: MySQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2025-11-07T17:57:01.112+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2025-11-07T17:57:01.119+05:30  INFO 30220 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ⚠ Caffeine Cache Manager Active (FALLBACK)
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Mode: IN-MEMORY (Development)
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Configuration:
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Max entries: 10,000 per cache
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - TTL: 5 minutes
+2025-11-07T17:57:01.184+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Idle timeout: 10 minutes
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Limitations:
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ NOT shared across servers
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Data lost on restart
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Single-server only
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   For production: Configure Redis
+2025-11-07T17:57:01.185+05:30  WARN 30220 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:57:01.420+05:30  WARN 30220 --- [pbx-core] [restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'callController' defined in file [C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes\com\dalai\llama\pbx\core\controller\CallController.class]: Unsatisfied dependency expressed through constructor parameter 0: No qualifying bean of type 'com.dalai.llama.pbx.core.services.CdrService' available: expected at least 1 bean which qualifies as autowire candidate. Dependency annotations: {}
+2025-11-07T17:57:01.420+05:30  INFO 30220 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:57:01.422+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown initiated...
+2025-11-07T17:57:01.425+05:30  INFO 30220 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown completed.
+2025-11-07T17:57:01.426+05:30  INFO 30220 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Stopping service [Tomcat]
+2025-11-07T17:57:01.443+05:30  INFO 30220 --- [pbx-core] [restartedMain] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2025-11-07T17:57:01.472+05:30 ERROR 30220 --- [pbx-core] [restartedMain] o.s.b.d.LoggingFailureAnalysisReporter   : 
+
+2025-11-07T17:59:14.241+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 43764 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-07T17:59:14.243+05:30 DEBUG 43764 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-07T17:59:14.245+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-07T17:59:14.330+05:30  INFO 43764 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-07T17:59:14.330+05:30  INFO 43764 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-07T17:59:15.481+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:59:15.482+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2025-11-07T17:59:15.497+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 6 ms. Found 0 JPA repository interfaces.
+2025-11-07T17:59:16.045+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T17:59:16.046+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2025-11-07T17:59:16.069+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 11 ms. Found 0 Redis repository interfaces.
+2025-11-07T17:59:18.025+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2025-11-07T17:59:18.070+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-11-07T17:59:18.071+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2025-11-07T17:59:18.130+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-11-07T17:59:18.131+05:30  INFO 43764 --- [pbx-core] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3800 ms
+2025-11-07T17:59:18.438+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Starting...
+2025-11-07T17:59:18.757+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.zaxxer.hikari.pool.HikariPool        : PBX-H2-Pool - Added connection conn0: url=jdbc:h2:mem:pbxdb user=SA
+2025-11-07T17:59:18.760+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Start completed.
+2025-11-07T17:59:18.760+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ⚠ H2 In-Memory Database Active
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   This is a FALLBACK configuration
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   For production, configure MySQL or PostgreSQL
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   Console: http://localhost:8080/h2-console
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   JDBC URL: jdbc:h2:mem:pbxdb
+2025-11-07T17:59:18.761+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T17:59:18.877+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.s.b.a.h2.H2ConsoleAutoConfiguration    : H2 console available at '/h2-console'. Database available at 'jdbc:h2:mem:pbxdb'
+2025-11-07T17:59:19.898+05:30  INFO 43764 --- [pbx-core] [restartedMain] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:pbxdb (H2 2.2)
+2025-11-07T17:59:19.904+05:30  WARN 43764 --- [pbx-core] [restartedMain] o.f.c.internal.database.base.Database    : Flyway upgrade recommended: H2 2.2.224 is newer than this version of Flyway and support has not been tested. The latest supported version of H2 is 2.2.220.
+2025-11-07T17:59:19.921+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "PUBLIC"."flyway_schema_history" does not exist yet
+2025-11-07T17:59:19.923+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : Successfully validated 0 migrations (execution time 00:00.007s)
+2025-11-07T17:59:19.923+05:30  WARN 43764 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : No migrations found. Are your locations set up correctly?
+2025-11-07T17:59:19.930+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "PUBLIC"."flyway_schema_history" ...
+2025-11-07T17:59:19.984+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Current version of schema "PUBLIC": << Empty Schema >>
+2025-11-07T17:59:19.986+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Schema "PUBLIC" is up to date. No migration necessary.
+2025-11-07T17:59:20.229+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2025-11-07T17:59:20.318+05:30  INFO 43764 --- [pbx-core] [restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2025-11-07T17:59:20.362+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2025-11-07T17:59:20.873+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2025-11-07T17:59:20.931+05:30  WARN 43764 --- [pbx-core] [restartedMain] org.hibernate.dialect.Dialect            : HHH000511: The 2.2.224 version for [org.hibernate.dialect.MySQLDialect] is no longer supported, hence certain features may not work properly. The minimum supported version is 8.0.0. Check the community dialects project for available legacy versions.
+2025-11-07T17:59:20.936+05:30  WARN 43764 --- [pbx-core] [restartedMain] org.hibernate.orm.deprecation            : HHH90000025: MySQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2025-11-07T17:59:21.318+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2025-11-07T17:59:21.323+05:30  INFO 43764 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:59:21.389+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ⚠ Caffeine Cache Manager Active (FALLBACK)
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Mode: IN-MEMORY (Development)
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Configuration:
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Max entries: 10,000 per cache
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - TTL: 5 minutes
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Idle timeout: 10 minutes
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Limitations:
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ NOT shared across servers
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Data lost on restart
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Single-server only
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   For production: Configure Redis
+2025-11-07T17:59:21.390+05:30  WARN 43764 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T17:59:21.611+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : ObjectMapper configured with JavaTimeModule
+2025-11-07T17:59:21.653+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : RTP ExecutorService created (cached thread pool)
+2025-11-07T17:59:21.661+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : SIP ExecutorService created (50 threads)
+2025-11-07T17:59:21.662+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : ScheduledExecutorService created (10 threads)
+2025-11-07T17:59:22.076+05:30  WARN 43764 --- [pbx-core] [restartedMain] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2025-11-07T17:59:22.226+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : BCrypt password encoder configured (strength 12)
+2025-11-07T17:59:22.230+05:30  WARN 43764 --- [pbx-core] [restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 049882a5-aa13-401b-8883-b921afec722d
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2025-11-07T17:59:22.263+05:30  INFO 43764 --- [pbx-core] [restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2025-11-07T17:59:22.605+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket transport configured
+2025-11-07T17:59:22.661+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket endpoint registered at /ws
+2025-11-07T17:59:23.617+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 3 endpoints beneath base path '/actuator'
+2025-11-07T17:59:23.703+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : CORS configuration registered
+2025-11-07T17:59:23.754+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : Security filter chain configured
+2025-11-07T17:59:23.934+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket message broker configured
+2025-11-07T17:59:25.142+05:30  INFO 43764 --- [pbx-core] [restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2025-11-07T17:59:25.341+05:30  WARN 43764 --- [pbx-core] [restartedMain] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.context.ApplicationContextException: Failed to start bean 'webServerStartStop'
+2025-11-07T17:59:25.382+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.p.c.c.ApplicationShutdownManager   : Shutting down application...
+2025-11-07T17:59:25.382+05:30  INFO 43764 --- [pbx-core] [restartedMain] c.d.l.p.c.c.ApplicationShutdownManager   : Application shutdown complete
+2025-11-07T17:59:25.383+05:30  INFO 43764 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T17:59:25.384+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown initiated...
+2025-11-07T17:59:25.390+05:30  INFO 43764 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown completed.
+2025-11-07T17:59:25.407+05:30  INFO 43764 --- [pbx-core] [restartedMain] .s.b.a.l.ConditionEvaluationReportLogger : 
+
+Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
+2025-11-07T17:59:25.440+05:30 ERROR 43764 --- [pbx-core] [restartedMain] o.s.b.d.LoggingFailureAnalysisReporter   : 
+
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+Web server failed to start. Port 8081 was already in use.
+
+Action:
+
+Identify and stop the process that's listening on port 8081 or configure this application to listen on another port.
+
+2025-11-07T17:59:26.379+05:30  INFO 43764 --- [pbx-core] [Thread-4] c.d.l.p.c.c.ApplicationShutdownManager   : Shutting down application...
+2025-11-07T17:59:26.380+05:30  INFO 43764 --- [pbx-core] [Thread-4] c.d.l.p.c.c.ApplicationShutdownManager   : Application shutdown complete
+2025-11-07T18:00:07.156+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 32784 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-07T18:00:07.157+05:30 DEBUG 32784 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-07T18:00:07.159+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-07T18:00:07.216+05:30  INFO 32784 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-07T18:00:07.216+05:30  INFO 32784 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-07T18:00:08.234+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T18:00:08.234+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2025-11-07T18:00:08.250+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 6 ms. Found 0 JPA repository interfaces.
+2025-11-07T18:00:08.801+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2025-11-07T18:00:08.803+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2025-11-07T18:00:08.834+05:30  INFO 32784 --- [pbx-core] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 14 ms. Found 0 Redis repository interfaces.
+2025-11-07T18:00:10.683+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 9080 (http)
+2025-11-07T18:00:10.733+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-11-07T18:00:10.733+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2025-11-07T18:00:10.860+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-11-07T18:00:10.861+05:30  INFO 32784 --- [pbx-core] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3643 ms
+2025-11-07T18:00:11.203+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Starting...
+2025-11-07T18:00:11.683+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.zaxxer.hikari.pool.HikariPool        : PBX-H2-Pool - Added connection conn0: url=jdbc:h2:mem:pbxdb user=SA
+2025-11-07T18:00:11.684+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Start completed.
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ⚠ H2 In-Memory Database Active
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   This is a FALLBACK configuration
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   For production, configure MySQL or PostgreSQL
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   Console: http://localhost:8080/h2-console
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     :   JDBC URL: jdbc:h2:mem:pbxdb
+2025-11-07T18:00:11.685+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.DatabaseConfig     : ═══════════════════════════════════════════════
+2025-11-07T18:00:11.791+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.b.a.h2.H2ConsoleAutoConfiguration    : H2 console available at '/h2-console'. Database available at 'jdbc:h2:mem:pbxdb'
+2025-11-07T18:00:12.696+05:30  INFO 32784 --- [pbx-core] [restartedMain] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:pbxdb (H2 2.2)
+2025-11-07T18:00:12.702+05:30  WARN 32784 --- [pbx-core] [restartedMain] o.f.c.internal.database.base.Database    : Flyway upgrade recommended: H2 2.2.224 is newer than this version of Flyway and support has not been tested. The latest supported version of H2 is 2.2.220.
+2025-11-07T18:00:12.718+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table "PUBLIC"."flyway_schema_history" does not exist yet
+2025-11-07T18:00:12.719+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : Successfully validated 0 migrations (execution time 00:00.006s)
+2025-11-07T18:00:12.719+05:30  WARN 32784 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbValidate     : No migrations found. Are your locations set up correctly?
+2025-11-07T18:00:12.726+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table "PUBLIC"."flyway_schema_history" ...
+2025-11-07T18:00:12.797+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Current version of schema "PUBLIC": << Empty Schema >>
+2025-11-07T18:00:12.802+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.f.core.internal.command.DbMigrate      : Schema "PUBLIC" is up to date. No migration necessary.
+2025-11-07T18:00:13.060+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2025-11-07T18:00:13.134+05:30  INFO 32784 --- [pbx-core] [restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2025-11-07T18:00:13.181+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2025-11-07T18:00:13.555+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2025-11-07T18:00:13.617+05:30  WARN 32784 --- [pbx-core] [restartedMain] org.hibernate.dialect.Dialect            : HHH000511: The 2.2.224 version for [org.hibernate.dialect.MySQLDialect] is no longer supported, hence certain features may not work properly. The minimum supported version is 8.0.0. Check the community dialects project for available legacy versions.
+2025-11-07T18:00:13.623+05:30  WARN 32784 --- [pbx-core] [restartedMain] org.hibernate.orm.deprecation            : HHH90000025: MySQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2025-11-07T18:00:14.058+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2025-11-07T18:00:14.070+05:30  INFO 32784 --- [pbx-core] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T18:00:14.186+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ⚠ Caffeine Cache Manager Active (FALLBACK)
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Mode: IN-MEMORY (Development)
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Configuration:
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Max entries: 10,000 per cache
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - TTL: 5 minutes
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     - Idle timeout: 10 minutes
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   Limitations:
+2025-11-07T18:00:14.187+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ NOT shared across servers
+2025-11-07T18:00:14.188+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Data lost on restart
+2025-11-07T18:00:14.188+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :     ✗ Single-server only
+2025-11-07T18:00:14.188+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    :   For production: Configure Redis
+2025-11-07T18:00:14.188+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.llama.pbx.core.config.CacheConfig    : ═══════════════════════════════════════════════
+2025-11-07T18:00:14.458+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : ObjectMapper configured with JavaTimeModule
+2025-11-07T18:00:14.519+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : RTP ExecutorService created (cached thread pool)
+2025-11-07T18:00:14.543+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : SIP ExecutorService created (50 threads)
+2025-11-07T18:00:14.543+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.ApplicationConfig  : ScheduledExecutorService created (10 threads)
+2025-11-07T18:00:15.102+05:30  WARN 32784 --- [pbx-core] [restartedMain] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2025-11-07T18:00:15.260+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : BCrypt password encoder configured (strength 12)
+2025-11-07T18:00:15.263+05:30  WARN 32784 --- [pbx-core] [restartedMain] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 0a82f1ba-eff2-4102-96da-f421b91d8e81
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2025-11-07T18:00:15.300+05:30  INFO 32784 --- [pbx-core] [restartedMain] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name inMemoryUserDetailsManager
+2025-11-07T18:00:15.614+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket transport configured
+2025-11-07T18:00:15.655+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket endpoint registered at /ws
+2025-11-07T18:00:16.987+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 3 endpoints beneath base path '/actuator'
+2025-11-07T18:00:17.055+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : CORS configuration registered
+2025-11-07T18:00:17.125+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.SecurityConfig     : Security filter chain configured
+2025-11-07T18:00:17.262+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.pbx.core.config.WebSocketConfig    : WebSocket message broker configured
+2025-11-07T18:00:18.507+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2025-11-07T18:00:18.592+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 9080 (http) with context path '/'
+2025-11-07T18:00:18.595+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.m.s.b.SimpleBrokerMessageHandler     : Starting...
+2025-11-07T18:00:18.595+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.m.s.b.SimpleBrokerMessageHandler     : BrokerAvailabilityEvent[available=true, SimpleBrokerMessageHandler [org.springframework.messaging.simp.broker.DefaultSubscriptionRegistry@216b3ade]]
+2025-11-07T18:00:18.595+05:30  INFO 32784 --- [pbx-core] [restartedMain] o.s.m.s.b.SimpleBrokerMessageHandler     : Started.
+2025-11-07T18:00:18.612+05:30  INFO 32784 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Started PbxCore in 12.043 seconds (process running for 12.724)
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : ╔═══════════════════════════════════════════════╗
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : ║     PBX CONFIGURATION DETECTION REPORT       ║
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : ╚═══════════════════════════════════════════════╝
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : DATABASE:
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   Type: PBX-H2-Pool
+2025-11-07T18:00:18.812+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   Connection Pool: HikariCP
+2025-11-07T18:00:18.812+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   ⚠ WARNING: Using H2 in-memory database
+2025-11-07T18:00:18.812+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :     - Data will be lost on restart
+2025-11-07T18:00:18.813+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :     - Not suitable for production
+2025-11-07T18:00:18.813+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:18.813+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : CACHE:
+2025-11-07T18:00:18.813+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   Manager: CaffeineCacheManager
+2025-11-07T18:00:18.813+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   Caches: [dialPlans, activeCalls, users, didRoutes, trunks, extensions]
+2025-11-07T18:00:18.813+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   ⚠ WARNING: Using Caffeine (in-memory only)
+2025-11-07T18:00:18.814+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :     - Not shared across servers
+2025-11-07T18:00:18.814+05:30  WARN 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :     - Cache lost on restart
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : RECOMMENDATIONS:
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   :   → Install Redis: apt install redis-server
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : ═══════════════════════════════════════════════
+2025-11-07T18:00:18.814+05:30  INFO 32784 --- [pbx-core] [restartedMain] c.d.l.p.c.config.ConfigurationDetector   : 
+2025-11-07T18:00:38.823+05:30  INFO 32784 --- [pbx-core] [Thread-4] c.d.l.p.c.c.ApplicationShutdownManager   : Shutting down application...
+2025-11-07T18:00:38.825+05:30  INFO 32784 --- [pbx-core] [Thread-4] c.d.l.p.c.c.ApplicationShutdownManager   : Application shutdown complete
+2025-11-07T18:00:38.829+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] o.s.m.s.b.SimpleBrokerMessageHandler     : Stopping...
+2025-11-07T18:00:38.830+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] o.s.m.s.b.SimpleBrokerMessageHandler     : BrokerAvailabilityEvent[available=false, SimpleBrokerMessageHandler [org.springframework.messaging.simp.broker.DefaultSubscriptionRegistry@216b3ade]]
+2025-11-07T18:00:38.830+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] o.s.m.s.b.SimpleBrokerMessageHandler     : Stopped.
+2025-11-07T18:00:38.865+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] c.d.l.p.c.c.ApplicationShutdownManager   : Shutting down application...
+2025-11-07T18:00:38.865+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] c.d.l.p.c.c.ApplicationShutdownManager   : Application shutdown complete
+2025-11-07T18:00:38.865+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'
+2025-11-07T18:00:38.867+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown initiated...
+2025-11-07T18:00:38.870+05:30  INFO 32784 --- [pbx-core] [SpringApplicationShutdownHook] com.zaxxer.hikari.HikariDataSource       : PBX-H2-Pool - Shutdown completed.

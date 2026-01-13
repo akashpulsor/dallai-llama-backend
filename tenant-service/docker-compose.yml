@@ -1,0 +1,194 @@
+version: '3.8'
+
+services:
+  # ==================== Databases ====================
+  postgres-init:
+    image: postgres:16-alpine
+    container_name: tenant-postgres-init
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGPASSWORD: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        psql -h postgres -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = 'tenant_db'\" | grep -q 1 || psql -h postgres -U postgres -c 'CREATE DATABASE tenant_db';
+        psql -h postgres -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = 'keycloak'\" | grep -q 1 || psql -h postgres -U postgres -c 'CREATE DATABASE keycloak';
+        echo 'Databases initialized!'
+      "
+    restart: "no"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tenant-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: tenant-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Kafka ====================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: tenant-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: tenant-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # ==================== Keycloak ====================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: tenant-keycloak
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8080
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+    ports:
+      - "8080:8080"
+      - "9000:9000"  # Health port
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000;echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==================== Tenant Service ====================
+  tenant-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tenant-service
+    ports:
+      - "8091:8091"
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tenant_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+      # Keycloak Admin
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN_USERNAME: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/dalaillama
+
+      # Other Services (for local, point to host machine or mock)
+      PRODUCT_SERVICE_URL: http://host.docker.internal:8082
+      BILLING_SERVICE_URL: http://host.docker.internal:8083
+
+      # Kubernetes - leave empty for local dev without K8s
+      # Or point to your k3d cluster from inside Docker
+      KUBERNETES_MASTER_URL: ""
+      KUBERNETES_NAMESPACE: dalai-llama
+      KUBERNETES_TRUST_CERTS: "true"
+
+      # Provisioning
+      PROVISIONING_MAX_RETRIES: 3
+      PROVISIONING_MIN_WALLET_BALANCE: 1000
+
+      # Spring
+      SPRING_PROFILES_ACTIVE: dev
+      SERVER_PORT: 8091
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==================== Kafka UI (Optional) ====================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: tenant-kafka-ui
+    ports:
+      - "9080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    depends_on:
+      - kafka
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: dalai-llama-network

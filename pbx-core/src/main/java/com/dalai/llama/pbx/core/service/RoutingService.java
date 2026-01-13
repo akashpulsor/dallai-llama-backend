@@ -16,8 +16,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.RequestEntity;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
 import java.time.Duration;
@@ -32,7 +34,7 @@ public class RoutingService {
 
     private final RoutingPolicyRepository policyRepo;
     private final DidRepository didRepository; // <-- **NEW: Inject DidRepository**
-    private final StringRedisTemplate redis;
+    private final RestTemplate restTemplate;
     private final RouteEventProducer producer;
     private final EgressService egressService;
     private final ObjectMapper om = new ObjectMapper();
@@ -76,65 +78,208 @@ public class RoutingService {
         return handleInboundToAgent(req, destination);
     }
 
-    /**
-     * **NEW: Refactored logic for routing to an agent/policy**
-     */
     private RouteDecisionResponse handleInboundToAgent(IngressCallRequest req, String entrypoint) {
+
+        // 1. Load routing policy for this entrypoint
         RoutingPolicy policy = policyRepo.findByTenantIdAndEntrypoint(req.getTenantId(), entrypoint)
                 .orElseThrow(() -> new RuntimeException("No routing policy for entrypoint: " + entrypoint));
 
-        List<String> eligibleAgents = getEligibleAgents(req.getTenantId(), policy);
+        String strategy = policy.getStrategy() == null ? "" : policy.getStrategy().trim();
+
+        // ----------------------------------------------------------------------------------
+        // 0. FIRST: IVR entrypoint — use strategy pattern: "ivr:<flowName>"
+        // ----------------------------------------------------------------------------------
+        if (strategy.startsWith("ivr:")) {
+            String ivrFlow = strategy.substring("ivr:".length());
+            log.info("Routing to IVR {} for entrypoint {}", ivrFlow, entrypoint);
+
+            return RouteDecisionResponse.builder()
+                    .decision("ivr")
+                    .ivrFlow(ivrFlow)
+                    .ttlMs(30000)
+                    .targets(List.of(
+                            RouteDecisionResponse.Target.builder()
+                                    .type("ivr")
+                                    .contact("sip:ivr@127.0.0.1")
+                                    .build()
+                    ))
+                    .build();
+        }
+
+        // Prepare response target list
         List<RouteDecisionResponse.Target> targets = new ArrayList<>();
 
-        String strategy = policy.getStrategy();
+        // ----------------------------------------------------------------------------------
+        // 1. AI Hook routing (if defined) — ask AI model, then resolve contact via Agent-Service
+        // ----------------------------------------------------------------------------------
         if ("ai_hook".equalsIgnoreCase(strategy) && policy.getAiEndpoint() != null) {
+
             String agentId = invokeAiHook(req, policy);
+
             if (agentId != null) {
-                String contact = resolveBestContact(agentId);
-                if (contact != null) {
-                    targets.add(RouteDecisionResponse.Target.builder()
-                            .type("agent").agentId(agentId).contact(contact).build());
-                }
-            }
-        } else {
-            // deterministic fallback strategies
-            String selected = switch (strategy) {
-                case "round_robin" -> nextRoundRobin(req.getTenantId(), policy.getTeamId(), eligibleAgents);
-                case "longest_idle" -> popLongestIdle(req.getTenantId(), policy.getTeamId(), eligibleAgents);
-                case "priority-weighted" -> pickWeighted(eligibleAgents);
-                default -> eligibleAgents.isEmpty() ? null : eligibleAgents.getFirst();
-            };
-            if (selected != null) {
-                String contact = resolveBestContact(selected);
-                if (contact != null) {
-                    targets.add(RouteDecisionResponse.Target.builder()
-                            .type("agent").agentId(selected).contact(contact).build());
+                RouteDecisionResponse.Target resolved = resolveAgentContactFromAgentService(agentId, req.getTenantId(), req.getCallId());
+
+                if (resolved != null) {
+                    targets.add(resolved);
+                } else {
+                    log.warn("AI hook selected agent {}, but Agent-Service could not provide contact", agentId);
                 }
             }
         }
 
-        // Failover if no targets
+        // ----------------------------------------------------------------------------------
+        // 2. Otherwise: agent allocation via Agent-Service (centralized & atomic)
+        // ----------------------------------------------------------------------------------
+        else {
+
+            RouteDecisionResponse.Target allocated = allocateAgentFromAgentService(req, policy);
+
+            if (allocated != null) {
+                targets.add(allocated);
+            } else {
+                log.warn("Agent-Service unable to allocate agent for entrypoint {}. Fallback engaged.", entrypoint);
+                return RouteDecisionResponse.builder()
+                        .decision("fallback")
+                        .strategyApplied("agent-service-none-available")
+                        .ttlMs(30000)
+                        .targets(List.of())
+                        .build();
+            }
+        }
+
+        // ----------------------------------------------------------------------------------
+        // 3. Final fallback if we still have no agent targets
+        // ----------------------------------------------------------------------------------
         if (targets.isEmpty()) {
             log.warn("No agent targets found for entrypoint {}. Failing over.", entrypoint);
+
             return RouteDecisionResponse.builder()
-                    .decision("fallback").strategyApplied(strategy).ttlMs(30000).targets(List.of()).build();
+                    .decision("fallback")
+                    .strategyApplied(strategy)
+                    .ttlMs(30000)
+                    .targets(List.of())
+                    .build();
         }
 
+        // ----------------------------------------------------------------------------------
+        // 4. Successful routing → deliver to chosen agent
+        // ----------------------------------------------------------------------------------
         RouteDecisionResponse response = RouteDecisionResponse.builder()
-                .decision("deliver").strategyApplied(strategy).ttlMs(30000).targets(targets).build();
+                .decision("deliver")
+                .strategyApplied(strategy)
+                .ttlMs(30000)
+                .targets(targets)
+                .build();
 
-        // Publish to Kafka for Agent GW / Signaling observability
+        // Publish event for observability
         try {
-            Map<String,Object> evt = new HashMap<>();
-            evt.put("type","call.route.decided");
+            Map<String, Object> evt = new HashMap<>();
+            evt.put("type", "call.route.decided");
             evt.put("tenant_id", req.getTenantId());
             evt.put("call_id", req.getCallId());
             evt.put("targets", targets);
-            producer.publish("call.route.decided", req.getTenantId()+":"+req.getCallId(), om.writeValueAsString(evt));
-        } catch (Exception ignore){}
+
+            producer.publish("call.route.decided",
+                    req.getTenantId() + ":" + req.getCallId(),
+                    om.writeValueAsString(evt));
+
+        } catch (Exception ignore) {}
 
         return response;
     }
+
+    /*
+     * Helper: ask Agent-Service to allocate an agent for this call/entrypoint.
+     * Expected Agent-Service contract (example):
+     * POST /api/v1/agents/allocate
+     * Body: { "tenantId": "...", "entrypoint": "...", "callId":"..." }
+     * Response: { "agentId": "agent123", "contact": "webrtc:wss://...", "status":"allocated" }
+     */
+    private RouteDecisionResponse.Target allocateAgentFromAgentService(
+            IngressCallRequest req, RoutingPolicy policy) {
+
+        try {
+            URI uri = URI.create("http://agent-service/api/v1/agents/allocate");
+
+            Map<String, Object> body = Map.of(
+                    "tenantId", req.getTenantId(),
+                    "entrypoint", policy.getEntrypoint(),
+                    "callId", req.getCallId()
+            );
+
+            ResponseEntity<Map> resp = restTemplate.postForEntity(uri, body, Map.class);
+
+            // No agent available — agent service returned nothing
+            if (!resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
+                return null;
+            }
+
+            Map<String, Object> json = resp.getBody();
+
+            String agentId = (String) json.get("agentId");
+            String contact = (String) json.get("contact");
+
+            if (agentId == null || contact == null) {
+                return null;
+            }
+
+            return RouteDecisionResponse.Target.builder()
+                    .type("agent")
+                    .agentId(agentId)
+                    .contact(contact)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("allocateAgentFromAgentService error: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /*
+     * Helper: ask Agent-Service to resolve the best contact for a given agentId (if AI returned agentId).
+     * Expected Agent-Service contract:
+     * POST /api/v1/agents/resolve
+     * Body: { "agentId": "...", "tenantId":"...", "callId":"..." }
+     * Response: { "agentId":"...", "contact":"sip:101@x" }
+     */
+    private RouteDecisionResponse.Target resolveAgentContactFromAgentService(
+            String agentId, String tenantId, String callId) {
+
+        try {
+            URI uri = URI.create("http://agent-service/api/v1/agents/resolve");
+
+            Map<String, Object> body = Map.of(
+                    "agentId", agentId,
+                    "tenantId", tenantId,
+                    "callId", callId
+            );
+
+            ResponseEntity<Map> resp = restTemplate.postForEntity(uri, body, Map.class);
+
+            if (!resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
+                return null;
+            }
+
+            Map<String, Object> json = resp.getBody();
+
+            String contact = (String) json.get("contact");
+
+            if (contact == null) {
+                return null;
+            }
+
+            return RouteDecisionResponse.Target.builder()
+                    .type("agent")
+                    .agentId(agentId)
+                    .contact(contact)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("resolveAgentContactFromAgentService error: {}", e.getMessage());
+            return null;
+        }
+    }
+
 
 
     /**
@@ -196,43 +341,6 @@ public class RoutingService {
         return PSTN_PATTERN.matcher(number).matches();
     }
 
-    private List<String> getEligibleAgents(String tenantId, RoutingPolicy policy) {
-        // Expect ZSET presence: team:eligible:{tenant}:{team}
-        String key = "team:eligible:%s:%s".formatted(tenantId, policy.getTeamId());
-        // For simplicity, read as LIST of agent IDs
-        List<String> agents = redis.opsForList().range(key, 0, -1);
-        return agents == null ? List.of() : agents;
-    }
-
-    private String nextRoundRobin(String tenantId, String teamId, List<String> agents) {
-        if (agents.isEmpty()) return null;
-        String pointerKey = "rr:pointer:%s:%s".formatted(tenantId, teamId);
-        Long idx = redis.opsForValue().increment(pointerKey);
-        int i = (int) ((idx == null ? 0 : idx) % agents.size());
-        return agents.get(i);
-        // Note: in production use atomic scripts for wrap-around
-    }
-
-    private String popLongestIdle(String tenantId, String teamId, List<String> agents) {
-        // Expect ZSET: idle:team:{tenant}:{team} with score=idleSeconds
-        String zkey = "idle:team:%s:%s".formatted(tenantId, teamId);
-        Set<String> top = redis.opsForZSet().reverseRange(zkey, 0, 0);
-        if (top != null && !top.isEmpty()) return top.iterator().next();
-        return agents.isEmpty() ? null : agents.get(0);
-    }
-
-    private String pickWeighted(List<String> agents) {
-        if (agents.isEmpty()) return null;
-        int i = ThreadLocalRandom.current().nextInt(agents.size());
-        return agents.get(i);
-    }
-
-    private String resolveBestContact(String agentId) {
-        // contacts:agent:{agent} -> list like ["webrtc:wss://…", "sip:101@x"]
-        String key = "contacts:agent:%s".formatted(agentId);
-        List<String> contacts = redis.opsForList().range(key, 0, -1);
-        return (contacts == null || contacts.isEmpty()) ? null : contacts.get(0);
-    }
 
     private String invokeAiHook(IngressCallRequest req, RoutingPolicy policy) {
         try {

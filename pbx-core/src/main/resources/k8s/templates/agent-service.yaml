@@ -40,8 +40,9 @@ spec:
               value: "${KAFKA_REG_TOPIC}"
             - name: KAFKA_CALL_TOPIC # <-- **NEW**
               value: "${KAFKA_CALL_TOPIC}"
-            - name: WS_PORT
-              value: "8080"
+            - name: KAMAILIO_RPC_URL # <-- **NEW**
+              value: "${KAMAILIO_RPC_URL}"
+
           ports:
             - containerPort: 8080
               protocol: TCP

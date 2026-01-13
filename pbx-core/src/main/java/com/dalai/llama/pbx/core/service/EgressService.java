@@ -26,7 +26,7 @@ public class EgressService {
                 .sorted(Comparator.comparing(t -> t.getRegion()==null?1:0)) // prefer with region
                 .findFirst().get();
 
-        String cli = req.getCli()!=null? req.getCli() : null;
+        String cli = null;//req.getCli()!=null? req.getCli() : null;
         return OutboundRouteResponse.builder()
                 .decision("deliver")
                 .trunkId(chosen.getId())

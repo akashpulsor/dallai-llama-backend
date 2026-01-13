@@ -241,6 +241,14 @@ public class SignalingOrchestratorService {
 
 
         Map<String, String> vars = new HashMap<>();
+        String kamailioRpcUrl;
+        if (isDedicated) {
+            // RPC endpoint for per-tenant Kamailio pods
+            kamailioRpcUrl = "http://kamailio-" + tenant.getId() + "." + ns + ".svc.cluster.local:8080/RPC";
+        } else {
+            // Shared infra => use platform-wide kamailio RPC (set via env/property)
+            kamailioRpcUrl = System.getenv().getOrDefault("KAMAILIO_SHARED_RPC_URL", "http://kamailio.shared.svc.cluster.local:8080/RPC");
+        }
 
         vars.put("TENANT_ID", tenant.getId());
         vars.put("REALM", tenant.getRealm());
@@ -255,7 +263,7 @@ public class SignalingOrchestratorService {
 
         vars.put("PBX_CORE_URL", pbxCoreUrl);
         vars.put("WSS_URL", webrtcWsUrl);
-
+        vars.put("KAMAILIO_RPC_URL", kamailioRpcUrl);
         vars.put("KAFKA_REG_TOPIC", regTopic);
         vars.put("KAFKA_CALL_TOPIC", callTopic);
         vars.put("AI_RESULT_TOPIC", aiTopic);
@@ -292,6 +300,11 @@ public class SignalingOrchestratorService {
             tenant.setStatus("error");
             return tenant;
         }
+
+        // after tenant.setSipUdpUrl(...), tenant.setWebsocketUrl(...), etc:
+
+
+// optionally persist here (tenantRepo.save(tenant)) if you want immediate availability
 
         tenant.setStatus("active");
 

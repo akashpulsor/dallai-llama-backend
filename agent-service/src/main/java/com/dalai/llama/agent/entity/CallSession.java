@@ -58,6 +58,12 @@ public class CallSession {
     @Column(name = "call_state", length = 50)
     private String callState;
 
+    @Column(name = "to", length = 20)
+    private String to;
+
+    @Column(name = "from", length = 20)
+    private String from;
+
     @Column(name = "ring_start_time", nullable = false)
     @Builder.Default
     private OffsetDateTime ringStartTime = OffsetDateTime.now();

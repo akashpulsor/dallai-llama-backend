@@ -1,42 +1,53 @@
 package com.dalai.llama.pbx.core.model;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
 @Entity
 @Table(name = "call_records")
 @Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
 public class CallRecord {
-    @Id @GeneratedValue(strategy = GenerationType.UUID)
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
+    @Column(nullable = false, length = 36)
     private String tenantId;
-    private String callId;
-    private String caller;
-    private String callee;
-    private String recordPath;
 
-    private Double durationSec;
-    private Double packetLoss;
-    private Double jitter;
-    private String status; // in-progress, completed, failed
+    @Column(nullable = false, length = 128)
+    private String callId;  // = SIP Call-ID (Kamailio)
 
-    @Lob
-    @Column(columnDefinition = "TEXT")
-    private String transcriptCaller;
+    private String direction; // inbound / outbound
 
-    @Lob
-    @Column(columnDefinition = "TEXT")
-    private String transcriptResponder;
+    private String fromNumber;
+    private String toNumber;
+
+    private Long agentId;
+    private String agentUsername;
+    private String entrypoint;
 
     private Instant startedAt;
+    private Instant ringingAt;
+    private Instant answeredAt;
     private Instant endedAt;
-    private Instant createdAt = Instant.now();
 
-    private Double billedAmount; // from billing service
+    private Double durationSec;
+
+    private String status; // ringing, in-progress, completed, missed, failed
+
+    // Recording file paths (written by media service)
+    private String recordingMix;
+    private String recordingCaller;
+    private String recordingAgent;
+
+    private Instant createdAt = Instant.now();
 }

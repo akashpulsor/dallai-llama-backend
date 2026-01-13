@@ -20,14 +20,16 @@
   </parent>
 
   <modules>
-    <module>auth-service</module>
     <module>pbx-core</module>
     <module>prediction-service</module>
       <module>agent-service</module>
     <module>billing-service</module>
-    <module>onboarding-service</module>
+
     <module>ai-service</module>
     <module>blob-manager</module>
+      <module>media-server</module>
+      <module>tenant-service</module>
+      <module>product-service</module>
   </modules>
 
   <properties>

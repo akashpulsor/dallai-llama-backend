@@ -1,0 +1,225 @@
+spring:
+  application:
+    name: product-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:product_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    show-sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: product-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    listener:
+      ack-mode: record
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalaillama}
+          jwk-set-uri: ${KEYCLOAK_JWK_URI:http://localhost:8080/realms/dalaillama/protocol/openid-connect/certs}
+
+# DIDWW Configuration
+didww:
+  api-url: ${DIDWW_API_URL:https://api.didww.com/v3}
+  api-key: ${DIDWW_API_KEY:your-api-key-here}
+  webhook-secret: ${DIDWW_WEBHOOK_SECRET:your-webhook-secret}
+  sync-enabled: ${DIDWW_SYNC_ENABLED:true}
+  sync-interval-minutes: ${DIDWW_SYNC_INTERVAL:60}
+
+# SIP Configuration
+sip:
+  domain: ${SIP_DOMAIN:sip.dalaillama.in}
+  realm: ${SIP_REALM:dalaillama.in}
+
+# Internal Service URLs
+services:
+  tenant:
+    url: ${TENANT_SERVICE_URL:http://localhost:8081}
+  billing:
+    url: ${BILLING_SERVICE_URL:http://localhost:8083}
+
+# Cache Configuration
+cache:
+  entitlements:
+    ttl-minutes: ${CACHE_ENTITLEMENTS_TTL:5}
+
+# Server Configuration
+server:
+  port: ${SERVER_PORT:8082}
+  shutdown: graceful
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    export:
+      prometheus:
+        enabled: true
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.dalai.llama.product: ${LOG_LEVEL:INFO}
+    org.springframework.security: WARN
+    org.springframework.kafka: WARN
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# Springdoc OpenAPI
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    doc-expansion: none
+    filter: true
+    oauth:
+      client-id: product-service
+      use-pkce-with-authorization-code-grant: true
+  info:
+    title: Product Service API
+    description: |
+      Product Service for Dalai LLAMA AI-Native Contact Center Platform.
+      Manages products, plans, DIDs, SIP trunks, and entitlements.
+    version: 1.0.0
+    contact:
+      name: Dalai LLAMA Team
+      email: support@dalaillama.in
+      url: https://dalaillama.in
+  servers:
+    - url: http://localhost:8082
+      description: Local Development
+    - url: https://api.dalaillama.in/product
+      description: Production
+
+---
+# Development Profile
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/product_db
+
+  jpa:
+    show-sql: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/dalaillama
+
+didww:
+  sync-enabled: false
+
+logging:
+  level:
+    com.dalai.llama.product: DEBUG
+
+---
+# Docker Profile
+spring:
+  config:
+    activate:
+      on-profile: docker
+
+  datasource:
+    url: jdbc:postgresql://postgres:5432/product_db
+
+  data:
+    redis:
+      host: redis
+
+  kafka:
+    bootstrap-servers: kafka:29092
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://keycloak:8080/realms/dalaillama
+          jwk-set-uri: http://keycloak:8080/realms/dalaillama/protocol/openid-connect/certs
+
+services:
+  tenant:
+    url: http://tenant-service:8081
+  billing:
+    url: http://billing-service:8083

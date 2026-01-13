@@ -12,7 +12,8 @@ public interface AgentRepository extends JpaRepository<Agent, Long> {
     List<Agent> findByTenantId(String tenantId);
     Optional<Agent> findByExternalId(String externalId);
     Optional<Agent> findByTenantIdAndUsername(String tenantId, String username);
-    
+    Optional<Agent> findByTenantIdAndId(String tenantId, long id);
+
     @Query("SELECT a FROM Agent a WHERE a.tenantId = ?1 AND a.online = true AND a.available = true")
     List<Agent> findAvailableAgents(String tenantId);
     

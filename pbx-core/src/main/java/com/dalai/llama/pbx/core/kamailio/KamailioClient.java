@@ -3,20 +3,13 @@ package com.dalai.llama.pbx.core.kamailio;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
-/**
- * Kamailio JSONRPC Client
- * Controls Kamailio via JSONRPC for call operations
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -24,20 +17,29 @@ public class KamailioClient {
 
     private final ObjectMapper objectMapper;
 
-    @Value("${kamailio.jsonrpc.url:http://kamailio:8080/RPC}")
-    private String kamailioJsonRpcUrl;
+    // =====================================================
+    //  OUTBOUND: ORIGINATE CALL (UAC INVITE)
+    // =====================================================
+    public void originate(String rpcUrl, String callId, String from, String to, String sdpOffer) {
+        log.info("[Kamailio] Originate call {} from {} to {}", callId, from, to);
 
-    @Value("${kamailio.timeout-ms:5000}")
-    private int timeoutMs;
+        Map<String,Object> params = new HashMap<>();
+        params.put("callid", callId);
+        params.put("from", from);
+        params.put("to", to);
+        params.put("body", sdpOffer);
+        params.put("content_type", "application/sdp");
 
-    /**
-     * Answer incoming call
-     * Sends SIP 200 OK with SDP answer
-     */
-    public void answerCall(String callId, String fromTag, String toTag, String sdpAnswer) {
-        log.info("Answering call {} via Kamailio", callId);
+        send(rpcUrl, "uac.invite", params);
+    }
 
-        Map<String, Object> params = new HashMap<>();
+    // =====================================================
+    //  INBOUND: ANSWER CALL (200 OK)
+    // =====================================================
+    public void answerCall(String rpcUrl, String callId, String fromTag, String toTag, String sdpAnswer) {
+        log.info("[Kamailio] Answer call {}", callId);
+
+        Map<String,Object> params = new HashMap<>();
         params.put("callid", callId);
         params.put("from_tag", fromTag);
         params.put("to_tag", toTag);
@@ -46,183 +48,140 @@ public class KamailioClient {
         params.put("body", sdpAnswer);
         params.put("content_type", "application/sdp");
 
-        try {
-            sendJsonRpcCommand("dlg.send_reply", params);
-        } catch (Exception e) {
-            log.error("Failed to answer call via Kamailio", e);
-            throw new RuntimeException("Failed to answer call: " + e.getMessage());
-        }
+        send(rpcUrl, "dlg.send_reply", params);
     }
 
-    /**
-     * Initiate outbound call
-     * Sends SIP INVITE
-     */
-    public void initiateCall(String callId, String from, String to, String sdpOffer) {
-        log.info("Initiating call {} from {} to {} via Kamailio", callId, from, to);
+    // =====================================================
+    //  INBOUND: REJECT CALL (486 / 603)
+    // =====================================================
+    public void reject(String rpcUrl, String callId, String fromTag, int code, String reason) {
+        log.info("[Kamailio] Reject call {} with {} {}", callId, code, reason);
 
-        Map<String, Object> params = new HashMap<>();
-        params.put("callid", callId);
-        params.put("from", from);
-        params.put("to", to);
-        params.put("body", sdpOffer);
-        params.put("content_type", "application/sdp");
-
-        try {
-            sendJsonRpcCommand("uac.invite", params);
-        } catch (Exception e) {
-            log.error("Failed to initiate call via Kamailio", e);
-            throw new RuntimeException("Failed to initiate call: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Hangup/terminate call
-     * Sends SIP BYE
-     */
-    public void hangupCall(String callId, String fromTag, String toTag) {
-        log.info("Hanging up call {} via Kamailio", callId);
-
-        Map<String, Object> params = new HashMap<>();
-        params.put("callid", callId);
-        params.put("from_tag", fromTag);
-        params.put("to_tag", toTag);
-
-        try {
-            sendJsonRpcCommand("dlg.end_dlg", params);
-        } catch (Exception e) {
-            log.error("Failed to hangup call via Kamailio", e);
-            throw new RuntimeException("Failed to hangup call: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Reject incoming call
-     * Sends SIP 486 Busy Here or 603 Decline
-     */
-    public void rejectCall(String callId, String fromTag, int code, String reason) {
-        log.info("Rejecting call {} with code {}", callId, code);
-
-        Map<String, Object> params = new HashMap<>();
+        Map<String,Object> params = new HashMap<>();
         params.put("callid", callId);
         params.put("from_tag", fromTag);
         params.put("code", code);
         params.put("reason", reason);
 
-        try {
-            sendJsonRpcCommand("dlg.send_reply", params);
-        } catch (Exception e) {
-            log.error("Failed to reject call via Kamailio", e);
-        }
+        send(rpcUrl, "dlg.send_reply", params);
     }
 
-    /**
-     * Transfer call (blind transfer)
-     */
-    public void transferCall(String callId, String fromTag, String toTag, String destination) {
-        log.info("Transferring call {} to {}", callId, destination);
+    // =====================================================
+    //  TERMINATE CALL (Forced BYE)
+    // =====================================================
+    public void hangup(String rpcUrl, String callId) {
+        log.info("[Kamailio] Hangup call {}", callId);
 
-        Map<String, Object> params = new HashMap<>();
+        Map<String,Object> params = new HashMap<>();
+        params.put("callid", callId);
+
+        send(rpcUrl, "dlg.end_dlg", params);
+    }
+
+    // =====================================================
+    //  BLIND TRANSFER (REFER)
+    // =====================================================
+    public void transfer(String rpcUrl, String callId, String fromTag, String toTag, String destination) {
+        log.info("[Kamailio] Transfer call {} → {}", callId, destination);
+
+        Map<String,Object> params = new HashMap<>();
         params.put("callid", callId);
         params.put("from_tag", fromTag);
         params.put("to_tag", toTag);
         params.put("refer_to", destination);
 
-        try {
-            sendJsonRpcCommand("dlg.transfer", params);
-        } catch (Exception e) {
-            log.error("Failed to transfer call via Kamailio", e);
-            throw new RuntimeException("Failed to transfer call: " + e.getMessage());
-        }
+        send(rpcUrl, "dlg.transfer", params);
     }
 
-    /**
-     * Get active dialogs (calls) from Kamailio
-     */
-    public Map<String, Object> getActiveDialogs() {
-        try {
-            return sendJsonRpcCommand("dlg.list", Map.of());
-        } catch (Exception e) {
-            log.error("Failed to get active dialogs", e);
-            return Map.of();
-        }
+    // =====================================================
+    //  ACTIVE CALLS LIST
+    // =====================================================
+    public Map<String,Object> listDialogs(String rpcUrl) {
+        log.info("[Kamailio] Fetch active dialogs");
+
+        return send(rpcUrl, "dlg.list", Map.of());
     }
 
-    /**
-     * Send JSONRPC command to Kamailio
-     */
-    private Map<String, Object> sendJsonRpcCommand(String method, Map<String, Object> params) 
-            throws Exception {
-        
-        URL url = new URL(kamailioJsonRpcUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        
+    // =====================================================
+    //  SUPERVISOR: LISTEN / BARGE-IN / WHISPER HOOKS
+    // (actual mixing happens in RTPENGINE config)
+    // =====================================================
+
+    public void bargeIn(String rpcUrl, String supervisorCallId, String targetCallId, String supervisorContact) {
+        log.info("[Kamailio] Barge-in supervisor {} into call {}", supervisorContact, targetCallId);
+
+        Map<String,Object> params = new HashMap<>();
+        params.put("supervisor_callid", supervisorCallId);
+        params.put("target_callid", targetCallId);
+        params.put("contact", supervisorContact);
+
+        send(rpcUrl, "uac.bargein", params);  // Needs custom Kamailio route
+    }
+
+    public void listen(String rpcUrl, String supervisorCallId, String targetCallId, String supervisorContact) {
+        log.info("[Kamailio] Listen supervisor {} to call {}", supervisorContact, targetCallId);
+
+        Map<String,Object> params = new HashMap<>();
+        params.put("supervisor_callid", supervisorCallId);
+        params.put("target_callid", targetCallId);
+        params.put("contact", supervisorContact);
+
+        send(rpcUrl, "uac.listen", params); // Again, custom route in kamailio.cfg
+    }
+
+    public void whisper(String rpcUrl, String supervisorCallId, String targetCallId, String supervisorContact) {
+        log.info("[Kamailio] Whisper supervisor {} to call {}", supervisorContact, targetCallId);
+
+        Map<String,Object> params = new HashMap<>();
+        params.put("supervisor_callid", supervisorCallId);
+        params.put("target_callid", targetCallId);
+        params.put("contact", supervisorContact);
+
+        send(rpcUrl, "uac.whisper", params);  // Custom Kamailio + RTPENGINE logic
+    }
+
+    // =====================================================
+    //  CORE JSONRPC SENDER
+    // =====================================================
+    private Map<String,Object> send(String rpcUrl, String method, Map<String,Object> params) {
         try {
+            URL url = new URL(rpcUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(timeoutMs);
-            conn.setReadTimeout(timeoutMs);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
 
-            // Build JSONRPC request
-            Map<String, Object> request = new HashMap<>();
-            request.put("jsonrpc", "2.0");
-            request.put("method", method);
-            request.put("params", params);
-            request.put("id", UUID.randomUUID().toString());
+            Map<String,Object> payload = new HashMap<>();
+            payload.put("jsonrpc", "2.0");
+            payload.put("method", method);
+            payload.put("params", params);
+            payload.put("id", UUID.randomUUID().toString());
 
-            String jsonRequest = objectMapper.writeValueAsString(request);
-            log.debug("Sending to Kamailio: {}", jsonRequest);
+            String json = objectMapper.writeValueAsString(payload);
+            log.debug("RPC → {}", json);
 
-            // Send request
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonRequest.getBytes());
-                os.flush();
+                os.write(json.getBytes());
             }
 
-            // Read response
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 200) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> response = objectMapper.readValue(
-                    conn.getInputStream(), 
-                    Map.class
-                );
-                
-                log.debug("Received from Kamailio: {}", response);
-                
-                if (response.containsKey("error")) {
-                    throw new RuntimeException("Kamailio error: " + response.get("error"));
-                }
-                
-                return response;
-            } else {
-                throw new RuntimeException("Kamailio returned HTTP " + responseCode);
-            }
-        } finally {
-            conn.disconnect();
-        }
-    }
+            int code = conn.getResponseCode();
+            if (code != 200)
+                throw new RuntimeException("Kamailio RPC HTTP " + code);
 
-    /**
-     * Get Kamailio URL for tenant
-     */
-    public String getKamailioUrlForTenant(String tenantId) {
-        // In multi-tenant setup, each tenant has own Kamailio instance
-        return String.format("http://kamailio-%s.tenant-%s.svc.cluster.local:8080/RPC", 
-            tenantId, tenantId);
-    }
+            Map resp = objectMapper.readValue(conn.getInputStream(), Map.class);
+            log.debug("RPC ← {}", resp);
 
-    /**
-     * Check if Kamailio is reachable
-     */
-    public boolean isHealthy() {
-        try {
-            Map<String, Object> result = sendJsonRpcCommand("core.info", Map.of());
-            return result.containsKey("result");
-        } catch (Exception e) {
-            log.warn("Kamailio health check failed", e);
-            return false;
+            if (resp.containsKey("error"))
+                throw new RuntimeException("Kamailio RPC Error: " + resp.get("error"));
+
+            return resp;
+
+        } catch (Exception ex) {
+            log.error("Kamailio RPC failed: {}", ex.getMessage(), ex);
+            throw new RuntimeException(ex);
         }
     }
 }

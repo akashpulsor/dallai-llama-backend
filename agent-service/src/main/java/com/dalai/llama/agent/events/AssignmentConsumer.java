@@ -25,7 +25,7 @@ public class AssignmentConsumer {
     // Consume assignment requests
     @KafkaListener(topics = "${kafka.topic.assignment-requests:agent.assign.requests}", groupId = "agent-service-assign")
     public void onAssignRequest(ConsumerRecord<String, String> record) {
-        try {
+/*        try {
             String msg = record.value();
             Map<String, Object> req = mapper.readValue(msg, Map.class);
             String tenantId = (String) req.get("tenantId");
@@ -56,5 +56,7 @@ public class AssignmentConsumer {
         } catch (Exception e) {
             log.error("Failed to process assignment request: {}", e.getMessage(), e);
         }
+
+ */
     }
 }

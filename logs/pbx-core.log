@@ -1,0 +1,14 @@
+2025-11-06T16:57:17.973+05:30  INFO 20688 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Starting PbxCore using Java 21.0.7 with PID 20688 (C:\Users\Akash\workspace\v4\dallai-llama-backend\pbx-core\target\classes started by Akash in C:\Users\Akash\workspace\v4\dallai-llama-backend)
+2025-11-06T16:57:17.974+05:30 DEBUG 20688 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : Running with Spring Boot v3.3.4, Spring v6.1.11
+2025-11-06T16:57:17.975+05:30  INFO 20688 --- [pbx-core] [restartedMain] com.dalai.llama.pbx.core.PbxCore         : No active profile set, falling back to 1 default profile: "default"
+2025-11-06T16:57:18.027+05:30  INFO 20688 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2025-11-06T16:57:18.028+05:30  INFO 20688 --- [pbx-core] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2025-11-06T16:57:19.373+05:30  INFO 20688 --- [pbx-core] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8081 (http)
+2025-11-06T16:57:19.385+05:30  INFO 20688 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2025-11-06T16:57:19.386+05:30  INFO 20688 --- [pbx-core] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2025-11-06T16:57:19.424+05:30  INFO 20688 --- [pbx-core] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2025-11-06T16:57:19.425+05:30  INFO 20688 --- [pbx-core] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 1397 ms
+2025-11-06T16:57:19.584+05:30  INFO 20688 --- [pbx-core] [restartedMain] c.dalai.llama.pbx.core.config.RtpConfig  : RTP Config initialized: ports 0-0, codec=null, rate=0Hz, frameSize=0, maxSessions=0
+2025-11-06T16:57:19.599+05:30  INFO 20688 --- [pbx-core] [restartedMain] c.dalai.llama.pbx.core.config.SipConfig  : Initializing SIP stack on 0.0.0.0:5060/udp
+2025-11-06T16:57:19.626+05:30 ERROR 20688 --- [pbx-core] [restartedMain] c.dalai.llama.pbx.core.config.SipConfig  : ❌ Failed to initialize SIP stack
+

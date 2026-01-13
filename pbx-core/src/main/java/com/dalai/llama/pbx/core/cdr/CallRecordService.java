@@ -38,12 +38,12 @@ public class CallRecordService {
             rec = CallRecord.builder()
                     .tenantId(tenantId)
                     .callId(callId)
-                    .recordPath(recordPath)
+                    //.recordPath(recordPath)
                     .status("completed")
                     .createdAt(Instant.now())
                     .build();
         } else {
-            rec.setRecordPath(recordPath);
+            //rec.setRecordPath(recordPath);
             rec.setStatus("completed");
         }
 
@@ -78,7 +78,7 @@ public class CallRecordService {
                         .createdAt(Instant.now())
                         .build();
             }
-
+/*
             if ("caller".equalsIgnoreCase(role)) {
                 rec.setTranscriptCaller(
                         (rec.getTranscriptCaller() == null ? "" : rec.getTranscriptCaller() + "\n") + text
@@ -88,7 +88,7 @@ public class CallRecordService {
                         (rec.getTranscriptResponder() == null ? "" : rec.getTranscriptResponder() + "\n") + text
                 );
             }
-
+*/
             recordRepo.save(rec);
             log.debug("📝 Appended {} transcript for call {}: {}", role, callId, text);
         } catch (Exception e) {
@@ -134,7 +134,7 @@ public class CallRecordService {
             Map<String, Object> event = new HashMap<>();
             event.put("tenantId", rec.getTenantId());
             event.put("callId", rec.getCallId());
-            event.put("recordPath", rec.getRecordPath());
+            //event.put("recordPath", rec.getRecordPath());
             event.put("durationSec", rec.getDurationSec());
             event.put("transcriptLength", getTranscriptLength(rec));
             event.put("timestamp", Instant.now().toString());
@@ -147,9 +147,11 @@ public class CallRecordService {
     }
 
     private int getTranscriptLength(CallRecord rec) {
-        int caller = rec.getTranscriptCaller() == null ? 0 : rec.getTranscriptCaller().length();
-        int responder = rec.getTranscriptResponder() == null ? 0 : rec.getTranscriptResponder().length();
-        return caller + responder;
+        //int caller = rec.getTranscriptCaller() == null ? 0 : rec.getTranscriptCaller().length();
+        //int responder = rec.getTranscriptResponder() == null ? 0 : rec.getTranscriptResponder().length();
+        //return caller + responder;
+
+        return 0;
     }
 
     /**

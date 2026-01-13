@@ -5,9 +5,10 @@ spring:
     port: 8080
     shutdown: graceful
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:agent_db}
-    username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASS:root}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:agent_db}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -36,7 +37,8 @@ spring:
   # Kafka Configuration
   kafka:
     bootstrap-servers: ${KAFKA_BROKERS:kafka.platform.svc.cluster.local:9092}
-
+    topics:
+      kamailio-registration-events: ${KAFKA_REG_TOPIC:pbx-registration-events}
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP:agent-service-${spring.application.instance_id:default}}
       auto-offset-reset: earliest
@@ -93,14 +95,32 @@ spring:
 app:
   tenant:
     id: ${TENANT_ID:default}
-
+#            - name: RTP_TOPIC
+  #              value: "${RTP_TOPIC}"
+  #            - name: AI_RESULT_TOPIC
+  #              value: "${AI_RESULT_TOPIC}"
+  #            - name: WS_PORT
+  #              value: "8080"
+  #            - name: TENANT_ID
+  #              value: "${TENANT_ID}"
+  #            - name: KAFKA_BROKER
+  #              # NOTE: Changed from KAFKA_BROKER to KAFKA_BROKERS to match the variable in your Java code
+  #              value: "${KAFKA_BROKERS}"
+  #            - name: REDIS_URL # <-- **NEW**
+  #              value: "${REDIS_URL}"
+  #            - name: KAFKA_REG_TOPIC # <-- **NEW**
+  #              value: "${KAFKA_REG_TOPIC}"
+  #            - name: KAFKA_CALL_TOPIC # <-- **NEW**
+  #              value: "${KAFKA_CALL_TOPIC}"
   kafka:
+    consumer-group: ${KAFKA_CONSUMER_GROUP:agent-service-reg}
     topics:
       # Inbound topics (consumed)
       assignment-requests: agent.assign.requests
-      rtp-voice-frames: rtp.voice.frames.${app.tenant.id}
-      ai-transcripts: ai.transcript.${app.tenant.id}
-      call-events: pbx.call.events.${app.tenant.id}
+      rtp-voice-frames: ${RTP_TOPIC}
+      ai-transcripts: ${AI_RESULT_TOPIC}
+      call-events: ${KAFKA_CALL_TOPIC}
+      reg-events: ${KAFKA_REG_TOPIC}
 
       # Outbound topics (produced)
       assignment-responses: agent.assign.responses

@@ -10,7 +10,8 @@ public class Did {
     @Id @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
-    @Column(nullable = false)
+
+    @Column(nullable = false,name = "tenant_id", length = 36)
     private String tenantId;
 
     @Column(nullable = false)

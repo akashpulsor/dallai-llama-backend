@@ -16,8 +16,10 @@
     </option>
     <option name="ignoredFiles">
       <set>
+        <option value="$PROJECT_DIR$/auth-service/pom.xml" />
         <option value="$PROJECT_DIR$/com.dalaillama.auth-service/pom.xml" />
         <option value="$PROJECT_DIR$/content/pom.xml" />
+        <option value="$PROJECT_DIR$/onboarding-service/pom.xml" />
         <option value="$PROJECT_DIR$/pbx/pom.xml" />
       </set>
     </option>

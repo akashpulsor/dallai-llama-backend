@@ -36,6 +36,12 @@ public class Agent {
     @Column(nullable = false)
     private String username;
 
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
+    private String extension;
+
     @Column(name = "display_name")
     private String displayName;
 

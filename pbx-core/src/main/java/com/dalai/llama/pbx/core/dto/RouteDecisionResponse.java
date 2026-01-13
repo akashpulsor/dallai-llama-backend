@@ -7,11 +7,11 @@ import lombok.Data;
 @Data
 @Builder
 public class RouteDecisionResponse {
-    private String decision;           // deliver | fallback | reject
+    private String decision;           // deliver | fallback | reject | ivr
     private String strategyApplied;
     private int ttlMs;
     private List<Target> targets;
-
+    private String ivrFlow;
     @Data
     @Builder
     public static class Target {

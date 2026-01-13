@@ -1,0 +1,169 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: billing-postgres
+    environment:
+      POSTGRES_DB: billing_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - billing_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d billing_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - billing-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: billing-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - billing_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - billing-network
+
+  # Kafka (using Confluent images)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: billing-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2183:2181"
+    volumes:
+      - billing_zookeeper_data:/var/lib/zookeeper/data
+      - billing_zookeeper_log:/var/lib/zookeeper/log
+    networks:
+      - billing-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: billing-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9094:9092"
+      - "29094:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - billing_kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - billing-network
+
+  # Billing Service
+  billing-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: billing-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: billing_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      
+      # Keycloak (external - configure as needed)
+      KEYCLOAK_ISSUER_URI: http://host.docker.internal:8080/realms/dalai-llama
+      KEYCLOAK_JWKS_URI: http://host.docker.internal:8080/realms/dalai-llama/protocol/openid-connect/certs
+      
+      # Razorpay (configure with actual credentials)
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_xxxxx}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-xxxxx}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-xxxxx}
+      
+      # Service URLs
+      PRODUCT_SERVICE_URL: http://host.docker.internal:8082
+      TENANT_SERVICE_URL: http://host.docker.internal:8081
+      
+      # Billing config
+      GRACE_PERIOD_DAYS: 7
+      LOW_BALANCE_THRESHOLD: 500
+      DEFAULT_CURRENCY: INR
+      
+      # Logging
+      LOG_LEVEL: DEBUG
+      
+      # Spring profile
+      SPRING_PROFILES_ACTIVE: dev
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - billing-network
+
+  # Kafka UI (optional - for debugging)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: billing-kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8089:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: billing-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - billing-network
+    profiles:
+      - debug
+
+volumes:
+  billing_postgres_data:
+  billing_redis_data:
+  billing_zookeeper_data:
+  billing_zookeeper_log:
+  billing_kafka_data:
+
+networks:
+  billing-network:
+    driver: bridge

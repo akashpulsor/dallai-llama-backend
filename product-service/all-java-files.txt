@@ -1,0 +1,4958 @@
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/ProductServiceApplication.java
+==================================================
+
+package com.dalai.llama.product;
+
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.kafka.annotation.EnableKafka;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@SpringBootApplication
+@EnableKafka
+@EnableCaching
+@EnableScheduling
+public class ProductServiceApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(ProductServiceApplication.class, args);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/CacheConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+
+@Configuration
+@EnableCaching
+public class CacheConfig {
+
+    @Value("${cache.entitlements.ttl-minutes:5}")
+    private int entitlementsTtlMinutes;
+
+    @Bean
+    public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {
+        // Configure ObjectMapper for Redis serialization
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.activateDefaultTyping(
+                LaissezFaireSubTypeValidator.instance,
+                ObjectMapper.DefaultTyping.NON_FINAL,
+                JsonTypeInfo.As.PROPERTY
+        );
+
+        GenericJackson2JsonRedisSerializer jsonSerializer =
+                new GenericJackson2JsonRedisSerializer(objectMapper);
+
+        // Default cache configuration
+        RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(Duration.ofMinutes(10))
+                .serializeKeysWith(
+                        RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer())
+                )
+                .serializeValuesWith(
+                        RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer)
+                )
+                .disableCachingNullValues();
+
+        // Cache-specific configurations
+        Map<String, RedisCacheConfiguration> cacheConfigs = new HashMap<>();
+
+        // Entitlements cache - 5 minute TTL (frequently accessed, invalidated on plan change)
+        cacheConfigs.put("entitlements", defaultConfig
+                .entryTtl(Duration.ofMinutes(entitlementsTtlMinutes)));
+
+        // Products cache - 1 hour TTL (rarely changes)
+        cacheConfigs.put("products", defaultConfig
+                .entryTtl(Duration.ofHours(1)));
+
+        // Plans cache - 30 minute TTL
+        cacheConfigs.put("plans", defaultConfig
+                .entryTtl(Duration.ofMinutes(30)));
+
+        return RedisCacheManager.builder(connectionFactory)
+                .cacheDefaults(defaultConfig)
+                .withInitialCacheConfigurations(cacheConfigs)
+                .transactionAware()
+                .build();
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/DidwwConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+@Data
+@Configuration
+@ConfigurationProperties(prefix = "didww")
+public class DidwwConfig {
+    private String apiUrl;
+    private String apiKey;
+    private String webhookSecret;
+    private boolean syncEnabled;
+    private int syncIntervalMinutes;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/KafkaConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.support.serializer.JsonSerializer;
+
+import java.util.Map;
+
+@Configuration
+public class KafkaConfig {
+
+    @Bean
+    public Map<String, Object> producerConfigs() {
+        return Map.of(
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class
+        );
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/RedisConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+
+@Configuration
+public class RedisConfig {
+
+    @Bean
+    public LettuceConnectionFactory redisConnectionFactory() {
+        return new LettuceConnectionFactory();
+    }
+
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate() {
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(redisConnectionFactory());
+        return template;
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/SecurityConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
+                        .requestMatchers("/api/v1/webhooks/**").permitAll()
+                        .requestMatchers("/api/v1/**").authenticated()
+                        .anyRequest().denyAll()
+                )
+                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
+
+        return http.build();
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/config/WebClientConfig.java
+==================================================
+
+package com.dalai.llama.product.config;
+
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.reactive.function.client.WebClient;
+
+@Configuration
+public class WebClientConfig {
+
+    @Bean
+    public WebClient.Builder webClientBuilder() {
+        return WebClient.builder();
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/DidController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.request.ProvisionDidRequest;
+import com.dalai.llama.product.dto.request.SearchAvailableDidsRequest;
+import com.dalai.llama.product.dto.request.UpdateDidRoutingRequest;
+import com.dalai.llama.product.dto.response.AvailableDidResponse;
+import com.dalai.llama.product.dto.response.DidDetailResponse;
+import com.dalai.llama.product.dto.response.DidResponse;
+import com.dalai.llama.product.service.DidService;
+import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/v1/tenants/{tenantId}/dids")
+@RequiredArgsConstructor
+@Tag(name = "DIDs", description = "Phone number (DID) provisioning and management")
+public class DidController {
+
+    private final DidService didService;
+    private final DidwwProvisioningService didwwService;
+    private final ProductMapper mapper;
+
+    @GetMapping("/available")
+    @Operation(
+            summary = "Search available DIDs",
+            description = "Search for available phone numbers from DIDWW by country, city, and type"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of available DIDs",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = AvailableDidResponse.class)))
+            )
+    })
+    public List<AvailableDidResponse> searchAvailable(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Valid SearchAvailableDidsRequest req
+    ) {
+        return didwwService.searchAvailableDids(
+                        req.getCountry(),
+                        req.getCity(),
+                        req.getPrefix(),
+                        req.getType(),
+                        req.getLimit()
+                )
+                .getData()
+                .stream()
+                .map(d -> AvailableDidResponse.builder()
+                        .number(d.getNumber())
+                        .country(d.getCountry())
+                        .city(d.getCity())
+                        .type(d.getType())
+                        .monthlyFee(d.getMonthlyFee())
+                        .setupFee(d.getSetupFee())
+                        .build()
+                )
+                .toList();
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(
+            summary = "Provision a DID",
+            description = "Purchase and provision a phone number for the tenant. Creates SIP endpoint automatically."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "201",
+                    description = "DID provisioned successfully",
+                    content = @Content(schema = @Schema(implementation = DidResponse.class))
+            ),
+            @ApiResponse(responseCode = "400", description = "Invalid request or DID not available"),
+            @ApiResponse(responseCode = "403", description = "Entitlement exceeded (max DIDs)")
+    })
+    public DidResponse provision(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @RequestBody @Valid ProvisionDidRequest request
+    ) {
+        return mapper.toDidResponse(
+                didService.provisionDid(
+                        tenantId,
+                        request.getNumber(),
+                        request.getSipTrunkId() == null ? null : UUID.fromString(request.getSipTrunkId())
+                )
+        );
+    }
+
+    @GetMapping
+    @Operation(
+            summary = "List tenant DIDs",
+            description = "Returns all DIDs provisioned for the tenant"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of DIDs",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = DidResponse.class)))
+            )
+    })
+    public List<DidResponse> list(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId
+    ) {
+        return didService.getTenantDids(tenantId)
+                .stream()
+                .map(mapper::toDidResponse)
+                .toList();
+    }
+
+    @GetMapping("/{didId}")
+    @Operation(
+            summary = "Get DID details",
+            description = "Returns detailed information about a specific DID including routing config"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "DID details",
+                    content = @Content(schema = @Schema(implementation = DidDetailResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "DID not found")
+    })
+    public DidDetailResponse get(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Parameter(description = "DID ID", required = true)
+            @PathVariable UUID didId
+    ) {
+        var did = didService.getDid(tenantId, didId);
+        return DidDetailResponse.builder()
+                .did(mapper.toDidResponse(did))
+                .build();
+    }
+
+    @PatchMapping("/{didId}/routing")
+    @Operation(
+            summary = "Update DID routing",
+            description = "Configure where calls to this DID should be routed (IVR, Queue, Agent, etc.)"
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Routing updated"),
+            @ApiResponse(responseCode = "404", description = "DID not found")
+    })
+    public void updateRouting(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Parameter(description = "DID ID", required = true)
+            @PathVariable UUID didId,
+            @RequestBody @Valid UpdateDidRoutingRequest request
+    ) {
+        // TODO: Implement routing update
+    }
+
+    @DeleteMapping("/{didId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(
+            summary = "Release a DID",
+            description = "Release a phone number. The number will be returned to the pool."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "DID released"),
+            @ApiResponse(responseCode = "404", description = "DID not found")
+    })
+    public void release(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Parameter(description = "DID ID", required = true)
+            @PathVariable UUID didId
+    ) {
+        didService.releaseDid(tenantId, didId);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/DidwwWebhookController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.domain.entity.enums.SipTrunkStatus;
+import com.dalai.llama.product.domain.event.DidProvisionedEvent;
+import com.dalai.llama.product.domain.event.DidReleasedEvent;
+import com.dalai.llama.product.kafka.producer.ProductEventProducer;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.repository.SipTrunkRepository;
+import com.dalai.llama.product.service.didww.DidwwProperties;
+import com.dalai.llama.product.service.didww.dto.DidwwWebhookPayload;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.HexFormat;
+
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/webhooks/didww")
+@RequiredArgsConstructor
+@Tag(name = "DIDWW Webhooks", description = "DIDWW event notifications")
+public class DidwwWebhookController {
+
+    private final DidRepository didRepository;
+    private final SipTrunkRepository sipTrunkRepository;
+    private final ProductEventProducer eventProducer;
+    private final DidwwProperties didwwProperties;
+
+    @PostMapping
+    @Operation(summary = "Handle DIDWW webhook", description = "Receives event notifications from DIDWW")
+    public ResponseEntity<Void> handle(
+            @RequestHeader(value = "X-DIDWW-Signature", required = false) String signature,
+            @RequestBody String rawBody,
+            @RequestBody DidwwWebhookPayload payload
+    ) {
+        log.info("Received DIDWW webhook: event={}, resourceType={}, resourceId={}",
+                payload.getEvent(), payload.getResourceType(), payload.getResourceId());
+
+        // 1. Verify signature
+        if (!verifySignature(rawBody, signature)) {
+            log.warn("Invalid DIDWW webhook signature");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // 2. Process event
+        try {
+            switch (payload.getEvent()) {
+                case "did.activated" -> handleDidActivated(payload);
+                case "did.suspended" -> handleDidSuspended(payload);
+                case "did.released" -> handleDidReleased(payload);
+                case "did.provisioning_failed" -> handleProvisioningFailed(payload);
+                case "trunk.status_changed" -> handleTrunkStatusChanged(payload);
+                default -> log.debug("Unhandled DIDWW event: {}", payload.getEvent());
+            }
+        } catch (Exception e) {
+            log.error("Error processing DIDWW webhook: {}", e.getMessage(), e);
+            // Return 200 to prevent retries for processing errors
+        }
+
+        return ResponseEntity.ok().build();
+    }
+
+    private boolean verifySignature(String payload, String signature) {
+        if (signature == null || signature.isBlank()) {
+            log.debug("No signature provided, skipping verification");
+            return true; // Allow in dev mode
+        }
+
+        try {
+            String secret = didwwProperties.getWebhookSecret();
+            Mac mac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec secretKey = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            mac.init(secretKey);
+            byte[] hash = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+            String computed = HexFormat.of().formatHex(hash);
+            return computed.equalsIgnoreCase(signature);
+        } catch (Exception e) {
+            log.error("Signature verification failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private void handleDidActivated(DidwwWebhookPayload payload) {
+        log.info("DID activated: {}", payload.getResourceId());
+
+        didRepository.findAll().stream()
+                .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
+                .findFirst()
+                .ifPresent(did -> {
+                    did.setStatus(DidStatus.ACTIVE);
+                    did.setProvisionedAt(Instant.now());
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+
+                    eventProducer.publishDidProvisioned(DidProvisionedEvent.builder()
+                            .tenantId(did.getTenantId())
+                            .didId(did.getId())
+                            .number(did.getNumber())
+                            .provisionedAt(did.getProvisionedAt())
+                            .occurredAt(Instant.now())
+                            .build());
+
+                    log.info("DID {} marked as ACTIVE", did.getNumber());
+                });
+    }
+
+    private void handleDidSuspended(DidwwWebhookPayload payload) {
+        log.info("DID suspended: {}", payload.getResourceId());
+
+        didRepository.findAll().stream()
+                .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
+                .findFirst()
+                .ifPresent(did -> {
+                    did.setStatus(DidStatus.SUSPENDED);
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+                    log.info("DID {} marked as SUSPENDED", did.getNumber());
+                });
+    }
+
+    private void handleDidReleased(DidwwWebhookPayload payload) {
+        log.info("DID released: {}", payload.getResourceId());
+
+        didRepository.findAll().stream()
+                .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
+                .findFirst()
+                .ifPresent(did -> {
+                    did.setStatus(DidStatus.RELEASED);
+                    did.setReleasedAt(Instant.now());
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+
+                    eventProducer.publishDidReleased(DidReleasedEvent.builder()
+                            .tenantId(did.getTenantId())
+                            .didId(did.getId())
+                            .number(did.getNumber())
+                            .reason("DIDWW_RELEASED")
+                            .releasedAt(did.getReleasedAt())
+                            .occurredAt(Instant.now())
+                            .build());
+
+                    log.info("DID {} marked as RELEASED", did.getNumber());
+                });
+    }
+
+    private void handleProvisioningFailed(DidwwWebhookPayload payload) {
+        log.error("DID provisioning failed: {}", payload.getResourceId());
+
+        didRepository.findAll().stream()
+                .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
+                .findFirst()
+                .ifPresent(did -> {
+                    did.setStatus(DidStatus.PENDING);
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+                    log.info("DID {} marked as PENDING due to provisioning failure", did.getNumber());
+                });
+    }
+
+    private void handleTrunkStatusChanged(DidwwWebhookPayload payload) {
+        log.info("Trunk status changed: {} -> {}", payload.getResourceId(), payload.getStatus());
+
+        sipTrunkRepository.findByDidwwTrunkId(payload.getResourceId())
+                .ifPresentOrElse(
+                        trunk -> {
+                            SipTrunkStatus newStatus = mapDidwwStatus(payload.getStatus());
+                            trunk.setStatus(newStatus);
+                            trunk.setHealthy(newStatus == SipTrunkStatus.ACTIVE);
+                            trunk.setUpdatedAt(Instant.now());
+                            sipTrunkRepository.save(trunk);
+                            log.info("Updated SIP trunk {} status to {}", trunk.getName(), newStatus);
+                        },
+                        () -> log.warn("SIP trunk not found for DIDWW trunk ID: {}", payload.getResourceId())
+                );
+    }
+
+    private SipTrunkStatus mapDidwwStatus(String didwwStatus) {
+        if (didwwStatus == null) {
+            return SipTrunkStatus.PENDING;
+        }
+        return switch (didwwStatus.toLowerCase()) {
+            case "active", "enabled" -> SipTrunkStatus.ACTIVE;
+            case "suspended", "disabled" -> SipTrunkStatus.SUSPENDED;
+            case "failed", "error" -> SipTrunkStatus.FAILED;
+            default -> SipTrunkStatus.PENDING;
+        };
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/InternalProductController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.domain.entity.Plan;
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.response.DidResponse;
+import com.dalai.llama.product.dto.response.EntitlementResponse;
+import com.dalai.llama.product.dto.response.PlanAssignmentResponse;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.repository.PlanRepository;
+import com.dalai.llama.product.repository.PstnChannelBundleRepository;
+import com.dalai.llama.product.service.EntitlementService;
+import com.dalai.llama.product.service.PlanAssignmentService;
+import com.dalai.llama.product.service.didww.DidwwApiService;
+import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import io.swagger.v3.oas.annotations.Hidden;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/internal")
+@RequiredArgsConstructor
+@Tag(name = "Internal APIs", description = "Service-to-service APIs")
+@Hidden
+public class InternalProductController {
+
+    private final PlanAssignmentService planAssignmentService;
+    private final EntitlementService entitlementService;
+    private final PlanRepository planRepository;
+    private final DidRepository didRepository;
+    private final PstnChannelBundleRepository channelBundleRepository;
+    private final ProductMapper mapper;
+    private final DidwwProvisioningService didwwProvisioningService;
+    /**
+     * Called by Tenant Service during provisioning to assign default plan
+     */
+    @PostMapping("/tenants/{tenantId}/default-plan")
+    @Operation(summary = "Assign default plan to tenant")
+    public ResponseEntity<PlanAssignmentResponse> assignDefaultPlan(
+            @PathVariable UUID tenantId,
+            @RequestParam(defaultValue = "AI_CC") String productCode
+    ) {
+        log.info("Assigning default plan for tenant {} with product {}", tenantId, productCode);
+
+        // Find default plan for the product
+        Plan defaultPlan = planRepository.findByProduct_CodeAndIsDefaultTrue(productCode)
+                .orElse(null);
+
+        if (defaultPlan == null) {
+            log.warn("No default plan found for product {}", productCode);
+            return ResponseEntity.notFound().build();
+        }
+
+        var assignment = planAssignmentService.assignPlan(tenantId, defaultPlan.getId());
+        log.info("Assigned default plan {} to tenant {}", defaultPlan.getCode(), tenantId);
+
+        return ResponseEntity.ok(mapper.toPlanAssignmentResponse(assignment));
+    }
+
+    /**
+     * Called by Tenant Service during deprovisioning (compensation)
+     */
+    @DeleteMapping("/tenants/{tenantId}/plan")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Remove plan assignment (compensation)")
+    public void removePlan(@PathVariable UUID tenantId) {
+        log.info("Removing plan for tenant {}", tenantId);
+        planAssignmentService.removePlan(tenantId);
+        entitlementService.invalidateCache(tenantId);
+    }
+
+    /**
+     * Called by PBX Core / Billing for authorization checks
+     */
+    @GetMapping("/tenants/{tenantId}/entitlements")
+    @Operation(summary = "Get tenant entitlements for authorization")
+    public EntitlementResponse getEntitlements(@PathVariable UUID tenantId) {
+        return mapper.toEntitlementResponse(
+                entitlementService.getEffectiveEntitlements(tenantId)
+        );
+    }
+
+    /**
+     * Called by PBX Core to get DID info by number
+     */
+    @GetMapping("/tenants/{tenantId}/dids/{number}")
+    @Operation(summary = "Get DID by number")
+    public ResponseEntity<DidResponse> getDidByNumber(
+            @PathVariable UUID tenantId,
+            @PathVariable String number
+    ) {
+        return didRepository.findByTenantIdAndNumber(tenantId, number)
+                .map(mapper::toDidResponse)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Called by Tenant Service to check purchased DIDs
+     */
+    @GetMapping("/tenants/{tenantId}/dids/purchased")
+    @Operation(summary = "Get purchased DIDs for tenant")
+    public List<DidResponse> getPurchasedDids(@PathVariable UUID tenantId) {
+        return didRepository.findByTenantId(tenantId).stream()
+                .map(mapper::toDidResponse)
+                .toList();
+    }
+
+    /**
+     * Called by PBX Core to get available PSTN channels
+     */
+    @GetMapping("/tenants/{tenantId}/channels")
+    @Operation(summary = "Get available PSTN channels")
+    public ResponseEntity<Map<String, Object>> getAvailableChannels(@PathVariable UUID tenantId) {
+        var bundles = channelBundleRepository.findByTenantId(tenantId);
+
+        int totalChannels = bundles.stream().mapToInt(b -> b.getTotalChannels()).sum();
+        int activeChannels = bundles.stream().mapToInt(b -> b.getActiveChannels()).sum();
+        int inboundChannels = bundles.stream().mapToInt(b -> b.getInboundChannels()).sum();
+        int outboundChannels = bundles.stream().mapToInt(b -> b.getOutboundChannels()).sum();
+
+        return ResponseEntity.ok(Map.of(
+                "totalChannels", totalChannels,
+                "activeChannels", activeChannels,
+                "availableChannels", totalChannels - activeChannels,
+                "inboundChannels", inboundChannels,
+                "outboundChannels", outboundChannels
+        ));
+    }
+
+    /**
+     * Called by Tenant Service to configure DIDWW trunk with Kamailio IP
+     */
+    @PostMapping("/tenants/{tenantId}/didww/configure")
+    @Operation(summary = "Configure DIDWW trunk with Kamailio IP")
+    public ResponseEntity<Map<String, String>> configureDidwwTrunk(
+            @PathVariable UUID tenantId,
+            @RequestBody Map<String, String> request
+    ) {
+        String kamailioIp = request.get("kamailioIp");
+        int kamailioPort = Integer.parseInt(request.getOrDefault("kamailioPort", "5060"));
+
+        log.info("Configuring DIDWW trunk for tenant {} with IP {}:{}", tenantId, kamailioIp, kamailioPort);
+
+
+        didwwProvisioningService.configureSip(tenantId.toString(), kamailioIp, kamailioPort);
+        return ResponseEntity.ok(Map.of(
+                "status", "configured",
+                "kamailioIp", kamailioIp,
+                "kamailioPort", String.valueOf(kamailioPort)
+        ));
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/PlanController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.response.PlanDetailResponse;
+import com.dalai.llama.product.dto.response.PlanResponse;
+import com.dalai.llama.product.repository.PlanEntitlementRepository;
+import com.dalai.llama.product.service.PlanService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/plans")
+@RequiredArgsConstructor
+@Tag(name = "Plans", description = "Plan and pricing management")
+public class PlanController {
+
+    private final PlanService planService;
+    private final PlanEntitlementRepository entitlementRepository;
+    private final ProductMapper mapper;
+
+    @GetMapping
+    @Operation(
+            summary = "List all plans",
+            description = "Returns all available plans across all products"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of plans",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = PlanResponse.class)))
+            )
+    })
+    public List<PlanResponse> getAllPlans() {
+        return planService.getAllPlans()
+                .stream()
+                .map(mapper::toPlanResponse)
+                .toList();
+    }
+
+    @GetMapping("/{code}")
+    @Operation(
+            summary = "Get plan with entitlements",
+            description = "Returns plan details including all entitlements (limits and features)"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Plan with entitlements",
+                    content = @Content(schema = @Schema(implementation = PlanDetailResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "Plan not found")
+    })
+    public PlanDetailResponse getPlan(
+            @Parameter(description = "Plan code (e.g., AI_CC_STARTER, AI_CC_PROFESSIONAL)")
+            @PathVariable String code
+    ) {
+        var plan = planService.getPlanByCode(code);
+        var entitlement = entitlementRepository
+                .findByPlan_Id(plan.getId())
+                .orElseThrow();
+
+        return mapper.toPlanDetailResponse(plan, entitlement);
+    }
+
+    @GetMapping("/product/{productCode}")
+    @Operation(
+            summary = "List plans by product",
+            description = "Returns all plans available for a specific product"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of plans for the product",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = PlanResponse.class)))
+            )
+    })
+    public List<PlanResponse> getPlansByProduct(
+            @Parameter(description = "Product code (e.g., AI_CC, CONV_IVR)")
+            @PathVariable String productCode
+    ) {
+        return planService.getPlansByProductCode(productCode)
+                .stream()
+                .map(mapper::toPlanResponse)
+                .toList();
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/ProductController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.response.ProductResponse;
+import com.dalai.llama.product.service.ProductService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/products")
+@RequiredArgsConstructor
+@Tag(name = "Products", description = "Product catalog management")
+public class ProductController {
+
+    private final ProductService productService;
+    private final ProductMapper mapper;
+
+    @GetMapping
+    @Operation(
+            summary = "List all products",
+            description = "Returns all active products in the catalog"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of products",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = ProductResponse.class)))
+            )
+    })
+    public List<ProductResponse> getAllProducts() {
+        return productService.getAllActiveProducts()
+                .stream()
+                .map(mapper::toProductResponse)
+                .toList();
+    }
+
+    @GetMapping("/{code}")
+    @Operation(
+            summary = "Get product by code",
+            description = "Returns a specific product by its unique code"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Product found",
+                    content = @Content(schema = @Schema(implementation = ProductResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "Product not found")
+    })
+    public ProductResponse getProduct(
+            @Parameter(description = "Product code (e.g., AI_CC, CONV_IVR, BASIC_PBX)")
+            @PathVariable String code
+    ) {
+        return mapper.toProductResponse(productService.getByCode(code));
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/SipTrunkController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.domain.entity.SipTrunk;
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.request.CreateSipTrunkRequest;
+import com.dalai.llama.product.dto.response.SipTrunkResponse;
+import com.dalai.llama.product.service.SipTrunkService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/v1/tenants/{tenantId}/sip-trunks")
+@RequiredArgsConstructor
+@Tag(name = "SIP Trunks", description = "SIP trunk management for voice connectivity")
+public class SipTrunkController {
+
+    private final SipTrunkService sipTrunkService;
+    private final ProductMapper mapper;
+
+    @GetMapping
+    @Operation(
+            summary = "List tenant SIP trunks",
+            description = "Returns all SIP trunks configured for the tenant"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "List of SIP trunks",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = SipTrunkResponse.class)))
+            )
+    })
+    public List<SipTrunkResponse> list(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId
+    ) {
+        return sipTrunkService.getTrunks(tenantId)
+                .stream()
+                .map(mapper::toSipTrunkResponse)
+                .toList();
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(
+            summary = "Create SIP trunk",
+            description = "Create a custom SIP trunk for BYOC (Bring Your Own Carrier) scenarios"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "201",
+                    description = "SIP trunk created",
+                    content = @Content(schema = @Schema(implementation = SipTrunkResponse.class))
+            ),
+            @ApiResponse(responseCode = "400", description = "Invalid request")
+    })
+    public SipTrunkResponse create(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @RequestBody @Valid CreateSipTrunkRequest request
+    ) {
+        SipTrunk trunk = SipTrunk.builder()
+                .name(request.getName())
+                .server(request.getServer())
+                .port(request.getPort())
+                .transport(request.getTransport())
+                .build();
+
+        return mapper.toSipTrunkResponse(
+                sipTrunkService.createTrunk(tenantId, trunk)
+        );
+    }
+
+    @GetMapping("/{id}")
+    @Operation(
+            summary = "Get SIP trunk details",
+            description = "Returns detailed information about a specific SIP trunk"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "SIP trunk details",
+                    content = @Content(schema = @Schema(implementation = SipTrunkResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "SIP trunk not found")
+    })
+    public SipTrunkResponse get(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Parameter(description = "SIP Trunk ID", required = true)
+            @PathVariable UUID id
+    ) {
+        return mapper.toSipTrunkResponse(
+                sipTrunkService.getTrunk(tenantId, id)
+        );
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(
+            summary = "Delete SIP trunk",
+            description = "Delete a custom SIP trunk. DIDs using this trunk will be orphaned."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "SIP trunk deleted"),
+            @ApiResponse(responseCode = "404", description = "SIP trunk not found")
+    })
+    public void delete(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @Parameter(description = "SIP Trunk ID", required = true)
+            @PathVariable UUID id
+    ) {
+        sipTrunkService.deleteTrunk(tenantId, id);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/controller/TenantPlanController.java
+==================================================
+
+package com.dalai.llama.product.controller;
+
+import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.request.AssignPlanRequest;
+import com.dalai.llama.product.dto.response.EntitlementResponse;
+import com.dalai.llama.product.dto.response.PlanAssignmentResponse;
+import com.dalai.llama.product.service.EntitlementService;
+import com.dalai.llama.product.service.PlanAssignmentService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/v1/tenants/{tenantId}")
+@RequiredArgsConstructor
+@Tag(name = "Tenant Plans", description = "Tenant plan assignment and entitlements")
+public class TenantPlanController {
+
+    private final PlanAssignmentService planAssignmentService;
+    private final EntitlementService entitlementService;
+    private final ProductMapper mapper;
+
+    @GetMapping("/plan")
+    @Operation(
+            summary = "Get tenant's current plan",
+            description = "Returns the currently active plan assigned to the tenant"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Current plan assignment",
+                    content = @Content(schema = @Schema(implementation = PlanAssignmentResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "No active plan found")
+    })
+    public PlanAssignmentResponse getCurrentPlan(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId
+    ) {
+        return mapper.toPlanAssignmentResponse(
+                planAssignmentService.getActivePlan(tenantId)
+        );
+    }
+
+    @PostMapping("/plan")
+    @Operation(
+            summary = "Assign plan to tenant",
+            description = "Assign a new plan to the tenant. If a plan is already assigned, it will be replaced."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Plan assigned successfully",
+                    content = @Content(schema = @Schema(implementation = PlanAssignmentResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "Plan not found")
+    })
+    public PlanAssignmentResponse assignPlan(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId,
+            @RequestBody @Valid AssignPlanRequest request
+    ) {
+        return mapper.toPlanAssignmentResponse(
+                planAssignmentService.assignPlan(tenantId, request.getPlanId())
+        );
+    }
+
+    @GetMapping("/entitlements")
+    @Operation(
+            summary = "Get tenant entitlements",
+            description = "Returns the effective entitlements (limits and features) for the tenant based on their plan"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Tenant entitlements",
+                    content = @Content(schema = @Schema(implementation = EntitlementResponse.class))
+            ),
+            @ApiResponse(responseCode = "404", description = "No active plan found")
+    })
+    public EntitlementResponse getEntitlements(
+            @Parameter(description = "Tenant ID", required = true)
+            @PathVariable UUID tenantId
+    ) {
+        return mapper.toEntitlementResponse(
+                entitlementService.getEffectiveEntitlements(tenantId)
+        );
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/Did.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "dids",
+        indexes = {
+                @Index(name = "idx_did_tenant", columnList = "tenantId"),
+                @Index(name = "idx_did_status", columnList = "status")
+        }
+)
+@Getter @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class Did {
+
+    @Id
+    private UUID id;
+
+    @Column(nullable = false)
+    private UUID tenantId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sip_trunk_id")
+    private SipTrunk sipTrunk;
+
+    @Column(nullable = false, unique = true)
+    private String number;              // E.164
+
+    private String displayNumber;
+
+    private String country;
+    private String region;
+    private String city;
+
+    private String didwwDidId;
+    private String didwwTrunkGroupId;
+
+    @Enumerated(EnumType.STRING)
+    private DidStatus status;
+
+    private BigDecimal monthlyRental;
+    private String currency;
+
+    private Instant provisionedAt;
+    private Instant releasedAt;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/DidRoutingConfig.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import com.dalai.llama.product.domain.entity.enums.RoutingTargetType;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.time.LocalTime;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "did_routing_configs",
+        uniqueConstraints = @UniqueConstraint(name = "uk_routing_did", columnNames = "did_id")
+)
+@Getter @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class DidRoutingConfig {
+
+    @Id
+    private UUID id;
+
+    @OneToOne
+    @JoinColumn(name = "did_id", nullable = false)
+    private Did did;
+
+    @Enumerated(EnumType.STRING)
+    private RoutingTargetType routingTargetType;
+
+    private String routingTargetId;
+
+    @Enumerated(EnumType.STRING)
+    private RoutingTargetType fallbackTargetType;
+
+    private String fallbackTargetId;
+
+    private boolean recordingEnabled;
+    private boolean transcriptionEnabled;
+    private boolean sentimentEnabled;
+
+    private boolean businessHoursOnly;
+    private LocalTime businessHoursStart;
+    private LocalTime businessHoursEnd;
+
+    @Enumerated(EnumType.STRING)
+    private RoutingTargetType afterHoursTargetType;
+
+    private String afterHoursTargetId;
+
+    private int maxRingTime;
+    private int priority;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/OutboundCallerId.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "outbound_caller_ids",
+        indexes = @Index(name = "idx_cli_tenant", columnList = "tenantId")
+)
+@Getter @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class OutboundCallerId {
+
+    @Id
+    private UUID id;
+
+    @Column(nullable = false)
+    private UUID tenantId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sip_trunk_id")
+    private SipTrunk sipTrunk;
+
+    @Column(nullable = false)
+    private String number;
+
+    private String displayName;
+
+    private boolean verified;
+    private boolean isDefault;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/Plan.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+import com.dalai.llama.product.domain.entity.enums.PlanTier;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "plans")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class Plan {
+
+    @Id
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id")
+    private Product product;
+
+    @Column(unique = true)
+    private String code;
+
+    private String name;
+    private String description;
+
+    @Enumerated(EnumType.STRING)
+    private PlanTier tier;
+
+    private double monthlyPrice;
+    private String currency;
+
+    private boolean isDefault;
+    private boolean active;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/PlanAssignment.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+@Entity
+@Table(name = "plan_assignments")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanAssignment {
+
+    @Id
+    private UUID id;
+
+    private UUID tenantId;
+
+    @ManyToOne
+    @JoinColumn(name = "plan_id")
+    private Plan plan;
+
+    private Instant effectiveFrom;
+    private Instant effectiveTo;
+
+    private boolean active;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> entitlementOverrides;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/PlanEntitlement.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "plan_entitlements")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanEntitlement {
+
+    @Id
+    private UUID id;
+
+    @OneToOne
+    @JoinColumn(name = "plan_id", unique = true)
+    private Plan plan;
+
+    private int maxAgents;
+    private int maxSupervisors;
+    private int maxConcurrentLogins;
+
+    private int maxPstnChannels;
+    private int maxDids;
+
+    private boolean inboundEnabled;
+    private boolean outboundEnabled;
+    private boolean recordingEnabled;
+
+    private boolean analyticsEnabled;
+    private int analyticsRetentionDays;
+
+    private boolean aiSttEnabled;
+    private boolean aiLlmEnabled;
+    private boolean aiBotEnabled;
+    private boolean aiSentimentEnabled;
+    private long aiTokensPerMonth;
+
+    private int maxQueues;
+    private int maxIvrFlows;
+
+    private int recordingStorageGb;
+    private int recordingRetentionDays;
+
+    private boolean bargeEnabled;
+    private boolean whisperEnabled;
+    private boolean monitorEnabled;
+
+    private boolean conferenceEnabled;
+    private boolean voicemailEnabled;
+    private boolean callbackEnabled;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/Product.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import com.dalai.llama.product.domain.entity.enums.ProductType;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+@Entity
+@Table(name = "products")
+@Getter @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class Product {
+
+    @Id
+    private UUID id;
+
+    @Column(nullable = false, unique = true)
+    private String code;
+
+    private String name;
+    private String description;
+
+    @Enumerated(EnumType.STRING)
+    private ProductType type;
+
+    private boolean active = true;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> features;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/PstnChannelBundle.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "pstn_channel_bundles",
+        indexes = {
+                @Index(name = "idx_channel_tenant", columnList = "tenant_id")
+        }
+)
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class PstnChannelBundle {
+
+    @Id
+    @Column(nullable = false)
+    private UUID id;
+
+    @Column(name = "tenant_id", nullable = false)
+    private UUID tenantId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sip_trunk_id")
+    private SipTrunk sipTrunk;
+
+    @Column(name = "total_channels", nullable = false)
+    private int totalChannels;
+
+    @Column(name = "inbound_channels", nullable = false)
+    private int inboundChannels;
+
+    @Column(name = "outbound_channels", nullable = false)
+    private int outboundChannels;
+
+    @Column(name = "active_channels")
+    private int activeChannels;
+
+    /**
+     * ACTIVE | EXHAUSTED | SUSPENDED
+     */
+    @Column(nullable = false)
+    private String status;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/SipEndpoint.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(
+        name = "sip_endpoints",
+        indexes = {
+                @Index(
+                        name = "idx_endpoint_username",
+                        columnList = "username, domain",
+                        unique = true
+                ),
+                @Index(
+                        name = "idx_endpoint_did",
+                        columnList = "did_id"
+                ),
+                @Index(
+                        name = "idx_endpoint_pending_sync",
+                        columnList = "registered_in_kamailio"
+                )
+        }
+)
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class SipEndpoint {
+
+    @Id
+    @Column(nullable = false)
+    private UUID id;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "did_id", nullable = false)
+    private Did did;
+
+    /**
+     * Example: did_919876543210
+     */
+    @Column(nullable = false)
+    private String username;
+
+    /**
+     * HA1 hash: MD5(username:realm:password)
+     */
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
+    @Column(nullable = false)
+    private String domain;
+
+    @Column(nullable = false)
+    private String realm;
+
+    @Column(nullable = false)
+    private boolean active;
+
+    @Column(name = "registered_in_kamailio", nullable = false)
+    private boolean registeredInKamailio;
+
+    @Column(name = "kamailio_synced_at")
+    private Instant kamailioSyncedAt;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/SipTrunk.java
+==================================================
+
+package com.dalai.llama.product.domain.entity;
+
+
+import com.dalai.llama.product.domain.entity.enums.SipProvider;
+import com.dalai.llama.product.domain.entity.enums.SipTrunkStatus;
+import com.dalai.llama.product.domain.entity.enums.TransportProtocol;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Entity
+@Table(name = "sip_trunks")
+@Getter @Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class SipTrunk {
+
+    @Id
+    private UUID id;
+
+    private UUID tenantId; // NULL = platform trunk
+
+    private String name;
+
+    @Enumerated(EnumType.STRING)
+    private SipProvider provider;
+
+    private String server;
+    private int port;
+
+    @Enumerated(EnumType.STRING)
+    private TransportProtocol transport;
+
+    private String authType; // IP / CREDENTIAL / BOTH
+    private String authUsername;
+    private String authPasswordEncrypted;
+    private String allowedIps;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    private List<String> codecs;
+
+    private int maxConcurrentCalls;
+    private int maxCallsPerSecond;
+
+    @Enumerated(EnumType.STRING)
+    private SipTrunkStatus status;
+
+    private Instant lastHealthCheck;
+    private boolean isHealthy;
+
+    private String didwwTrunkId;
+    private String didwwSipConfigId;
+
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    @Version
+    private long version;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/DidStatus.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum DidStatus {
+    PENDING, PROVISIONING, ACTIVE, SUSPENDED, RELEASING, RELEASED
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/PlanTier.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum PlanTier {
+    STARTER, PROFESSIONAL, ENTERPRISE, CUSTOM
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/ProductType.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+
+public enum ProductType {
+    AI_CONTACT_CENTER,
+    CONVERSATIONAL_IVR,
+    BASIC_PBX,
+    OUTBOUND_DIALER,
+    VIRTUAL_RECEPTIONIST
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/RoutingTargetType.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum RoutingTargetType {
+    IVR, QUEUE, AGENT, BOT, VOICEMAIL, EXTERNAL
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/SipProvider.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum SipProvider {
+    DIDWW, TATA, AIRTEL, CUSTOM
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/SipTrunkStatus.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum SipTrunkStatus {
+    PENDING, ACTIVE, SUSPENDED, FAILED
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/entity/enums/TransportProtocol.java
+==================================================
+
+package com.dalai.llama.product.domain.entity.enums;
+
+public enum TransportProtocol {
+    UDP, TCP, TLS, WSS
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/event/DidProvisionedEvent.java
+==================================================
+
+package com.dalai.llama.product.domain.event;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidProvisionedEvent {
+
+    private UUID tenantId;
+    private UUID didId;
+
+    private String number;
+    private UUID sipTrunkId;
+    private UUID sipEndpointId;
+
+    private Instant provisionedAt;
+    private Instant occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/event/DidPurchasedEvent.java
+==================================================
+
+package com.dalai.llama.product.domain.event;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidPurchasedEvent {
+
+    private UUID tenantId;
+    private UUID didId;
+
+    private String number;          // E.164
+    private String country;
+    private String city;
+
+    private String didwwDidId;
+
+    private Instant occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/event/DidReleasedEvent.java
+==================================================
+
+package com.dalai.llama.product.domain.event;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidReleasedEvent {
+
+    private UUID tenantId;
+    private UUID didId;
+
+    private String number;
+    private String reason;
+
+    private Instant releasedAt;
+    private Instant occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/event/PlanAssignedEvent.java
+==================================================
+
+package com.dalai.llama.product.domain.event;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanAssignedEvent {
+
+    private UUID tenantId;
+    private UUID planId;
+
+    private String planCode;
+    private String productCode;
+
+    private Instant effectiveFrom;
+    private Instant occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/event/PlanChangedEvent.java
+==================================================
+
+package com.dalai.llama.product.domain.event;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanChangedEvent {
+
+    private UUID tenantId;
+
+    private UUID oldPlanId;
+    private String oldPlanCode;
+
+    private UUID newPlanId;
+    private String newPlanCode;
+
+    private Instant effectiveFrom;
+    private Instant occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/DidNotAvailableException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class DidNotAvailableException extends RuntimeException {
+    public DidNotAvailableException(String message) {
+        super(message);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/DidNotFoundException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class DidNotFoundException extends RuntimeException {
+    public DidNotFoundException(String id) {
+      super("DID not found: " + id);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/DidwwApiException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class DidwwApiException extends RuntimeException {
+    public DidwwApiException(String message) {
+        super(message);
+    }
+
+    public DidwwApiException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/EntitlementExceededException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class EntitlementExceededException extends RuntimeException {
+    public EntitlementExceededException(String message) {
+        super(message);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/PlanNotFoundException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class PlanNotFoundException extends RuntimeException {
+    public PlanNotFoundException(String code) {
+        super("Plan not found: " + code);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/ProductNotFoundException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+
+public class ProductNotFoundException extends RuntimeException {
+    public ProductNotFoundException(String code) {
+        super("Product not found: " + code);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/SipEndpointConflictException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class SipEndpointConflictException extends RuntimeException {
+    public SipEndpointConflictException(String message) {
+        super(message);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/mapper/ProductMapper.java
+==================================================
+
+package com.dalai.llama.product.dto.mapper;
+
+import com.dalai.llama.product.domain.entity.*;
+import com.dalai.llama.product.dto.response.*;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+
+@Mapper(componentModel = "spring")
+public interface ProductMapper {
+
+    // ---------- Product ----------
+    ProductResponse toProductResponse(Product product);
+
+    // ---------- Plan ----------
+    PlanResponse toPlanResponse(Plan plan);
+
+    default PlanDetailResponse toPlanDetailResponse(
+            Plan plan,
+            PlanEntitlement entitlement
+    ) {
+        return PlanDetailResponse.builder()
+                .plan(toPlanResponse(plan))
+                .entitlements(toEntitlementResponse(entitlement))
+                .build();
+    }
+
+    // ---------- Plan Assignment ----------
+    default PlanAssignmentResponse toPlanAssignmentResponse(PlanAssignment pa) {
+        return PlanAssignmentResponse.builder()
+                .tenantId(pa.getTenantId())
+                .planId(pa.getPlan().getId())
+                .planCode(pa.getPlan().getCode())
+                .effectiveFrom(pa.getEffectiveFrom())
+                .effectiveTo(pa.getEffectiveTo())
+                .active(pa.isActive())
+                .build();
+    }
+
+    // ---------- DID ----------
+    DidResponse toDidResponse(Did did);
+
+    // ---------- SIP ----------
+    SipTrunkResponse toSipTrunkResponse(SipTrunk trunk);
+
+    SipEndpointResponse toSipEndpointResponse(SipEndpoint endpoint);
+
+    // ---------- Entitlements ----------
+    default EntitlementResponse toEntitlementResponse(PlanEntitlement e) {
+        return EntitlementResponse.builder()
+                .maxAgents(e.getMaxAgents())
+                .maxSupervisors(e.getMaxSupervisors())
+                .maxConcurrentLogins(e.getMaxConcurrentLogins())
+                .maxPstnChannels(e.getMaxPstnChannels())
+                .maxDids(e.getMaxDids())
+                .inboundEnabled(e.isInboundEnabled())
+                .outboundEnabled(e.isOutboundEnabled())
+                .recordingEnabled(e.isRecordingEnabled())
+                .analyticsEnabled(e.isAnalyticsEnabled())
+                .analyticsRetentionDays(e.getAnalyticsRetentionDays())
+                .aiSttEnabled(e.isAiSttEnabled())
+                .aiLlmEnabled(e.isAiLlmEnabled())
+                .aiBotEnabled(e.isAiBotEnabled())
+                .aiSentimentEnabled(e.isAiSentimentEnabled())
+                .aiTokensPerMonth(e.getAiTokensPerMonth())
+                .maxQueues(e.getMaxQueues())
+                .maxIvrFlows(e.getMaxIvrFlows())
+                .recordingStorageGb(e.getRecordingStorageGb())
+                .recordingRetentionDays(e.getRecordingRetentionDays())
+                .bargeEnabled(e.isBargeEnabled())
+                .whisperEnabled(e.isWhisperEnabled())
+                .monitorEnabled(e.isMonitorEnabled())
+                .conferenceEnabled(e.isConferenceEnabled())
+                .voicemailEnabled(e.isVoicemailEnabled())
+                .callbackEnabled(e.isCallbackEnabled())
+                .build();
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/AssignPlanRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+import jakarta.validation.constraints.NotNull;
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class AssignPlanRequest {
+
+    @NotNull
+    private UUID planId;
+
+    /**
+     * Optional. Defaults to now if not provided.
+     */
+    private Instant effectiveFrom;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/CreatePlanRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+import com.dalai.llama.product.domain.entity.enums.PlanTier;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.*;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CreatePlanRequest {
+
+    @NotNull
+    private UUID productId;
+
+    @NotBlank
+    private String code;
+
+    @NotBlank
+    private String name;
+
+    private String description;
+
+    @NotNull
+    private PlanTier tier;
+
+    @DecimalMin("0.0")
+    private BigDecimal monthlyPrice;
+
+    private boolean isDefault;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/CreateProductRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+import com.dalai.llama.product.domain.entity.enums.ProductType;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.*;
+
+import java.util.Map;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CreateProductRequest {
+
+    @NotBlank
+    private String code;
+
+    @NotBlank
+    private String name;
+
+    private String description;
+
+    @NotNull
+    private ProductType type;
+
+    private Map<String, Object> features;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/CreateSipTrunkRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+
+import com.dalai.llama.product.domain.entity.enums.TransportProtocol;
+import jakarta.validation.constraints.NotBlank;
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CreateSipTrunkRequest {
+
+    @NotBlank
+    private String name;
+
+    @NotBlank
+    private String server;
+
+    private int port = 5060;
+
+    private TransportProtocol transport = TransportProtocol.UDP;
+
+    /**
+     * Optional (for credential-based auth)
+     */
+    private String authUsername;
+
+    /**
+     * Optional (stored encrypted later)
+     */
+    private String authPassword;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/ProvisionDidRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+
+import jakarta.validation.constraints.NotBlank;
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ProvisionDidRequest {
+
+    /**
+     * E.164 format (+919876543210)
+     */
+    @NotBlank
+    private String number;
+
+    /**
+     * Optional.
+     * If null → platform / default trunk is used
+     */
+    private String sipTrunkId;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/SearchAvailableDidsRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class SearchAvailableDidsRequest {
+
+    @NotBlank
+    private String country; // ISO-2 (IN, US, etc.)
+
+    private String city;
+
+    private String prefix;
+
+    /**
+     * GEOGRAPHIC | MOBILE | TOLL_FREE
+     */
+    private String type;
+
+    @Positive
+    private int limit = 10;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/request/UpdateDidRoutingRequest.java
+==================================================
+
+package com.dalai.llama.product.dto.request;
+
+import com.dalai.llama.product.domain.entity.enums.RoutingTargetType;
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UpdateDidRoutingRequest {
+
+    private RoutingTargetType routingTargetType;
+    private String routingTargetId;
+
+    private RoutingTargetType fallbackTargetType;
+    private String fallbackTargetId;
+
+    private boolean recordingEnabled;
+    private boolean transcriptionEnabled;
+    private boolean sentimentEnabled;
+
+    private boolean businessHoursOnly;
+
+    /**
+     * Format: HH:mm
+     */
+    private String businessHoursStart;
+
+    /**
+     * Format: HH:mm
+     */
+    private String businessHoursEnd;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/AvailableDidResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class AvailableDidResponse {
+
+    private String number;
+    private String country;
+    private String city;
+    private String type;
+    private String setupFee;
+    private String monthlyFee;
+}
+
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/DidDetailResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidDetailResponse {
+
+    private DidResponse did;
+    private SipTrunkResponse sipTrunk;
+    private SipEndpointResponse sipEndpoint;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/DidResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import lombok.*;
+
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidResponse {
+
+    private UUID id;
+    private String number;
+    private String displayNumber;
+    private DidStatus status;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/EntitlementResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class EntitlementResponse {
+
+    // Agents & channels
+    private int maxAgents;
+    private int maxSupervisors;
+    private int maxConcurrentLogins;
+    private int maxPstnChannels;
+    private int maxDids;
+
+    // Voice features
+    private boolean inboundEnabled;
+    private boolean outboundEnabled;
+    private boolean recordingEnabled;
+
+    // Analytics
+    private boolean analyticsEnabled;
+    private int analyticsRetentionDays;
+
+    // AI features
+    private boolean aiSttEnabled;
+    private boolean aiLlmEnabled;
+    private boolean aiBotEnabled;
+    private boolean aiSentimentEnabled;
+    private long aiTokensPerMonth;
+
+    // Queue / IVR
+    private int maxQueues;
+    private int maxIvrFlows;
+
+    // Storage
+    private int recordingStorageGb;
+    private int recordingRetentionDays;
+
+    // Supervisor
+    private boolean bargeEnabled;
+    private boolean whisperEnabled;
+    private boolean monitorEnabled;
+
+    // Misc
+    private boolean conferenceEnabled;
+    private boolean voicemailEnabled;
+    private boolean callbackEnabled;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/PlanAssignmentResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanAssignmentResponse {
+
+    private UUID tenantId;
+    private UUID planId;
+    private String planCode;
+    private Instant effectiveFrom;
+    private Instant effectiveTo;
+    private boolean active;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/PlanDetailResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanDetailResponse {
+
+    private PlanResponse plan;
+    private EntitlementResponse entitlements;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/PlanResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+import com.dalai.llama.product.domain.entity.enums.PlanTier;
+import lombok.*;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class PlanResponse {
+
+    private UUID id;
+    private String code;
+    private String name;
+    private String description;
+    private PlanTier tier;
+    private BigDecimal monthlyPrice;
+    private String currency;
+    private boolean isDefault;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/ProductResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import com.dalai.llama.product.domain.entity.enums.ProductType;
+import lombok.*;
+
+import java.util.Map;
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ProductResponse {
+
+    private UUID id;
+    private String code;
+    private String name;
+    private String description;
+    private ProductType type;
+    private boolean active;
+    private Map<String, Object> features;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/SipEndpointResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class SipEndpointResponse {
+
+    private String username;
+    private String domain;
+    private String realm;
+    private boolean active;
+    private boolean registeredInKamailio;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/dto/response/SipTrunkResponse.java
+==================================================
+
+package com.dalai.llama.product.dto.response;
+
+
+import lombok.*;
+
+import java.util.UUID;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class SipTrunkResponse {
+
+    private UUID id;
+    private String name;
+    private String provider;
+    private String server;
+    private int port;
+    private String transport;
+    private String status;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/kafka/consumer/TenantEventConsumer.java
+==================================================
+
+package com.dalai.llama.product.kafka.consumer;
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.Plan;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.repository.PlanRepository;
+import com.dalai.llama.product.service.DidService;
+import com.dalai.llama.product.service.EntitlementService;
+import com.dalai.llama.product.service.PlanAssignmentService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.UUID;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class TenantEventConsumer {
+
+    private final PlanAssignmentService planAssignmentService;
+    private final PlanRepository planRepository;
+    private final DidRepository didRepository;
+    private final DidService didService;
+    private final EntitlementService entitlementService;
+    private final ObjectMapper objectMapper;
+
+    @KafkaListener(topics = "tenant.created", groupId = "product-service")
+    public void onTenantCreated(String message) {
+        log.info("Received tenant.created event: {}", message);
+
+        try {
+            JsonNode json = objectMapper.readTree(message);
+            UUID tenantId = UUID.fromString(json.get("tenantId").asText());
+            String productCode = json.has("productCode") ? json.get("productCode").asText() : "AI_CC";
+
+            // Assign default plan for the product
+            Plan defaultPlan = planRepository.findByProduct_CodeAndIsDefaultTrue(productCode)
+                    .orElse(null);
+
+            if (defaultPlan != null) {
+                planAssignmentService.assignPlan(tenantId, defaultPlan.getId());
+                log.info("Assigned default plan {} to tenant {}", defaultPlan.getCode(), tenantId);
+            } else {
+                log.warn("No default plan found for product {}", productCode);
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to process tenant.created event: {}", e.getMessage(), e);
+        }
+    }
+
+    @KafkaListener(topics = "tenant.deleted", groupId = "product-service")
+    public void onTenantDeleted(String message) {
+        log.info("Received tenant.deleted event: {}", message);
+
+        try {
+            JsonNode json = objectMapper.readTree(message);
+            UUID tenantId = UUID.fromString(json.get("tenantId").asText());
+
+            // 1. Release all tenant DIDs
+            List<Did> dids = didRepository.findByTenantId(tenantId);
+            for (Did did : dids) {
+                if (did.getStatus() != DidStatus.RELEASED) {
+                    try {
+                        didService.releaseDid(tenantId, did.getId());
+                        log.info("Released DID {} for deleted tenant {}", did.getNumber(), tenantId);
+                    } catch (Exception e) {
+                        log.error("Failed to release DID {}: {}", did.getNumber(), e.getMessage());
+                    }
+                }
+            }
+
+            // 2. Remove plan assignment
+            planAssignmentService.removePlan(tenantId);
+
+            // 3. Invalidate entitlement cache
+            entitlementService.invalidateCache(tenantId);
+
+            log.info("Cleaned up product resources for deleted tenant {}", tenantId);
+
+        } catch (Exception e) {
+            log.error("Failed to process tenant.deleted event: {}", e.getMessage(), e);
+        }
+    }
+
+    @KafkaListener(topics = "tenant.suspended", groupId = "product-service")
+    public void onTenantSuspended(String message) {
+        log.info("Received tenant.suspended event: {}", message);
+
+        try {
+            JsonNode json = objectMapper.readTree(message);
+            UUID tenantId = UUID.fromString(json.get("tenantId").asText());
+
+            // Suspend all tenant DIDs
+            List<Did> dids = didRepository.findByTenantId(tenantId);
+            for (Did did : dids) {
+                if (did.getStatus() == DidStatus.ACTIVE) {
+                    did.setStatus(DidStatus.SUSPENDED);
+                    didRepository.save(did);
+                    log.info("Suspended DID {} for tenant {}", did.getNumber(), tenantId);
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to process tenant.suspended event: {}", e.getMessage(), e);
+        }
+    }
+
+    @KafkaListener(topics = "tenant.activated", groupId = "product-service")
+    public void onTenantActivated(String message) {
+        log.info("Received tenant.activated event: {}", message);
+
+        try {
+            JsonNode json = objectMapper.readTree(message);
+            UUID tenantId = UUID.fromString(json.get("tenantId").asText());
+
+            // Reactivate suspended DIDs
+            List<Did> dids = didRepository.findByTenantId(tenantId);
+            for (Did did : dids) {
+                if (did.getStatus() == DidStatus.SUSPENDED) {
+                    did.setStatus(DidStatus.ACTIVE);
+                    didRepository.save(did);
+                    log.info("Reactivated DID {} for tenant {}", did.getNumber(), tenantId);
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to process tenant.activated event: {}", e.getMessage(), e);
+        }
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/kafka/producer/ProductEventProducer.java
+==================================================
+
+package com.dalai.llama.product.kafka.producer;
+
+
+import com.dalai.llama.product.domain.event.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Component;
+
+@Component
+@RequiredArgsConstructor
+public class ProductEventProducer {
+
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    public static final String PLAN_ASSIGNED_TOPIC = "product.plan.assigned";
+    public static final String PLAN_CHANGED_TOPIC = "product.plan.changed";
+    public static final String DID_PURCHASED_TOPIC = "product.did.purchased";
+    public static final String DID_PROVISIONED_TOPIC = "product.did.provisioned";
+    public static final String DID_RELEASED_TOPIC = "product.did.released";
+
+    public void publishPlanAssigned(PlanAssignedEvent event) {
+        kafkaTemplate.send(PLAN_ASSIGNED_TOPIC, event.getTenantId().toString(), event);
+    }
+
+    public void publishPlanChanged(PlanChangedEvent event) {
+        kafkaTemplate.send(PLAN_CHANGED_TOPIC, event.getTenantId().toString(), event);
+    }
+
+    public void publishDidPurchased(DidPurchasedEvent event) {
+        kafkaTemplate.send(DID_PURCHASED_TOPIC, event.getTenantId().toString(), event);
+    }
+
+    public void publishDidProvisioned(DidProvisionedEvent event) {
+        kafkaTemplate.send(DID_PROVISIONED_TOPIC, event.getTenantId().toString(), event);
+    }
+
+    public void publishDidReleased(DidReleasedEvent event) {
+        kafkaTemplate.send(DID_RELEASED_TOPIC, event.getTenantId().toString(), event);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/DidRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface DidRepository extends JpaRepository<Did, UUID> {
+
+    List<Did> findByTenantId(UUID tenantId);
+
+    Optional<Did> findByTenantIdAndId(UUID tenantId, UUID id);
+
+    Optional<Did> findByTenantIdAndNumber(UUID tenantId, String number);
+
+    long countByTenantIdAndStatusIn(UUID tenantId, List<DidStatus> statuses);
+
+    List<Did> findByStatus(DidStatus status);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/PlanAssignmentRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.PlanAssignment;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface PlanAssignmentRepository extends JpaRepository<PlanAssignment, UUID> {
+
+    @Query("""
+        SELECT pa FROM PlanAssignment pa
+        WHERE pa.tenantId = :tenantId
+          AND pa.active = true
+          AND (pa.effectiveTo IS NULL OR pa.effectiveTo > CURRENT_TIMESTAMP)
+        """)
+    Optional<PlanAssignment> findActiveByTenantId(UUID tenantId);
+
+    List<PlanAssignment> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/PlanEntitlementRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.PlanEntitlement;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+import java.util.UUID;
+
+public interface PlanEntitlementRepository extends JpaRepository<PlanEntitlement, UUID> {
+
+    Optional<PlanEntitlement> findByPlan_Id(UUID planId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/PlanRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.Plan;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface PlanRepository extends JpaRepository<Plan, UUID> {
+
+    Optional<Plan> findByCode(String code);
+
+    List<Plan> findByProduct_CodeAndActiveTrue(String productCode);
+
+    Optional<Plan> findByProduct_CodeAndIsDefaultTrue(String productCode);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/ProductRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+
+import com.dalai.llama.product.domain.entity.Product;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface ProductRepository extends JpaRepository<Product, UUID> {
+
+    Optional<Product> findByCode(String code);
+
+    List<Product> findByActiveTrue();
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/PstnChannelBundleRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.PstnChannelBundle;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface PstnChannelBundleRepository extends JpaRepository<PstnChannelBundle, UUID> {
+
+    List<PstnChannelBundle> findByTenantId(UUID tenantId);
+
+    Optional<PstnChannelBundle> findByTenantIdAndSipTrunk_Id(UUID tenantId, UUID sipTrunkId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/SipEndpointRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.SipEndpoint;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface SipEndpointRepository extends JpaRepository<SipEndpoint, UUID> {
+
+    Optional<SipEndpoint> findByUsernameAndDomain(String username, String domain);
+
+    List<SipEndpoint> findByRegisteredInKamailioFalse();
+
+    Optional<SipEndpoint> findByDid_Id(UUID didId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/repository/SipTrunkRepository.java
+==================================================
+
+package com.dalai.llama.product.repository;
+
+import com.dalai.llama.product.domain.entity.SipTrunk;
+import com.dalai.llama.product.domain.entity.enums.SipProvider;
+import com.dalai.llama.product.domain.entity.enums.SipTrunkStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface SipTrunkRepository extends JpaRepository<SipTrunk, UUID> {
+
+    List<SipTrunk> findByTenantId(UUID tenantId);
+
+    List<SipTrunk> findByProvider(SipProvider provider);
+
+    List<SipTrunk> findByStatus(SipTrunkStatus status);
+
+    Optional<SipTrunk> findByDidwwTrunkId(String didwwTrunkId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/scheduler/DidwwSyncScheduler.java
+==================================================
+
+package com.dalai.llama.product.scheduler;
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.service.didww.DidwwProperties;
+import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.List;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class DidwwSyncScheduler {
+
+    private final DidwwProperties properties;
+    private final DidRepository didRepository;
+    private final DidwwProvisioningService didwwService;
+
+    @Scheduled(fixedDelayString = "#{${didww.sync-interval-minutes:60} * 60 * 1000}")
+    public void syncDidwwState() {
+        if (!properties.isSyncEnabled()) {
+            log.debug("DIDWW sync is disabled");
+            return;
+        }
+
+        log.info("Running DIDWW sync job");
+
+        try {
+            // 1. Find DIDs stuck in PROVISIONING state for too long
+            List<Did> stuckDids = didRepository.findByStatus(DidStatus.PROVISIONING);
+            for (Did did : stuckDids) {
+                if (did.getCreatedAt().isBefore(Instant.now().minusSeconds(600))) {
+                    log.warn("DID {} stuck in PROVISIONING for >10 minutes, marking as PENDING", did.getNumber());
+                    did.setStatus(DidStatus.PENDING);
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+                }
+            }
+
+            // 2. Retry PENDING DIDs
+            List<Did> pendingDids = didRepository.findByStatus(DidStatus.PENDING);
+            log.info("Found {} pending DIDs to retry", pendingDids.size());
+
+            for (Did did : pendingDids) {
+                try {
+                    retryProvisioning(did);
+                } catch (Exception e) {
+                    log.error("Failed to retry provisioning for DID {}: {}", did.getNumber(), e.getMessage());
+                }
+            }
+
+            // 3. TODO: Fetch active DIDs from DIDWW API and compare with local DB
+            // This would require DIDWW to have a list DIDs endpoint
+            // var remoteDids = didwwService.listActiveDids();
+            // Compare and repair drift
+
+            log.info("DIDWW sync job completed");
+
+        } catch (Exception e) {
+            log.error("DIDWW sync job failed: {}", e.getMessage(), e);
+        }
+    }
+
+    private void retryProvisioning(Did did) {
+        log.info("Retrying provisioning for DID: {}", did.getNumber());
+
+        did.setStatus(DidStatus.PROVISIONING);
+        did.setUpdatedAt(Instant.now());
+        didRepository.save(did);
+
+        try {
+            // Call DIDWW to check/complete the order
+            String orderId = didwwService.orderDid(did.getNumber());
+            did.setDidwwDidId(orderId);
+            did.setStatus(DidStatus.ACTIVE);
+            did.setProvisionedAt(Instant.now());
+            did.setUpdatedAt(Instant.now());
+            didRepository.save(did);
+
+            log.info("Successfully provisioned DID: {}", did.getNumber());
+
+        } catch (Exception e) {
+            log.error("Retry failed for DID {}: {}", did.getNumber(), e.getMessage());
+            did.setStatus(DidStatus.PENDING);
+            did.setUpdatedAt(Instant.now());
+            didRepository.save(did);
+        }
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/scheduler/SipTrunkHealthChecker.java
+==================================================
+
+package com.dalai.llama.product.scheduler;
+
+import com.dalai.llama.product.domain.entity.SipTrunk;
+import com.dalai.llama.product.domain.entity.enums.SipTrunkStatus;
+import com.dalai.llama.product.repository.SipTrunkRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.time.Instant;
+import java.util.List;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class SipTrunkHealthChecker {
+
+    private final SipTrunkRepository sipTrunkRepository;
+
+    private static final int HEALTH_CHECK_TIMEOUT_MS = 5000;
+
+    @Scheduled(fixedRate = 300_000) // every 5 minutes
+    public void checkHealth() {
+        log.debug("Starting SIP trunk health check");
+
+        List<SipTrunk> trunks = sipTrunkRepository.findByStatus(SipTrunkStatus.ACTIVE);
+        int healthyCount = 0;
+        int unhealthyCount = 0;
+
+        for (SipTrunk trunk : trunks) {
+            boolean isHealthy = performHealthCheck(trunk);
+
+            if (isHealthy) {
+                healthyCount++;
+                if (!trunk.isHealthy()) {
+                    log.info("SIP trunk {} recovered", trunk.getName());
+                }
+            } else {
+                unhealthyCount++;
+                if (trunk.isHealthy()) {
+                    log.warn("SIP trunk {} became unhealthy", trunk.getName());
+                }
+            }
+
+            trunk.setHealthy(isHealthy);
+            trunk.setLastHealthCheck(Instant.now());
+            trunk.setUpdatedAt(Instant.now());
+        }
+
+        sipTrunkRepository.saveAll(trunks);
+
+        if (unhealthyCount > 0) {
+            log.warn("SIP trunk health check completed: {} healthy, {} unhealthy",
+                    healthyCount, unhealthyCount);
+        } else {
+            log.debug("SIP trunk health check completed: {} healthy", healthyCount);
+        }
+    }
+
+    private boolean performHealthCheck(SipTrunk trunk) {
+        // TCP connection check to SIP server
+        try (Socket socket = new Socket()) {
+            socket.connect(
+                    new InetSocketAddress(trunk.getServer(), trunk.getPort()),
+                    HEALTH_CHECK_TIMEOUT_MS
+            );
+            return true;
+        } catch (IOException e) {
+            log.debug("Health check failed for trunk {}: {}", trunk.getName(), e.getMessage());
+            return false;
+        }
+    }
+
+    // Manual health check trigger
+    public void checkTrunkHealth(SipTrunk trunk) {
+        boolean isHealthy = performHealthCheck(trunk);
+        trunk.setHealthy(isHealthy);
+        trunk.setLastHealthCheck(Instant.now());
+        trunk.setUpdatedAt(Instant.now());
+        sipTrunkRepository.save(trunk);
+
+        log.info("Manual health check for trunk {}: {}", trunk.getName(), isHealthy ? "healthy" : "unhealthy");
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/DidService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+
+import com.dalai.llama.product.domain.entity.Did;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface DidService {
+
+    Did provisionDid(UUID tenantId, String number, UUID sipTrunkId);
+
+    List<Did> getTenantDids(UUID tenantId);
+
+    Did getDid(UUID tenantId, UUID didId);
+
+    void releaseDid(UUID tenantId, UUID didId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/EntitlementService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+
+import com.dalai.llama.product.domain.entity.PlanEntitlement;
+
+import java.util.UUID;
+
+public interface EntitlementService {
+
+    PlanEntitlement getEffectiveEntitlements(UUID tenantId);
+
+    void validateDidLimit(UUID tenantId);
+
+    void invalidateCache(UUID tenantId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/PlanAssignmentService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+
+import com.dalai.llama.product.domain.entity.PlanAssignment;
+
+import java.util.UUID;
+
+public interface PlanAssignmentService {
+
+    PlanAssignment assignPlan(UUID tenantId, UUID planId);
+
+    PlanAssignment getActivePlan(UUID tenantId);
+
+    void removePlan(UUID tenantId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/PlanService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+
+import com.dalai.llama.product.domain.entity.Plan;
+
+import java.util.List;
+
+public interface PlanService {
+
+    List<Plan> getAllPlans();
+
+    List<Plan> getPlansByProductCode(String productCode);
+
+    Plan getPlanByCode(String code);
+
+    Plan createPlan(Plan plan);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/ProductService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+import com.dalai.llama.product.domain.entity.Product;
+
+import java.util.List;
+
+public interface ProductService {
+
+    List<Product> getAllActiveProducts();
+
+    Product getByCode(String code);
+
+    Product createProduct(Product product);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/SipEndpointService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.SipEndpoint;
+
+public interface SipEndpointService {
+
+    SipEndpoint createEndpoint(Did did);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/SipTrunkService.java
+==================================================
+
+package com.dalai.llama.product.service;
+
+
+
+import com.dalai.llama.product.domain.entity.SipTrunk;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface SipTrunkService {
+
+    SipTrunk createTrunk(UUID tenantId, SipTrunk trunk);
+
+    List<SipTrunk> getTrunks(UUID tenantId);
+
+    SipTrunk getTrunk(UUID tenantId, UUID trunkId);
+
+    void deleteTrunk(UUID tenantId, UUID trunkId);
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/DidwwApiService.java
+==================================================
+
+package com.dalai.llama.product.service.didww;
+
+
+import com.dalai.llama.product.domain.exception.DidwwApiException;
+import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
+import com.dalai.llama.product.service.didww.dto.DidwwOrderRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwSipConfigRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwTrunkRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
+
+import java.time.Duration;
+
+@Service
+@RequiredArgsConstructor
+public class DidwwApiService {
+
+    private final DidwwClient client;
+
+    private Retry retrySpec() {
+        return Retry.fixedDelay(3, Duration.ofSeconds(2));
+    }
+
+    public DidwwAvailableDidResponse searchAvailableDids(String query) {
+        return client.searchAvailableDids(query)
+                .retryWhen(retrySpec())
+                .onErrorMap(e -> new DidwwApiException("DID search failed", e))
+                .block();
+    }
+
+    public String orderDid(DidwwOrderRequest request) {
+        return client.orderDid(request)
+                .retryWhen(retrySpec())
+                .onErrorMap(e -> new DidwwApiException("DID order failed", e))
+                .block();
+    }
+
+    public String createSipConfig(DidwwSipConfigRequest request) {
+        return client.createSipConfig(request)
+                .retryWhen(retrySpec())
+                .onErrorMap(e -> new DidwwApiException("SIP config creation failed", e))
+                .block();
+    }
+
+    public String createTrunk(DidwwTrunkRequest request) {
+        return client.createTrunk(request)
+                .retryWhen(retrySpec())
+                .onErrorMap(e -> new DidwwApiException("Trunk creation failed", e))
+                .block();
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/DidwwClient.java
+==================================================
+
+package com.dalai.llama.product.service.didww;
+
+
+import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
+import com.dalai.llama.product.service.didww.dto.DidwwOrderRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwSipConfigRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwTrunkRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+@Component
+@RequiredArgsConstructor
+public class DidwwClient {
+
+    private final WebClient.Builder webClientBuilder;
+    private final DidwwProperties properties;
+
+    private WebClient client() {
+        return webClientBuilder
+                .baseUrl(properties.getApiUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
+                .build();
+    }
+
+    public Mono<DidwwAvailableDidResponse> searchAvailableDids(String query) {
+        return client()
+                .get()
+                .uri(uri -> uri.path("/available_dids").query(query).build())
+                .retrieve()
+                .bodyToMono(DidwwAvailableDidResponse.class);
+    }
+
+    public Mono<String> orderDid(DidwwOrderRequest request) {
+        return client()
+                .post()
+                .uri("/orders")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(String.class);
+    }
+
+    public Mono<String> createSipConfig(DidwwSipConfigRequest request) {
+        return client()
+                .post()
+                .uri("/sip_configs")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(String.class);
+    }
+
+    public Mono<String> createTrunk(DidwwTrunkRequest request) {
+        return client()
+                .post()
+                .uri("/voice_in_trunks")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(String.class);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/DidwwProperties.java
+==================================================
+
+package com.dalai.llama.product.service.didww;
+
+
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.validation.annotation.Validated;
+
+import jakarta.validation.constraints.NotBlank;
+
+@Getter
+@Setter
+@Configuration
+@ConfigurationProperties(prefix = "didww")
+@Validated
+public class DidwwProperties {
+
+    /**
+     * Base URL for DIDWW API
+     * Example: https://api.didww.com/v3
+     */
+    @NotBlank
+    private String apiUrl;
+
+    /**
+     * API key used for Authorization: Bearer <apiKey>
+     */
+    @NotBlank
+    private String apiKey;
+
+    /**
+     * Shared secret for validating DIDWW webhooks
+     */
+    @NotBlank
+    private String webhookSecret;
+
+    /**
+     * Enable/disable background sync jobs
+     */
+    private boolean syncEnabled = true;
+
+    /**
+     * Interval (in minutes) for DIDWW sync job
+     */
+    private int syncIntervalMinutes = 60;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/DidwwProvisioningService.java
+==================================================
+
+package com.dalai.llama.product.service.didww;
+
+import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
+import com.dalai.llama.product.service.didww.dto.DidwwOrderRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwSipConfigRequest;
+import com.dalai.llama.product.service.didww.dto.DidwwTrunkRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class DidwwProvisioningService {
+
+    private final DidwwApiService apiService;
+
+    /**
+     * STEP 1: Search available DIDs
+     */
+    public DidwwAvailableDidResponse searchAvailableDids(
+            String country,
+            String city,
+            String prefix,
+            String type,
+            int limit
+    ) {
+        String query = String.format(
+                "country=%s&city=%s&prefix=%s&type=%s&limit=%d",
+                country, city, prefix, type, limit
+        );
+        return apiService.searchAvailableDids(query);
+    }
+
+    /**
+     * STEP 2: Order DID
+     */
+    public String orderDid(String didNumber) {
+        DidwwOrderRequest request = DidwwOrderRequest.builder()
+                .items(List.of(
+                        DidwwOrderRequest.OrderItem.builder()
+                                .did(didNumber)
+                                .quantity(1)
+                                .build()
+                ))
+                .build();
+
+        return apiService.orderDid(request);
+    }
+
+    /**
+     * STEP 3: Configure SIP
+     */
+    public String configureSip(String name, String host, int port) {
+        DidwwSipConfigRequest request = DidwwSipConfigRequest.builder()
+                .name(name)
+                .host(host)
+                .port(port)
+                .transport("UDP")
+                .build();
+
+        return apiService.createSipConfig(request);
+    }
+
+    /**
+     * STEP 4: Create trunk
+     */
+    public String createTrunk(String name, String sipConfigId) {
+        DidwwTrunkRequest request = DidwwTrunkRequest.builder()
+                .name(name)
+                .sipConfigId(sipConfigId)
+                .cliValidation(true)
+                .build();
+
+        return apiService.createTrunk(request);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/dto/DidwwAvailableDidResponse.java
+==================================================
+
+package com.dalai.llama.product.service.didww.dto;
+
+
+import lombok.Data;
+import java.util.List;
+
+@Data
+public class DidwwAvailableDidResponse {
+
+    private List<DidInfo> data;
+
+    @Data
+    public static class DidInfo {
+        private String number;
+        private String country;
+        private String city;
+        private String type; // GEOGRAPHIC / MOBILE / TOLL_FREE
+        private String prefix;
+        private String setupFee;
+        private String monthlyFee;
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/dto/DidwwOrderRequest.java
+==================================================
+
+package com.dalai.llama.product.service.didww.dto;
+
+
+import lombok.*;
+
+import java.util.List;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidwwOrderRequest {
+
+    private List<OrderItem> items;
+
+    @Getter
+    @Setter
+    @Builder
+    public static class OrderItem {
+        private String did;
+        private int quantity;
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/dto/DidwwSipConfigRequest.java
+==================================================
+
+package com.dalai.llama.product.service.didww.dto;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidwwSipConfigRequest {
+
+    private String name;
+    private String host;
+    private int port;
+    private String transport; // UDP / TCP / TLS
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/dto/DidwwTrunkRequest.java
+==================================================
+
+package com.dalai.llama.product.service.didww.dto;
+
+
+import lombok.*;
+
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class DidwwTrunkRequest {
+
+    private String name;
+    private String sipConfigId;
+    private boolean cliValidation;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/didww/dto/DidwwWebhookPayload.java
+==================================================
+
+package com.dalai.llama.product.service.didww.dto;
+
+
+import lombok.Data;
+
+@Data
+public class DidwwWebhookPayload {
+
+    private String event;
+    private String resourceType;
+    private String resourceId;
+    private String status;
+    private String occurredAt;
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/DidServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.SipEndpoint;
+import com.dalai.llama.product.domain.entity.SipTrunk;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.domain.event.DidProvisionedEvent;
+import com.dalai.llama.product.domain.event.DidPurchasedEvent;
+import com.dalai.llama.product.domain.event.DidReleasedEvent;
+import com.dalai.llama.product.domain.exception.DidNotAvailableException;
+import com.dalai.llama.product.domain.exception.DidNotFoundException;
+import com.dalai.llama.product.kafka.producer.ProductEventProducer;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.repository.SipTrunkRepository;
+import com.dalai.llama.product.service.DidService;
+import com.dalai.llama.product.service.EntitlementService;
+import com.dalai.llama.product.service.SipEndpointService;
+import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import com.dalai.llama.product.util.E164Formatter;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class DidServiceImpl implements DidService {
+
+    private final DidRepository didRepository;
+    private final SipTrunkRepository sipTrunkRepository;
+    private final EntitlementService entitlementService;
+    private final SipEndpointService sipEndpointService;
+    private final DidwwProvisioningService didwwService;
+    private final ProductEventProducer eventProducer;
+
+    @Override
+    public Did provisionDid(UUID tenantId, String number, UUID sipTrunkId) {
+        log.info("Provisioning DID {} for tenant {}", number, tenantId);
+
+        // 1. Validate entitlements
+        entitlementService.validateDidLimit(tenantId);
+
+        // 2. Normalize number
+        String normalizedNumber = E164Formatter.normalize(number);
+
+        // 3. Check if already exists
+        didRepository.findByTenantIdAndNumber(tenantId, normalizedNumber)
+                .ifPresent(d -> {
+                    throw new DidNotAvailableException("DID already provisioned: " + number);
+                });
+
+        // 4. Get or use platform trunk
+        SipTrunk trunk = sipTrunkId != null
+                ? sipTrunkRepository.findById(sipTrunkId).orElse(null)
+                : null;
+
+        // 5. Create DID record (status: PENDING)
+        Did did = Did.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .sipTrunk(trunk)
+                .number(normalizedNumber)
+                .displayNumber(E164Formatter.display(normalizedNumber))
+                .status(DidStatus.PENDING)
+                .currency("INR")
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        did = didRepository.save(did);
+
+        // 6. Publish purchased event (for Tenant Service to track)
+        eventProducer.publishDidPurchased(DidPurchasedEvent.builder()
+                .tenantId(tenantId)
+                .didId(did.getId())
+                .number(normalizedNumber)
+                .occurredAt(Instant.now())
+                .build());
+
+        // 7. Order from DIDWW (async in real implementation)
+        try {
+            did.setStatus(DidStatus.PROVISIONING);
+            did.setUpdatedAt(Instant.now());
+            didRepository.save(did);
+
+            String didwwOrderId = didwwService.orderDid(normalizedNumber);
+            did.setDidwwDidId(didwwOrderId);
+
+            // 8. Create SIP endpoint
+            SipEndpoint endpoint = sipEndpointService.createEndpoint(did);
+
+            // 9. Mark as ACTIVE
+            did.setStatus(DidStatus.ACTIVE);
+            did.setProvisionedAt(Instant.now());
+            did.setUpdatedAt(Instant.now());
+            did = didRepository.save(did);
+
+            // 10. Publish provisioned event
+            eventProducer.publishDidProvisioned(DidProvisionedEvent.builder()
+                    .tenantId(tenantId)
+                    .didId(did.getId())
+                    .number(normalizedNumber)
+                    .sipTrunkId(trunk != null ? trunk.getId() : null)
+                    .sipEndpointId(endpoint.getId())
+                    .provisionedAt(did.getProvisionedAt())
+                    .occurredAt(Instant.now())
+                    .build());
+
+            log.info("DID {} provisioned successfully for tenant {}", number, tenantId);
+
+        } catch (Exception e) {
+            log.error("Failed to provision DID {}: {}", number, e.getMessage());
+            did.setStatus(DidStatus.PENDING);
+            did.setUpdatedAt(Instant.now());
+            didRepository.save(did);
+            throw new DidNotAvailableException("Failed to provision DID: " + e.getMessage());
+        }
+
+        return did;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Did> getTenantDids(UUID tenantId) {
+        return didRepository.findByTenantId(tenantId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Did getDid(UUID tenantId, UUID didId) {
+        return didRepository.findByTenantIdAndId(tenantId, didId)
+                .orElseThrow(() -> new DidNotFoundException(didId.toString()));
+    }
+
+    @Override
+    public void releaseDid(UUID tenantId, UUID didId) {
+        Did did = getDid(tenantId, didId);
+
+        log.info("Releasing DID {} for tenant {}", did.getNumber(), tenantId);
+
+        did.setStatus(DidStatus.RELEASING);
+        did.setUpdatedAt(Instant.now());
+        didRepository.save(did);
+
+        // TODO: Call DIDWW API to release DID
+
+        did.setStatus(DidStatus.RELEASED);
+        did.setReleasedAt(Instant.now());
+        did.setUpdatedAt(Instant.now());
+        didRepository.save(did);
+
+        eventProducer.publishDidReleased(DidReleasedEvent.builder()
+                .tenantId(tenantId)
+                .didId(didId)
+                .number(did.getNumber())
+                .reason("USER_REQUEST")
+                .releasedAt(did.getReleasedAt())
+                .occurredAt(Instant.now())
+                .build());
+
+        log.info("DID {} released for tenant {}", did.getNumber(), tenantId);
+    }
+
+    // Internal API for tenant service
+    public boolean hasPurchasedDid(UUID tenantId) {
+        return didRepository.countByTenantIdAndStatusIn(
+                tenantId,
+                List.of(DidStatus.ACTIVE, DidStatus.PENDING, DidStatus.PROVISIONING)
+        ) > 0;
+    }
+
+    public Did getDidByNumber(UUID tenantId, String number) {
+        return didRepository.findByTenantIdAndNumber(tenantId, number)
+                .orElseThrow(() -> new DidNotFoundException(number));
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/EntitlementServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.PlanAssignment;
+import com.dalai.llama.product.domain.entity.PlanEntitlement;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.domain.exception.EntitlementExceededException;
+import com.dalai.llama.product.domain.exception.PlanNotFoundException;
+import com.dalai.llama.product.repository.DidRepository;
+import com.dalai.llama.product.repository.PlanAssignmentRepository;
+import com.dalai.llama.product.repository.PlanEntitlementRepository;
+import com.dalai.llama.product.service.EntitlementService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class EntitlementServiceImpl implements EntitlementService {
+
+    private final PlanAssignmentRepository assignmentRepository;
+    private final PlanEntitlementRepository entitlementRepository;
+    private final DidRepository didRepository;
+
+    private static final String CACHE_NAME = "entitlements";
+
+    @Override
+    @Cacheable(value = CACHE_NAME, key = "'tenant:' + #tenantId")
+    public PlanEntitlement getEffectiveEntitlements(UUID tenantId) {
+        log.debug("Fetching entitlements for tenant: {}", tenantId);
+
+        PlanAssignment assignment = assignmentRepository.findActiveByTenantId(tenantId)
+                .orElseThrow(() -> new PlanNotFoundException("No active plan for tenant: " + tenantId));
+
+        return entitlementRepository.findByPlan_Id(assignment.getPlan().getId())
+                .orElseThrow(() -> new PlanNotFoundException(
+                        "No entitlements for plan: " + assignment.getPlan().getCode()));
+    }
+
+    @Override
+    public void validateDidLimit(UUID tenantId) {
+        PlanEntitlement entitlements = getEffectiveEntitlements(tenantId);
+
+        long currentDids = didRepository.countByTenantIdAndStatusIn(
+                tenantId,
+                List.of(DidStatus.ACTIVE, DidStatus.PENDING, DidStatus.PROVISIONING)
+        );
+
+        if (currentDids >= entitlements.getMaxDids()) {
+            throw new EntitlementExceededException(
+                    "DID limit exceeded. Max: " + entitlements.getMaxDids() + ", Current: " + currentDids);
+        }
+    }
+
+    @Override
+    @CacheEvict(value = CACHE_NAME, key = "'tenant:' + #tenantId")
+    public void invalidateCache(UUID tenantId) {
+        log.info("Invalidated entitlement cache for tenant: {}", tenantId);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/PlanAssignmentServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.Plan;
+import com.dalai.llama.product.domain.entity.PlanAssignment;
+import com.dalai.llama.product.domain.event.PlanAssignedEvent;
+import com.dalai.llama.product.domain.event.PlanChangedEvent;
+import com.dalai.llama.product.domain.exception.PlanNotFoundException;
+import com.dalai.llama.product.kafka.producer.ProductEventProducer;
+import com.dalai.llama.product.repository.PlanAssignmentRepository;
+import com.dalai.llama.product.repository.PlanRepository;
+import com.dalai.llama.product.service.EntitlementService;
+import com.dalai.llama.product.service.PlanAssignmentService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class PlanAssignmentServiceImpl implements PlanAssignmentService {
+
+    private final PlanAssignmentRepository assignmentRepository;
+    private final PlanRepository planRepository;
+    private final ProductEventProducer eventProducer;
+    private final EntitlementService entitlementService;
+
+    @Override
+    public PlanAssignment assignPlan(UUID tenantId, UUID planId) {
+        Plan plan = planRepository.findById(planId)
+                .orElseThrow(() -> new PlanNotFoundException(planId.toString()));
+
+        // Check for existing active assignment
+        var existingOpt = assignmentRepository.findActiveByTenantId(tenantId);
+
+        if (existingOpt.isPresent()) {
+            PlanAssignment existing = existingOpt.get();
+
+            // Deactivate old plan
+            existing.setActive(false);
+            existing.setEffectiveTo(Instant.now());
+            existing.setUpdatedAt(Instant.now());
+            assignmentRepository.save(existing);
+
+            // Create new assignment
+            PlanAssignment newAssignment = createAssignment(tenantId, plan);
+
+            // Publish plan changed event
+            eventProducer.publishPlanChanged(PlanChangedEvent.builder()
+                    .tenantId(tenantId)
+                    .oldPlanId(existing.getPlan().getId())
+                    .oldPlanCode(existing.getPlan().getCode())
+                    .newPlanId(plan.getId())
+                    .newPlanCode(plan.getCode())
+                    .effectiveFrom(newAssignment.getEffectiveFrom())
+                    .occurredAt(Instant.now())
+                    .build());
+
+            // Invalidate cache
+            entitlementService.invalidateCache(tenantId);
+
+            return newAssignment;
+        }
+
+        // First time assignment
+        PlanAssignment assignment = createAssignment(tenantId, plan);
+
+        eventProducer.publishPlanAssigned(PlanAssignedEvent.builder()
+                .tenantId(tenantId)
+                .planId(plan.getId())
+                .planCode(plan.getCode())
+                .productCode(plan.getProduct().getCode())
+                .effectiveFrom(assignment.getEffectiveFrom())
+                .occurredAt(Instant.now())
+                .build());
+
+        return assignment;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PlanAssignment getActivePlan(UUID tenantId) {
+        return assignmentRepository.findActiveByTenantId(tenantId)
+                .orElseThrow(() -> new PlanNotFoundException("No active plan for tenant: " + tenantId));
+    }
+
+    @Override
+    public void removePlan(UUID tenantId) {
+        assignmentRepository.findActiveByTenantId(tenantId).ifPresent(assignment -> {
+            assignment.setActive(false);
+            assignment.setEffectiveTo(Instant.now());
+            assignment.setUpdatedAt(Instant.now());
+            assignmentRepository.save(assignment);
+            entitlementService.invalidateCache(tenantId);
+            log.info("Removed plan assignment for tenant: {}", tenantId);
+        });
+    }
+
+    private PlanAssignment createAssignment(UUID tenantId, Plan plan) {
+        PlanAssignment assignment = PlanAssignment.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .plan(plan)
+                .effectiveFrom(Instant.now())
+                .active(true)
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+        return assignmentRepository.save(assignment);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/PlanServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.Plan;
+import com.dalai.llama.product.domain.exception.PlanNotFoundException;
+import com.dalai.llama.product.repository.PlanRepository;
+import com.dalai.llama.product.service.PlanService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class PlanServiceImpl implements PlanService {
+
+    private final PlanRepository planRepository;
+
+    @Override
+    public List<Plan> getAllPlans() {
+        return planRepository.findAll();
+    }
+
+    @Override
+    public List<Plan> getPlansByProductCode(String productCode) {
+        return planRepository.findByProduct_CodeAndActiveTrue(productCode);
+    }
+
+    @Override
+    public Plan getPlanByCode(String code) {
+        return planRepository.findByCode(code)
+                .orElseThrow(() -> new PlanNotFoundException(code));
+    }
+
+    @Override
+    @Transactional
+    public Plan createPlan(Plan plan) {
+        plan.setId(UUID.randomUUID());
+        plan.setCreatedAt(Instant.now());
+        plan.setUpdatedAt(Instant.now());
+        return planRepository.save(plan);
+    }
+
+    public Plan getDefaultPlanForProduct(String productCode) {
+        return planRepository.findByProduct_CodeAndIsDefaultTrue(productCode)
+                .orElseThrow(() -> new PlanNotFoundException("default for " + productCode));
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/ProductServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.Product;
+import com.dalai.llama.product.domain.exception.ProductNotFoundException;
+import com.dalai.llama.product.repository.ProductRepository;
+import com.dalai.llama.product.service.ProductService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class ProductServiceImpl implements ProductService {
+
+    private final ProductRepository productRepository;
+
+    @Override
+    public List<Product> getAllActiveProducts() {
+        return productRepository.findByActiveTrue();
+    }
+
+    @Override
+    public Product getByCode(String code) {
+        return productRepository.findByCode(code)
+                .orElseThrow(() -> new ProductNotFoundException(code));
+    }
+
+    @Override
+    @Transactional
+    public Product createProduct(Product product) {
+        product.setId(UUID.randomUUID());
+        product.setCreatedAt(Instant.now());
+        product.setUpdatedAt(Instant.now());
+        return productRepository.save(product);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/SipEndpointServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.SipEndpoint;
+import com.dalai.llama.product.domain.exception.SipEndpointConflictException;
+import com.dalai.llama.product.repository.SipEndpointRepository;
+import com.dalai.llama.product.service.SipEndpointService;
+import com.dalai.llama.product.util.Ha1HashGenerator;
+import com.dalai.llama.product.util.SipCredentialGenerator;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class SipEndpointServiceImpl implements SipEndpointService {
+
+    private final SipEndpointRepository sipEndpointRepository;
+
+    @Value("${sip.domain:sip.dalaillama.in}")
+    private String sipDomain;
+
+    @Value("${sip.realm:dalaillama.in}")
+    private String sipRealm;
+
+    @Override
+    public SipEndpoint createEndpoint(Did did) {
+        // Generate username from DID number: did_919876543210
+        String username = "did_" + did.getNumber().replace("+", "");
+
+        // Check for existing endpoint
+        if (sipEndpointRepository.findByUsernameAndDomain(username, sipDomain).isPresent()) {
+            throw new SipEndpointConflictException("SIP endpoint already exists: " + username);
+        }
+
+        // Generate secure password and HA1 hash
+        String password = SipCredentialGenerator.generatePassword(24);
+        String ha1Hash = Ha1HashGenerator.generate(username, sipRealm, password);
+
+        SipEndpoint endpoint = SipEndpoint.builder()
+                .id(UUID.randomUUID())
+                .did(did)
+                .username(username)
+                .passwordHash(ha1Hash)
+                .domain(sipDomain)
+                .realm(sipRealm)
+                .active(true)
+                .registeredInKamailio(false)
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        endpoint = sipEndpointRepository.save(endpoint);
+        log.info("Created SIP endpoint for DID {}: {}", did.getNumber(), username);
+
+        return endpoint;
+    }
+
+    public SipEndpoint getByDidId(UUID didId) {
+        return sipEndpointRepository.findByDid_Id(didId).orElse(null);
+    }
+
+    public void markAsSynced(UUID endpointId) {
+        sipEndpointRepository.findById(endpointId).ifPresent(endpoint -> {
+            endpoint.setRegisteredInKamailio(true);
+            endpoint.setKamailioSyncedAt(Instant.now());
+            endpoint.setUpdatedAt(Instant.now());
+            sipEndpointRepository.save(endpoint);
+        });
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/service/impl/SipTrunkServiceImpl.java
+==================================================
+
+package com.dalai.llama.product.service.impl;
+
+import com.dalai.llama.product.domain.entity.SipTrunk;
+import com.dalai.llama.product.domain.entity.enums.SipProvider;
+import com.dalai.llama.product.domain.entity.enums.SipTrunkStatus;
+import com.dalai.llama.product.repository.SipTrunkRepository;
+import com.dalai.llama.product.service.SipTrunkService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class SipTrunkServiceImpl implements SipTrunkService {
+
+    private final SipTrunkRepository sipTrunkRepository;
+
+    @Override
+    public SipTrunk createTrunk(UUID tenantId, SipTrunk trunk) {
+        trunk.setId(UUID.randomUUID());
+        trunk.setTenantId(tenantId);
+        trunk.setProvider(SipProvider.CUSTOM);
+        trunk.setStatus(SipTrunkStatus.PENDING);
+        trunk.setHealthy(false);
+        trunk.setMaxConcurrentCalls(100);
+        trunk.setMaxCallsPerSecond(10);
+        trunk.setCreatedAt(Instant.now());
+        trunk.setUpdatedAt(Instant.now());
+
+        trunk = sipTrunkRepository.save(trunk);
+        log.info("Created SIP trunk for tenant {}: {}", tenantId, trunk.getName());
+
+        return trunk;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SipTrunk> getTrunks(UUID tenantId) {
+        return sipTrunkRepository.findByTenantId(tenantId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SipTrunk getTrunk(UUID tenantId, UUID trunkId) {
+        return sipTrunkRepository.findById(trunkId)
+                .filter(t -> tenantId.equals(t.getTenantId()))
+                .orElseThrow(() -> new RuntimeException("SIP trunk not found: " + trunkId));
+    }
+
+    @Override
+    public void deleteTrunk(UUID tenantId, UUID trunkId) {
+        SipTrunk trunk = getTrunk(tenantId, trunkId);
+        sipTrunkRepository.delete(trunk);
+        log.info("Deleted SIP trunk for tenant {}: {}", tenantId, trunkId);
+    }
+
+    public SipTrunk getOrCreatePlatformTrunk() {
+        return sipTrunkRepository.findByTenantId(null).stream()
+                .filter(t -> t.getProvider() == SipProvider.DIDWW)
+                .findFirst()
+                .orElseGet(this::createPlatformTrunk);
+    }
+
+    private SipTrunk createPlatformTrunk() {
+        SipTrunk trunk = SipTrunk.builder()
+                .id(UUID.randomUUID())
+                .tenantId(null)
+                .name("Platform DIDWW Trunk")
+                .provider(SipProvider.DIDWW)
+                .server("sip.didww.com")
+                .port(5060)
+                .status(SipTrunkStatus.ACTIVE)
+                .isHealthy(true)
+                .maxConcurrentCalls(1000)
+                .maxCallsPerSecond(50)
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        return sipTrunkRepository.save(trunk);
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/util/E164Formatter.java
+==================================================
+
+package com.dalai.llama.product.util;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public final class E164Formatter {
+
+    private E164Formatter() {}
+
+    // Country code to country name mapping (common ones)
+    private static final Map<String, String> COUNTRY_CODES = new HashMap<>();
+
+    static {
+        COUNTRY_CODES.put("1", "US/CA");
+        COUNTRY_CODES.put("91", "IN");
+        COUNTRY_CODES.put("44", "GB");
+        COUNTRY_CODES.put("49", "DE");
+        COUNTRY_CODES.put("33", "FR");
+        COUNTRY_CODES.put("61", "AU");
+        COUNTRY_CODES.put("81", "JP");
+        COUNTRY_CODES.put("86", "CN");
+        COUNTRY_CODES.put("971", "AE");
+        COUNTRY_CODES.put("65", "SG");
+    }
+
+    /**
+     * Normalize phone number to E.164 format
+     * @param number Phone number (may include spaces, dashes, etc.)
+     * @return E.164 formatted number (e.g., +919876543210)
+     * @throws IllegalArgumentException if number is invalid
+     */
+    public static String normalize(String number) {
+        if (number == null || number.isBlank()) {
+            throw new IllegalArgumentException("Phone number cannot be null or empty");
+        }
+
+        // Remove all non-digit characters except leading +
+        String cleaned = number.replaceAll("[^0-9+]", "");
+
+        // Must start with +
+        if (!cleaned.startsWith("+")) {
+            throw new IllegalArgumentException("Number must be in E.164 format (starting with +)");
+        }
+
+        // Validate length (E.164 max is 15 digits including country code)
+        String digits = cleaned.substring(1);
+        if (digits.length() < 7 || digits.length() > 15) {
+            throw new IllegalArgumentException("Invalid E.164 number length: " + digits.length());
+        }
+
+        // Validate all remaining characters are digits
+        if (!digits.matches("\\d+")) {
+            throw new IllegalArgumentException("Invalid characters in phone number");
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * Format E.164 number for display
+     * @param e164 E.164 formatted number
+     * @return Human-readable format (e.g., +91 98765 43210)
+     */
+    public static String display(String e164) {
+        if (e164 == null || !e164.startsWith("+")) {
+            return e164;
+        }
+
+        String digits = e164.substring(1);
+
+        // Format based on country code
+        if (digits.startsWith("91") && digits.length() == 12) {
+            // India: +91 XXXXX XXXXX
+            return String.format("+91 %s %s",
+                    digits.substring(2, 7),
+                    digits.substring(7));
+        } else if (digits.startsWith("1") && digits.length() == 11) {
+            // US/Canada: +1 (XXX) XXX-XXXX
+            return String.format("+1 (%s) %s-%s",
+                    digits.substring(1, 4),
+                    digits.substring(4, 7),
+                    digits.substring(7));
+        } else if (digits.startsWith("44") && digits.length() >= 11) {
+            // UK: +44 XXXX XXXXXX
+            return String.format("+44 %s %s",
+                    digits.substring(2, 6),
+                    digits.substring(6));
+        }
+
+        // Default: just add space after country code
+        return e164;
+    }
+
+    /**
+     * Extract country code from E.164 number
+     * @param e164 E.164 formatted number
+     * @return Country code (e.g., "91" for India)
+     */
+    public static String extractCountryCode(String e164) {
+        if (e164 == null || !e164.startsWith("+")) {
+            return null;
+        }
+
+        String digits = e164.substring(1);
+
+        // Check for 3-digit country codes first
+        if (digits.length() >= 3) {
+            String code3 = digits.substring(0, 3);
+            if (COUNTRY_CODES.containsKey(code3)) {
+                return code3;
+            }
+        }
+
+        // Check for 2-digit country codes
+        if (digits.length() >= 2) {
+            String code2 = digits.substring(0, 2);
+            if (COUNTRY_CODES.containsKey(code2)) {
+                return code2;
+            }
+        }
+
+        // Check for 1-digit country codes
+        if (digits.length() >= 1) {
+            String code1 = digits.substring(0, 1);
+            if (COUNTRY_CODES.containsKey(code1)) {
+                return code1;
+            }
+        }
+
+        // Default to first 2 digits
+        return digits.length() >= 2 ? digits.substring(0, 2) : digits;
+    }
+
+    /**
+     * Check if number is valid E.164 format
+     * @param number Phone number to validate
+     * @return true if valid E.164 format
+     */
+    public static boolean isValid(String number) {
+        try {
+            normalize(number);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Get national number (without country code)
+     * @param e164 E.164 formatted number
+     * @return National number
+     */
+    public static String getNationalNumber(String e164) {
+        String countryCode = extractCountryCode(e164);
+        if (countryCode == null) {
+            return e164;
+        }
+        return e164.substring(1 + countryCode.length());
+    }
+}
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/util/Ha1HashGenerator.java
+==================================================
+
+package com.dalai.llama.product.util;
+
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
+public final class Ha1HashGenerator {
+
+    private Ha1HashGenerator() {}
+
+    public static String generate(String username, String realm, String password) {
+        try {
+            String input = username + ":" + realm + ":" + password;
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to generate HA1 hash", e);
+        }
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/util/SipCredentialGenerator.java
+==================================================
+
+package com.dalai.llama.product.util;
+
+
+import java.security.SecureRandom;
+
+public final class SipCredentialGenerator {
+
+    private static final String CHARS =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private SipCredentialGenerator() {}
+
+    public static String generatePassword(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(CHARS.charAt(RANDOM.nextInt(CHARS.length())));
+        }
+        return sb.toString();
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/resources/archetype-resources/src/main/java/App.java
+==================================================
+
+package $com.dalai.llama;
+
+/**
+ * Hello world!
+ *
+ */
+public class App 
+{
+    public static void main( String[] args )
+    {
+        System.out.println( "Hello World!" );
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/resources/archetype-resources/src/test/java/AppTest.java
+==================================================
+
+package $com.dalai.llama;
+
+import junit.framework.Test;
+import junit.framework.TestCase;
+import junit.framework.TestSuite;
+
+/**
+ * Unit test for simple App.
+ */
+public class AppTest 
+    extends TestCase
+{
+    /**
+     * Create the test case
+     *
+     * @param testName name of the test case
+     */
+    public AppTest( String testName )
+    {
+        super( testName );
+    }
+
+    /**
+     * @return the suite of tests being tested
+     */
+    public static Test suite()
+    {
+        return new TestSuite( AppTest.class );
+    }
+
+    /**
+     * Rigourous Test :-)
+     */
+    public void testApp()
+    {
+        assertTrue( true );
+    }
+}
+
+
+

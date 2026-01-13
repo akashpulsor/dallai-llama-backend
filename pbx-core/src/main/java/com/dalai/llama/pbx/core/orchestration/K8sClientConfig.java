@@ -1,6 +1,7 @@
 package com.dalai.llama.pbx.core.orchestration;
 
 import io.fabric8.kubernetes.client.Config;
+import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.springframework.context.annotation.Bean;
@@ -16,7 +17,9 @@ public class K8sClientConfig {
 
         Config cfg = (masterUrl == null || masterUrl.isBlank())
                 ? Config.autoConfigure(null)
-                : new Config.builder().withMasterUrl(masterUrl).build();
+                : new ConfigBuilder()
+                .withMasterUrl(masterUrl)
+                .build();;
 
         return new DefaultKubernetesClient(cfg);
     }

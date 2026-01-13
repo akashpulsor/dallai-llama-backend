@@ -1,0 +1,34 @@
+package com.dalai.llama.tenant.domain.entity.enums;
+
+
+
+public enum TenantStatus {
+
+    // Phase 1: Business Setup
+    CREATED,
+    PLAN_ASSIGNED,
+    PRODUCTS_CONFIGURED,
+    BILLING_READY,
+    READY_TO_PROVISION,
+
+    // Phase 2: Technical Provisioning
+    PROVISIONING,
+    PROVISIONING_KEYCLOAK,
+    PROVISIONING_NAMESPACE,
+    PROVISIONING_INFRA,
+    PROVISIONING_TELECOM,
+    PROVISIONING_MEDIA_SERVER,
+    PROVISIONING_SERVICES,
+    PROVISIONING_LOADBALANCER,
+    PROVISIONING_WAITING_IP,
+    PROVISIONING_DIDWW,
+    PROVISIONING_DASHBOARD,
+    PROVISIONING_USERS,
+    HEALTH_CHECK,
+
+    // Final States
+    ACTIVE,
+    SUSPENDED,
+    ERROR,
+    DELETED
+}

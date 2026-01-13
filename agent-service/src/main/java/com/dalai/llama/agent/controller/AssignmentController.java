@@ -11,7 +11,8 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/v1/assignments")
 @RequiredArgsConstructor
-public class AssignmentController {
+public class
+AssignmentController {
     private final AssignmentService service;
 
     @PostMapping("/request")

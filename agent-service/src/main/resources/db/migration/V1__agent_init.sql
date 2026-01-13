@@ -21,46 +21,53 @@ CREATE TABLE agent_event_log (
 -- Core Agent table
 CREATE TABLE agents (
     id BIGSERIAL PRIMARY KEY,
-    external_id VARCHAR(255) UNIQUE NOT NULL, -- Keycloak user ID
+
+    external_id VARCHAR(255) NOT NULL UNIQUE,
     username VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    extension VARCHAR(255) NOT NULL,
+
     display_name VARCHAR(255),
     email VARCHAR(255),
     phone_number VARCHAR(50),
+
     tenant_id VARCHAR(128) NOT NULL,
 
-    -- Status fields
-    status VARCHAR(50) NOT NULL DEFAULT 'OFFLINE', -- OFFLINE, ONLINE, BUSY, BREAK, TRAINING
-    availability_status VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', -- AVAILABLE, UNAVAILABLE, IN_CALL, AFTER_CALL_WORK
-    online BOOLEAN DEFAULT FALSE,
-    available BOOLEAN DEFAULT TRUE,
+    -- ENUMS
+    status VARCHAR(50) NOT NULL,
+    availability_status VARCHAR(50) NOT NULL,
 
-    -- Configuration
+    online BOOLEAN NOT NULL DEFAULT FALSE,
+    available BOOLEAN NOT NULL DEFAULT TRUE,
+
     max_concurrent_calls INTEGER DEFAULT 1,
-    skills JSONB DEFAULT '[]'::jsonb,
-    queue_memberships JSONB DEFAULT '[]'::jsonb,
-    preferences JSONB DEFAULT '{}'::jsonb,
 
-    -- Metrics
+    skills JSONB DEFAULT '[]',
+    queue_memberships JSONB DEFAULT '[]',
+    preferences JSONB DEFAULT '{}',
+
     total_calls_handled INTEGER DEFAULT 0,
     total_call_duration_seconds BIGINT DEFAULT 0,
     average_handle_time_seconds INTEGER DEFAULT 0,
-    last_call_at TIMESTAMP TZ,
 
-    -- Timestamps
-    created_at TIMESTAMP TZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP TZ NOT NULL DEFAULT NOW(),
-    last_seen_at TIMESTAMP TZ,
-
-    CONSTRAINT agents_tenant_username_unique UNIQUE(tenant_id, username)
+    last_call_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agents_tenant ON agents(tenant_id);
-CREATE INDEX idx_agents_external_id ON agents(external_id);
-CREATE INDEX idx_agents_status ON agents(tenant_id, status);
-CREATE INDEX idx_agents_availability ON agents(tenant_id, availability_status);
-CREATE INDEX idx_agents_online ON agents(tenant_id, online, available);
-CREATE INDEX idx_agents_skills ON agents USING GIN(skills);
-CREATE INDEX idx_agents_queues ON agents USING GIN(queue_memberships);
+-- Indexes
+CREATE INDEX idx_agents_tenant
+    ON agents (tenant_id);
+
+CREATE INDEX idx_agents_external_id
+    ON agents (external_id);
+
+CREATE INDEX idx_agents_status
+    ON agents (tenant_id, status);
+
+CREATE INDEX idx_agents_availability
+    ON agents (tenant_id, availability_status);
 
 -- Agent Sessions (tracks login/logout, shifts)
 CREATE TABLE agent_sessions (
