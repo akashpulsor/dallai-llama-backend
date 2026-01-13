@@ -1,5 +1,6 @@
 package com.dalai.llama.product.service.impl;
 
+import com.dalai.llama.product.client.BillingServiceClient;
 import com.dalai.llama.product.domain.entity.Did;
 import com.dalai.llama.product.domain.entity.SipEndpoint;
 import com.dalai.llama.product.domain.entity.SipTrunk;
@@ -18,6 +19,7 @@ import com.dalai.llama.product.service.DidService;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.SipEndpointService;
 import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
 import com.dalai.llama.product.util.E164Formatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +44,39 @@ public class DidServiceImpl implements DidService {
     private final DidwwProvisioningService didwwService;
     private final ProductEventProducer eventProducer;
 
+    private final BillingServiceClient billingServiceClient;
+
+
+    // In DidwwProvisioningService - add this method
+    /*
+    public DidwwAvailableDidResponse.DidInfo getDidInfo(String number) {
+        // Search by the exact number
+        DidwwAvailableDidResponse response = didwwService.searchAvailableDids("number=" + number);
+
+        return response.getData().stream()
+                .filter(d -> d.getNumber().equals(number))
+                .findFirst()
+                .orElse(null);
+    } */
+
+    private BigDecimal getDidMonthlyRate(String number) {
+        // Search DIDWW for this specific number to get its rate
+        /*
+        DidwwAvailableDidResponse response = didwwService.searchAvailableDids(number);
+
+        return response.getData().stream()
+                .filter(d -> d.getNumber().equals(number))
+                .findFirst()
+                .map(d -> new BigDecimal(d.getMonthlyFee()))
+                .orElse(getDefaultDidRate()); // fallback
+
+         */
+        return new BigDecimal(500.00); // For simplicity, return default rate
+    }
+
+    private BigDecimal getDefaultDidRate() {
+        return new BigDecimal("500.00"); // Default INR 500/month
+    }
     @Override
     public Did provisionDid(UUID tenantId, String number, UUID sipTrunkId) {
         log.info("Provisioning DID {} for tenant {}", number, tenantId);

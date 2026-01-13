@@ -28,7 +28,7 @@ public class BillingServiceClient {
     }
 
     /**
-     * Record DID rental charge when DID is provisioned
+     * Record DID rental charge (monthly or initial)
      */
     public void recordDidRental(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
         try {
@@ -44,21 +44,50 @@ public class BillingServiceClient {
                     .block();
             log.info("Recorded DID rental for tenant {}: {} @ {}", tenantId, didNumber, amount);
         } catch (Exception e) {
-            log.error("Failed to record DID rental: {}", e.getMessage());
+            log.error("Failed to record DID rental for tenant {}: {}", tenantId, e.getMessage());
+            throw new RuntimeException("Failed to record DID rental", e);
         }
     }
 
     /**
-     * Check if tenant has sufficient balance for DID purchase
+     * Record DID setup fee (one-time charge)
+     */
+    public void recordDidSetupFee(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/usage", tenantId)
+                    .bodyValue(Map.of(
+                            "metric", "DID_SETUP",
+                            "quantity", BigDecimal.ONE,
+                            "unit", "UNIT",
+                            "unitCost", amount,
+                            "totalCost", amount,
+                            "sourceType", "DID",
+                            "sourceId", didId,
+                            "description", "DID setup fee: " + didNumber
+                    ))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Recorded DID setup fee for tenant {}: {} @ {}", tenantId, didNumber, amount);
+        } catch (Exception e) {
+            log.error("Failed to record DID setup fee: {}", e.getMessage());
+            throw new RuntimeException("Failed to record DID setup fee", e);
+        }
+    }
+
+    /**
+     * Check if tenant has sufficient balance
      */
     public boolean hasSufficientBalance(UUID tenantId, BigDecimal required) {
         try {
-            BigDecimal balance = client().get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
+            CallAuthResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/authorize-call", tenantId)
                     .retrieve()
-                    .bodyToMono(BigDecimal.class)
+                    .bodyToMono(CallAuthResponse.class)
                     .block();
-            return balance != null && balance.compareTo(required) >= 0;
+            return resp != null && resp.remainingBalance() != null
+                    && resp.remainingBalance().compareTo(required) >= 0;
         } catch (Exception e) {
             log.error("Failed to check balance for tenant {}: {}", tenantId, e.getMessage());
             return false;
@@ -70,17 +99,36 @@ public class BillingServiceClient {
      */
     public String getBillingState(UUID tenantId) {
         try {
-            BillingStateInfo info = client().get()
+            BillingStateResponse resp = client().get()
                     .uri("/api/v1/internal/tenants/{tenantId}/billing-state", tenantId)
                     .retrieve()
-                    .bodyToMono(BillingStateInfo.class)
+                    .bodyToMono(BillingStateResponse.class)
                     .block();
-            return info != null ? info.state() : "UNKNOWN";
+            return resp != null ? resp.state() : "UNKNOWN";
         } catch (Exception e) {
             log.error("Failed to get billing state for tenant {}: {}", tenantId, e.getMessage());
             return "UNKNOWN";
         }
     }
 
-    public record BillingStateInfo(String state, boolean canMakeCalls) {}
+    /**
+     * Check if calls are allowed (ACTIVE or GRACE state)
+     */
+    public boolean canMakeCalls(UUID tenantId) {
+        try {
+            BillingStateResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/billing-state", tenantId)
+                    .retrieve()
+                    .bodyToMono(BillingStateResponse.class)
+                    .block();
+            return resp != null && resp.canMakeCalls();
+        } catch (Exception e) {
+            log.error("Failed to check call permission: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // Response DTOs
+    public record BillingStateResponse(String state, boolean canMakeCalls) {}
+    public record CallAuthResponse(boolean authorized, String state, String reason, BigDecimal remainingBalance) {}
 }
