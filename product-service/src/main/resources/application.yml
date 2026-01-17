@@ -95,6 +95,9 @@ cache:
 
 # Server Configuration
 server:
+  servlet:
+    context-path: /product
+
   port: ${SERVER_PORT:8082}
   shutdown: graceful
   compression:
@@ -168,58 +171,3 @@ springdoc:
     - url: https://api.dalaillama.in/product
       description: Production
 
----
-# Development Profile
-spring:
-  config:
-    activate:
-      on-profile: dev
-
-  datasource:
-    url: jdbc:postgresql://localhost:5432/product_db
-
-  jpa:
-    show-sql: true
-
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://localhost:8080/realms/dalaillama
-
-didww:
-  sync-enabled: false
-
-logging:
-  level:
-    com.dalai.llama.product: DEBUG
-
----
-# Docker Profile
-spring:
-  config:
-    activate:
-      on-profile: docker
-
-  datasource:
-    url: jdbc:postgresql://postgres:5432/product_db
-
-  data:
-    redis:
-      host: redis
-
-  kafka:
-    bootstrap-servers: kafka:29092
-
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://keycloak:8080/realms/dalaillama
-          jwk-set-uri: http://keycloak:8080/realms/dalaillama/protocol/openid-connect/certs
-
-services:
-  tenant:
-    url: http://tenant-service:8081
-  billing:
-    url: http://billing-service:8083

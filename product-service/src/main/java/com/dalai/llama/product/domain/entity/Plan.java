@@ -4,6 +4,7 @@ import com.dalai.llama.product.domain.entity.enums.PlanTier;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -32,7 +33,7 @@ public class Plan {
     @Enumerated(EnumType.STRING)
     private PlanTier tier;
 
-    private double monthlyPrice;
+    private BigDecimal monthlyPrice;
     private String currency;
 
     private boolean isDefault;
