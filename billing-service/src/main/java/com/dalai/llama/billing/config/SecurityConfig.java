@@ -14,6 +14,15 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/swagger-ui.html",    // Removed /product
+                                "/swagger-ui/**",      // Removed /product
+                                "/v3/api-docs",        // Default springdoc path
+                                "/v3/api-docs/**",     // Default springdoc path
+                                "/api-docs",           // Your custom path in YAML
+                                "/api-docs/**"          // Your custom path in YAML
+                        ).permitAll()
+                        .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
                         .anyRequest().authenticated()

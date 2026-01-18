@@ -20,9 +20,9 @@
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
         <module name="media-server" />
+        <module name="blob-manager" />
         <module name="pbx-core" />
         <module name="prediction-service" />
-        <module name="blob-manager" />
         <module name="agent-service" />
       </profile>
       <profile name="Annotation profile for dalai-llama-backend" enabled="true">
@@ -34,6 +34,8 @@
           <entry name="$MAVEN_REPOSITORY$/org/mapstruct/mapstruct-processor/1.5.5.Final/mapstruct-processor-1.5.5.Final.jar" />
           <entry name="$MAVEN_REPOSITORY$/org/mapstruct/mapstruct/1.5.5.Final/mapstruct-1.5.5.Final.jar" />
         </processorPath>
+        <module name="product-service" />
+        <module name="tenant-service" />
         <module name="billing-service" />
       </profile>
     </annotationProcessing>
