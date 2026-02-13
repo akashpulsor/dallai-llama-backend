@@ -22,24 +22,21 @@ public class KubernetesClientConfig {
 
     @Bean
     public KubernetesClient kubernetesClient() {
-        Config config;
 
-        if (masterUrl != null && !masterUrl.isEmpty()) {
-            // Outside cluster - explicit config
-            config = new ConfigBuilder()
-                    .withMasterUrl(masterUrl)
-                    .withNamespace(namespace)
-                    .withTrustCerts(trustCerts)
-                    .build();
-        } else {
-            // Inside cluster - auto-detect from service account
-            config = new ConfigBuilder()
-                    .withNamespace(namespace)
-                    .build();
+        // Let Fabric8 auto-detect EVERYTHING first
+        Config baseConfig = Config.autoConfigure(null);
+
+        ConfigBuilder builder = new ConfigBuilder(baseConfig)
+                .withNamespace(namespace)
+                .withTrustCerts(trustCerts);
+
+        // Only override master if explicitly provided
+        if (masterUrl != null && !masterUrl.isBlank()) {
+            builder.withMasterUrl(masterUrl);
         }
 
         return new KubernetesClientBuilder()
-                .withConfig(config)
+                .withConfig(builder.build())
                 .build();
     }
 }

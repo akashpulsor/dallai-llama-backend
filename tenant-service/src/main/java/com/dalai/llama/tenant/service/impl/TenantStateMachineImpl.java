@@ -28,98 +28,41 @@ public class TenantStateMachineImpl implements TenantStateMachine {
     private final TenantStateAuditRepository auditRepository;
     private final TenantEventProducer eventProducer;
 
-    // Define valid state transitions
     private static final Map<TenantStatus, Set<TenantStatus>> TRANSITIONS = Map.ofEntries(
-            // Phase 1: Business Setup
-            Map.entry(TenantStatus.CREATED, Set.of(
-                    TenantStatus.PLAN_ASSIGNED,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.PLAN_ASSIGNED, Set.of(
-                    TenantStatus.PRODUCTS_CONFIGURED,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.PRODUCTS_CONFIGURED, Set.of(
-                    TenantStatus.BILLING_READY,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.BILLING_READY, Set.of(
-                    TenantStatus.READY_TO_PROVISION,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.READY_TO_PROVISION, Set.of(
-                    TenantStatus.PROVISIONING,
-                    TenantStatus.DELETED
-            )),
+            // Phase 1: Business Setup & Compliance
+            Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.PRODUCTS_CONFIGURED, TenantStatus.DELETED, TenantStatus.PROVISIONING_RESTART)),
+            Map.entry(TenantStatus.PLAN_ASSIGNED, Set.of(TenantStatus.PROVISIONING_KEYCLOAK,TenantStatus.DID_PURCHASED, TenantStatus.KYC_SUBMITTED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.DID_PURCHASED, Set.of(TenantStatus.SIP_CONFIGURED, TenantStatus.KYC_SUBMITTED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.SIP_CONFIGURED, Set.of(TenantStatus.BILLING_READY, TenantStatus.KYC_SUBMITTED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.KYC_SUBMITTED, Set.of(TenantStatus.KYC_APPROVED, TenantStatus.KYC_REJECTED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.KYC_REJECTED, Set.of(TenantStatus.KYC_SUBMITTED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.KYC_APPROVED, Set.of(TenantStatus.PRODUCTS_CONFIGURED, TenantStatus.BILLING_READY, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.PRODUCTS_CONFIGURED, Set.of(TenantStatus.PLAN_ASSIGNED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.BILLING_READY, Set.of(TenantStatus.PROVISIONING_KEYCLOAK, TenantStatus.DELETED)),
 
-            // Phase 2: Provisioning substates
-            Map.entry(TenantStatus.PROVISIONING, Set.of(
-                    TenantStatus.PROVISIONING_KEYCLOAK,
-                    TenantStatus.ERROR,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.PROVISIONING_KEYCLOAK, Set.of(
-                    TenantStatus.PROVISIONING_NAMESPACE,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_NAMESPACE, Set.of(
-                    TenantStatus.PROVISIONING_INFRA,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_INFRA, Set.of(
-                    TenantStatus.PROVISIONING_TELECOM,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_TELECOM, Set.of(
-                    TenantStatus.PROVISIONING_MEDIA_SERVER,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_MEDIA_SERVER, Set.of(
-                    TenantStatus.PROVISIONING_SERVICES,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_SERVICES, Set.of(
-                    TenantStatus.PROVISIONING_LOADBALANCER,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_LOADBALANCER, Set.of(
-                    TenantStatus.PROVISIONING_WAITING_IP,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_WAITING_IP, Set.of(
-                    TenantStatus.PROVISIONING_DIDWW,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_DIDWW, Set.of(
-                    TenantStatus.PROVISIONING_DASHBOARD,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_DASHBOARD, Set.of(
-                    TenantStatus.PROVISIONING_USERS,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.PROVISIONING_USERS, Set.of(
-                    TenantStatus.HEALTH_CHECK,
-                    TenantStatus.ERROR
-            )),
-            Map.entry(TenantStatus.HEALTH_CHECK, Set.of(
-                    TenantStatus.ACTIVE,
-                    TenantStatus.ERROR
-            )),
+            // Phase 2: Provisioning Entry & Restart Logic
+            Map.entry(TenantStatus.READY_TO_PROVISION, Set.of(TenantStatus.PROVISIONING, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.PROVISIONING_RESTART, Set.of(TenantStatus.PROVISIONING, TenantStatus.DELETED)),
 
-            // Final states
-            Map.entry(TenantStatus.ACTIVE, Set.of(
-                    TenantStatus.SUSPENDED,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.SUSPENDED, Set.of(
-                    TenantStatus.ACTIVE,
-                    TenantStatus.DELETED
-            )),
-            Map.entry(TenantStatus.ERROR, Set.of(
-                    TenantStatus.PROVISIONING,
-                    TenantStatus.DELETED
-            ))
+            // Phase 3: Technical Provisioning Pipeline (Added RESTART to all states to prevent transition errors)
+            Map.entry(TenantStatus.PROVISIONING, Set.of( TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.PROVISIONING_KEYCLOAK, Set.of(TenantStatus.READY_TO_PROVISION, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_NAMESPACE, Set.of(TenantStatus.PROVISIONING_INFRA, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_INFRA, Set.of(TenantStatus.PROVISIONING_TELECOM, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_TELECOM, Set.of(TenantStatus.PROVISIONING_MEDIA_SERVER, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_MEDIA_SERVER, Set.of(TenantStatus.PROVISIONING_SERVICES, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_SERVICES, Set.of(TenantStatus.PROVISIONING_LOADBALANCER, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_LOADBALANCER, Set.of(TenantStatus.PROVISIONING_WAITING_IP, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_WAITING_IP, Set.of(TenantStatus.PROVISIONING_DIDWW, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_DIDWW, Set.of(TenantStatus.PROVISIONING_DASHBOARD, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_DASHBOARD, Set.of(TenantStatus.PROVISIONING_USERS, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.PROVISIONING_USERS, Set.of(TenantStatus.HEALTH_CHECK, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+            Map.entry(TenantStatus.HEALTH_CHECK, Set.of(TenantStatus.ACTIVE, TenantStatus.PROVISIONING_RESTART, TenantStatus.ERROR)),
+
+            // Operational Lifecycle & Error Recovery
+            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.DELETED, TenantStatus.PROVISIONING_RESTART)),
+            Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.ERROR, Set.of(TenantStatus.PROVISIONING_RESTART, TenantStatus.PROVISIONING, TenantStatus.DELETED))
     );
 
     @Override
@@ -127,50 +70,37 @@ public class TenantStateMachineImpl implements TenantStateMachine {
     public void transition(Tenant tenant, TenantStatus target, String triggerSource, String message) {
         TenantStatus current = tenant.getStatus();
 
-        // Validate transition
         Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
         if (!allowed.contains(target)) {
-            log.warn("Invalid transition attempt: {} -> {} for tenant {}",
-                    current, target, tenant.getId());
-            throw new InvalidStateTransitionException(
-                    String.format("Cannot transition from %s to %s", current, target)
-            );
+            log.warn("Invalid transition: {} -> {} for tenant {}", current, target, tenant.getId());
+            throw new InvalidStateTransitionException(String.format("Cannot transition from %s to %s", current, target));
         }
 
-        log.info("Tenant {} transitioning: {} -> {} (trigger: {})",
-                tenant.getId(), current, target, triggerSource);
+        log.info("Tenant {} transitioning: {} -> {} (trigger: {})", tenant.getId(), current, target, triggerSource);
 
-        // Create audit record
         TenantStateAudit audit = new TenantStateAudit();
         audit.setTenant(tenant);
         audit.setOldStatus(current.name());
         audit.setNewStatus(target.name());
-        audit.setOldSubstatus(tenant.getSubstatus());
         audit.setTriggerSource(triggerSource);
         audit.setMessage(message);
         auditRepository.save(audit);
 
-        // Update tenant state
         tenant.setStatus(target);
         tenant.setStatusMessage(message);
         tenant.setStatusChangedAt(OffsetDateTime.now());
 
-        // Handle specific status changes
         switch (target) {
             case ACTIVE -> {
                 tenant.setActivatedAt(OffsetDateTime.now());
                 tenant.setSuspendedAt(null);
-                tenant.setSuspensionReason(null);
                 tenantRepository.save(tenant);
-                eventProducer.publish("tenant.activated", tenant.getId().toString(),
-                        new TenantActivatedEvent(tenant.getId()));
+                eventProducer.publish("tenant.activated", tenant.getId().toString(), new TenantActivatedEvent(tenant.getId()));
             }
-            case SUSPENDED -> {
-                tenant.setSuspendedAt(OffsetDateTime.now());
-                tenant.setSuspensionReason(message);
+            case PROVISIONING_RESTART -> {
+                // Keep pre-requisite data (DID/SIP) but flag for re-deployment
+                tenant.setStatusMessage("Restarting provisioning: " + message);
                 tenantRepository.save(tenant);
-                eventProducer.publish("tenant.suspended", tenant.getId().toString(),
-                        new TenantSuspendedEvent(tenant.getId(), message));
             }
             case DELETED -> {
                 tenant.setDeletedAt(OffsetDateTime.now());
@@ -179,13 +109,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
             default -> tenantRepository.save(tenant);
         }
 
-        // Publish state change event
         eventProducer.publish("tenant.state.changed", tenant.getId().toString(),
-                Map.of(
-                        "tenantId", tenant.getId(),
-                        "oldState", current.name(),
-                        "newState", target.name(),
-                        "message", message != null ? message : ""
-                ));
+                Map.of("tenantId", tenant.getId(), "oldState", current.name(), "newState", target.name(), "message", message != null ? message : ""));
     }
 }

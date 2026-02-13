@@ -1,6 +1,7 @@
 package com.dalai.llama.tenant.dto.request;
 
 
+import com.dalai.llama.tenant.domain.entity.enums.DeploymentModel;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -29,5 +30,9 @@ public record CreateTenantRequest(
         String country,
         String timezone,
 
-        String productCode
+
+        String productCode,
+
+        DeploymentModel deploymentModel
+
 ) {}

@@ -11,8 +11,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,9 +30,10 @@ public class TenantController {
 
     @PostMapping
     @Operation(summary = "Create tenant")
-    public TenantResponse create(@Valid @RequestBody CreateTenantRequest request) {
+    public TenantResponse create(@Valid @RequestBody CreateTenantRequest request, @AuthenticationPrincipal Jwt jwt) {
+
         meterRegistry.counter("tenant.create").increment();
-        return tenantService.createTenant(request);
+        return tenantService.createTenant(request,jwt);
     }
 
     @GetMapping
@@ -78,6 +82,6 @@ public class TenantController {
     @Operation(summary = "Delete tenant")
     public void delete(@PathVariable UUID id) {
         meterRegistry.counter("tenant.delete").increment();
-        tenantService.deleteTenant(id);
+        tenantService.deleteTenant(id," Tenant deletion requested");
     }
 }

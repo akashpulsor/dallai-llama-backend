@@ -15,17 +15,16 @@ public class KeycloakAdminConfig {
     public Keycloak keycloakAdminClient(
             @Value("${keycloak.admin.url}") String serverUrl,
             @Value("${keycloak.admin.realm}") String realm,
-            @Value("${keycloak.admin.client-id}") String clientId,
-            @Value("${keycloak.admin.username}") String username,
-            @Value("${keycloak.admin.password}") String password
+            @Value("${keycloak.admin.orchestrator.client-id}") String clientId,
+            @Value("${keycloak.admin.orchestrator.client-secret}") String clientSecret
     ) {
         return KeycloakBuilder.builder()
                 .serverUrl(serverUrl)
                 .realm(realm)
                 .clientId(clientId)
-                .grantType(OAuth2Constants.PASSWORD)
-                .username(username)
-                .password(password)
+                .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
+                .clientId(clientId)
+                .clientSecret(clientSecret)
                 .build();
     }
 }

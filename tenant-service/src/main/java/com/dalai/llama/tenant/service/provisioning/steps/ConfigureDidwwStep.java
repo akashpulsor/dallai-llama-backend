@@ -14,7 +14,7 @@ public class ConfigureDidwwStep implements ProvisioningStep {
 
     public String name() { return "CONFIGURE_DIDWW"; }
 
-    public void execute(Tenant tenant) {
-        didww.configureTrunk(tenant.getId(), tenant.getSipExternalIp());
+    public void execute(Tenant tenant, String productCode) {
+        //didww.configureTrunk(tenant.getId(), tenant.getSipExternalIp());
     }
 }

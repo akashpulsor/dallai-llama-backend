@@ -157,6 +157,7 @@ services:
     build:
       context: ..
       dockerfile: product-service/Dockerfile
+    image: akashtripathi/product-service:1.0.2  # <--- Set your version here
     container_name: product-service
     depends_on:
       postgres-init:

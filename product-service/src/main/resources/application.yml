@@ -2,8 +2,20 @@ spring:
   application:
     name: product-service
 
+  # ADD THIS SECTION
+  web:
+    cors:
+      mapping: "/**"
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+      allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+      allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+      max-age: ${CORS_MAX_AGE:86400}
+      exposed-headers: Authorization,Content-Disposition
+      allow-credentials: true
+
+
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:product_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:product_db}?sslmode=disable
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     hikari:
@@ -71,6 +83,19 @@ didww:
   sync-enabled: ${DIDWW_SYNC_ENABLED:true}
   sync-interval-minutes: ${DIDWW_SYNC_INTERVAL:60}
 
+epsilon:
+  voice:
+    api-url: https://greeter.co.in
+    username: dlAdmin
+    password: Nirmala@2801
+    defaults:
+      type: LOCAL
+      city: MUMBAI
+      monthly-fee: 299
+      setup-fee: 0
+      currency: INR
+      inboundPrice: 0.5
+      outboundPrice: 0.7
 # SIP Configuration
 sip:
   domain: ${SIP_DOMAIN:sip.dalaillama.in}
@@ -90,9 +115,6 @@ cache:
 
 # Server Configuration
 server:
-  servlet:
-    context-path: /product
-
   port: ${SERVER_PORT:8082}
   shutdown: graceful
   compression:

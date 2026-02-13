@@ -12,7 +12,7 @@ public class FinalizeStep implements ProvisioningStep {
 
     public String name() { return "FINALIZE"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         tenant.setActivatedAt(OffsetDateTime.now());
         tenant.setStatus(TenantStatus.ACTIVE);
     }

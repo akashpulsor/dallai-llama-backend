@@ -3,6 +3,7 @@ package com.dalai.llama.billing.controller;
 import com.dalai.llama.billing.domain.entity.BillingState;
 import com.dalai.llama.billing.dto.response.BillingStateResponse;
 import com.dalai.llama.billing.repository.BillingStateRepository;
+import com.dalai.llama.billing.service.WalletService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import java.util.UUID;
 public class BillingController {
 
     private final BillingStateRepository billingStateRepository;
+    private final WalletService walletService;
 
     @GetMapping("/billing-state")
     @Operation(summary = "Get billing state", description = "Retrieve current billing state for a tenant")
@@ -33,4 +35,6 @@ public class BillingController {
                 .lastCheckedAt(state.getLastCheckedAt())
                 .build());
     }
+
+
 }

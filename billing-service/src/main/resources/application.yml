@@ -4,7 +4,7 @@ spring:
 
   # Database
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:billing_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:billing_db}?sslmode=disable
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     hikari:
@@ -77,7 +77,8 @@ services:
     url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
   tenant:
     url: ${TENANT_SERVICE_URL:http://localhost:8081}
-
+  billing:
+    url: ${BILLING_SERVICE_URL:http://localhost:8081}
 # Server Configuration
 server:
   port: ${SERVER_PORT:8083}

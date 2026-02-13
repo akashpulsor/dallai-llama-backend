@@ -25,7 +25,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/internal/tenants/{tenantId}")
+@RequestMapping("/api/v1/internal/billing/{tenantId}")
 @RequiredArgsConstructor
 @Tag(name = "Internal Billing", description = "Internal APIs for service-to-service communication")
 @Hidden

@@ -2,12 +2,14 @@ package com.dalai.llama.product.service.didww.dto;
 
 
 import lombok.Data;
+
+import java.util.ArrayList;
 import java.util.List;
 
 @Data
 public class DidwwAvailableDidResponse {
 
-    private List<DidInfo> data;
+    private List<DidInfo> data = new ArrayList<>();
 
     @Data
     public static class DidInfo {

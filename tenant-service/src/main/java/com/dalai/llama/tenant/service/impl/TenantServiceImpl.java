@@ -19,6 +19,7 @@ import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.SlugGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,10 +46,10 @@ public class TenantServiceImpl implements TenantService {
     private final TenantEventProducer eventProducer;
     private final ProductServiceClient productServiceClient;
     private final BillingServiceClient billingServiceClient;
-
+    private final ProvisioningOrchestrator provisioningOrchestrator;
 
     @Override
-    public TenantResponse createTenant(CreateTenantRequest request) {
+    public TenantResponse createTenant(CreateTenantRequest request, Jwt jwt) {
         String slug = SlugGenerator.generate(request.name());
 
         if (tenantRepository.existsBySlug(slug)) {
@@ -59,34 +60,81 @@ public class TenantServiceImpl implements TenantService {
         Tenant tenant = tenantMapper.toEntity(request);
         tenant.setSlug(slug);
         tenant.setStatus(TenantStatus.CREATED);
-        tenant.setDeploymentModel(DeploymentModel.SHARED); // Default
+        tenant.setAdminUserEmail(jwt.getSubject());
+        tenant.setAdminUserId(jwt.getId());
         tenant.setCountry(request.country() != null ? request.country() : "IN");
         tenant.setTimezone(request.timezone() != null ? request.timezone() : "Asia/Kolkata");
+
         tenant = tenantRepository.save(tenant);
 
+        // 4. Transition to PRODUCTS_CONFIGURED
+        //stateMachine.transition(tenant, TenantStatus.PRODUCTS_CONFIGURED, "SYSTEM", "Internal compliance and recording policies initialized");
 
-        // Create default compliance policy
-        CompliancePolicy compliance = new CompliancePolicy();
-        compliance.setTenant(tenant);
-        compliancePolicyRepository.save(compliance);
-
-        // Create default recording policy
-        RecordingPolicy recording = new RecordingPolicy();
-        recording.setTenant(tenant);
-        recordingPolicyRepository.save(recording);
-
-        // Create default agent capacity
-        AgentCapacity capacity = new AgentCapacity();
-        capacity.setTenant(tenant);
-        agentCapacityRepository.save(capacity);
-        productServiceClient.assignDefaultPlan(tenant.getId(),request.productCode());
-        billingServiceClient.createWallet(tenant.getId());
+        // 2. Transition to PLAN_ASSIGNED
+        //productServiceClient.assignDefaultPlan(tenant.getId(), request.productCode());
+        //stateMachine.transition(tenant, TenantStatus.PLAN_ASSIGNED, "SYSTEM", "Default plan assigned: " + request.productCode());
+        // 3. Configure Internal Policies (Compliance, Recording, Capacity)
+        //createDefaultPolicies(tenant);
+        //billingServiceClient.createWallet(tenant.getId());
         // Publish event
+        // 5. START TECHNICAL PROVISIONING (Keycloak)
+        // We transition to PROVISIONING_KEYCLOAK and call the realm service
+        //stateMachine.transition(tenant, TenantStatus.PROVISIONING_KEYCLOAK, "ORCHESTRATOR", "Starting Keycloak Realm Provisioning");
+
+        try {
+            // This sets up Realm, Roles, Client, and Admin User
+            //provisioningOrchestrator.setIdentityProvisioner(tenant);
+            //provisioningOrchestrator
+            // 6. Hand over to Infrastructure Provisioning
+            //stateMachine.transition(tenant, TenantStatus.READY_TO_PROVISION, "KEYCLOAK_SERVICE", "Keycloak setup verified");
+
+        } catch (Exception e) {
+            log.error("Keycloak provisioning failed for tenant {}: {}", tenant.getId(), e.getMessage());
+            stateMachine.transition(tenant, TenantStatus.ERROR, "KEYCLOAK_SERVICE", "Keycloak setup failed: " + e.getMessage());
+            // Handle error/rollback if necessary
+        }
         eventProducer.publish("tenant.created", tenant.getId().toString(),
                 new TenantCreatedEvent(tenant.getId(), tenant.getSlug()));
 
         log.info("Created tenant: {} ({})", tenant.getName(), tenant.getSlug());
         return tenantMapper.toResponse(tenant);
+    }
+
+    @Override
+    public void restartProvisioning(UUID tenantId, String reason) {
+        Tenant tenant = findTenantOrThrow(tenantId);
+
+        // PM Logic: Only allow restart if NOT currently in a successful ACTIVE state,
+        // or allow it from ACTIVE if we are performing a 're-deployment'.
+        log.info("Initiating provisioning restart for tenant: {} due to: {}", tenantId, reason);
+
+        // 1. Transition State
+        stateMachine.transition(tenant, TenantStatus.PROVISIONING_RESTART, "ADMIN", reason);
+
+        // 2. Trigger Orchestrator (Orchestrator should handle task cleanup)
+        orchestrator.startProvisioning(tenantId);
+    }
+
+    @Override
+    public void rejectKyc(UUID tenantId, String reason) {
+        Tenant tenant = findTenantOrThrow(tenantId);
+
+        stateMachine.transition(tenant, TenantStatus.KYC_REJECTED, "COMPLIANCE_OFFICER", reason);
+
+        // PM Note: You might want to trigger an email notification here
+        // informing the user why their documents were rejected.
+        log.info("KYC Rejected for tenant: {}. Reason: {}", tenantId, reason);
+    }
+
+    @Override
+    public void approveKyc(UUID tenantId) {
+        Tenant tenant = findTenantOrThrow(tenantId);
+
+        stateMachine.transition(tenant, TenantStatus.KYC_APPROVED, "COMPLIANCE_OFFICER", "KYC documents verified successfully");
+
+        // After approval, check if we can move closer to provisioning
+        checkAndTransitionToReadyToProvision(tenant);
+        log.info("KYC Approved for tenant: {}", tenantId);
     }
 
     @Override
@@ -138,9 +186,9 @@ public class TenantServiceImpl implements TenantService {
     }
 
     @Override
-    public void deleteTenant(UUID tenantId) {
+    public void deleteTenant(UUID tenantId, String reason) {
         Tenant tenant = findTenantOrThrow(tenantId);
-        stateMachine.transition(tenant, TenantStatus.DELETED, "ADMIN", "Deleted by admin");
+        stateMachine.transition(tenant, TenantStatus.DELETED, "ADMIN", reason);
         eventProducer.publish("tenant.deleted", tenantId.toString(),
                 new TenantDeletedEvent(tenantId));
         log.info("Deleted tenant: {}", tenantId);
@@ -148,7 +196,7 @@ public class TenantServiceImpl implements TenantService {
 
     @Override
     public void triggerProvisioning(UUID tenantId) {
-        readinessCheckService.assertReady(tenantId);
+        ///readinessCheckService.assertReady(tenantId);
         orchestrator.startProvisioning(tenantId);
         log.info("Triggered provisioning for tenant: {}", tenantId);
     }
@@ -182,9 +230,9 @@ public class TenantServiceImpl implements TenantService {
     @Override
     public void onPlanAssigned(UUID tenantId, UUID planId, String planCode) {
         Tenant tenant = findTenantOrThrow(tenantId);
-        tenant.setPlanId(planId);
-        tenant.setPlanCode(planCode);
-        tenant.setPlanAssignedAt(OffsetDateTime.now());
+        //tenant.setPlanId(planId);
+        //tenant.setPlanCode(planCode);
+        //tenant.setPlanAssignedAt(OffsetDateTime.now());
 
         if (tenant.getStatus() == TenantStatus.CREATED) {
             stateMachine.transition(tenant, TenantStatus.PLAN_ASSIGNED,
@@ -245,31 +293,33 @@ public class TenantServiceImpl implements TenantService {
         Tenant t = findTenantOrThrow(tenantId);
         CompliancePolicy compliance = compliancePolicyRepository.findByTenantId(tenantId)
                 .orElse(null);
-
+/*
         return new TenantProvisioningConfigResponse(
                 t.getId(),
                 t.getSlug(),
-                t.getNamespace(),
-                t.getDeploymentModel() != null ? t.getDeploymentModel().name() : "SHARED",
+                //t.getNamespace(),
+                //t.getDeploymentModel() != null ? t.getDeploymentModel().name() : "SHARED",
                 compliance != null ? compliance.getDataRegion().name() : "IN",
-                t.getKafkaBootstrap(),
+                //t.getKafkaBootstrap(),
                 "registration-events-" + t.getSlug(),
                 "call-events-" + t.getSlug(),
                 "ai-results-" + t.getSlug(),
                 "rtp-events-" + t.getSlug(),
-                t.getRedisUrl(),
-                t.getPostgresUrl(),
-                t.getMysqlUrl(),
-                t.getSipExternalIp(),
-                t.getSipUdpUrl(),
-                t.getSipTlsUrl(),
-                t.getTurnUrl(),
-                t.getWebsocketUrl(),
-                t.getRtpengineSock(),
-                t.getDidwwTrunkId(),
-                t.getDidwwSipConfigId(),
-                t.getDashboardUrl()
-        );
+                //t.getRedisUrl(),
+                //t.getPostgresUrl(),
+                //t.getMysqlUrl(),
+                //t.getSipExternalIp(),
+                //t.getSipUdpUrl(),
+                //t.getSipTlsUrl(),
+                //t.getTurnUrl(),
+                //t.getWebsocketUrl(),
+                //t.getRtpengineSock(),
+                //t.getDidwwTrunkId(),
+                //t.getDidwwSipConfigId(),
+                //t.getDashboardUrl()
+        );*/
+
+        return null;
     }
 
     // ========== Private Helpers ==========
@@ -285,5 +335,22 @@ public class TenantServiceImpl implements TenantService {
             stateMachine.transition(tenant, TenantStatus.READY_TO_PROVISION,
                     "SYSTEM", "All prerequisites met");
         }
+    }
+
+    /**
+     * Helper to encapsulate policy creation
+     */
+    private void createDefaultPolicies(Tenant tenant) {
+        CompliancePolicy compliance = new CompliancePolicy();
+        compliance.setTenant(tenant);
+        compliancePolicyRepository.save(compliance);
+
+        RecordingPolicy recording = new RecordingPolicy();
+        recording.setTenant(tenant);
+        recordingPolicyRepository.save(recording);
+
+        AgentCapacity capacity = new AgentCapacity();
+        capacity.setTenant(tenant);
+        agentCapacityRepository.save(capacity);
     }
 }

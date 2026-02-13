@@ -14,7 +14,7 @@ public class DeployInfrastructureStep implements ProvisioningStep {
 
     public String name() { return "DEPLOY_INFRASTRUCTURE"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         k8s.deployInfrastructure(tenant.getId());
     }
 }

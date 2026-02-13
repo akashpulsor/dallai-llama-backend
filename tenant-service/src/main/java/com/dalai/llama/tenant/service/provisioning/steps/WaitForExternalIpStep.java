@@ -14,7 +14,7 @@ public class WaitForExternalIpStep implements ProvisioningStep {
 
     public String name() { return "WAIT_EXTERNAL_IP"; }
 
-    public void execute(Tenant tenant) {
-        tenant.setSipExternalIp(k8s.waitForExternalIp(tenant.getId()));
+    public void execute(Tenant tenant, String productCode) {
+        //tenant.setSipExternalIp(k8s.waitForExternalIp(tenant.getId()));
     }
 }

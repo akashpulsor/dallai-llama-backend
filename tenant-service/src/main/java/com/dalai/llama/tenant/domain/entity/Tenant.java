@@ -1,6 +1,5 @@
 package com.dalai.llama.tenant.domain.entity;
 
-import com.dalai.llama.tenant.domain.entity.enums.DeploymentModel;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -37,6 +36,7 @@ public class Tenant {
     private String primaryContactEmail;
 
     private String primaryContactPhone;
+    private String billingEmail;
 
     private String country;
     private String timezone;
@@ -49,47 +49,19 @@ public class Tenant {
     private String statusMessage;
     private OffsetDateTime statusChangedAt;
 
-    @Enumerated(EnumType.STRING)
-    private DeploymentModel deploymentModel;
 
-    private String namespace;
 
-    // Keycloak
+    // Global Keycloak Realm Info (Apps will have their own Client IDs)
     private String keycloakRealmName;
     private String keycloakRealmId;
-    private String keycloakClientId;
+
     private String adminUserId;
     private String adminUserEmail;
 
-    // Product
-    private UUID planId;
-    private String planCode;
-    private OffsetDateTime planAssignedAt;
-
-    // Billing
+    // Billing (Main Wallet)
     private UUID walletId;
     private String billingState;
     private OffsetDateTime billingReadyAt;
-
-    // Infra
-    private String kafkaBootstrap;
-    private String redisUrl;
-    private String postgresUrl;
-    private String mysqlUrl;
-
-    // SIP
-    private String sipExternalIp;
-    private String sipUdpUrl;
-    private String sipTlsUrl;
-    private String turnUrl;
-    private String websocketUrl;
-    private String rtpengineSock;
-
-    // DIDWW
-    private String didwwTrunkId;
-    private String didwwSipConfigId;
-
-    private String dashboardUrl;
 
     // Lifecycle
     private OffsetDateTime createdAt;
@@ -113,5 +85,14 @@ public class Tenant {
     @PreUpdate
     void preUpdate() {
         updatedAt = OffsetDateTime.now();
+    }
+
+    // Helper methods
+    public boolean isActive() {
+        return status == TenantStatus.ACTIVE;
+    }
+
+    public String getRealm() {
+        return slug + ".dalaillama.in";
     }
 }

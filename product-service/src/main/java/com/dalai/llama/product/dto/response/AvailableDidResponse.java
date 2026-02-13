@@ -16,5 +16,9 @@ public class AvailableDidResponse {
     private String type;
     private String setupFee;
     private String monthlyFee;
+    private String provider;
+    private String currency;
+    private String inboundPrice;
+    private String outboundPrice;
 }
 

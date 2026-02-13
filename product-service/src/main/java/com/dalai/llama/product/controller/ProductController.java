@@ -1,6 +1,7 @@
 package com.dalai.llama.product.controller;
 
 import com.dalai.llama.product.dto.mapper.ProductMapper;
+import com.dalai.llama.product.dto.response.ProductAppResponse;
 import com.dalai.llama.product.dto.response.ProductResponse;
 import com.dalai.llama.product.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -62,5 +63,22 @@ public class ProductController {
             @PathVariable String code
     ) {
         return mapper.toProductResponse(productService.getByCode(code));
+    }
+
+    @GetMapping("/{code}/apps")
+    @Operation(summary = "Get apps for a product", description = "Returns all enabled apps configured for a product")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "List of apps",
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = ProductAppResponse.class)))),
+            @ApiResponse(responseCode = "404", description = "Product not found")
+    })
+    public List<ProductAppResponse> getProductApps(
+            @Parameter(description = "Product code (e.g., AI_CC, CONV_IVR)")
+            @PathVariable String code) {
+        // Validate product exists
+        return productService.getAppsByProductCode(code)
+                .stream()
+                .map(mapper::toProductAppResponse)
+                .toList();
     }
 }

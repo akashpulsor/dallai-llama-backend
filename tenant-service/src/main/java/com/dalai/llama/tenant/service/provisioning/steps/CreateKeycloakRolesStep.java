@@ -14,7 +14,7 @@ public class CreateKeycloakRolesStep implements ProvisioningStep {
 
     public String name() { return "CREATE_KEYCLOAK_ROLES"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         keycloak.createRoles(tenant.getSlug());
     }
 }

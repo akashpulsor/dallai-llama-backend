@@ -5,13 +5,14 @@ package com.dalai.llama.tenant.service;
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.UpdateTenantRequest;
 import com.dalai.llama.tenant.dto.response.*;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.util.List;
 import java.util.UUID;
 
 public interface TenantService {
 
-    TenantResponse createTenant(CreateTenantRequest request);
+    TenantResponse createTenant(CreateTenantRequest request, Jwt jwt);
 
     List<TenantResponse> listTenants();
 
@@ -23,13 +24,17 @@ public interface TenantService {
 
     void suspendTenant(UUID tenantId, String reason);
 
+    void rejectKyc(UUID tenantId, String reason);
+
     void activateTenant(UUID tenantId);
 
-    void deleteTenant(UUID tenantId);
+    void deleteTenant(UUID tenantId, String reason);
 
     void triggerProvisioning(UUID tenantId);
 
     void retryProvisioning(UUID tenantId);
+
+    void approveKyc(UUID tenantId);
 
     ProvisioningStatusResponse getProvisioningStatus(UUID tenantId);
 
@@ -47,4 +52,6 @@ public interface TenantService {
     void onBillingStateChanged(UUID tenantId, String state);
 
     TenantProvisioningConfigResponse getProvisioningConfig(UUID tenantId);
+
+    void restartProvisioning(UUID tenantId, String reason);
 }

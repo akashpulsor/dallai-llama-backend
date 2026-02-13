@@ -3,12 +3,22 @@ spring:
     name: tenant-service
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:tenant_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:tenant_db}?sslmode=disable
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5
+  # ADD THIS SECTION
+  web:
+    cors:
+      mapping: "/**"
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+      allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+      allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+      max-age: ${CORS_MAX_AGE:86400}
+      exposed-headers: Authorization,Content-Disposition
+      allow-credentials: true
 
   jpa:
     hibernate:
@@ -48,14 +58,40 @@ spring:
         jwt:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://auth.localhost:8081/realms/dalaillama}
 
-# Keycloak Admin Client
+# Dalai LLAMA Platform Configuration
+dalaillama:
+  domain: ${DALAILLAMA_DOMAIN:dalaillama.in}
+
+
+# Telecom Stack Images
+telecom:
+  images:
+    agent-ui: ${IMAGE_AGENT_UI:dalaillama/agent-ui:latest}
+    pbx-core: ${IMAGE_PBX_CORE:dalaillama/pbx-core:latest}
+    agent-service: ${IMAGE_AGENT_SERVICE:dalaillama/agent-service:latest}
+    ai-service: ${IMAGE_AI_SERVICE:dalaillama/ai-service:latest}
+    kamailio: ${IMAGE_KAMAILIO:dalaillama/kamailio:5.7}
+    freeswitch: ${IMAGE_FREESWITCH:dalaillama/freeswitch:1.10}
+    rtpengine: ${IMAGE_RTPENGINE:dalaillama/rtpengine:latest}
+    coturn: ${IMAGE_COTURN:dalaillama/coturn:latest}
+
+# Cluster Configuration
+cluster:
+  issuer: ${CLUSTER_ISSUER:letsencrypt-prod}
+
+# Ingress Configuration
+ingress:
+  class: ${INGRESS_CLASS:nginx}
+
 keycloak:
   admin:
     url: ${KEYCLOAK_ADMIN_URL:http://auth.localhost:8081}
     realm: master
-    client-id: admin-cli
-    username: ${KEYCLOAK_ADMIN_USERNAME:admin}
-    password: ${KEYCLOAK_ADMIN_PASSWORD:admin}
+    orchestrator:
+      client-id: platform-orchestrator
+      # Add the $ and ensure the colon has a space after it
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:PYJhT5PhZVZzVo81I2E5bNaKtDXC8hPA}
+
 
 # Kubernetes Client
 kubernetes:
@@ -69,7 +105,11 @@ services:
     url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
   billing:
     url: ${BILLING_SERVICE_URL:http://localhost:8083}
+  didww:
+    url: ${DIDWW_SERVICE_URL:http://didww-service:8080}
 
+gateway:
+  ref: ${GATEWAY_REF:istio-system/central-gateway}
 # Provisioning Configuration
 provisioning:
   max-retries: ${PROVISIONING_MAX_RETRIES:3}

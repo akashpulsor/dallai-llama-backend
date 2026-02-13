@@ -73,7 +73,18 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
 
             keycloakAdminClient.realms().create(realm);
             log.info("Created Keycloak realm: {}", realmName);
-        } catch (Exception e) {
+        }
+        catch (jakarta.ws.rs.WebApplicationException e) {
+            // Capture the response to check the status code
+            if (e.getResponse().getStatus() == 409) {
+                log.info("Realm {} already exists. Skipping creation step.", realmName);
+                // Do not throw an exception; let the orchestrator move to the next step
+            } else {
+                log.error("Keycloak error: {}", e.getResponse().readEntity(String.class));
+                throw e;
+            }
+        }
+        catch (Exception e) {
             log.error("Failed to create Keycloak realm: {}", realmName, e);
             throw new KeycloakException("Failed to create realm: " + realmName, e);
         }
@@ -108,7 +119,18 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             rolesResource.get("TENANT_ADMIN").addComposites(composites);
 
             log.info("Created {} roles for realm: {}", TENANT_ROLES.size(), realmName);
-        } catch (Exception e) {
+        }
+        catch (jakarta.ws.rs.WebApplicationException e) {
+            // Capture the response to check the status code
+            if (e.getResponse().getStatus() == 409) {
+                log.info("Realm {} already exists. Skipping creation step.", realmName);
+                // Do not throw an exception; let the orchestrator move to the next step
+            } else {
+                log.error("Keycloak error: {}", e.getResponse().readEntity(String.class));
+                throw e;
+            }
+        }
+        catch (Exception e) {
             log.error("Failed to create roles for realm: {}", realmName, e);
             throw new KeycloakException("Failed to create roles for realm: " + realmName, e);
         }

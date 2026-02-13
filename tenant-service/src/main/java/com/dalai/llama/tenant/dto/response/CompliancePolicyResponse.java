@@ -2,6 +2,7 @@ package com.dalai.llama.tenant.dto.response;
 
 import com.dalai.llama.tenant.domain.entity.enums.DataRegion;
 import java.time.LocalTime;
+import java.util.List;
 
 public record CompliancePolicyResponse(
 
@@ -13,5 +14,5 @@ public record CompliancePolicyResponse(
         boolean callTimeRestrictionEnabled,
         LocalTime callWindowStart,
         LocalTime callWindowEnd,
-        String blockedDays
+        List<String> blockedDays
 ) {}

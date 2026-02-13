@@ -7,7 +7,7 @@ public interface ProvisioningStep {
 
     String name();
 
-    void execute(Tenant tenant);
+    void execute(Tenant tenant, String productCode);
 
     default void compensate(Tenant tenant) {}
 }

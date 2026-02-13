@@ -14,7 +14,7 @@ public class CreateNamespaceStep implements ProvisioningStep {
 
     public String name() { return "CREATE_NAMESPACE"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         k8s.createNamespace(tenant.getId(), tenant.getSlug());
     }
 }

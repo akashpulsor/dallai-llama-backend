@@ -14,7 +14,7 @@ public class DeployTelecomStep implements ProvisioningStep {
 
     public String name() { return "DEPLOY_TELECOM"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         k8s.deployTelecom(tenant.getId());
     }
 }

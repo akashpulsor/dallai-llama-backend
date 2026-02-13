@@ -25,6 +25,235 @@ public class ProductServiceApplication {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/product/client/BillingServiceClient.java
+==================================================
+
+package com.dalai.llama.product.client;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.math.BigDecimal;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Client for Billing Service - called when DIDs are provisioned/released
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class BillingServiceClient {
+
+    private final WebClient.Builder webClientBuilder;
+
+    @Value("${services.billing.url:http://localhost:8083}")
+    private String billingServiceUrl;
+
+    private WebClient client() {
+        return webClientBuilder.baseUrl(billingServiceUrl).build();
+    }
+
+    /**
+     * Record DID rental charge (monthly or initial)
+     */
+    public void recordDidRental(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/did-rental", tenantId)
+                    .bodyValue(Map.of(
+                            "didId", didId,
+                            "didNumber", didNumber,
+                            "amount", amount
+                    ))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Recorded DID rental for tenant {}: {} @ {}", tenantId, didNumber, amount);
+        } catch (Exception e) {
+            log.error("Failed to record DID rental for tenant {}: {}", tenantId, e.getMessage());
+            throw new RuntimeException("Failed to record DID rental", e);
+        }
+    }
+
+    /**
+     * Record DID setup fee (one-time charge)
+     */
+    public void recordDidSetupFee(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/usage", tenantId)
+                    .bodyValue(Map.of(
+                            "metric", "DID_SETUP",
+                            "quantity", BigDecimal.ONE,
+                            "unit", "UNIT",
+                            "unitCost", amount,
+                            "totalCost", amount,
+                            "sourceType", "DID",
+                            "sourceId", didId,
+                            "description", "DID setup fee: " + didNumber
+                    ))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Recorded DID setup fee for tenant {}: {} @ {}", tenantId, didNumber, amount);
+        } catch (Exception e) {
+            log.error("Failed to record DID setup fee: {}", e.getMessage());
+            throw new RuntimeException("Failed to record DID setup fee", e);
+        }
+    }
+
+    /**
+     * Check if tenant has sufficient balance
+     */
+    public boolean hasSufficientBalance(UUID tenantId, BigDecimal required) {
+        try {
+            CallAuthResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/authorize-call", tenantId)
+                    .retrieve()
+                    .bodyToMono(CallAuthResponse.class)
+                    .block();
+            return resp != null && resp.remainingBalance() != null
+                    && resp.remainingBalance().compareTo(required) >= 0;
+        } catch (Exception e) {
+            log.error("Failed to check balance for tenant {}: {}", tenantId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get billing state for tenant
+     */
+    public String getBillingState(UUID tenantId) {
+        try {
+            BillingStateResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/billing-state", tenantId)
+                    .retrieve()
+                    .bodyToMono(BillingStateResponse.class)
+                    .block();
+            return resp != null ? resp.state() : "UNKNOWN";
+        } catch (Exception e) {
+            log.error("Failed to get billing state for tenant {}: {}", tenantId, e.getMessage());
+            return "UNKNOWN";
+        }
+    }
+
+    /**
+     * Check if calls are allowed (ACTIVE or GRACE state)
+     */
+    public boolean canMakeCalls(UUID tenantId) {
+        try {
+            BillingStateResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/billing-state", tenantId)
+                    .retrieve()
+                    .bodyToMono(BillingStateResponse.class)
+                    .block();
+            return resp != null && resp.canMakeCalls();
+        } catch (Exception e) {
+            log.error("Failed to check call permission: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    // Response DTOs
+    public record BillingStateResponse(String state, boolean canMakeCalls) {}
+    public record CallAuthResponse(boolean authorized, String state, String reason, BigDecimal remainingBalance) {}
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/client/TenantServiceClient.java
+==================================================
+
+package com.dalai.llama.product.client;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.UUID;
+
+/**
+ * Client for Tenant Service - called to notify DID purchases and plan assignments
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class TenantServiceClient {
+
+    private final WebClient.Builder webClientBuilder;
+
+    @Value("${services.tenant.url:http://localhost:8081}")
+    private String tenantServiceUrl;
+
+    private WebClient client() {
+        return webClientBuilder.baseUrl(tenantServiceUrl).build();
+    }
+
+    /**
+     * Notify tenant service when DID is purchased
+     */
+    public void notifyDidPurchased(UUID tenantId) {
+        try {
+            client().put()
+                    .uri("/api/v1/internal/tenants/{tenantId}/did-purchased", tenantId)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Notified tenant service of DID purchase for tenant {}", tenantId);
+        } catch (Exception e) {
+            log.error("Failed to notify DID purchase: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Notify tenant service when plan is assigned
+     */
+    public void notifyPlanAssigned(UUID tenantId, UUID planId, String planCode) {
+        try {
+            client().put()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/internal/tenants/{tenantId}/plan-assigned")
+                            .queryParam("planId", planId)
+                            .queryParam("planCode", planCode)
+                            .build(tenantId))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Notified tenant service of plan assignment: {} -> {}", tenantId, planCode);
+        } catch (Exception e) {
+            log.error("Failed to notify plan assignment: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Get tenant status
+     */
+    public TenantStatus getTenantStatus(UUID tenantId) {
+        try {
+            return client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/status", tenantId)
+                    .retrieve()
+                    .bodyToMono(TenantStatus.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get tenant status: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    public record TenantStatus(UUID id, String status, String billingState) {}
+}
+
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/product/config/CacheConfig.java
 ==================================================
 
@@ -166,24 +395,42 @@ FILE: ./src/main/java/com/dalai/llama/product/config/RedisConfig.java
 package com.dalai.llama.product.config;
 
 
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 @Configuration
+@EnableConfigurationProperties(RedisProperties.class)
 public class RedisConfig {
 
+
     @Bean
-    public LettuceConnectionFactory redisConnectionFactory() {
-        return new LettuceConnectionFactory();
+    public RedisConnectionFactory redisConnectionFactory(
+            RedisProperties properties) {
+
+        RedisStandaloneConfiguration config =
+                new RedisStandaloneConfiguration(
+                        properties.getHost(),
+                        properties.getPort()
+                );
+
+        if (properties.getPassword() != null && !properties.getPassword().isEmpty()) {
+            config.setPassword(properties.getPassword());
+        }
+
+        return new LettuceConnectionFactory(config);
     }
 
     @Bean
-    public RedisTemplate<String, Object> redisTemplate() {
-        RedisTemplate<String, Object> template = new RedisTemplate<>();
-        template.setConnectionFactory(redisConnectionFactory());
-        return template;
+    public StringRedisTemplate stringRedisTemplate(
+            RedisConnectionFactory factory) {
+        return new StringRedisTemplate(factory);
     }
 }
 
@@ -202,6 +449,8 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 
+import static org.springframework.security.config.Customizer.withDefaults;
+
 @Configuration
 public class SecurityConfig {
 
@@ -210,17 +459,27 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/swagger-ui.html",    // Removed /product
+                                "/swagger-ui/**",      // Removed /product
+                                "/v3/api-docs",        // Default springdoc path
+                                "/v3/api-docs/**",     // Default springdoc path
+                                "/api-docs",           // Your custom path in YAML
+                                "/api-docs/**"          // Your custom path in YAML
+                        ).permitAll()
+                        .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().denyAll()
                 )
-                .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(withDefaults())
+                );
 
         return http.build();
     }
 }
-
 
 
 ==================================================
@@ -1422,6 +1681,7 @@ import com.dalai.llama.product.domain.entity.enums.PlanTier;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -1450,7 +1710,7 @@ public class Plan {
     @Enumerated(EnumType.STRING)
     private PlanTier tier;
 
-    private double monthlyPrice;
+    private BigDecimal monthlyPrice;
     private String currency;
 
     private boolean isDefault;
@@ -2108,6 +2368,20 @@ public class PlanChangedEvent {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/BillingBlockedException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class BillingBlockedException extends RuntimeException {
+    public BillingBlockedException(String message) {
+        super(message);
+    }
+}
+
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/product/domain/exception/DidNotAvailableException.java
 ==================================================
 
@@ -2161,6 +2435,20 @@ package com.dalai.llama.product.domain.exception;
 
 public class EntitlementExceededException extends RuntimeException {
     public EntitlementExceededException(String message) {
+        super(message);
+    }
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/product/domain/exception/InsufficientBalanceException.java
+==================================================
+
+package com.dalai.llama.product.domain.exception;
+
+public class InsufficientBalanceException extends RuntimeException {
+    public InsufficientBalanceException(String message) {
         super(message);
     }
 }
@@ -3347,6 +3635,142 @@ public class DidwwSyncScheduler {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/product/scheduler/MonthlyDidRentalJob.java
+==================================================
+
+package com.dalai.llama.product.scheduler;
+
+import com.dalai.llama.product.client.BillingServiceClient;
+import com.dalai.llama.product.domain.entity.Did;
+import com.dalai.llama.product.domain.entity.enums.DidStatus;
+import com.dalai.llama.product.repository.DidRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+/**
+ * Monthly job to charge DID rental fees.
+ * Runs on 1st of each month at 00:30 AM.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class MonthlyDidRentalJob {
+
+    private final DidRepository didRepository;
+    private final BillingServiceClient billingServiceClient;
+
+    private static final BigDecimal DEFAULT_MONTHLY_RATE = new BigDecimal("500.00");
+
+    /**
+     * Runs on 1st of every month at 00:30 AM
+     * Cron: second minute hour day-of-month month day-of-week
+     */
+    @Scheduled(cron = "0 30 0 1 * *")
+    public void chargeMonthlyDidRentals() {
+        log.info("Starting monthly DID rental billing job for {}", LocalDate.now());
+
+        try {
+            // Get all ACTIVE DIDs
+            List<Did> activeDids = didRepository.findByStatus(DidStatus.ACTIVE);
+            log.info("Found {} active DIDs to bill", activeDids.size());
+
+            if (activeDids.isEmpty()) {
+                log.info("No active DIDs to bill");
+                return;
+            }
+
+            // Group DIDs by tenant
+            Map<UUID, List<Did>> didsByTenant = activeDids.stream()
+                    .collect(Collectors.groupingBy(Did::getTenantId));
+
+            int successCount = 0;
+            int failCount = 0;
+
+            // Process each tenant
+            for (Map.Entry<UUID, List<Did>> entry : didsByTenant.entrySet()) {
+                UUID tenantId = entry.getKey();
+                List<Did> tenantDids = entry.getValue();
+
+                log.info("Billing tenant {} for {} DIDs", tenantId, tenantDids.size());
+
+                for (Did did : tenantDids) {
+                    try {
+                        chargeDid(tenantId, did);
+                        successCount++;
+                    } catch (Exception e) {
+                        log.error("Failed to charge DID {} for tenant {}: {}", 
+                                did.getNumber(), tenantId, e.getMessage());
+                        failCount++;
+                    }
+                }
+            }
+
+            log.info("Monthly DID rental billing completed. Success: {}, Failed: {}", 
+                    successCount, failCount);
+
+        } catch (Exception e) {
+            log.error("Monthly DID rental billing job failed: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Charge rental for a single DID
+     */
+    private void chargeDid(UUID tenantId, Did did) {
+        BigDecimal monthlyRate = did.getMonthlyRental();
+        
+        // Use default rate if not set on DID
+        if (monthlyRate == null || monthlyRate.signum() <= 0) {
+            monthlyRate = DEFAULT_MONTHLY_RATE;
+            log.warn("DID {} has no monthly rate set, using default: {}", 
+                    did.getNumber(), DEFAULT_MONTHLY_RATE);
+        }
+
+        log.debug("Charging DID {} rental {} for tenant {}", 
+                did.getNumber(), monthlyRate, tenantId);
+
+        // Call Billing Service to record the charge
+        billingServiceClient.recordDidRental(
+                tenantId,
+                did.getId(),
+                did.getNumber(),
+                monthlyRate
+        );
+
+        log.info("Charged DID {} rental {} for tenant {}", 
+                did.getNumber(), monthlyRate, tenantId);
+    }
+
+    /**
+     * Manual trigger for testing or re-billing
+     */
+    public void chargeDidRentalForTenant(UUID tenantId) {
+        log.info("Manual DID rental billing for tenant {}", tenantId);
+
+        List<Did> tenantDids = didRepository.findByTenantId(tenantId).stream()
+                .filter(d -> d.getStatus() == DidStatus.ACTIVE)
+                .toList();
+
+        for (Did did : tenantDids) {
+            chargeDid(tenantId, did);
+        }
+
+        log.info("Completed manual DID rental billing for tenant {}", tenantId);
+    }
+}
+
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/product/scheduler/SipTrunkHealthChecker.java
 ==================================================
 
@@ -4003,6 +4427,7 @@ FILE: ./src/main/java/com/dalai/llama/product/service/impl/DidServiceImpl.java
 
 package com.dalai.llama.product.service.impl;
 
+import com.dalai.llama.product.client.BillingServiceClient;
 import com.dalai.llama.product.domain.entity.Did;
 import com.dalai.llama.product.domain.entity.SipEndpoint;
 import com.dalai.llama.product.domain.entity.SipTrunk;
@@ -4010,8 +4435,10 @@ import com.dalai.llama.product.domain.entity.enums.DidStatus;
 import com.dalai.llama.product.domain.event.DidProvisionedEvent;
 import com.dalai.llama.product.domain.event.DidPurchasedEvent;
 import com.dalai.llama.product.domain.event.DidReleasedEvent;
+import com.dalai.llama.product.domain.exception.BillingBlockedException;
 import com.dalai.llama.product.domain.exception.DidNotAvailableException;
 import com.dalai.llama.product.domain.exception.DidNotFoundException;
+import com.dalai.llama.product.domain.exception.InsufficientBalanceException;
 import com.dalai.llama.product.kafka.producer.ProductEventProducer;
 import com.dalai.llama.product.repository.DidRepository;
 import com.dalai.llama.product.repository.SipTrunkRepository;
@@ -4019,12 +4446,14 @@ import com.dalai.llama.product.service.DidService;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.SipEndpointService;
 import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
 import com.dalai.llama.product.util.E164Formatter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -4042,9 +4471,54 @@ public class DidServiceImpl implements DidService {
     private final DidwwProvisioningService didwwService;
     private final ProductEventProducer eventProducer;
 
+    private final BillingServiceClient billingServiceClient;
+
+
+    // In DidwwProvisioningService - add this method
+    /*
+    public DidwwAvailableDidResponse.DidInfo getDidInfo(String number) {
+        // Search by the exact number
+        DidwwAvailableDidResponse response = didwwService.searchAvailableDids("number=" + number);
+
+        return response.getData().stream()
+                .filter(d -> d.getNumber().equals(number))
+                .findFirst()
+                .orElse(null);
+    } */
+
+    private BigDecimal getDidMonthlyRate(String number) {
+        // Search DIDWW for this specific number to get its rate
+        /*
+        DidwwAvailableDidResponse response = didwwService.searchAvailableDids(number);
+
+        return response.getData().stream()
+                .filter(d -> d.getNumber().equals(number))
+                .findFirst()
+                .map(d -> new BigDecimal(d.getMonthlyFee()))
+                .orElse(getDefaultDidRate()); // fallback
+
+         */
+        return new BigDecimal(500.00); // For simplicity, return default rate
+    }
+
+    private BigDecimal getDefaultDidRate() {
+        return new BigDecimal("500.00"); // Default INR 500/month
+    }
     @Override
     public Did provisionDid(UUID tenantId, String number, UUID sipTrunkId) {
         log.info("Provisioning DID {} for tenant {}", number, tenantId);
+
+        // NEW: Check billing state first
+        String billingState = billingServiceClient.getBillingState(tenantId);
+        if (!"ACTIVE".equals(billingState) && !"GRACE".equals(billingState)) {
+            throw new BillingBlockedException("Cannot purchase DID - billing state: " + billingState);
+        }
+
+        // NEW: Check sufficient balance for first month rental
+        BigDecimal monthlyRate = getDidMonthlyRate(number); // from DIDWW
+        if (!billingServiceClient.hasSufficientBalance(tenantId, monthlyRate)) {
+            throw new InsufficientBalanceException("Insufficient balance for DID rental");
+        }
 
         // 1. Validate entitlements
         entitlementService.validateDidLimit(tenantId);

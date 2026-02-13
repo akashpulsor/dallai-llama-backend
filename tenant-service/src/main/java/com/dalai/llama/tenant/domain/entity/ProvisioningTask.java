@@ -5,7 +5,9 @@ import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -33,10 +35,12 @@ public class ProvisioningTask {
     private String currentStepStatus;
     private OffsetDateTime currentStepStartedAt;
 
-    @Column(columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "completed_steps")
     private String completedSteps;
 
-    @Column(columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "step_results")
     private String stepResults;
 
     private int retryCount;

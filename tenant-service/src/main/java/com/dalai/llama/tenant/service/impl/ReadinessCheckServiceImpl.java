@@ -51,14 +51,14 @@ public class ReadinessCheckServiceImpl implements ReadinessCheckService {
         }
 
         // 3. Plan assigned
-        if (tenant.getPlanId() == null) {
-            failedChecks.add("No plan assigned");
-        }
+        //if (tenant.getPlanId() == null) {
+        //    failedChecks.add("No plan assigned");
+        //}
 
         // 4. Deployment model set
-        if (tenant.getDeploymentModel() == null) {
-            failedChecks.add("Deployment model not set");
-        }
+        //if (tenant.getDeploymentModel() == null) {
+        //    failedChecks.add("Deployment model not set");
+        //}
 
         // 5. At least 1 DID purchased (call Product Service)
         try {

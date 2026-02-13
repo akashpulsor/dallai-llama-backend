@@ -11,10 +11,13 @@ import org.springframework.stereotype.Component;
 public class CreateLoadBalancerStep implements ProvisioningStep {
 
     private final KubernetesProvisioningService k8s;
+    private final LoadBalancerProvisioner loadBalancerProvisioner;
 
     public String name() { return "CREATE_LOADBALANCER"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
+
         k8s.waitForExternalIp(tenant.getId());
+        loadBalancerProvisioner.execute(tenant, productCode);
     }
 }

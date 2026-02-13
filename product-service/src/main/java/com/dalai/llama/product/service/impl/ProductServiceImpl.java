@@ -1,7 +1,9 @@
 package com.dalai.llama.product.service.impl;
 
 import com.dalai.llama.product.domain.entity.Product;
+import com.dalai.llama.product.domain.entity.ProductApp;
 import com.dalai.llama.product.domain.exception.ProductNotFoundException;
+import com.dalai.llama.product.repository.ProductAppRepository;
 import com.dalai.llama.product.repository.ProductRepository;
 import com.dalai.llama.product.service.ProductService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,8 @@ import java.util.UUID;
 public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
+
+    private final ProductAppRepository productAppRepository;
 
     @Override
     public List<Product> getAllActiveProducts() {
@@ -37,5 +41,11 @@ public class ProductServiceImpl implements ProductService {
         product.setCreatedAt(Instant.now());
         product.setUpdatedAt(Instant.now());
         return productRepository.save(product);
+    }
+
+    @Transactional
+    public List<ProductApp> getAppsByProductCode(String productCode) {
+        getByCode(productCode);
+        return productAppRepository.findEnabledAppsByProductCode(productCode);
     }
 }

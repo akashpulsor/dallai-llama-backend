@@ -12,4 +12,6 @@ public interface KubernetesProvisioningService {
     void deployTelecom(UUID tenantId);
 
     String waitForExternalIp(UUID tenantId);
+
+    void deployServices(UUID tenantId);  // NEW - deploys pbx-core, agent-service, ai-service, agent-ui
 }

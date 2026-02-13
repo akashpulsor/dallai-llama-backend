@@ -22,7 +22,7 @@ public enum ProvisioningStep {
     DEPLOY_RTPENGINE(12, "Deploy RTPEngine Media Proxy", true),
     DEPLOY_COTURN(13, "Deploy CoTurn TURN Server", true),
     DEPLOY_WEBRTC_GW(14, "Deploy WebRTC Gateway", true),
-    DEPLOY_ASTERISK(15, "Deploy Asterisk PBX", true),
+    DEPLOY_FREESWITCH(15, "Deploy FreeSWITCH Media Server", true),
     DEPLOY_AI_SERVICE(16, "Deploy AI Service", true),
     DEPLOY_AGENT_SERVICE(17, "Deploy Agent Service", true),
     DEPLOY_CALL_CONTROL(18, "Deploy Call Control Service", true),
@@ -33,9 +33,10 @@ public enum ProvisioningStep {
     CONFIGURE_DIDWW_DIDS(23, "Point DIDs to External IP", true),
     DEPLOY_CC_DASHBOARD(24, "Deploy Contact Center Dashboard", true),
     CREATE_TENANT_USERS(25, "Create Initial Users", true),
+    DEPLOY_AGENT_UI(28, "Deploy Agent UI Dashboard", true),
+    CONFIGURE_LOADBALANCER_DNS(29, "Configure LoadBalancer DNS", true),
     HEALTH_CHECK(26, "Health Check All Components", false),
     FINALIZE(27, "Finalize Provisioning", false);
-
     private final int order;
     private final String description;
     private final boolean compensatable;

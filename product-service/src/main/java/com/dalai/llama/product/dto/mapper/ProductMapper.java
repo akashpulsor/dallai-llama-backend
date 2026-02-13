@@ -74,4 +74,20 @@ public interface ProductMapper {
                 .callbackEnabled(e.isCallbackEnabled())
                 .build();
     }
+
+    default ProductAppResponse toProductAppResponse(ProductApp app) {
+        return ProductAppResponse.builder()
+                .id(app.getId())
+                .appType(app.getAppType().name())
+                .subdomain(app.getSubdomain())
+                .displayName(app.getDisplayName())
+                .keycloakClientSuffix(app.getKeycloakClientSuffix())
+                .frontendImage(app.getFrontendImage())
+                .frontendPort(app.getFrontendPort())
+                .requiredRoles(app.getRequiredRoles())
+                .icon(app.getIcon())
+                .description(app.getDescription())
+                .displayOrder(app.getDisplayOrder())
+                .build();
+    }
 }

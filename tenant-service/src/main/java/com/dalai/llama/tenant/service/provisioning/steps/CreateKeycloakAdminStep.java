@@ -14,7 +14,7 @@ public class CreateKeycloakAdminStep implements ProvisioningStep {
 
     public String name() { return "CREATE_KEYCLOAK_ADMIN"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         keycloak.createAdminUser(
                 tenant.getSlug(),
                 tenant.getPrimaryContactEmail(),

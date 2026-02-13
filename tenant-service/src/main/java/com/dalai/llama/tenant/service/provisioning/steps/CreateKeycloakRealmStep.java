@@ -14,7 +14,7 @@ public class CreateKeycloakRealmStep implements ProvisioningStep {
 
     public String name() { return "CREATE_KEYCLOAK_REALM"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         keycloak.createRealm(tenant.getSlug(), tenant.getName());
     }
 

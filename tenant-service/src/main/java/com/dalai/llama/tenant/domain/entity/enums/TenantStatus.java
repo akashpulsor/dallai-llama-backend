@@ -8,12 +8,18 @@ public enum TenantStatus {
     CREATED,
     PLAN_ASSIGNED,
     PRODUCTS_CONFIGURED,
+    DID_PURCHASED,
+    KYC_SUBMITTED,
+    SIP_CONFIGURED,
+    KYC_APPROVED,
     BILLING_READY,
     READY_TO_PROVISION,
-
+    PROVISIONING_RESTART,
+    KYC_REJECTED,
+    PROVISIONING_KEYCLOAK,
     // Phase 2: Technical Provisioning
     PROVISIONING,
-    PROVISIONING_KEYCLOAK,
+
     PROVISIONING_NAMESPACE,
     PROVISIONING_INFRA,
     PROVISIONING_TELECOM,
@@ -24,11 +30,28 @@ public enum TenantStatus {
     PROVISIONING_DIDWW,
     PROVISIONING_DASHBOARD,
     PROVISIONING_USERS,
+    PROVISIONING_AGENT_UI,
+
+    PROVISIONING_LOADBALANCER_DNS,
     HEALTH_CHECK,
 
     // Final States
     ACTIVE,
     SUSPENDED,
     ERROR,
-    DELETED
+    DELETED;
+
+    // Add at the end of your existing enum:
+
+    public boolean isProvisioning() {
+        return name().startsWith("PROVISIONING") || this == HEALTH_CHECK;
+    }
+
+    public boolean isError() {
+        return this == ERROR;
+    }
+
+    public boolean canReceiveCalls() {
+        return this == ACTIVE;
+    }
 }

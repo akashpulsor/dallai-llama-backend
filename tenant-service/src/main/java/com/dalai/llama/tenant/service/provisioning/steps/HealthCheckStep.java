@@ -9,7 +9,7 @@ public class HealthCheckStep implements ProvisioningStep {
 
     public String name() { return "HEALTH_CHECK"; }
 
-    public void execute(Tenant tenant) {
+    public void execute(Tenant tenant, String productCode) {
         // ping services; throw exception if unhealthy
     }
 }

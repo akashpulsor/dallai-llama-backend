@@ -74,9 +74,9 @@ public class CompensationExecutor {
 
             // Kubernetes namespace - deleting namespace removes all resources
             case CREATE_NAMESPACE -> {
-                if (tenant.getNamespace() != null) {
-                    kubernetesService.deleteNamespace(tenant.getNamespace());
-                }
+               // if (tenant.getNamespace() != null) {
+               //     kubernetesService.deleteNamespace(tenant.getNamespace());
+                //}
             }
 
             // Infrastructure steps - covered by namespace deletion
@@ -86,7 +86,7 @@ public class CompensationExecutor {
             }
 
             // Telecom steps - covered by namespace deletion
-            case DEPLOY_KAMAILIO, DEPLOY_RTPENGINE, DEPLOY_COTURN, DEPLOY_WEBRTC_GW, DEPLOY_ASTERISK -> {
+            case DEPLOY_KAMAILIO, DEPLOY_RTPENGINE, DEPLOY_COTURN, DEPLOY_WEBRTC_GW, DEPLOY_FREESWITCH -> {
                 log.debug("Telecom cleanup handled by namespace deletion");
             }
 
@@ -102,9 +102,9 @@ public class CompensationExecutor {
 
             // DIDWW configuration - delete trunk
             case CONFIGURE_DIDWW_TRUNK, CONFIGURE_DIDWW_DIDS -> {
-                if (tenant.getDidwwTrunkId() != null) {
-                    deleteDidwwTrunk(tenant);
-                }
+                //if (tenant.getDidwwTrunkId() != null) {
+                 //   deleteDidwwTrunk(tenant);
+                //}
             }
 
             // Dashboard - covered by namespace deletion
@@ -125,7 +125,7 @@ public class CompensationExecutor {
     }
 
     private void deleteDidwwTrunk(Tenant tenant) {
-        log.info("Deleting DIDWW trunk for tenant {}: {}", tenant.getId(), tenant.getDidwwTrunkId());
+        //log.info("Deleting DIDWW trunk for tenant {}: {}", tenant.getId(), tenant.getDidwwTrunkId());
         // TODO: Implement DIDWW trunk deletion via API
     }
 }

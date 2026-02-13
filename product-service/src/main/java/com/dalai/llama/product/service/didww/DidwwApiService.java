@@ -2,6 +2,8 @@ package com.dalai.llama.product.service.didww;
 
 
 import com.dalai.llama.product.domain.exception.DidwwApiException;
+import com.dalai.llama.product.service.ProviderApiService;
+import com.dalai.llama.product.service.ProviderHealthIndicator;
 import com.dalai.llama.product.service.didww.dto.DidwwAvailableDidResponse;
 import com.dalai.llama.product.service.didww.dto.DidwwOrderRequest;
 import com.dalai.llama.product.service.didww.dto.DidwwSipConfigRequest;
@@ -15,7 +17,7 @@ import java.time.Duration;
 
 @Service
 @RequiredArgsConstructor
-public class DidwwApiService {
+public class DidwwApiService implements ProviderApiService, ProviderHealthIndicator {
 
     private final DidwwClient client;
 
@@ -49,5 +51,20 @@ public class DidwwApiService {
                 .retryWhen(retrySpec())
                 .onErrorMap(e -> new DidwwApiException("Trunk creation failed", e))
                 .block();
+    }
+
+    @Override
+    public boolean isHealthy() {
+        try {
+            searchAvailableDids("limit=1");
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @Override
+    public String providerName() {
+        return "DIDWW";
     }
 }
