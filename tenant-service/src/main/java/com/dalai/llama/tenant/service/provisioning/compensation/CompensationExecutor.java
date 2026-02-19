@@ -64,7 +64,7 @@ public class CompensationExecutor {
             // Keycloak steps - delete realm undoes all Keycloak operations
             case CREATE_KEYCLOAK_REALM -> {
                 if (tenant.getKeycloakRealmName() != null) {
-                    keycloakRealmService.deleteRealm(tenant.getKeycloakRealmName());
+                    keycloakRealmService.deleteTenant(tenant.getKeycloakRealmName());
                 }
             }
             // Other Keycloak steps are covered by realm deletion

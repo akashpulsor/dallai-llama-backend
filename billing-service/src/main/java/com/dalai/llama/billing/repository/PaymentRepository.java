@@ -7,9 +7,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+// PaymentRepository
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByGatewayOrderId(String gatewayOrderId);
+
+    Optional<Payment> findByGatewayPaymentId(String gatewayPaymentId);
 
     List<Payment> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 }

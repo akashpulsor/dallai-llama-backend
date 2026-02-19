@@ -1,5 +1,6 @@
 package com.dalai.llama.product.domain.entity;
 
+import com.dalai.llama.product.domain.entity.enums.AiStackType;
 import com.dalai.llama.product.domain.entity.enums.PlanTier;
 import jakarta.persistence.*;
 import lombok.*;
@@ -44,4 +45,33 @@ public class Plan {
 
     @Version
     private long version;
+
+    // Add these fields to your Plan entity class:
+
+    @Column(name = "per_agent_fee", precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal perAgentFee = BigDecimal.ZERO;
+
+    @Column(name = "setup_fee", precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal setupFee = BigDecimal.ZERO;
+
+    @Column(name = "included_minutes")
+    @Builder.Default
+    private Integer includedMinutes = 0;
+
+    @Column(name = "included_agents")
+    @Builder.Default
+    private Integer includedAgents = 0;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ai_stack_type", length = 20)
+    private AiStackType aiStackType;
+
+    @Column(name = "ai_rate_per_min", precision = 6, scale = 2)
+    private BigDecimal aiRatePerMin;
+
+    // Relationship to AI config
+    @OneToOne(mappedBy = "plan", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private PlanAiConfig aiConfig;
 }

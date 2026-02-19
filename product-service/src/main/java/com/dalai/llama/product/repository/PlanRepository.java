@@ -14,4 +14,6 @@ public interface PlanRepository extends JpaRepository<Plan, UUID> {
     List<Plan> findByProduct_CodeAndActiveTrue(String productCode);
 
     Optional<Plan> findByProduct_CodeAndIsDefaultTrue(String productCode);
+
+
 }

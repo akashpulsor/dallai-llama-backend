@@ -68,6 +68,11 @@ public class SipEndpointServiceImpl implements SipEndpointService {
         return sipEndpointRepository.findByDid_Id(didId).orElse(null);
     }
 
+    @Override
+    public SipEndpoint getById(UUID id) {
+        return sipEndpointRepository.findById(id).orElse(null);
+    }
+
     public void markAsSynced(UUID endpointId) {
         sipEndpointRepository.findById(endpointId).ifPresent(endpoint -> {
             endpoint.setRegisteredInKamailio(true);

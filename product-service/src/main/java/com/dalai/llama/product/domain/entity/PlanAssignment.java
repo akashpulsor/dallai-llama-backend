@@ -30,6 +30,8 @@ public class PlanAssignment {
     private Instant effectiveFrom;
     private Instant effectiveTo;
 
+    UUID subscriptionId;
+
     private boolean active;
 
     @JdbcTypeCode(SqlTypes.JSON)

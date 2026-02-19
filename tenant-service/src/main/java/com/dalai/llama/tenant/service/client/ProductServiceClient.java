@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import lombok.Data;
@@ -96,6 +98,75 @@ public class ProductServiceClient {
                 .block();
     }
 
+    /**
+     * Get subscription details for tenant
+     */
+    public TenantSubscriptionInfo getSubscription(UUID tenantId) {
+        try {
+            return client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/subscription", tenantId)
+                    .retrieve()
+                    .bodyToMono(TenantSubscriptionInfo.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get subscription for tenant {}: {}", tenantId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Get apps configured for tenant's product
+     */
+    public List<AppInfo> getProductApps(UUID tenantId) {
+        try {
+            return client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/product-apps", tenantId)
+                    .retrieve()
+                    .bodyToFlux(AppInfo.class)
+                    .collectList()
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get apps for tenant {}: {}", tenantId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // Response DTOs
+
+    public record TenantSubscriptionInfo(
+            UUID planAssignmentId,
+            String planCode,
+            String planName,
+            String planTier,
+            String productCode,
+            Instant validUntil,
+            Instant nextBillingDate,
+            // Entitlements
+            int maxAgents,
+            int maxDids,
+            int maxChannels,
+            int includedMinutes,
+            BigDecimal aiRatePerMin,
+            // DID info
+            DidInfo primaryDid,
+            // Channel info
+            int channelsAvailable,
+            int channelsInUse
+    ) {}
+
+    public record DidInfo(
+            UUID id,
+            String number,
+            String displayNumber,
+            String status
+    ) {}
+
+    public record AppInfo(
+            String type,
+            String subdomain,
+            String displayName,
+            String icon
+    ) {}
     // ========================================================================
     // DTOs
     // ========================================================================

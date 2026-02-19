@@ -34,7 +34,6 @@ public class WalletServiceImpl implements WalletService {
                 .walletId(wallet.getId())
                 .occurredAt(Instant.now())
                 .build());
-
     }
 
     @Override
@@ -45,6 +44,18 @@ public class WalletServiceImpl implements WalletService {
     @Override
     @Transactional
     public void credit(UUID tenantId, BigDecimal amount, String reference) {
+        credit(tenantId, amount, reference, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void credit(UUID tenantId, BigDecimal amount, String reference,
+                       UUID subscriptionId, String idempotencyKey) {
+        // Check idempotency
+        if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
@@ -52,13 +63,32 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount, TransactionType.RECHARGE, reference
+                tenantId, wallet.getId(), amount, TransactionType.RECHARGE,
+                reference, subscriptionId, idempotencyKey
         );
     }
 
     @Override
     @Transactional
     public void debit(UUID tenantId, BigDecimal amount, String reference) {
+        debit(tenantId, amount, reference, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void debit(UUID tenantId, BigDecimal amount, String reference, UUID subscriptionId) {
+        debit(tenantId, amount, reference, subscriptionId, null);
+    }
+
+    @Override
+    @Transactional
+    public void debit(UUID tenantId, BigDecimal amount, String reference,
+                      UUID subscriptionId, String idempotencyKey) {
+        // Check idempotency
+        if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
@@ -70,7 +100,8 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION, reference
+                tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION,
+                reference, subscriptionId, idempotencyKey
         );
     }
 

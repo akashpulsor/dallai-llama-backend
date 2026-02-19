@@ -70,6 +70,9 @@ public class Tenant {
     private String suspensionReason;
     private OffsetDateTime deletedAt;
 
+    // --- ADD THIS FIELD ---
+    private OffsetDateTime expiresAt;
+
     @Version
     private long version;
 

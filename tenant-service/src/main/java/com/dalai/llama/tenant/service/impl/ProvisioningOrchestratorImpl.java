@@ -90,13 +90,17 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
               return;
         }
         try {
-            //readinessCheckService.assertReady(tenantId);
+
             ProvisioningTask provisioningTask =initializeProvisioningTask(tenant);
             executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_REALM);
+            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ROLES);
+            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_CLIENT);
+            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ADMIN);
         } finally {
             distributedLock.release(lockKey, lockValue);
         }
     }
+
 
 
     @Override
@@ -341,6 +345,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private Map<String, Object> executeKeycloakClientStep(Tenant tenant) {
         String clientId = "dalaillama-" + tenant.getSlug();
         keycloakRealmService.createClient(tenant.getKeycloakRealmName(), clientId);
+
         //tenant.setKeycloakClientId(clientId);
         tenantRepository.save(tenant);
         return Map.of("clientId", clientId);
@@ -349,6 +354,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private Map<String, Object> executeKeycloakAdminStep(Tenant tenant) {
         String tempPassword = PasswordGenerator.generate(16);
         keycloakRealmService.createAdminUser(
+                tenant,
                 tenant.getKeycloakRealmName(),
                 tenant.getPrimaryContactEmail(),
                 tempPassword

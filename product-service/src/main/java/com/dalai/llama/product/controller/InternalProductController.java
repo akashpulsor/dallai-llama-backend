@@ -1,13 +1,13 @@
 package com.dalai.llama.product.controller;
 
-import com.dalai.llama.product.domain.entity.Plan;
+import com.dalai.llama.product.domain.entity.*;
+import com.dalai.llama.product.domain.entity.enums.SubscriptionStatus;
 import com.dalai.llama.product.dto.mapper.ProductMapper;
 import com.dalai.llama.product.dto.response.DidResponse;
 import com.dalai.llama.product.dto.response.EntitlementResponse;
 import com.dalai.llama.product.dto.response.PlanAssignmentResponse;
-import com.dalai.llama.product.repository.DidRepository;
-import com.dalai.llama.product.repository.PlanRepository;
-import com.dalai.llama.product.repository.PstnChannelBundleRepository;
+import com.dalai.llama.product.dto.response.SubscriptionResponse;
+import com.dalai.llama.product.repository.*;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.PlanAssignmentService;
 import com.dalai.llama.product.service.didww.DidwwApiService;
@@ -15,19 +15,21 @@ import com.dalai.llama.product.service.didww.DidwwProvisioningService;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/internal")
+@RequestMapping("/api/v1/internal/products")
 @RequiredArgsConstructor
 @Tag(name = "Internal APIs", description = "Service-to-service APIs")
 @Hidden
@@ -40,6 +42,14 @@ public class InternalProductController {
     private final PstnChannelBundleRepository channelBundleRepository;
     private final ProductMapper mapper;
     private final DidwwProvisioningService didwwProvisioningService;
+    private final SubscriptionRepository subscriptionRepository;
+    private final ProductRepository productRepository;
+    private final PlanEntitlementRepository planEntitlementRepository;
+    private final TenantSipTrunkRepository tenantSipTrunkRepository;
+    private  final PlanAssignmentRepository planAssignmentRepository;
+    private final ProductAppRepository productAppRepository;
+    // ==================== SUBSCRIPTION ENDPOINTS ====================
+
     /**
      * Called by Tenant Service during provisioning to assign default plan
      */
@@ -140,7 +150,7 @@ public class InternalProductController {
     /**
      * Called by Tenant Service to configure DIDWW trunk with Kamailio IP
      */
-    @PostMapping("/tenants/{tenantId}/didww/configure")
+    @PostMapping("/{tenantId}/didww/configure")
     @Operation(summary = "Configure DIDWW trunk with Kamailio IP")
     public ResponseEntity<Map<String, String>> configureDidwwTrunk(
             @PathVariable UUID tenantId,
@@ -158,5 +168,294 @@ public class InternalProductController {
                 "kamailioIp", kamailioIp,
                 "kamailioPort", String.valueOf(kamailioPort)
         ));
+    }
+
+    /**
+     * Get all subscriptions for tenant
+     * GET /api/v1/internal/tenants/{tenantId}/subscriptions
+     */
+    @GetMapping("/{tenantId}/subscriptions")
+    public ResponseEntity<List<TenantSubscriptionInfo>> getSubscriptions(@PathVariable UUID tenantId) {
+        List<Subscription> subscriptions = subscriptionRepository.findByTenantId(tenantId);
+
+        List<TenantSubscriptionInfo> result = subscriptions.stream()
+                .map(this::buildSubscriptionInfo)
+                .toList();
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Get active subscriptions only
+     * GET /api/v1/internal/products/{tenantId}/subscriptions?status=ACTIVE
+     */
+    @GetMapping("/{tenantId}/subscriptions/active")
+    public ResponseEntity<List<TenantSubscriptionInfo>> getActiveSubscriptions(@PathVariable UUID tenantId) {
+        List<Subscription> subscriptions = subscriptionRepository.findByTenantIdAndStatus(tenantId, SubscriptionStatus.ACTIVE);
+
+        List<TenantSubscriptionInfo> result = subscriptions.stream()
+                .map(this::buildSubscriptionInfo)
+                .toList();
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Get subscription by ID
+     * GET /api/v1/internal/subscriptions/{subscriptionId}
+     */
+    @GetMapping("/subscriptions/{subscriptionId}")
+    public ResponseEntity<TenantSubscriptionInfo> getSubscriptionById(@PathVariable UUID subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElse(null);
+
+        if (subscription == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(buildSubscriptionInfo(subscription));
+    }
+
+    /**
+     * Get subscriptions by product code (can be multiple)
+     * GET /api/v1/internal/tenants/{tenantId}/subscriptions/product/{productCode}
+     */
+    @GetMapping("/{tenantId}/subscriptions/product/{productCode}")
+    public ResponseEntity<List<TenantSubscriptionInfo>> getSubscriptionsByProduct(
+            @PathVariable UUID tenantId,
+            @PathVariable String productCode) {
+
+        Product product = productRepository.findByCode(productCode).orElse(null);
+        if (product == null) {
+            return ResponseEntity.ok(List.of());
+        }
+
+        List<Subscription> subscriptions = subscriptionRepository.findByTenantIdAndProductId(tenantId, product.getId());
+
+        List<TenantSubscriptionInfo> result = subscriptions.stream()
+                .map(this::buildSubscriptionInfo)
+                .toList();
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Get subscription by DID number
+     * GET /api/v1/internal/tenants/{tenantId}/subscriptions/did/{didNumber}
+     */
+    @GetMapping("/{tenantId}/subscriptions/did/{didNumber}")
+    public ResponseEntity<TenantSubscriptionInfo> getSubscriptionByDid(
+            @PathVariable UUID tenantId,
+            @PathVariable String didNumber) {
+
+        Did did = didRepository.findByNumber(didNumber).orElse(null);
+        if (did == null || !did.getTenantId().equals(tenantId)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Subscription subscription = subscriptionRepository.findByDidId(did.getId()).orElse(null);
+        if (subscription == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(buildSubscriptionInfo(subscription));
+    }
+
+    // ==================== PRIVATE METHODS ====================
+
+    private TenantSubscriptionInfo buildSubscriptionInfo(Subscription subscription) {
+        Plan plan = subscription.getPlan();
+        Product product = subscription.getProduct();
+
+        // Get entitlements
+        PlanEntitlement ent = planEntitlementRepository.findByPlan_Id(plan.getId()).orElse(null);
+
+        // Get DID
+        Did did = subscription.getDidId() != null
+                ? didRepository.findById(subscription.getDidId()).orElse(null)
+                : null;
+
+        // Get channels
+        PstnChannelBundle bundle = subscription.getChannelBundleId() != null
+                ? channelBundleRepository.findById(subscription.getChannelBundleId()).orElse(null)
+                : null;
+
+        // Get SIP trunk
+        TenantSipTrunk sipTrunk = subscription.getTenantSipTrunkId() != null
+                ? tenantSipTrunkRepository.findById(subscription.getTenantSipTrunkId()).orElse(null)
+                : null;
+
+        return TenantSubscriptionInfo.builder()
+                .subscriptionId(subscription.getId())
+                .tenantId(subscription.getTenantId())
+                // Product & Plan
+                .productCode(product.getCode())
+                .productName(product.getName())
+                .planCode(plan.getCode())
+                .planName(plan.getName())
+                .planTier(plan.getTier().name())
+                // Status & Dates
+                .status(subscription.getStatus().name())
+                .subscribedAt(subscription.getSubscribedAt())
+                .activatedAt(subscription.getActivatedAt())
+                .expiresAt(subscription.getExpiresAt())
+                .nextBillingDate(subscription.getExpiresAt())
+                // Provisioning
+                .fullyProvisioned(subscription.isFullyProvisioned())
+                .didProvisioned(subscription.isDidProvisioned())
+                .sipEndpointCreated(subscription.isSipEndpointCreated())
+                .channelsAllocated(subscription.isChannelsAllocated())
+                // Entitlements
+                .agentSeats(subscription.getAgentSeats())
+                .maxAgents(ent != null ? ent.getMaxAgents() : subscription.getAgentSeats())
+                .maxDids(ent != null ? ent.getMaxDids() : 1)
+                .maxChannels(ent != null ? ent.getMaxPstnChannels() : 0)
+                .includedMinutes(subscription.getIncludedMinutes())
+                .aiRatePerMin(plan.getAiRatePerMin())
+                // DID
+                .did(did != null ? DidInfo.builder()
+                        .id(did.getId())
+                        .number(did.getNumber())
+                        .displayNumber(did.getDisplayNumber())
+                        .country(did.getCountry())
+                        .region(did.getRegion())
+                        .city(did.getCity())
+                        .status(did.getStatus().name())
+                        .build() : null)
+                // Channels
+                .channels(bundle != null ? ChannelInfo.builder()
+                        .id(bundle.getId())
+                        .direction(bundle.getDirection().name())
+                        .total(bundle.getTotalChannels())
+                        .inbound(bundle.getInboundChannels())
+                        .outbound(bundle.getOutboundChannels())
+                        .inUse(bundle.getActiveChannels())
+                        .status(bundle.getStatus())
+                        .build() : null)
+                // SIP Integration
+                .sipIntegration(sipTrunk != null ? SipInfo.builder()
+                        .id(sipTrunk.getId())
+                        .server(sipTrunk.getDomain())
+                        .port(sipTrunk.getPort())
+                        .username(sipTrunk.getUsername())
+                        .realm(sipTrunk.getRealm())
+                        .build() : null)
+                .build();
+    }
+
+    /**
+     * Get product apps for tenant
+     * Called by tenant-service to build app URLs
+     */
+    @GetMapping("/{tenantId}/product-apps")
+    public ResponseEntity<List<SubscriptionResponse.AppInfo>> getProductApps(@PathVariable UUID tenantId) {
+
+        PlanAssignment assignment = planAssignmentRepository.findActiveByTenantId(tenantId)
+                .orElse(null);
+
+        if (assignment == null) {
+            return ResponseEntity.ok(List.of());
+        }
+
+        UUID productId = assignment.getPlan().getProduct().getId();
+
+        List<SubscriptionResponse.AppInfo> apps = productAppRepository
+                .findByProductIdAndEnabledTrueOrderByDisplayOrderAsc(productId)
+                .stream()
+                .map(app -> SubscriptionResponse.AppInfo.builder()
+                        .type(app.getAppType().name())
+                        .url(app.getSubdomain())
+                        .displayName(app.getDisplayName())
+                        .icon(app.getIcon())
+                        .build())
+                .toList();
+
+        return ResponseEntity.ok(apps);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Integer getAgentOverride(PlanAssignment assignment) {
+        if (assignment.getEntitlementOverrides() == null) return null;
+        Object val = assignment.getEntitlementOverrides().get("agentCount");
+        return val instanceof Number ? ((Number) val).intValue() : null;
+    }
+
+    // ==================== DTOs ====================
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class TenantSubscriptionInfo {
+        private UUID subscriptionId;
+        private UUID tenantId;
+        // Product & Plan
+        private String productCode;
+        private String productName;
+        private String planCode;
+        private String planName;
+        private String planTier;
+        // Status & Dates
+        private String status;
+        private Instant subscribedAt;
+        private Instant activatedAt;
+        private Instant expiresAt;
+        private Instant nextBillingDate;
+        // Provisioning
+        private boolean fullyProvisioned;
+        private boolean didProvisioned;
+        private boolean sipEndpointCreated;
+        private boolean channelsAllocated;
+        // Entitlements
+        private int agentSeats;
+        private int maxAgents;
+        private int maxDids;
+        private int maxChannels;
+        private int includedMinutes;
+        private BigDecimal aiRatePerMin;
+        // Resources
+        private DidInfo did;
+        private ChannelInfo channels;
+        private SipInfo sipIntegration;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DidInfo {
+        private UUID id;
+        private String number;
+        private String displayNumber;
+        private String country;
+        private String region;
+        private String city;
+        private String status;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChannelInfo {
+        private UUID id;
+        private String direction;
+        private int total;
+        private Integer inbound;
+        private Integer outbound;
+        private int inUse;
+        private String status;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SipInfo {
+        private UUID id;
+        private String server;
+        private int port;
+        private String username;
+        private String realm;
     }
 }

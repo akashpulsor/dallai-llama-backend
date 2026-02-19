@@ -19,4 +19,11 @@ public interface DidRepository extends JpaRepository<Did, UUID> {
     long countByTenantIdAndStatusIn(UUID tenantId, List<DidStatus> statuses);
 
     List<Did> findByStatus(DidStatus status);
+
+
+    List<Did> findByTenantIdAndStatus(UUID tenantId, DidStatus status);
+
+    Optional<Did> findByNumber(String number);
+
+    boolean existsByNumber(String number);
 }

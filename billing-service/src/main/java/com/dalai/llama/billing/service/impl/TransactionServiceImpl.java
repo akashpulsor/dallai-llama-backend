@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -29,13 +30,31 @@ public class TransactionServiceImpl implements TransactionService {
             UUID walletId,
             BigDecimal amount,
             TransactionType type,
-            String reference
+            String reference,
+            UUID subscriptionId
     ) {
-        // Get wallet to record balance before/after
+        recordTransaction(tenantId, walletId, amount, type, reference, subscriptionId, null);
+    }
+
+    @Override
+    @Transactional
+    public void recordTransaction(
+            UUID tenantId,
+            UUID walletId,
+            BigDecimal amount,
+            TransactionType type,
+            String reference,
+            UUID subscriptionId,
+            String idempotencyKey
+    ) {
+        // Idempotency check
+        if (idempotencyKey != null && transactionRepository.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findById(walletId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
-        // Calculate balance before (current balance is already updated by wallet service)
         BigDecimal balanceAfter = wallet.getBalance();
         BigDecimal balanceBefore = balanceAfter.subtract(amount);
 
@@ -43,16 +62,33 @@ public class TransactionServiceImpl implements TransactionService {
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
                 .walletId(walletId)
+                .subscriptionId(subscriptionId)
                 .amount(amount)
                 .balanceBefore(balanceBefore)
                 .balanceAfter(balanceAfter)
                 .type(type)
                 .reference(reference)
+                .idempotencyKey(idempotencyKey)
                 .description(generateDescription(type, reference))
                 .createdAt(Instant.now())
                 .build();
 
         transactionRepository.save(tx);
+    }
+
+    @Override
+    public boolean existsByIdempotencyKey(String idempotencyKey) {
+        return transactionRepository.existsByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
+    public Optional<Transaction> findByIdempotencyKey(String idempotencyKey) {
+        return transactionRepository.findByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
+    public Optional<Transaction> findByReference(String reference) {
+        return transactionRepository.findByReference(reference);
     }
 
     private String generateDescription(TransactionType type, String reference) {

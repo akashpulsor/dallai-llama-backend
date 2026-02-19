@@ -19,6 +19,6 @@ public class CreateKeycloakRealmStep implements ProvisioningStep {
     }
 
     public void compensate(Tenant tenant) {
-        keycloak.deleteRealm(tenant.getSlug());
+        keycloak.deleteTenant(tenant.getKeycloakRealmName());
     }
 }

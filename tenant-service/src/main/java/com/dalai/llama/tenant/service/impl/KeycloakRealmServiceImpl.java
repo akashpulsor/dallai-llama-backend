@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.service.impl;
 
+import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.exception.KeycloakException;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
 import com.dalai.llama.tenant.util.PasswordGenerator;
@@ -9,15 +10,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.RolesResource;
+import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -72,6 +71,10 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             realm.setFailureFactor(5);
 
             keycloakAdminClient.realms().create(realm);
+            // --- NEW STEP: Setup Global Scopes immediately after creation ---
+            createClientScopes(realmName);
+            // ---------------------------------------------------------------
+
             log.info("Created Keycloak realm: {}", realmName);
         }
         catch (jakarta.ws.rs.WebApplicationException e) {
@@ -144,7 +147,7 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
 
             ClientRepresentation client = new ClientRepresentation();
             client.setClientId(clientId);
-            client.setName("Dalai LLAMA - " + realmName);
+            client.setName(realmName);
             client.setEnabled(true);
             client.setProtocol("openid-connect");
             client.setPublicClient(false); // Confidential client
@@ -169,6 +172,26 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
                     "client.secret.creation.time", String.valueOf(System.currentTimeMillis() / 1000)
             ));
 
+            // Create the Protocol Mapper to put tenant_id into the JWT
+            ProtocolMapperRepresentation tenantMapper = new ProtocolMapperRepresentation();
+            tenantMapper.setName("tenant-id-mapper");
+            tenantMapper.setProtocol("openid-connect");
+            tenantMapper.setProtocolMapper("oidc-usermodel-attribute-mapper");
+
+            Map<String, String> config = new HashMap<>();
+            config.put("user.attribute", "tenant_id");      // The attribute we set in createAdminUser
+            config.put("claim.name", "tenant_id");          // The key in the JSON Token
+            config.put("jsonType.label", "String");
+            config.put("id.token.claim", "true");           // Add to ID Token
+            config.put("access.token.claim", "true");       // Add to Access Token
+            config.put("userinfo.token.claim", "true");
+
+            tenantMapper.setConfig(config);
+
+            // Attach mapper to client
+            client.setProtocolMappers(Collections.singletonList(tenantMapper));
+            // ----------------------
+
             Response response = realmResource.clients().create(client);
             if (response.getStatus() != 201) {
                 throw new KeycloakException("Failed to create client, status: " + response.getStatus(), null);
@@ -182,7 +205,7 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     }
 
     @Override
-    public void createAdminUser(String realmName, String email, String tempPassword) {
+    public void createAdminUser(Tenant tenant, String realmName, String email, String tempPassword) {
         log.info("Creating admin user {} for realm: {}", email, realmName);
         try {
             RealmResource realmResource = keycloakAdminClient.realm(realmName);
@@ -195,7 +218,12 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             user.setEmailVerified(true);
             user.setEnabled(true);
             user.setRequiredActions(Collections.singletonList("UPDATE_PASSWORD"));
-
+            // --- ADD THIS BLOCK ---
+            // Set the tenant_id attribute immediately
+            Map<String, List<String>> attributes = new HashMap<>();
+            attributes.put("tenant_id", Collections.singletonList(tenant.getId().toString()));
+            user.setAttributes(attributes);
+            // ----------------------
             Response response = usersResource.create(user);
             if (response.getStatus() != 201) {
                 throw new KeycloakException("Failed to create user, status: " + response.getStatus(), null);
@@ -223,18 +251,58 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
         }
     }
 
+
+    public void linkUserToUUID(String realmName,String keycloakUserId, UUID tenantId) {
+        UserResource userResource = keycloakAdminClient.realm(realmName)
+                .users()
+                .get(keycloakUserId);
+
+        UserRepresentation user = userResource.toRepresentation();
+
+        // Add or Update the attribute
+        user.singleAttribute("tenant_id", tenantId.toString());
+
+        // Push update to Keycloak
+        userResource.update(user);
+    }
+
     @Override
-    public void deleteRealm(String realmName) {
-        log.info("Deleting Keycloak realm: {}", realmName);
+    public void deleteTenant(String slug) {
+        String realmName = "tenant-" + slug;
+        log.info("Initiating deletion for realm: {}", realmName);
+
         try {
+            // This one call deletes the realm, all its clients, roles, and users.
             keycloakAdminClient.realm(realmName).remove();
-            log.info("Deleted Keycloak realm: {}", realmName);
+            log.info("Successfully deleted Keycloak realm: {}", realmName);
+        } catch (jakarta.ws.rs.NotFoundException e) {
+            log.warn("Realm {} not found; it may have already been deleted.", realmName);
         } catch (Exception e) {
             log.error("Failed to delete Keycloak realm: {}", realmName, e);
-            // Don't throw - this is for compensation and we want to continue cleanup
+            throw new KeycloakException("Could not delete tenant realm: " + realmName, e);
         }
     }
 
+
+    /**
+     * Removes the tenant link from the user in the PRIMARY realm.
+     */
+    public void removeTenantLinkFromMainUser(String userId, String mainRealmName) {
+        log.info("Removing tenant_id attribute from user {} in realm {}", userId, mainRealmName);
+        try {
+            UserResource userResource = keycloakAdminClient.realm(mainRealmName).users().get(userId);
+            UserRepresentation user = userResource.toRepresentation();
+
+            if (user.getAttributes() != null) {
+                user.getAttributes().remove("tenant_id");
+                userResource.update(user);
+                log.info("User {} is now unlinked from the deleted tenant.", userId);
+            }
+        } catch (Exception e) {
+            // We log but don't necessarily fail the whole process if this cleanup fails
+            log.error("Could not remove tenant_id attribute for user {}", userId, e);
+        }
+    }
     // ========== Private Helpers ==========
 
     private String getDescriptionForRole(String roleName) {
@@ -254,5 +322,63 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             return location.substring(location.lastIndexOf('/') + 1);
         }
         throw new KeycloakException("Could not extract user ID from response", null);
+    }
+
+    /**
+     * NEW METHOD: Creates a global Client Scope that ensures tenant_id is in ALL tokens.
+     */
+    public void createClientScopes(String realmName) {
+        log.info("Configuring client scopes for realm: {}", realmName);
+        try {
+            RealmResource realmResource = keycloakAdminClient.realm(realmName);
+
+            // 1. Define the Mapper (moved from createClient)
+            ProtocolMapperRepresentation tenantMapper = new ProtocolMapperRepresentation();
+            tenantMapper.setName("tenant-id-mapper");
+            tenantMapper.setProtocol("openid-connect");
+            tenantMapper.setProtocolMapper("oidc-usermodel-attribute-mapper");
+
+            Map<String, String> config = new HashMap<>();
+            config.put("user.attribute", "tenant_id");
+            config.put("claim.name", "tenant_id");
+            config.put("jsonType.label", "String");
+            config.put("id.token.claim", "true");
+            config.put("access.token.claim", "true");
+            config.put("userinfo.token.claim", "true");
+            tenantMapper.setConfig(config);
+
+            // 2. Create the Client Scope
+            ClientScopeRepresentation tenantScope = new ClientScopeRepresentation();
+            tenantScope.setName("tenant-context");
+            tenantScope.setDescription("Injects tenant_id into token");
+            tenantScope.setProtocol("openid-connect");
+            tenantScope.setAttributes(Map.of("include.in.token.scope", "true", "display.on.consent.screen", "false"));
+            tenantScope.setProtocolMappers(Collections.singletonList(tenantMapper));
+
+            Response response = realmResource.clientScopes().create(tenantScope);
+
+            if (response.getStatus() == 201) {
+                // 3. Make it a Default Scope for the Realm
+                // We need the ID of the scope we just created
+                String createdScopeId = extractIdFromLocation(response);
+                realmResource.addDefaultDefaultClientScope(createdScopeId);
+                log.info("Added 'tenant-context' as a default client scope for realm: {}", realmName);
+            } else if (response.getStatus() == 409) {
+                log.info("Client scope already exists.");
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to create client scopes for realm: {}", realmName, e);
+            throw new KeycloakException("Failed to create scopes", e);
+        }
+    }
+
+    // Helper to get ID from Response
+    private String extractIdFromLocation(Response response) {
+        String location = response.getHeaderString("Location");
+        if (location != null) {
+            return location.substring(location.lastIndexOf('/') + 1);
+        }
+        return null;
     }
 }

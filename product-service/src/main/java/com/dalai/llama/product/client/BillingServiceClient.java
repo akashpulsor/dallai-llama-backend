@@ -5,13 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Client for Billing Service - called when DIDs are provisioned/released
+ * Client for Billing Service.
+ *
+ * Base path: /api/v1/internal/tenants/{tenantId}/...
  */
 @Slf4j
 @Component
@@ -20,83 +24,93 @@ public class BillingServiceClient {
 
     private final WebClient.Builder webClientBuilder;
 
-    @Value("${services.billing.url:http://localhost:8083}")
+    @Value("${services.billing.url:http://billing-service:8083}")
     private String billingServiceUrl;
 
     private WebClient client() {
         return webClientBuilder.baseUrl(billingServiceUrl).build();
     }
 
-    /**
-     * Record DID rental charge (monthly or initial)
-     */
-    public void recordDidRental(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
+    // ==================== WALLET ====================
+
+    public BigDecimal getWalletBalance(UUID tenantId) {
         try {
-            client().post()
-                    .uri("/api/v1/internal/tenants/{tenantId}/did-rental", tenantId)
-                    .bodyValue(Map.of(
-                            "didId", didId,
-                            "didNumber", didNumber,
-                            "amount", amount
-                    ))
+            WalletBalanceResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
                     .retrieve()
-                    .toBodilessEntity()
+                    .bodyToMono(WalletBalanceResponse.class)
                     .block();
-            log.info("Recorded DID rental for tenant {}: {} @ {}", tenantId, didNumber, amount);
+            return resp != null ? resp.balance() : BigDecimal.ZERO;
         } catch (Exception e) {
-            log.error("Failed to record DID rental for tenant {}: {}", tenantId, e.getMessage());
-            throw new RuntimeException("Failed to record DID rental", e);
+            log.error("Failed to get wallet balance for tenant {}: {}", tenantId, e.getMessage());
+            return BigDecimal.ZERO;
         }
     }
 
-    /**
-     * Record DID setup fee (one-time charge)
-     */
-    public void recordDidSetupFee(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
-        try {
-            client().post()
-                    .uri("/api/v1/internal/tenants/{tenantId}/usage", tenantId)
-                    .bodyValue(Map.of(
-                            "metric", "DID_SETUP",
-                            "quantity", BigDecimal.ONE,
-                            "unit", "UNIT",
-                            "unitCost", amount,
-                            "totalCost", amount,
-                            "sourceType", "DID",
-                            "sourceId", didId,
-                            "description", "DID setup fee: " + didNumber
-                    ))
-                    .retrieve()
-                    .toBodilessEntity()
-                    .block();
-            log.info("Recorded DID setup fee for tenant {}: {} @ {}", tenantId, didNumber, amount);
-        } catch (Exception e) {
-            log.error("Failed to record DID setup fee: {}", e.getMessage());
-            throw new RuntimeException("Failed to record DID setup fee", e);
-        }
-    }
-
-    /**
-     * Check if tenant has sufficient balance
-     */
     public boolean hasSufficientBalance(UUID tenantId, BigDecimal required) {
+        BigDecimal balance = getWalletBalance(tenantId);
+        return balance.compareTo(required) >= 0;
+    }
+
+    public void chargeSubscription(UUID tenantId, UUID subscriptionId, BigDecimal amount, String planCode, String didNumber) {
         try {
-            CallAuthResponse resp = client().get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/authorize-call", tenantId)
+            Map<String, Object> body = new HashMap<>();
+            body.put("amount", amount);
+            body.put("type", "SUBSCRIPTION");
+            body.put("description", String.format("Plan: %s, DID: %s", planCode, didNumber));
+            body.put("subscriptionId", subscriptionId.toString());
+
+            ChargeResponse resp = client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/charge", tenantId)
+                    .bodyValue(body)
                     .retrieve()
-                    .bodyToMono(CallAuthResponse.class)
+                    .bodyToMono(ChargeResponse.class)
                     .block();
-            return resp != null && resp.remainingBalance() != null
-                    && resp.remainingBalance().compareTo(required) >= 0;
-        } catch (Exception e) {
-            log.error("Failed to check balance for tenant {}: {}", tenantId, e.getMessage());
-            return false;
+
+            if (resp != null && !resp.success()) {
+                throw new RuntimeException("Charge failed: " + resp.message());
+            }
+
+            log.info("Charged subscription {} for tenant {}: ₹{}", subscriptionId, tenantId, amount);
+        } catch (WebClientResponseException e) {
+            log.error("Failed to charge subscription: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to charge subscription", e);
         }
     }
 
-    /**
-     * Get billing state for tenant
-     */
+    // ==================== RECURRING CHARGES ====================
+
+    public void createRecurringCharge(UUID tenantId, RecurringChargeRequest request) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("type", request.type());
+            body.put("amount", request.amount());
+            body.put("frequency", request.frequency() != null ? request.frequency() : "MONTHLY");
+            body.put("sourceType", request.sourceType() != null ? request.sourceType() : "");
+            body.put("sourceId", request.sourceId() != null ? request.sourceId().toString() : "");
+            body.put("description", request.description() != null ? request.description() : "");
+
+            // Add subscriptionId if present
+            if (request.subscriptionId() != null) {
+                body.put("subscriptionId", request.subscriptionId().toString());
+            }
+
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/recurring-charges", tenantId)
+                    .bodyValue(body)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+
+            log.info("Created recurring charge for tenant {}: {} @ ₹{}/{} (subscription: {})",
+                    tenantId, request.type(), request.amount(), request.frequency(), request.subscriptionId());
+        } catch (Exception e) {
+            log.error("Failed to create recurring charge for tenant {}: {}", tenantId, e.getMessage());
+        }
+    }
+
+    // ==================== BILLING STATE ====================
+
     public String getBillingState(UUID tenantId) {
         try {
             BillingStateResponse resp = client().get()
@@ -111,9 +125,6 @@ public class BillingServiceClient {
         }
     }
 
-    /**
-     * Check if calls are allowed (ACTIVE or GRACE state)
-     */
     public boolean canMakeCalls(UUID tenantId) {
         try {
             BillingStateResponse resp = client().get()
@@ -128,7 +139,68 @@ public class BillingServiceClient {
         }
     }
 
-    // Response DTOs
+    // ==================== DID RENTAL ====================
+
+    public void recordDidRental(UUID tenantId, UUID didId, String didNumber, BigDecimal amount) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/did-rental", tenantId)
+                    .bodyValue(Map.of(
+                            "didId", didId,
+                            "didNumber", didNumber,
+                            "amount", amount
+                    ))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Recorded DID rental for tenant {}: {} @ ₹{}", tenantId, didNumber, amount);
+        } catch (Exception e) {
+            log.error("Failed to record DID rental: {}", e.getMessage());
+            throw new RuntimeException("Failed to record DID rental", e);
+        }
+    }
+
+    // ==================== RESPONSE DTOs ====================
+
+    public record WalletBalanceResponse(BigDecimal balance, String currency) {}
+    public record ChargeResponse(boolean success, BigDecimal newBalance, String message) {}
     public record BillingStateResponse(String state, boolean canMakeCalls) {}
-    public record CallAuthResponse(boolean authorized, String state, String reason, BigDecimal remainingBalance) {}
+
+    // ==================== REQUEST DTOs ====================
+
+    public record RecurringChargeRequest(
+            String type,
+            BigDecimal amount,
+            String frequency,
+            String sourceType,
+            UUID sourceId,
+            UUID subscriptionId,
+            String description
+    ) {
+        // Without subscriptionId (backward compatible)
+        public static RecurringChargeRequest platformFee(BigDecimal amount) {
+            return new RecurringChargeRequest("PLATFORM_FEE", amount, "MONTHLY", null, null, null, "Monthly platform fee");
+        }
+
+        public static RecurringChargeRequest didRental(BigDecimal amount, UUID didId, String didNumber) {
+            return new RecurringChargeRequest("DID_RENTAL", amount, "MONTHLY", "DID", didId, null, "DID rental: " + didNumber);
+        }
+
+        public static RecurringChargeRequest agentFee(BigDecimal amount, int agentCount) {
+            return new RecurringChargeRequest("AGENT_FEE", amount, "MONTHLY", null, null, null, agentCount + " agent seats");
+        }
+
+        // With subscriptionId
+        public static RecurringChargeRequest platformFee(BigDecimal amount, UUID subscriptionId) {
+            return new RecurringChargeRequest("PLATFORM_FEE", amount, "MONTHLY", null, null, subscriptionId, "Monthly platform fee");
+        }
+
+        public static RecurringChargeRequest didRental(BigDecimal amount, UUID didId, String didNumber, UUID subscriptionId) {
+            return new RecurringChargeRequest("DID_RENTAL", amount, "MONTHLY", "DID", didId, subscriptionId, "DID rental: " + didNumber);
+        }
+
+        public static RecurringChargeRequest agentFee(BigDecimal amount, int agentCount, UUID subscriptionId) {
+            return new RecurringChargeRequest("AGENT_FEE", amount, "MONTHLY", null, null, subscriptionId, agentCount + " agent seats");
+        }
+    }
 }

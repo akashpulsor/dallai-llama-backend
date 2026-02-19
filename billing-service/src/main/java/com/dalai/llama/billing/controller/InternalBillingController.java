@@ -1,13 +1,14 @@
 package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.domain.entity.BillingState;
+import com.dalai.llama.billing.domain.entity.RecurringCharge;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.enums.BillingStateType;
 import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
-import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import com.dalai.llama.billing.dto.response.CallAuthorizationResponse;
 import com.dalai.llama.billing.repository.BillingStateRepository;
+import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.CallAuthorizationService;
@@ -16,16 +17,36 @@ import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.Builder;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Internal APIs for service-to-service communication.
+ *
+ * Called by:
+ * - product-service: subscription, DID provisioning
+ * - tenant-service: wallet creation
+ * - pbx-core: call authorization, usage recording
+ *
+ * Path: /api/v1/internal/tenants/{tenantId}/...
+ * No JWT auth - relies on service mesh / internal network.
+ */
+@Slf4j
 @RestController
-@RequestMapping("/api/v1/internal/billing/{tenantId}")
+@RequestMapping("/api/v1/internal/tenants/{tenantId}")
 @RequiredArgsConstructor
 @Tag(name = "Internal Billing", description = "Internal APIs for service-to-service communication")
 @Hidden
@@ -36,27 +57,132 @@ public class InternalBillingController {
     private final BillingStateRepository billingStateRepository;
     private final BillingStateService billingStateService;
     private final UsageRecordRepository usageRecordRepository;
+    private final RecurringChargeRepository recurringChargeRepository;
 
     // ==================== WALLET MANAGEMENT ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/wallet
+     * Create wallet for tenant (called by tenant-service on org setup)
+     */
     @PostMapping("/wallet")
-    @Operation(summary = "Create wallet", description = "Create wallet for new tenant (called by Tenant Service)")
-    public ResponseEntity<Void> createWallet(@PathVariable UUID tenantId) {
+    @Operation(summary = "Create wallet")
+    public ResponseEntity<WalletResponse> createWallet(@PathVariable UUID tenantId) {
         walletService.createWallet(tenantId);
-        return ResponseEntity.ok().build();
+        BigDecimal balance = walletService.getBalance(tenantId);
+        log.info("Created wallet for tenant {} with balance {}", tenantId, balance);
+        return ResponseEntity.ok(new WalletResponse(tenantId, balance, "INR", "ACTIVE"));
     }
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/wallet/balance
+     * Get wallet balance (called by product-service, tenant-service)
+     */
+    @GetMapping("/wallet/balance")
+    @Operation(summary = "Get wallet balance")
+    public ResponseEntity<WalletBalanceResponse> getWalletBalance(@PathVariable UUID tenantId) {
+        BigDecimal balance = walletService.getBalance(tenantId);
+        return ResponseEntity.ok(new WalletBalanceResponse(balance, "INR"));
+    }
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/wallet/charge
+     * Charge wallet for subscription (called by product-service on subscribe)
+     *
+     * Deducts: platform fee + agent fees + DID fees
+     */
+    @PostMapping("/wallet/charge")
+    @Operation(summary = "Charge wallet for subscription")
+    public ResponseEntity<ChargeResponse> chargeWallet(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody ChargeRequest request) {
+
+        log.info("Charging tenant {} - amount: ₹{}, type: {}", tenantId, request.amount, request.type);
+
+        // Validate balance
+        BigDecimal currentBalance = walletService.getBalance(tenantId);
+        if (currentBalance.compareTo(request.amount) < 0) {
+            return ResponseEntity.badRequest()
+                    .body(new ChargeResponse(false, currentBalance, "Insufficient balance"));
+        }
+
+        // Debit wallet
+        String description = request.description != null ? request.description : request.type;
+        walletService.debit(tenantId, request.amount, request.type + ":" + description, request.subscriptionId);
+
+        // Re-evaluate billing state
+        billingStateService.evaluateState(tenantId);
+
+        BigDecimal newBalance = walletService.getBalance(tenantId);
+        log.info("Charged tenant {} - ₹{}, new balance: ₹{}", tenantId, request.amount, newBalance);
+
+        return ResponseEntity.ok(new ChargeResponse(true, newBalance, "Charged successfully"));
+    }
+
+    /**
+     * DELETE /api/v1/internal/tenants/{tenantId}/wallet
+     * Delete wallet (rollback/compensation)
+     */
     @DeleteMapping("/wallet")
-    @Operation(summary = "Delete wallet", description = "Delete wallet for tenant (compensation)")
+    @Operation(summary = "Delete wallet")
     public ResponseEntity<Void> deleteWallet(@PathVariable UUID tenantId) {
         walletService.deleteWallet(tenantId);
+        log.info("Deleted wallet for tenant {}", tenantId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ==================== RECURRING CHARGES ====================
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/recurring-charges
+     * Create recurring charge for auto-billing (called by product-service on subscribe)
+     *
+     * Types: PLATFORM_FEE, DID_RENTAL, AGENT_FEE
+     */
+    @PostMapping("/recurring-charges")
+    @Operation(summary = "Create recurring charge")
+    public ResponseEntity<RecurringChargeResponse> createRecurringCharge(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody RecurringChargeRequest request) {
+
+        log.info("Creating recurring charge for tenant {} - type: {}, amount: ₹{}",
+                tenantId, request.type, request.amount);
+
+        RecurringCharge charge = RecurringCharge.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .type(request.type)
+                .amount(request.amount)
+                .frequency(request.frequency != null ? request.frequency : "MONTHLY")
+                .nextChargeDate(LocalDate.now().plusMonths(1))
+                .status("ACTIVE")
+                .sourceType(request.sourceType)
+                .subscriptionId(request.subscriptionId)
+                .sourceId(request.sourceId)
+                .description(request.description)
+                .createdAt(Instant.now())
+                .build();
+
+        recurringChargeRepository.save(charge);
+
+        log.info("Created recurring charge {} for tenant {}", charge.getId(), tenantId);
+
+        return ResponseEntity.ok(new RecurringChargeResponse(
+                charge.getId(),
+                charge.getType(),
+                charge.getAmount(),
+                charge.getNextChargeDate()
+        ));
     }
 
     // ==================== CALL AUTHORIZATION ====================
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/authorize-call
+     * Authorize call (called by pbx-core before each call)
+     */
     @GetMapping("/authorize-call")
-    @Operation(summary = "Authorize outbound call", description = "Check if tenant can make outbound calls (called by PBX Core)")
+    @Operation(summary = "Authorize call")
     public ResponseEntity<CallAuthorizationResponse> authorizeCall(@PathVariable UUID tenantId) {
         boolean authorized = callAuthorizationService.authorizeCall(tenantId);
 
@@ -82,16 +208,20 @@ public class InternalBillingController {
 
     // ==================== BILLING STATE ====================
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/billing-state
+     * Get billing state (called by product-service, pbx-core)
+     */
     @GetMapping("/billing-state")
-    @Operation(summary = "Get billing state", description = "Get current billing state (called by PBX Core)")
-    public ResponseEntity<InternalBillingStateResponse> getBillingState(@PathVariable UUID tenantId) {
+    @Operation(summary = "Get billing state")
+    public ResponseEntity<BillingStateResponse> getBillingState(@PathVariable UUID tenantId) {
         BillingState state = billingStateRepository.findByTenantId(tenantId)
                 .orElseGet(() -> BillingState.createDefault(tenantId));
 
         boolean canMakeCalls = state.getState() == BillingStateType.ACTIVE ||
                 state.getState() == BillingStateType.GRACE;
 
-        return ResponseEntity.ok(InternalBillingStateResponse.builder()
+        return ResponseEntity.ok(BillingStateResponse.builder()
                 .tenantId(tenantId)
                 .state(state.getState().name())
                 .canMakeCalls(canMakeCalls)
@@ -102,12 +232,16 @@ public class InternalBillingController {
 
     // ==================== DID RENTAL ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/did-rental
+     * Record DID rental charge (called by product-service monthly billing job)
+     */
     @PostMapping("/did-rental")
-    @Operation(summary = "Record DID rental", description = "Record DID rental charge (called by Product Service)")
+    @Operation(summary = "Record DID rental")
     public ResponseEntity<Void> recordDidRental(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody DidRentalRequest request
-    ) {
+            @Valid @RequestBody DidRentalRequest request) {
+
         // Create usage record
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
@@ -115,11 +249,11 @@ public class InternalBillingController {
                 .metric(UsageMetric.DID_RENTAL)
                 .quantity(BigDecimal.ONE)
                 .unit(BillingUnit.MONTH)
-                .unitCost(request.getAmount())
-                .totalCost(request.getAmount())
+                .unitCost(request.amount)
+                .totalCost(request.amount)
                 .sourceType("DID")
-                .sourceId(request.getDidId())
-                .description("DID rental: " + request.getDidNumber())
+                .sourceId(request.didId)
+                .description("DID rental: " + request.didNumber)
                 .recordedAt(Instant.now())
                 .createdAt(Instant.now())
                 .build();
@@ -127,37 +261,39 @@ public class InternalBillingController {
         usageRecordRepository.save(record);
 
         // Debit wallet
-        walletService.debit(
-                tenantId,
-                request.getAmount(),
-                "DID_RENTAL:" + request.getDidNumber()
-        );
+        walletService.debit(tenantId, request.amount, "DID_RENTAL:" + request.didNumber,request.subscriptionId);
 
         // Evaluate billing state
         billingStateService.evaluateState(tenantId);
+
+        log.info("Recorded DID rental for tenant {}: {} @ ₹{}", tenantId, request.didNumber, request.amount);
 
         return ResponseEntity.ok().build();
     }
 
     // ==================== USAGE RECORDING ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/usage
+     * Record usage (AI, storage, calls) - called by pbx-core, ai-service
+     */
     @PostMapping("/usage")
-    @Operation(summary = "Record usage", description = "Record AI/storage usage (called by PBX Core)")
+    @Operation(summary = "Record usage")
     public ResponseEntity<Void> recordUsage(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody RecordUsageRequest request
-    ) {
+            @Valid @RequestBody RecordUsageRequest request) {
+
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .metric(request.getMetric())
-                .quantity(request.getQuantity())
-                .unit(request.getUnit())
-                .unitCost(request.getUnitCost())
-                .totalCost(request.getTotalCost())
-                .sourceType(request.getSourceType())
-                .sourceId(request.getSourceId())
-                .description(request.getDescription())
+                .metric(request.metric)
+                .quantity(request.quantity)
+                .unit(request.unit)
+                .unitCost(request.unitCost)
+                .totalCost(request.totalCost)
+                .sourceType(request.sourceType)
+                .sourceId(request.sourceId)
+                .description(request.description)
                 .recordedAt(Instant.now())
                 .createdAt(Instant.now())
                 .build();
@@ -165,13 +301,8 @@ public class InternalBillingController {
         usageRecordRepository.save(record);
 
         // Debit wallet if there's a cost
-        if (request.getTotalCost() != null && request.getTotalCost().signum() > 0) {
-            walletService.debit(
-                    tenantId,
-                    request.getTotalCost(),
-                    "USAGE:" + request.getMetric().name()
-            );
-
+        if (request.totalCost != null && request.totalCost.signum() > 0) {
+            walletService.debit(tenantId, request.totalCost, "USAGE:" + request.metric.name(),request.subscriptionId);
             billingStateService.evaluateState(tenantId);
         }
 
@@ -181,71 +312,108 @@ public class InternalBillingController {
     // ==================== MANUAL ADJUSTMENTS ====================
 
     @PostMapping("/adjust/credit")
-    @Operation(summary = "Manual credit", description = "Apply manual credit adjustment (admin only)")
+    @Operation(summary = "Manual credit")
     public ResponseEntity<Void> manualCredit(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody AdjustmentRequest request
-    ) {
-        walletService.credit(tenantId, request.getAmount(), "ADJUSTMENT:" + request.getReason());
+            @Valid @RequestBody AdjustmentRequest request) {
+        walletService.credit(tenantId, request.amount, "ADJUSTMENT:" + request.reason);
         billingStateService.evaluateState(tenantId);
+        log.info("Manual credit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/adjust/debit")
-    @Operation(summary = "Manual debit", description = "Apply manual debit adjustment (admin only)")
+    @Operation(summary = "Manual debit")
     public ResponseEntity<Void> manualDebit(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody AdjustmentRequest request
-    ) {
-        walletService.debit(tenantId, request.getAmount(), "ADJUSTMENT:" + request.getReason());
+            @Valid @RequestBody AdjustmentRequest request) {
+        walletService.debit(tenantId, request.amount, "ADJUSTMENT:" + request.reason,request.subscriptionId);
         billingStateService.evaluateState(tenantId);
+        log.info("Manual debit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();
     }
 
-    @GetMapping("/wallet/balance")
-    @Operation(summary = "Get balance", description = "Get wallet balance (called by Product Service)")
-    public ResponseEntity<BigDecimal> getBalance(@PathVariable UUID tenantId) {
-        return ResponseEntity.ok(walletService.getBalance(tenantId));
-    }
     // ==================== REQUEST/RESPONSE CLASSES ====================
 
-    @lombok.Getter
-    public static class DidRentalRequest {
-        @jakarta.validation.constraints.NotNull
-        private UUID didId;
-        @jakarta.validation.constraints.NotBlank
-        private String didNumber;
-        @jakarta.validation.constraints.NotNull
+    // Wallet
+    public record WalletResponse(UUID tenantId, BigDecimal balance, String currency, String status) {}
+    public record WalletBalanceResponse(BigDecimal balance, String currency) {}
+
+    // Charge
+    @Getter
+    public static class ChargeRequest {
+        @NotNull @DecimalMin("0.01")
         private BigDecimal amount;
+        @NotBlank
+        private String type; // SUBSCRIPTION, USAGE, etc.
+        private String description;
+        private UUID subscriptionId;
+        private Map<String, Object> metadata;
+    }
+    public record ChargeResponse(boolean success, BigDecimal newBalance, String message) {}
+
+    // Recurring Charge
+    @Getter
+    public static class RecurringChargeRequest {
+        @NotBlank
+        private String type; // PLATFORM_FEE, DID_RENTAL, AGENT_FEE
+        @NotNull @DecimalMin("0.01")
+        private BigDecimal amount;
+        private String frequency; // MONTHLY (default), WEEKLY
+        private String sourceType; // DID, PLAN
+        private UUID sourceId;
+        private String description;
+        private UUID subscriptionId; // Optional, for better charge tracking
+    }
+    public record RecurringChargeResponse(UUID id, String type, BigDecimal amount, LocalDate nextChargeDate) {}
+
+    // DID Rental
+    @Getter
+    public static class DidRentalRequest {
+        @NotNull
+        private UUID didId;
+        @NotBlank
+        private String didNumber;
+        @NotNull
+        private BigDecimal amount;
+
+        @NotNull
+        private UUID subscriptionId; // Optional, for better charge tracking
     }
 
-    @lombok.Getter
+    // Usage
+    @Getter
     public static class RecordUsageRequest {
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private UsageMetric metric;
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private BigDecimal quantity;
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private BillingUnit unit;
         private BigDecimal unitCost;
         private BigDecimal totalCost;
         private String sourceType;
         private UUID sourceId;
         private String description;
+        private UUID subscriptionId; // Optional, for better charge tracking
+
+
     }
 
-    @lombok.Getter
+    // Adjustment
+    @Getter
     public static class AdjustmentRequest {
-        @jakarta.validation.constraints.NotNull
-        @jakarta.validation.constraints.DecimalMin("0.01")
+        @NotNull @DecimalMin("0.01")
         private BigDecimal amount;
-        @jakarta.validation.constraints.NotBlank
+        @NotBlank
         private String reason;
+
+        private UUID subscriptionId; // Optional, for better charge tracking
     }
 
-    @lombok.Builder
-    @lombok.Getter
-    public static class InternalBillingStateResponse {
+    // Billing State
+    @Builder @Getter
+    public static class BillingStateResponse {
         private UUID tenantId;
         private String state;
         private boolean canMakeCalls;

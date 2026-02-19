@@ -11,7 +11,15 @@ public interface WalletService {
 
     void credit(UUID tenantId, BigDecimal amount, String reference);
 
-    void debit(UUID tenantId, BigDecimal amount, String reference);
+    void debit(UUID tenantId, BigDecimal amount, String reference, UUID subscriptionId);
 
     BigDecimal getBalance(UUID tenantId);
+
+    void credit(UUID tenantId, BigDecimal amount, String reference,
+                UUID subscriptionId, String idempotencyKey);
+
+    void debit(UUID tenantId, BigDecimal amount, String reference,
+               UUID subscriptionId, String idempotencyKey);
+
+    void debit(UUID tenantId, BigDecimal amount, String reference);
 }

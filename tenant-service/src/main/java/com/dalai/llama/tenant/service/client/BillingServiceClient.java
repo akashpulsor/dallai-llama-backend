@@ -44,6 +44,14 @@ public class BillingServiceClient {
                 .block();
     }
 
+    public void deleteWallet(UUID tenantId) {
+        client().post()
+                .uri("/api/v1/internal/tenants/{tenantId}/wallet", tenantId)
+                .retrieve()
+                .toBodilessEntity()
+                .block();
+    }
+
     public BigDecimal getBalance(UUID tenantId) {
         try {
             return client().get()

@@ -1,10 +1,11 @@
 package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.domain.entity.Payment;
-import com.dalai.llama.billing.domain.entity.enums.TransactionType;
+import com.dalai.llama.billing.domain.entity.Transaction;
 import com.dalai.llama.billing.repository.PaymentRepository;
+import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.service.BillingStateService;
-import com.dalai.llama.billing.service.PaymentService;
+import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,8 +20,10 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/webhooks/razorpay")
@@ -30,9 +33,10 @@ import java.util.HexFormat;
 @Hidden
 public class RazorpayWebhookController {
 
-    private final PaymentService paymentService;
     private final PaymentRepository paymentRepository;
+    private final RecurringChargeRepository recurringChargeRepository;
     private final WalletService walletService;
+    private final TransactionService transactionService;
     private final BillingStateService billingStateService;
     private final ObjectMapper objectMapper;
 
@@ -47,7 +51,6 @@ public class RazorpayWebhookController {
     ) {
         log.info("Received Razorpay webhook");
 
-        // 1. Verify signature
         if (!verifySignature(payload, signature)) {
             log.warn("Invalid webhook signature");
             return ResponseEntity.badRequest().body("Invalid signature");
@@ -83,26 +86,34 @@ public class RazorpayWebhookController {
 
         log.info("Payment captured - Order: {}, Payment: {}", orderId, paymentId);
 
-        // The signature verification for the payment itself happens during client callback
-        // Here we just update the payment status
+        // Idempotency key
+        String idempotencyKey = "CREDIT:PAYMENT:" + paymentId;
+
+        if (transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            log.info("Payment {} already processed, skipping", paymentId);
+            return;
+        }
+
         paymentRepository.findByGatewayOrderId(orderId).ifPresent(payment -> {
-            if (payment.getGatewayPaymentId() == null) {
-                // Payment not yet verified via client callback, mark as captured
-                payment.markSuccess(paymentId, "webhook-verified");
-                paymentRepository.save(payment);
+            UUID tenantId = payment.getTenantId();
 
-                // Credit wallet
-                walletService.credit(
-                        payment.getTenantId(),
-                        payment.getAmount(),
-                        "PAYMENT:" + paymentId
-                );
+            // 1. Mark payment success
+            payment.markSuccess(paymentId, "webhook-verified");
+            paymentRepository.save(payment);
 
-                // Evaluate billing state
-                billingStateService.evaluateState(payment.getTenantId());
+            // 2. Credit wallet (creates Transaction with idempotencyKey)
+            walletService.credit(
+                    tenantId,
+                    payment.getAmount(),
+                    "PAYMENT:" + paymentId,
+                    null,
+                    idempotencyKey
+            );
 
-                log.info("Wallet credited via webhook for order: {}", orderId);
-            }
+            // 3. Evaluate billing state
+            billingStateService.evaluateState(tenantId);
+
+            log.info("Payment captured - Tenant: {}, Amount: ₹{}", tenantId, payment.getAmount());
         });
     }
 
@@ -125,43 +136,78 @@ public class RazorpayWebhookController {
         JsonNode refundEntity = event.path("payload").path("refund").path("entity");
 
         String paymentId = refundEntity.path("payment_id").asText();
+        String refundId = refundEntity.path("id").asText();
         int amountPaise = refundEntity.path("amount").asInt();
-        java.math.BigDecimal amount = java.math.BigDecimal.valueOf(amountPaise)
-                .divide(java.math.BigDecimal.valueOf(100));
+        BigDecimal amount = BigDecimal.valueOf(amountPaise).divide(BigDecimal.valueOf(100));
 
-        log.info("Refund created - Payment: {}, Amount: {}", paymentId, amount);
+        log.info("Refund created - Payment: {}, RefundId: {}, Amount: ₹{}", paymentId, refundId, amount);
 
-        // Find payment by gateway payment ID
-        paymentRepository.findAll().stream()
-                .filter(p -> paymentId.equals(p.getGatewayPaymentId()))
-                .findFirst()
-                .ifPresent(payment -> {
-                    // Debit wallet for refund
-                    walletService.debit(
-                            payment.getTenantId(),
-                            amount,
-                            "REFUND:" + refundEntity.path("id").asText()
-                    );
+        // Idempotency key
+        String idempotencyKey = "DEBIT:REFUND:" + refundId;
 
-                    // Update payment status
-                    payment.markRefunded("Refund processed");
-                    paymentRepository.save(payment);
+        if (transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            log.info("Refund {} already processed, skipping", refundId);
+            return;
+        }
 
-                    // Evaluate billing state
-                    billingStateService.evaluateState(payment.getTenantId());
+        Payment payment = paymentRepository.findByGatewayPaymentId(paymentId).orElse(null);
+        if (payment == null) {
+            log.warn("Payment not found for refund: {}", paymentId);
+            return;
+        }
 
-                    log.info("Refund processed for payment: {}", paymentId);
-                });
+        UUID tenantId = payment.getTenantId();
+
+        // Find subscriptionId from original credit transaction
+        String originalKey = "CREDIT:PAYMENT:" + paymentId;
+        UUID subscriptionId = transactionService.findByIdempotencyKey(originalKey)
+                .map(Transaction::getSubscriptionId)
+                .orElse(null);
+
+        // 1. Debit wallet (creates Transaction)
+        walletService.debit(
+                tenantId,
+                amount,
+                "REFUND:" + refundId,
+                subscriptionId,
+                idempotencyKey
+        );
+
+        // 2. Update payment status
+        payment.markRefunded("Refund: " + refundId);
+        paymentRepository.save(payment);
+
+        // 3. Handle subscription refund
+        if (subscriptionId != null) {
+            handleSubscriptionRefund(tenantId, subscriptionId, refundId);
+        }
+
+        // 4. Evaluate billing state
+        billingStateService.evaluateState(tenantId);
+
+        log.info("Refund processed - Tenant: {}, Subscription: {}, Amount: ₹{}",
+                tenantId, subscriptionId, amount);
+    }
+
+    private void handleSubscriptionRefund(UUID tenantId, UUID subscriptionId, String refundId) {
+        log.info("Cancelling recurring charges for subscription: {}", subscriptionId);
+
+        recurringChargeRepository.findBySubscriptionId(subscriptionId).forEach(charge -> {
+            charge.cancel();
+            recurringChargeRepository.save(charge);
+            log.info("Cancelled recurring charge: {}", charge.getId());
+        });
+
+        // TODO: Notify product-service
+        // productServiceClient.notifySubscriptionRefunded(tenantId, subscriptionId, refundId);
     }
 
     private void handleOrderPaid(JsonNode event) {
-        // Alternative to payment.captured
         JsonNode orderEntity = event.path("payload").path("order").path("entity");
         String orderId = orderEntity.path("id").asText();
 
         log.info("Order paid - Order: {}", orderId);
 
-        // Usually already handled by payment.captured
         paymentRepository.findByGatewayOrderId(orderId).ifPresent(payment -> {
             if (payment.getGatewayPaymentId() == null) {
                 log.info("Order {} marked as paid but no payment ID yet", orderId);

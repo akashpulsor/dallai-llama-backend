@@ -9,6 +9,7 @@ import com.dalai.llama.tenant.domain.exception.TenantAlreadyExistsException;
 import com.dalai.llama.tenant.domain.exception.TenantNotFoundException;
 import com.dalai.llama.tenant.dto.mapper.TenantMapper;
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
+import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
 import com.dalai.llama.tenant.dto.request.UpdateTenantRequest;
 import com.dalai.llama.tenant.dto.response.*;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
@@ -19,11 +20,14 @@ import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.SlugGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.connection.Subscription;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,7 +42,7 @@ public class TenantServiceImpl implements TenantService {
     private final CompliancePolicyRepository compliancePolicyRepository;
     private final RecordingPolicyRepository recordingPolicyRepository;
     private final AgentCapacityRepository agentCapacityRepository;
-
+    private final  TenantAppRepository tenantAppRepository;
     private final TenantMapper tenantMapper;
     private final TenantStateMachine stateMachine;
     private final ProvisioningOrchestrator orchestrator;
@@ -47,6 +51,7 @@ public class TenantServiceImpl implements TenantService {
     private final ProductServiceClient productServiceClient;
     private final BillingServiceClient billingServiceClient;
     private final ProvisioningOrchestrator provisioningOrchestrator;
+    private static final int TENANT_EXPIRY_HOURS = 24;
 
     @Override
     public TenantResponse createTenant(CreateTenantRequest request, Jwt jwt) {
@@ -64,35 +69,25 @@ public class TenantServiceImpl implements TenantService {
         tenant.setAdminUserId(jwt.getId());
         tenant.setCountry(request.country() != null ? request.country() : "IN");
         tenant.setTimezone(request.timezone() != null ? request.timezone() : "Asia/Kolkata");
+        tenant.setExpiresAt(
+                OffsetDateTime.now().plusHours(TENANT_EXPIRY_HOURS)
+        );
 
         tenant = tenantRepository.save(tenant);
 
-        // 4. Transition to PRODUCTS_CONFIGURED
-        //stateMachine.transition(tenant, TenantStatus.PRODUCTS_CONFIGURED, "SYSTEM", "Internal compliance and recording policies initialized");
-
-        // 2. Transition to PLAN_ASSIGNED
-        //productServiceClient.assignDefaultPlan(tenant.getId(), request.productCode());
-        //stateMachine.transition(tenant, TenantStatus.PLAN_ASSIGNED, "SYSTEM", "Default plan assigned: " + request.productCode());
-        // 3. Configure Internal Policies (Compliance, Recording, Capacity)
-        //createDefaultPolicies(tenant);
-        //billingServiceClient.createWallet(tenant.getId());
-        // Publish event
-        // 5. START TECHNICAL PROVISIONING (Keycloak)
-        // We transition to PROVISIONING_KEYCLOAK and call the realm service
-        //stateMachine.transition(tenant, TenantStatus.PROVISIONING_KEYCLOAK, "ORCHESTRATOR", "Starting Keycloak Realm Provisioning");
-
         try {
             // This sets up Realm, Roles, Client, and Admin User
-            //provisioningOrchestrator.setIdentityProvisioner(tenant);
-            //provisioningOrchestrator
-            // 6. Hand over to Infrastructure Provisioning
-            //stateMachine.transition(tenant, TenantStatus.READY_TO_PROVISION, "KEYCLOAK_SERVICE", "Keycloak setup verified");
+            provisioningOrchestrator.setIdentityProvisioner(tenant);
+            stateMachine.transition(tenant, TenantStatus.IDENTITY_CREATED, "SYSTEM", "Keycloak setup verified");
 
         } catch (Exception e) {
             log.error("Keycloak provisioning failed for tenant {}: {}", tenant.getId(), e.getMessage());
             stateMachine.transition(tenant, TenantStatus.ERROR, "KEYCLOAK_SERVICE", "Keycloak setup failed: " + e.getMessage());
             // Handle error/rollback if necessary
         }
+        billingServiceClient.createWallet(tenant.getId());
+        stateMachine.transition(tenant, TenantStatus.WALLET_CREATED, "SYSTEM", "Tenant Wallet Created: ");
+
         eventProducer.publish("tenant.created", tenant.getId().toString(),
                 new TenantCreatedEvent(tenant.getId(), tenant.getSlug()));
 
@@ -178,11 +173,45 @@ public class TenantServiceImpl implements TenantService {
         log.info("Suspended tenant: {} - {}", tenantId, reason);
     }
 
+    /**
+     * Called by product-service when subscription becomes ACTIVE.
+     *
+     * - Removes expiry (makes tenant permanent)
+     * - Triggers Keycloak setup
+     * - Updates status to ACTIVE
+     */
+    @Transactional
+    public void onSubscriptionActive(UUID tenantId, SubscriptionActiveRequest request) {
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Tenant not found: " + tenantId));
+
+        // 1. Remove expiry - tenant is now permanent
+        tenant.setExpiresAt(null);
+
+        // 2. Update status to ACTIVE (if first subscription)
+        if (tenant.getStatus() == TenantStatus.CREATED) {
+            tenant.setStatus(TenantStatus.ACTIVE);
+            tenant.setActivatedAt(OffsetDateTime.now());
+        }
+        activateTenant(tenant);
+        tenant.setUpdatedAt(OffsetDateTime.now());
+        tenantRepository.save(tenant);
+
+        log.info("Tenant {} activated with subscription to {}", tenantId, request.productCode());
+    }
+
     @Override
     public void activateTenant(UUID tenantId) {
         Tenant tenant = findTenantOrThrow(tenantId);
+
         stateMachine.transition(tenant, TenantStatus.ACTIVE, "ADMIN", "Reactivated by admin");
         log.info("Activated tenant: {}", tenantId);
+    }
+
+    private void activateTenant(Tenant tenant) {
+        provisioningOrchestrator.setIdentityProvisioner(tenant);
+        stateMachine.transition(tenant, TenantStatus.ACTIVE, "ADMIN", "Reactivated by admin");
+        log.info("Activated tenant: {}", tenant.getId());
     }
 
     @Override
@@ -225,14 +254,23 @@ public class TenantServiceImpl implements TenantService {
         return readinessCheckService.check(tenantId);
     }
 
+    @Override
+    public void setIdentity(UUID tenantId) {
+        Tenant tenant = findTenantOrThrow(tenantId);
+        provisioningOrchestrator.setIdentityProvisioner(tenant);
+    }
+
     // ========== Internal Event Handlers ==========
 
     @Override
     public void onPlanAssigned(UUID tenantId, UUID planId, String planCode) {
         Tenant tenant = findTenantOrThrow(tenantId);
-        //tenant.setPlanId(planId);
-        //tenant.setPlanCode(planCode);
-        //tenant.setPlanAssignedAt(OffsetDateTime.now());
+        TenantApp.TenantAppBuilder tenantApp = TenantApp.builder().
+                planCode(planCode).
+                planAssignedAt(OffsetDateTime.now()).
+                planId(planId).tenant(tenant);
+        tenantAppRepository.save(tenantApp.build());
+
 
         if (tenant.getStatus() == TenantStatus.CREATED) {
             stateMachine.transition(tenant, TenantStatus.PLAN_ASSIGNED,
