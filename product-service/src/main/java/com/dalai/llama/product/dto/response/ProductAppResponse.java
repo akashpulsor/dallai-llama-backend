@@ -41,6 +41,9 @@ public class ProductAppResponse {
     @Schema(description = "Description")
     private String description;
 
+    @Schema(description = "App is enabled or not")
+    private boolean enabled;
+
     @Schema(description = "Display order")
     private int displayOrder;
 }

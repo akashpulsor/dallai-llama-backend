@@ -3,10 +3,7 @@ package com.dalai.llama.product.controller;
 import com.dalai.llama.product.domain.entity.*;
 import com.dalai.llama.product.domain.entity.enums.SubscriptionStatus;
 import com.dalai.llama.product.dto.mapper.ProductMapper;
-import com.dalai.llama.product.dto.response.DidResponse;
-import com.dalai.llama.product.dto.response.EntitlementResponse;
-import com.dalai.llama.product.dto.response.PlanAssignmentResponse;
-import com.dalai.llama.product.dto.response.SubscriptionResponse;
+import com.dalai.llama.product.dto.response.*;
 import com.dalai.llama.product.repository.*;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.PlanAssignmentService;
@@ -17,6 +14,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -26,6 +24,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @RestController
@@ -86,6 +85,18 @@ public class InternalProductController {
         log.info("Removing plan for tenant {}", tenantId);
         planAssignmentService.removePlan(tenantId);
         entitlementService.invalidateCache(tenantId);
+    }
+
+    /**
+     * Invalidate entitlement cache for a tenant.
+     * Called when plan changes or subscription is modified.
+     */
+    @PostMapping("/tenants/{tenantId}/cache/invalidate")
+    @Operation(summary = "Invalidate cache for tenant")
+    public ResponseEntity<Void> invalidateCache(@PathVariable UUID tenantId) {
+        log.info("Invalidating cache for tenant {}", tenantId);
+        entitlementService.invalidateCache(tenantId);
+        return ResponseEntity.ok().build();
     }
 
     /**
@@ -261,86 +272,84 @@ public class InternalProductController {
         return ResponseEntity.ok(buildSubscriptionInfo(subscription));
     }
 
-    // ==================== PRIVATE METHODS ====================
 
-    private TenantSubscriptionInfo buildSubscriptionInfo(Subscription subscription) {
-        Plan plan = subscription.getPlan();
-        Product product = subscription.getProduct();
+    /**
+     * Get COMPLETE subscription configuration.
+     *
+     * This is the MAIN endpoint used by tenant-service.
+     * Returns everything needed to provision a tenant:
+     * - Product info (code, name, description)
+     * - Plan info (tier, pricing)
+     * - Entitlements (ALL feature flags)
+     * - AI config (providers, costs)
+     * - Apps (ALL UI apps with icons, images, roles)
+     *
+     * Cached for 5 minutes.
+     */
+    @GetMapping("/subscriptions/{subscriptionId}/config")
+    @Operation(summary = "Get complete configuration for subscription")
+    public ResponseEntity<ProductConfigResponse> getSubscriptionConfig(
+            @PathVariable UUID subscriptionId) {
 
-        // Get entitlements
-        PlanEntitlement ent = planEntitlementRepository.findByPlan_Id(plan.getId()).orElse(null);
+        log.debug("Internal API: Getting complete config for subscription {}", subscriptionId);
 
-        // Get DID
-        Did did = subscription.getDidId() != null
-                ? didRepository.findById(subscription.getDidId()).orElse(null)
-                : null;
+        ProductConfigResponse config = entitlementService.getSubscriptionConfig(subscriptionId);
 
-        // Get channels
-        PstnChannelBundle bundle = subscription.getChannelBundleId() != null
-                ? channelBundleRepository.findById(subscription.getChannelBundleId()).orElse(null)
-                : null;
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(5, TimeUnit.MINUTES))
+                .body(config);
+    }
+    /**
+     * Get entitlements for a subscription.
+     * Use getSubscriptionConfig() instead for complete data.
+     */
+    @GetMapping("/subscriptions/{subscriptionId}/entitlements")
+    @Operation(summary = "Get entitlements for subscription")
+    public ResponseEntity<PlanEntitlementResponse> getSubscriptionEntitlements(
+            @PathVariable UUID subscriptionId) {
 
-        // Get SIP trunk
-        TenantSipTrunk sipTrunk = subscription.getTenantSipTrunkId() != null
-                ? tenantSipTrunkRepository.findById(subscription.getTenantSipTrunkId()).orElse(null)
-                : null;
+        log.debug("Internal API: Getting entitlements for subscription {}", subscriptionId);
 
-        return TenantSubscriptionInfo.builder()
-                .subscriptionId(subscription.getId())
-                .tenantId(subscription.getTenantId())
-                // Product & Plan
-                .productCode(product.getCode())
-                .productName(product.getName())
-                .planCode(plan.getCode())
-                .planName(plan.getName())
-                .planTier(plan.getTier().name())
-                // Status & Dates
-                .status(subscription.getStatus().name())
-                .subscribedAt(subscription.getSubscribedAt())
-                .activatedAt(subscription.getActivatedAt())
-                .expiresAt(subscription.getExpiresAt())
-                .nextBillingDate(subscription.getExpiresAt())
-                // Provisioning
-                .fullyProvisioned(subscription.isFullyProvisioned())
-                .didProvisioned(subscription.isDidProvisioned())
-                .sipEndpointCreated(subscription.isSipEndpointCreated())
-                .channelsAllocated(subscription.isChannelsAllocated())
-                // Entitlements
-                .agentSeats(subscription.getAgentSeats())
-                .maxAgents(ent != null ? ent.getMaxAgents() : subscription.getAgentSeats())
-                .maxDids(ent != null ? ent.getMaxDids() : 1)
-                .maxChannels(ent != null ? ent.getMaxPstnChannels() : 0)
-                .includedMinutes(subscription.getIncludedMinutes())
-                .aiRatePerMin(plan.getAiRatePerMin())
-                // DID
-                .did(did != null ? DidInfo.builder()
-                        .id(did.getId())
-                        .number(did.getNumber())
-                        .displayNumber(did.getDisplayNumber())
-                        .country(did.getCountry())
-                        .region(did.getRegion())
-                        .city(did.getCity())
-                        .status(did.getStatus().name())
-                        .build() : null)
-                // Channels
-                .channels(bundle != null ? ChannelInfo.builder()
-                        .id(bundle.getId())
-                        .direction(bundle.getDirection().name())
-                        .total(bundle.getTotalChannels())
-                        .inbound(bundle.getInboundChannels())
-                        .outbound(bundle.getOutboundChannels())
-                        .inUse(bundle.getActiveChannels())
-                        .status(bundle.getStatus())
-                        .build() : null)
-                // SIP Integration
-                .sipIntegration(sipTrunk != null ? SipInfo.builder()
-                        .id(sipTrunk.getId())
-                        .server(sipTrunk.getDomain())
-                        .port(sipTrunk.getPort())
-                        .username(sipTrunk.getUsername())
-                        .realm(sipTrunk.getRealm())
-                        .build() : null)
-                .build();
+        PlanEntitlementResponse entitlements = entitlementService.getEntitlementsForSubscription(subscriptionId);
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(5, TimeUnit.MINUTES))
+                .body(entitlements);
+    }
+
+    /**
+     * Get entitlements by plan code.
+     * Used when subscription ID is not yet available.
+     */
+    @GetMapping("/plans/{planCode}/entitlements")
+    @Operation(summary = "Get entitlements for plan")
+    public ResponseEntity<PlanEntitlementResponse> getPlanEntitlements(
+            @PathVariable String planCode) {
+
+        log.debug("Internal API: Getting entitlements for plan {}", planCode);
+
+        PlanEntitlementResponse entitlements = entitlementService.getEntitlementsForPlan(planCode);
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(5, TimeUnit.MINUTES))
+                .body(entitlements);
+    }
+
+    /**
+     * Get product apps configuration.
+     */
+    @GetMapping("/products/{productCode}/apps")
+    @Operation(summary = "Get apps for product")
+    public ResponseEntity<ProductAppsResponse> getProductApps(
+            @PathVariable String productCode) {
+
+        log.debug("Internal API: Getting apps for product {}", productCode);
+
+        ProductAppsResponse apps = entitlementService.getProductApps(productCode);
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES))
+                .body(apps);
     }
 
     /**
@@ -458,4 +467,87 @@ public class InternalProductController {
         private String username;
         private String realm;
     }
+
+    // ==================== PRIVATE METHODS ====================
+
+    private TenantSubscriptionInfo buildSubscriptionInfo(Subscription subscription) {
+        Plan plan = subscription.getPlan();
+        Product product = subscription.getProduct();
+
+        // Get entitlements
+        PlanEntitlement ent = planEntitlementRepository.findByPlan_Id(plan.getId()).orElse(null);
+
+        // Get DID
+        Did did = subscription.getDidId() != null
+                ? didRepository.findById(subscription.getDidId()).orElse(null)
+                : null;
+
+        // Get channels
+        PstnChannelBundle bundle = subscription.getChannelBundleId() != null
+                ? channelBundleRepository.findById(subscription.getChannelBundleId()).orElse(null)
+                : null;
+
+        // Get SIP trunk
+        TenantSipTrunk sipTrunk = subscription.getTenantSipTrunkId() != null
+                ? tenantSipTrunkRepository.findById(subscription.getTenantSipTrunkId()).orElse(null)
+                : null;
+
+        return TenantSubscriptionInfo.builder()
+                .subscriptionId(subscription.getId())
+                .tenantId(subscription.getTenantId())
+                // Product & Plan
+                .productCode(product.getCode())
+                .productName(product.getName())
+                .planCode(plan.getCode())
+                .planName(plan.getName())
+                .planTier(plan.getTier().name())
+                // Status & Dates
+                .status(subscription.getStatus().name())
+                .subscribedAt(subscription.getSubscribedAt())
+                .activatedAt(subscription.getActivatedAt())
+                .expiresAt(subscription.getExpiresAt())
+                .nextBillingDate(subscription.getExpiresAt())
+                // Provisioning
+                .fullyProvisioned(subscription.isFullyProvisioned())
+                .didProvisioned(subscription.isDidProvisioned())
+                .sipEndpointCreated(subscription.isSipEndpointCreated())
+                .channelsAllocated(subscription.isChannelsAllocated())
+                // Entitlements
+                .agentSeats(subscription.getAgentSeats())
+                .maxAgents(ent != null ? ent.getMaxAgents() : subscription.getAgentSeats())
+                .maxDids(ent != null ? ent.getMaxDids() : 1)
+                .maxChannels(ent != null ? ent.getMaxPstnChannels() : 0)
+                .includedMinutes(subscription.getIncludedMinutes())
+                .aiRatePerMin(plan.getAiRatePerMin())
+                // DID
+                .did(did != null ? DidInfo.builder()
+                        .id(did.getId())
+                        .number(did.getNumber())
+                        .displayNumber(did.getDisplayNumber())
+                        .country(did.getCountry())
+                        .region(did.getRegion())
+                        .city(did.getCity())
+                        .status(did.getStatus().name())
+                        .build() : null)
+                // Channels
+                .channels(bundle != null ? ChannelInfo.builder()
+                        .id(bundle.getId())
+                        .direction(bundle.getDirection().name())
+                        .total(bundle.getTotalChannels())
+                        .inbound(bundle.getInboundChannels())
+                        .outbound(bundle.getOutboundChannels())
+                        .inUse(bundle.getActiveChannels())
+                        .status(bundle.getStatus())
+                        .build() : null)
+                // SIP Integration
+                .sipIntegration(sipTrunk != null ? SipInfo.builder()
+                        .id(sipTrunk.getId())
+                        .server(sipTrunk.getDomain())
+                        .port(sipTrunk.getPort())
+                        .username(sipTrunk.getUsername())
+                        .realm(sipTrunk.getRealm())
+                        .build() : null)
+                .build();
+    }
+
 }

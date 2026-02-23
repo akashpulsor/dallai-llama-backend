@@ -9,7 +9,7 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5
-  # ADD THIS SECTION
+
   web:
     cors:
       mapping: "/**"
@@ -58,48 +58,142 @@ spring:
         jwt:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://auth.localhost:8081/realms/dalaillama}
 
-# Dalai LLAMA Platform Configuration
+  # ================================================================
+  # KAMAILIO DATABASE (Separate datasource)
+  # ================================================================
+  kamailio-datasource:
+    url: jdbc:postgresql://${KAMAILIO_DB_HOST:localhost}:${KAMAILIO_DB_PORT:5432}/${KAMAILIO_DB_NAME:kamailio}
+    username: ${KAMAILIO_DB_USERNAME:kamailio}
+    password: ${KAMAILIO_DB_PASSWORD:kamailio}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+
+# ================================================================
+# DALAI LLAMA PLATFORM CONFIGURATION
+# ================================================================
 dalaillama:
   domain: ${DALAILLAMA_DOMAIN:dalaillama.in}
+  registry: ${DALAILLAMA_REGISTRY:dalaillama}
 
+  # ════════════════════════════════════════════════════════════════
+  # SHARED INFRASTRUCTURE (Multi-tenant)
+  # ════════════════════════════════════════════════════════════════
+  shared:
+    namespace: ${SHARED_NAMESPACE:dalaillama}
 
-# Telecom Stack Images
+    # PostgreSQL
+    postgres:
+      host: ${SHARED_POSTGRES_HOST:postgres.dalaillama.svc.cluster.local}
+      port: ${SHARED_POSTGRES_PORT:5432}
+      database: ${SHARED_POSTGRES_DB:dalaillama}
+
+    # Redis
+    redis:
+      host: ${SHARED_REDIS_HOST:redis.dalaillama.svc.cluster.local}
+      port: ${SHARED_REDIS_PORT:6379}
+
+    # Kafka
+    kafka:
+      bootstrap: ${SHARED_KAFKA_BOOTSTRAP:kafka.dalaillama.svc.cluster.local:9092}
+
+    # SIP/Telephony
+    sip:
+      host: ${SHARED_SIP_HOST:sip.dalaillama.in}
+      internal: ${SHARED_SIP_INTERNAL:kamailio.dalaillama.svc.cluster.local}
+
+    # TURN
+    turn:
+      host: ${SHARED_TURN_HOST:turn.dalaillama.in}
+
+    # RTPEngine
+    rtpengine:
+      socket: ${SHARED_RTPENGINE_SOCKET:udp:rtpengine.dalaillama.svc.cluster.local:22222}
+
+    # FreeSWITCH
+    freeswitch:
+      host: ${SHARED_FREESWITCH_HOST:freeswitch.dalaillama.svc.cluster.local}
+      esl:
+        port: ${SHARED_FREESWITCH_ESL_PORT:8021}
+        password: ${SHARED_FREESWITCH_ESL_PASSWORD:ClueCon}
+
+    # AI Service
+    ai:
+      host: ${SHARED_AI_HOST:ai-service.dalaillama.svc.cluster.local}
+      port: ${SHARED_AI_PORT:8080}
+      agi:
+        port: ${SHARED_AI_AGI_PORT:4573}
+
+  # ════════════════════════════════════════════════════════════════
+  # KAMAILIO CONFIGURATION
+  # ════════════════════════════════════════════════════════════════
+  kamailio:
+    realm: ${KAMAILIO_REALM:dalaillama.in}
+
+  # ════════════════════════════════════════════════════════════════
+  # RTPENGINE CONFIGURATION
+  # ════════════════════════════════════════════════════════════════
+  rtpengine:
+    control-sock: ${RTPENGINE_SOCKET:udp:rtpengine.dalaillama.svc.cluster.local:22222}
+    recording-path: ${RTPENGINE_RECORDING_PATH:/var/spool/rtpengine}
+
+  # ════════════════════════════════════════════════════════════════
+  # COTURN CONFIGURATION
+  # ════════════════════════════════════════════════════════════════
+  coturn:
+    host: ${COTURN_HOST:turn.dalaillama.in}
+    port: ${COTURN_PORT:3478}
+    tls-port: ${COTURN_TLS_PORT:5349}
+    secret: ${COTURN_SECRET:dalaillama-turn-secret}
+    realm: ${COTURN_REALM:dalaillama.in}
+
+  # ════════════════════════════════════════════════════════════════
+  # ISTIO CONFIGURATION
+  # ════════════════════════════════════════════════════════════════
+  istio:
+    gateway: ${ISTIO_GATEWAY:central-gateway}
+    namespace: ${ISTIO_NAMESPACE:istio-system}
+
+# ================================================================
+# TELECOM STACK IMAGES
+# ================================================================
 telecom:
   images:
     agent-ui: ${IMAGE_AGENT_UI:dalaillama/agent-ui:latest}
+    admin-ui: ${IMAGE_ADMIN_UI:dalaillama/admin-ui:latest}
+    supervisor-ui: ${IMAGE_SUPERVISOR_UI:dalaillama/supervisor-ui:latest}
+    ivr-builder: ${IMAGE_IVR_BUILDER:dalaillama/ivr-builder:latest}
     pbx-core: ${IMAGE_PBX_CORE:dalaillama/pbx-core:latest}
     agent-service: ${IMAGE_AGENT_SERVICE:dalaillama/agent-service:latest}
     ai-service: ${IMAGE_AI_SERVICE:dalaillama/ai-service:latest}
     kamailio: ${IMAGE_KAMAILIO:dalaillama/kamailio:5.7}
     freeswitch: ${IMAGE_FREESWITCH:dalaillama/freeswitch:1.10}
     rtpengine: ${IMAGE_RTPENGINE:dalaillama/rtpengine:latest}
-    coturn: ${IMAGE_COTURN:dalaillama/coturn:latest}
+    coturn: ${IMAGE_COTURN:coturn/coturn:latest}
 
-# Cluster Configuration
-cluster:
-  issuer: ${CLUSTER_ISSUER:letsencrypt-prod}
-
-# Ingress Configuration
-ingress:
-  class: ${INGRESS_CLASS:nginx}
-
+# ================================================================
+# KEYCLOAK CONFIGURATION
+# ================================================================
 keycloak:
   admin:
     url: ${KEYCLOAK_ADMIN_URL:http://auth.localhost:8081}
     realm: master
     orchestrator:
       client-id: platform-orchestrator
-      # Add the $ and ensure the colon has a space after it
       client-secret: ${KEYCLOAK_CLIENT_SECRET:PYJhT5PhZVZzVo81I2E5bNaKtDXC8hPA}
 
-
-# Kubernetes Client
+# ================================================================
+# KUBERNETES CLIENT
+# ================================================================
 kubernetes:
   master-url: ${KUBERNETES_MASTER_URL:https://127.0.0.1:6443}
-  namespace: ${KUBERNETES_NAMESPACE:dalai-llama}
+  namespace: ${KUBERNETES_NAMESPACE:dalaillama}
   trust-certs: ${KUBERNETES_TRUST_CERTS:true}
 
-# Internal Service URLs
+# ================================================================
+# INTERNAL SERVICE URLs
+# ================================================================
 services:
   product:
     url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
@@ -108,9 +202,24 @@ services:
   didww:
     url: ${DIDWW_SERVICE_URL:http://didww-service:8080}
 
+# ================================================================
+# GATEWAY CONFIGURATION
+# ================================================================
 gateway:
   ref: ${GATEWAY_REF:istio-system/central-gateway}
-# Provisioning Configuration
+
+# ================================================================
+# CLUSTER CONFIGURATION
+# ================================================================
+cluster:
+  issuer: ${CLUSTER_ISSUER:letsencrypt-prod}
+
+ingress:
+  class: ${INGRESS_CLASS:nginx}
+
+# ================================================================
+# PROVISIONING CONFIGURATION
+# ================================================================
 provisioning:
   max-retries: ${PROVISIONING_MAX_RETRIES:3}
   retry-delay-seconds: ${PROVISIONING_RETRY_DELAY_SECONDS:10}
@@ -118,17 +227,23 @@ provisioning:
   ip-poll-interval-seconds: ${PROVISIONING_IP_POLL_INTERVAL_SECONDS:10}
   min-wallet-balance: ${PROVISIONING_MIN_WALLET_BALANCE:1000}
 
-# Health Check Scheduler
+# ================================================================
+# HEALTH CHECK SCHEDULER
+# ================================================================
 health-check:
   enabled: true
   interval-seconds: 60
   failure-threshold: 3
 
-# Server Configuration
+# ================================================================
+# SERVER CONFIGURATION
+# ================================================================
 server:
   port: ${SERVER_PORT:8091}
 
-# Actuator
+# ================================================================
+# ACTUATOR
+# ================================================================
 management:
   endpoints:
     web:
@@ -143,9 +258,38 @@ management:
     tags:
       application: ${spring.application.name}
 
-# Logging
+# ================================================================
+# LOGGING
+# ================================================================
 logging:
   level:
     com.dalai.llama.tenant: DEBUG
+    com.dalai.llama.tenant.service.provisioning: DEBUG
     org.springframework.security: DEBUG
     io.fabric8.kubernetes: DEBUG
+
+---
+# ================================================================
+# PRODUCTION PROFILE
+# ================================================================
+spring:
+  config:
+    activate:
+      on-profile: production
+
+dalaillama:
+  domain: dalaillama.in
+
+  shared:
+    postgres:
+      host: postgres-primary.dalaillama.svc.cluster.local
+    redis:
+      host: redis-master.dalaillama.svc.cluster.local
+    kafka:
+      bootstrap: kafka-0.kafka-headless.dalaillama.svc.cluster.local:9092,kafka-1.kafka-headless.dalaillama.svc.cluster.local:9092
+
+logging:
+  level:
+    com.dalai.llama.tenant: INFO
+    org.springframework.security: WARN
+    io.fabric8.kubernetes: WARN

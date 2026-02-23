@@ -11,7 +11,10 @@ import java.util.UUID;
 @Repository
 public interface PlanAiConfigRepository extends JpaRepository<PlanAiConfig, UUID> {
 
-    Optional<PlanAiConfig> findByPlanId(UUID planId);
+    Optional<PlanAiConfig> findByPlan_Id(UUID planId);
+
+    Optional<PlanAiConfig> findByPlan_Code(String planCode);
+
 
     @Query("SELECT c FROM PlanAiConfig c " +
             "LEFT JOIN FETCH c.sttProvider " +

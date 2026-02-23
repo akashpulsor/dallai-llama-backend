@@ -8,63 +8,87 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Defines which apps are available for a product.
- * When a tenant subscribes to a product, they get access to these apps.
+ * ProductApp - UI applications for each product.
+ *
+ * This is the SOURCE OF TRUTH for:
+ * - App type (CONTACT_CENTER, IVR_BUILDER, ADMIN_PANEL, etc.)
+ * - Icon (emoji)
+ * - Frontend image (Docker image)
+ * - Required roles
+ * - Subdomain
+ * - Keycloak client suffix
+ *
+ * tenant-service reads this via internal API - NO hardcoded product config!
  */
 @Entity
-@Table(name = "product_apps", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_product_app_type", columnNames = {"product_id", "app_type"})
-})
-@Getter @Setter
+@Table(
+        name = "product_apps",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_product_app_type",
+                columnNames = {"product_id", "app_type"}
+        ),
+        indexes = @Index(name = "idx_product_apps_product_id", columnList = "product_id")
+)
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class ProductApp {
 
     @Id
-    private UUID id;
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "app_type", nullable = false)
+    @Column(name = "app_type", nullable = false, length = 50)
     private AppType appType;
 
-    @Column(nullable = false)
+    @Column(name = "subdomain", nullable = false, length = 50)
     private String subdomain;
 
-    @Column(nullable = false)
+    @Column(name = "display_name", nullable = false, length = 100)
     private String displayName;
 
-    /**
-     * Keycloak client suffix. NULL means use tenant's primary client.
-     * e.g., "ivr" → dalaillama-{tenant-slug}-ivr
-     */
+    @Column(name = "keycloak_client_suffix", length = 50)
     private String keycloakClientSuffix;
 
-    @Column(nullable = false)
+    @Column(name = "frontend_image", nullable = false, length = 200)
     private String frontendImage;
 
+    @Column(name = "frontend_port")
     @Builder.Default
-    private int frontendPort = 80;
+    private Integer frontendPort = 80;
 
+    @Column(name = "required_roles", length = 200)
     private String requiredRoles;
+
+    @Column(name = "icon", length = 200)
     private String icon;
+
+    @Column(name = "description", length = 500)
     private String description;
 
+    @Column(name = "display_order")
     @Builder.Default
-    private int displayOrder = 0;
+    private Integer displayOrder = 0;
 
+    @Column(name = "enabled")
     @Builder.Default
     private boolean enabled = true;
 
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     @Version
-    private long version;
+    private Long version;
 
     @PrePersist
     void prePersist() {

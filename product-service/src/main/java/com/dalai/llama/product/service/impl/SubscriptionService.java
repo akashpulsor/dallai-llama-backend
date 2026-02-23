@@ -48,6 +48,7 @@ public class SubscriptionService {
     private final BillingServiceClient billingClient;
     private final TenantServiceClient tenantClient;
 
+
     @Transactional
     public SubscriptionResponse subscribe(SubscriptionRequest request) {
         UUID tenantId = request.getTenantId();
@@ -216,12 +217,15 @@ public class SubscriptionService {
                 .subscribedAt(subscription.getSubscribedAt())
                 .activatedAt(subscription.getActivatedAt())
                 .expiresAt(subscription.getExpiresAt())
-                // Product & Plan
+                // Product & Plan references
+                .productId(product.getId())
                 .productCode(product.getCode())
                 .productName(product.getName())
+                .planId(plan.getId())
                 .planCode(plan.getCode())
                 .planName(plan.getName())
                 .planTier(plan.getTier().name())
+                .monthlyPrice(plan.getMonthlyPrice())
                 // Entitlements
                 .agentSeats(subscription.getAgentSeats())
                 .maxAgents(entitlement.getMaxAgents())
@@ -411,7 +415,7 @@ public class SubscriptionService {
                 .city(didInfo.getCity())
                 .status(DidStatus.PENDING)
                 .monthlyRental(didInfo.getMonthlyFee())
-                .currency("INR")
+                .currency("INR") //TODO change for different countries based on DID country
                 .createdAt(Instant.now())
                 .updatedAt(Instant.now())
                 .build();

@@ -7,5 +7,6 @@ public enum ProvisioningTaskStatus {
     COMPLETED,
     FAILED,
     COMPENSATING,
-    COMPENSATED
+    COMPENSATED,
+    CANCELLED
 }

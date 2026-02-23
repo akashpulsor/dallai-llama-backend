@@ -15,9 +15,7 @@ import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.service.*;
 import com.dalai.llama.tenant.service.client.DidwwClient;
-import com.dalai.llama.tenant.service.provisioning.compensation.CompensationExecutor;
-import com.dalai.llama.tenant.service.provisioning.steps.DeployAgentUiStep;
-import com.dalai.llama.tenant.service.provisioning.telecom.TelecomStackProvisioner;
+
 import com.dalai.llama.tenant.util.DistributedLock;
 import com.dalai.llama.tenant.util.PasswordGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -30,10 +28,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-// Add imports
-import com.dalai.llama.tenant.service.provisioning.telecom.TelecomStackProvisioner;
-import com.dalai.llama.tenant.service.provisioning.telecom.model.TelecomStackConfig;
-import io.fabric8.kubernetes.client.KubernetesClient;
+
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -51,11 +46,11 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private final KeycloakRealmService keycloakRealmService;
     private final KubernetesProvisioningService kubernetesService;
     private final DidwwClient didwwClient;
-    private final CompensationExecutor compensationExecutor;
+
     private final TenantEventProducer eventProducer;
     private final DistributedLock distributedLock;
     private final ObjectMapper objectMapper;
-    private final DeployAgentUiStep deployAgentUiStep;
+
     @Value("${provisioning.max-retries:3}")
     private int maxRetries;
 
@@ -63,8 +58,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private int retryDelaySeconds;
 
 
-    // Add to constructor injection (RequiredArgsConstructor handles this)
-    private final TelecomStackProvisioner telecomStackProvisioner;
+
     private final KubernetesClient kubernetesClient;
 
     // Add new @Value fields
@@ -253,7 +247,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
             case DEPLOY_CC_DASHBOARD -> executeDeployDashboardStep(tenant);
             case CREATE_TENANT_USERS -> executeCreateUsersStep(tenant);
             case HEALTH_CHECK -> executeHealthCheckStep(tenant);
-            case DEPLOY_AGENT_UI -> executeDeployAgentUiStep(tenant);
+            case DEPLOY_AGENT_UI -> executeHealthCheckStep(tenant);
             //TODO call product service to assign default plan
             case CONFIGURE_LOADBALANCER_DNS ->executeCreateLoadBalancerStep(tenant,"CODE" ,step);
             case FINALIZE -> executeFinalizeStep(tenant);
@@ -299,7 +293,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
         try {
             List<ProvisioningStep> completedSteps = getCompletedSteps(task);
-            compensationExecutor.compensate(tenant, completedSteps);
+
 
             task.setStatus(ProvisioningTaskStatus.COMPENSATED);
             task.setCompletedAt(OffsetDateTime.now());
@@ -321,13 +315,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
                 "ORCHESTRATOR", "Provisioning completed successfully");
     }
 
-    // ========== Step Implementations ==========
 
-    private Map<String, Object> executeDeployAgentUiStep(Tenant tenant) {
-        deployAgentUiStep.execute(tenant,"Code");
-        //return Map.of("dashboardUrl", tenant.getDashboardUrl());
-        return null;
-    }
 
     private Map<String, Object> executeKeycloakRealmStep(Tenant tenant) {
         String realmName = "tenant-" + tenant.getSlug();

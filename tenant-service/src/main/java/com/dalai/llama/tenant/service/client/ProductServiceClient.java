@@ -1,10 +1,17 @@
 package com.dalai.llama.tenant.service.client;
 
+import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
+import com.dalai.llama.tenant.dto.response.ProductAppsResponse;
+import com.dalai.llama.tenant.dto.response.ProductConfigResponse;
+
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -13,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -73,30 +81,7 @@ public class ProductServiceClient {
         }
     }
 
-    /**
-     * Get product by code
-     */
-    public ProductDto getProductByCode(String productCode) {
-        log.debug("Fetching product: {}", productCode);
-        return client().get()
-                .uri("/api/v1/products/{code}", productCode)
-                .retrieve()
-                .bodyToMono(ProductDto.class)
-                .block();
-    }
 
-    /**
-     * Get apps for a product (called during provisioning)
-     */
-    public List<ProductAppDto> getProductApps(String productCode) {
-        log.debug("Fetching apps for product: {}", productCode);
-        return client().get()
-                .uri("/api/v1/products/{code}/apps", productCode)
-                .retrieve()
-                .bodyToFlux(ProductAppDto.class)
-                .collectList()
-                .block();
-    }
 
     /**
      * Get subscription details for tenant
@@ -117,7 +102,7 @@ public class ProductServiceClient {
     /**
      * Get apps configured for tenant's product
      */
-    public List<AppInfo> getProductApps(UUID tenantId) {
+    public List<AppInfo> geTenantProductApps(UUID tenantId) {
         try {
             return client().get()
                     .uri("/api/v1/internal/tenants/{tenantId}/product-apps", tenantId)
@@ -130,6 +115,100 @@ public class ProductServiceClient {
             return List.of();
         }
     }
+
+    /**
+     * Get complete subscription configuration.
+     *
+     * This is the MAIN method - gets everything in one call:
+     * - Product info
+     * - Plan info
+     * - Entitlements (all feature flags)
+     * - AI config
+     * - Apps
+     *
+     * Cached for 5 minutes.
+     */
+    @Cacheable(value = "product-config", key = "#subscriptionId.toString()", unless = "#result == null")
+    public ProductConfigResponse getSubscriptionConfig(UUID subscriptionId) {
+        log.debug("Fetching subscription config from product-service: {}", subscriptionId);
+
+        try {
+            return client()
+                    .get()
+                    .uri("/api/v1/internal/subscriptions/{id}/config", subscriptionId)
+                    .retrieve()
+                    .onStatus(status -> status.equals(HttpStatus.NOT_FOUND),
+                            response -> Mono.error(new RuntimeException("Subscription not found: " + subscriptionId)))
+                    .bodyToMono(ProductConfigResponse.class)
+                    .timeout(Duration.ofSeconds(5))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get subscription config: {}", e.getMessage());
+            throw new RuntimeException("Failed to get subscription config from product-service", e);
+        }
+    }
+
+    /**
+     * Get entitlements for a plan (when subscription ID not available).
+     */
+    public PlanEntitlementResponse getPlanEntitlements(String planCode) {
+        log.debug("Fetching plan entitlements from product-service: {}", planCode);
+
+        try {
+            return client()
+                    .get()
+                    .uri("/api/v1/internal/plans/{code}/entitlements", planCode)
+                    .retrieve()
+                    .bodyToMono(PlanEntitlementResponse.class)
+                    .timeout(Duration.ofSeconds(5))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get plan entitlements: {}", e.getMessage());
+            throw new RuntimeException("Failed to get plan entitlements from product-service", e);
+        }
+    }
+
+    /**
+     * Get product apps.
+     */
+    @Cacheable(value = "product-apps", key = "#productCode", unless = "#result == null")
+    public ProductAppsResponse getProductApps(String productCode) {
+        log.debug("Fetching product apps from product-service: {}", productCode);
+
+        try {
+            return client()
+                    .get()
+                    .uri("/api/v1/internal/products/{code}/apps", productCode)
+                    .retrieve()
+                    .bodyToMono(ProductAppsResponse.class)
+                    .timeout(Duration.ofSeconds(5))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to get product apps: {}", e.getMessage());
+            throw new RuntimeException("Failed to get product apps from product-service", e);
+        }
+    }
+
+    /**
+     * Invalidate entitlement cache (called when plan changes).
+     */
+    public void invalidateCache(UUID tenantId) {
+        log.debug("Requesting cache invalidation for tenant: {}", tenantId);
+
+        try {
+            client()
+                    .post()
+                    .uri("/api/v1/internal/tenants/{id}/entitlements/invalidate", tenantId)
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(Duration.ofSeconds(5))
+                    .block();
+        } catch (Exception e) {
+            log.warn("Failed to invalidate cache: {}", e.getMessage());
+            // Don't throw - cache will expire naturally
+        }
+    }
+
 
     // Response DTOs
 
@@ -195,4 +274,10 @@ public class ProductServiceClient {
         private String icon;
         private Integer displayOrder;
     }
+
+    // ==================== RESPONSE DTOs ====================
+    // Mirror the product-service DTOs
+
+
+
 }

@@ -16,58 +16,163 @@ import java.util.UUID;
 @Repository
 public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
 
-    /**
-     * Find all enabled apps for a tenant, ordered by display order
-     */
-    List<TenantApp> findByTenantIdAndEnabledTrueOrderByDisplayOrderAsc(UUID tenantId);
-
-    /**
-     * Find all apps for a tenant (including disabled)
-     */
-    List<TenantApp> findByTenantIdOrderByDisplayOrderAsc(UUID tenantId);
-
-    /**
-     * Find app by tenant and app type
-     */
-    Optional<TenantApp> findByTenantIdAndAppType(UUID tenantId, AppType appType);
-
-    /**
-     * Find app by tenant and subdomain
-     */
-    Optional<TenantApp> findByTenantIdAndSubdomain(UUID tenantId, String subdomain);
-
-    /**
-     * Check if app exists for tenant
-     */
-    boolean existsByTenantIdAndAppType(UUID tenantId, AppType appType);
-
-    /**
-     * Get all distinct Keycloak client IDs for enabled apps
-     */
-    @Query("SELECT DISTINCT ta.keycloakClientId FROM TenantApp ta WHERE ta.tenant.id = :tenantId AND ta.enabled = true")
-    List<String> findEnabledClientIdsByTenantId(@Param("tenantId") UUID tenantId);
-
-    /**
-     * Update deployment status
-     */
-    @Modifying
-    @Query("UPDATE TenantApp ta SET ta.deploymentStatus = :status, ta.deployedAt = CURRENT_TIMESTAMP, ta.updatedAt = CURRENT_TIMESTAMP WHERE ta.id = :id")
-    void updateDeploymentStatus(@Param("id") UUID id, @Param("status") ProvisioningTaskStatus status);
-
-    /**
+/**
      * Delete all apps for a tenant
      */
     @Modifying
     @Query("DELETE FROM TenantApp ta WHERE ta.tenant.id = :tenantId")
     void deleteByTenantId(@Param("tenantId") UUID tenantId);
 
-    /**
-     * Count enabled apps for tenant
-     */
+    // ==================== FIND BY SUBSCRIPTION ====================
+
+    Optional<TenantApp> findBySubscriptionId(UUID subscriptionId);
+
+    boolean existsBySubscriptionId(UUID subscriptionId);
+
+    // ==================== FIND BY TENANT ====================
+
+    List<TenantApp> findByTenantId(UUID tenantId);
+
+    List<TenantApp> findByTenantIdAndEnabledTrue(UUID tenantId);
+
+    List<TenantApp> findByTenantIdOrderByDisplayOrderAsc(UUID tenantId);
+
+    List<TenantApp> findByTenantIdAndEnabledTrueOrderByDisplayOrderAsc(UUID tenantId);
+
+    long countByTenantId(UUID tenantId);
+
     long countByTenantIdAndEnabledTrue(UUID tenantId);
 
-    // Get all apps for a specific tenant
-    List<TenantApp> findByTenantId(UUID tenantId);
+    // ==================== FIND BY DID ====================
+
+    Optional<TenantApp> findByDidNumber(String didNumber);
+
+    boolean existsByDidNumber(String didNumber);
+
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.didNumber LIKE :prefix%")
+    List<TenantApp> findByDidNumberPrefix(@Param("prefix") String prefix);
+
+    // ==================== FIND BY APP TYPE ====================
+
+    Optional<TenantApp> findByTenantIdAndAppType(UUID tenantId, AppType appType);
+
+    boolean existsByTenantIdAndAppType(UUID tenantId, AppType appType);
+
+    List<TenantApp> findByAppType(AppType appType);
+
+    // ==================== FIND BY SUBDOMAIN ====================
+
+    Optional<TenantApp> findByTenantIdAndSubdomain(UUID tenantId, String subdomain);
+
+    // ==================== FIND BY NAMESPACE ====================
+
+    List<TenantApp> findByNamespace(String namespace);
+
+    @Query("SELECT DISTINCT ta.namespace FROM TenantApp ta WHERE ta.deploymentModel = 'DEDICATED'")
+    List<String> findAllDedicatedNamespaces();
+
+    // ==================== FIND BY STATUS ====================
+
+    List<TenantApp> findByDeploymentStatus(ProvisioningTaskStatus status);
+
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.kamailioSynced = false AND ta.enabled = true")
+    List<TenantApp> findPendingKamailioSync();
+
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.freepbxSynced = false AND ta.enabled = true")
+    List<TenantApp> findPendingFreepbxSync();
+
+    // ==================== FIND BY PRODUCT ====================
+
+    List<TenantApp> findByProductCode(String productCode);
+
+    List<TenantApp> findByProductCodeAndPlanTier(String productCode, String planTier);
+
+    @Query("SELECT COUNT(ta) FROM TenantApp ta WHERE ta.productCode = :productCode AND ta.enabled = true")
+    long countActiveByProductCode(@Param("productCode") String productCode);
+
+    // ==================== KEYCLOAK ====================
+
+    @Query("SELECT DISTINCT ta.keycloakClientId FROM TenantApp ta WHERE ta.tenant.id = :tenantId AND ta.enabled = true")
+    List<String> findEnabledClientIdsByTenantId(@Param("tenantId") UUID tenantId);
+
+    // ==================== SIP ENDPOINTS ====================
+
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.sipEndpointUsername = :username")
+    Optional<TenantApp> findBySipEndpointUsername(@Param("username") String username);
+
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.tenantTrunkUsername = :username")
+    Optional<TenantApp> findByTenantTrunkUsername(@Param("username") String username);
+
+    // ==================== UPDATE STATUS ====================
+
+    @Modifying
+    @Query("UPDATE TenantApp ta SET ta.deploymentStatus = :status, ta.deployedAt = CURRENT_TIMESTAMP, ta.updatedAt = CURRENT_TIMESTAMP WHERE ta.id = :id")
+    void updateDeploymentStatus(@Param("id") UUID id, @Param("status") ProvisioningTaskStatus status);
+
+    @Modifying
+    @Query("UPDATE TenantApp ta SET ta.kamailioSynced = true, ta.kamailioSyncedAt = CURRENT_TIMESTAMP WHERE ta.id = :id")
+    void markKamailioSynced(@Param("id") UUID id);
+
+    @Modifying
+    @Query("UPDATE TenantApp ta SET ta.freepbxSynced = true, ta.freepbxSyncedAt = CURRENT_TIMESTAMP WHERE ta.id = :id")
+    void markFreepbxSynced(@Param("id") UUID id);
+
+    // ==================== DELETE ====================
+
+
+    @Modifying
+    @Query("DELETE FROM TenantApp ta WHERE ta.subscriptionId = :subscriptionId")
+    void deleteBySubscriptionId(@Param("subscriptionId") UUID subscriptionId);
+
+    // ==================== ANALYTICS ====================
+
+    @Query("SELECT ta.productCode, COUNT(ta) FROM TenantApp ta WHERE ta.enabled = true GROUP BY ta.productCode")
+    List<Object[]> countActiveByProduct();
+
+    @Query("SELECT ta.planTier, COUNT(ta) FROM TenantApp ta WHERE ta.enabled = true GROUP BY ta.planTier")
+    List<Object[]> countActiveByPlanTier();
+
+    @Query("SELECT SUM(ta.channelTotal) FROM TenantApp ta WHERE ta.namespace = :namespace AND ta.enabled = true")
+    Integer sumChannelsByNamespace(@Param("namespace") String namespace);
+
+
+    List<TenantApp> findAllByTenantId(UUID tenantId);
+
+
+    /**
+     * Find by DID number (with or without + prefix)
+     */
+    @Query("SELECT ta FROM TenantApp ta WHERE " +
+            "(ta.didNumber = :didNumber OR ta.didNumber = CONCAT('+', :didNumber) OR " +
+            "REPLACE(ta.didNumber, '+', '') = :didNumber) AND ta.enabled = true")
+    Optional<TenantApp> findByDidNumberNormalized(@Param("didNumber") String didNumber);
+
+    /**
+     * Find active subscriptions for tenant with specific direction capability
+     */
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.tenant.id = :tenantId AND ta.enabled = :enabled")
+    List<TenantApp> findByTenantIdAndEnabled(@Param("tenantId") UUID tenantId, @Param("enabled") boolean enabled);
+
+
+    /**
+     * Find all that need Kamailio sync
+     */
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.kamailioSynced = false AND ta.enabled = true")
+    List<TenantApp> findAllNeedingKamailioSync();
+
+    /**
+     * Find all that need FreePBX sync
+     */
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.freepbxSynced = false AND ta.enabled = true")
+    List<TenantApp> findAllNeedingFreepbxSync();
+
+
+    /**
+     * Find subscriptions expiring soon
+     */
+    @Query("SELECT ta FROM TenantApp ta WHERE ta.tenant.expiresAt IS NOT NULL AND " +
+            "ta.tenant.expiresAt < CURRENT_TIMESTAMP + 7 DAY")
+    List<TenantApp> findExpiringSoon();
 
 
 }

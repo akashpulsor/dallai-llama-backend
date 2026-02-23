@@ -67,6 +67,18 @@ public class CacheConfig {
         cacheConfigs.put("plans", defaultConfig
                 .entryTtl(Duration.ofMinutes(30)));
 
+        cacheConfigs.put("subscription-config", defaultConfig
+                .entryTtl(Duration.ofMinutes(5)));
+
+        cacheConfigs.put("subscription-entitlements", defaultConfig
+                .entryTtl(Duration.ofMinutes(5)));
+
+        cacheConfigs.put("plan-entitlements", defaultConfig
+                .entryTtl(Duration.ofMinutes(10)));
+
+        cacheConfigs.put("product-apps", defaultConfig
+                .entryTtl(Duration.ofMinutes(10)));
+
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(defaultConfig)
                 .withInitialCacheConfigurations(cacheConfigs)

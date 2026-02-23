@@ -79,12 +79,17 @@ public class TenantServiceClient {
             Instant activatedAt,
             Instant expiresAt,
 
-            // Product & Plan
+            // ==================== PRODUCT & PLAN REFERENCES ====================
+            UUID productId,
             String productCode,
             String productName,
+
+
+            UUID planId,
             String planCode,
             String planName,
             String planTier,
+            BigDecimal monthlyPrice,
 
             // Entitlements
             int agentSeats,

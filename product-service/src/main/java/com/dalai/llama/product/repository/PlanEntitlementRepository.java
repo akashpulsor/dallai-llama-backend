@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface PlanEntitlementRepository extends JpaRepository<PlanEntitlement, UUID> {
 
     Optional<PlanEntitlement> findByPlan_Id(UUID planId);
+
+    Optional<PlanEntitlement> findByPlan_Code(String planCode);
 }
