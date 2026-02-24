@@ -12,11 +12,9 @@ import org.springframework.stereotype.Component;
 public class ProvisioningRetryScheduler {
 
     private final TenantRepository tenantRepository;
-    private final ProvisioningOrchestrator orchestrator;
 
     @Scheduled(fixedDelay = 300_000) // every 5 minutes
     public void retryFailedProvisioning() {
-        tenantRepository.findTenantsInErrorState()
-                .forEach(t -> orchestrator.retryProvisioning(t.getId()));
+
     }
 }

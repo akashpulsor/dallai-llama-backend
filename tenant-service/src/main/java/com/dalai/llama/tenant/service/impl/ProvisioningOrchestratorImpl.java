@@ -37,14 +37,13 @@ import java.util.*;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
+public class ProvisioningOrchestratorImpl  {
 
     private final TenantRepository tenantRepository;
     private final ProvisioningTaskRepository taskRepository;
     private final TenantStateMachine stateMachine;
     private final ReadinessCheckService readinessCheckService;
     private final KeycloakRealmService keycloakRealmService;
-    private final KubernetesProvisioningService kubernetesService;
     private final DidwwClient didwwClient;
 
     private final TenantEventProducer eventProducer;
@@ -97,7 +96,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
 
 
-    @Override
+
     //@Async("taskExecutor")
     public void startProvisioning(UUID tenantId) {
         String lockKey = LOCK_PREFIX + tenantId;
@@ -126,7 +125,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         task.setStepResults("{}");
         return taskRepository.save(task);
     }
-    @Override
+
     @Async("taskExecutor")
     public void retryProvisioning(UUID tenantId) {
         Tenant tenant = tenantRepository.findById(tenantId)
@@ -195,10 +194,6 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         for (int i = startIndex; i < steps.length; i++) {
             ProvisioningStep step = steps[i];
 
-            if (shouldSkipStep(tenant, step)) {
-                log.debug("Skipping step {} for tenant {}", step, tenant.getId());
-                continue;
-            }
 
             try {
                 executeStep(tenant, task, step);
@@ -232,24 +227,9 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
             case CREATE_KEYCLOAK_ROLES -> executeKeycloakRolesStep(tenant);
             case CREATE_KEYCLOAK_CLIENT -> executeKeycloakClientStep(tenant);
             case CREATE_KEYCLOAK_ADMIN -> executeKeycloakAdminStep(tenant);
-            case CREATE_NAMESPACE -> executeCreateNamespaceStep(tenant);
-            case DEPLOY_INFRA_KAFKA, DEPLOY_INFRA_REDIS, DEPLOY_INFRA_POSTGRES, DEPLOY_INFRA_MYSQL,
-                 CREATE_KAFKA_TOPICS -> executeDeployInfraStep(tenant, step);
-            // CHANGED: Use TelecomStackProvisioner for telecom deployment
-            case DEPLOY_KAMAILIO -> executeDeployTelecomStep(tenant, step);  // Only execute once
-            case DEPLOY_RTPENGINE, DEPLOY_COTURN, DEPLOY_WEBRTC_GW, DEPLOY_FREESWITCH ->
-                    Map.of("step", step.name(), "note", "Deployed as part of DEPLOY_KAMAILIO");  // Skip, already done
 
-            case DEPLOY_AI_SERVICE, DEPLOY_AGENT_SERVICE, DEPLOY_CALL_CONTROL -> executeDeployServicesStep(tenant, step);
-            case CREATE_SIP_LOADBALANCER, CREATE_WEBRTC_INGRESS -> executeCreateLoadBalancerStep(tenant,"CODE" , step);
-            case WAIT_EXTERNAL_IP -> executeWaitForIpStep(tenant);
-            case CONFIGURE_DIDWW_TRUNK, CONFIGURE_DIDWW_DIDS -> executeConfigureDidwwStep(tenant, step);
-            case DEPLOY_CC_DASHBOARD -> executeDeployDashboardStep(tenant);
-            case CREATE_TENANT_USERS -> executeCreateUsersStep(tenant);
-            case HEALTH_CHECK -> executeHealthCheckStep(tenant);
-            case DEPLOY_AGENT_UI -> executeHealthCheckStep(tenant);
-            //TODO call product service to assign default plan
-            case CONFIGURE_LOADBALANCER_DNS ->executeCreateLoadBalancerStep(tenant,"CODE" ,step);
+
+
             case FINALIZE -> executeFinalizeStep(tenant);
         };
 
@@ -352,42 +332,13 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         return Map.of("adminEmail", tenant.getPrimaryContactEmail());
     }
 
-    private Map<String, Object> executeCreateNamespaceStep(Tenant tenant) {
-        String namespace = "tenant-" + tenant.getId().toString().substring(0, 8);
-        kubernetesService.createNamespace(tenant.getId(), namespace);
-        return Map.of("namespace", namespace);
-    }
 
-    private Map<String, Object> executeDeployInfraStep(Tenant tenant, ProvisioningStep step) {
-        kubernetesService.deployInfrastructure(tenant.getId());
-        return Map.of("step", step.name());
-    }
-
-    private Map<String, Object> executeDeployTelecomStep(Tenant tenant, ProvisioningStep step) {
-        kubernetesService.deployTelecom(tenant.getId());
-        return Map.of("step", step.name());
-    }
-
-    private Map<String, Object> executeDeployServicesStep(Tenant tenant, ProvisioningStep step) {
-        kubernetesService.deployServices(tenant.getId());
-        return Map.of("step", step.name());
-    }
 
     private Map<String, Object> executeCreateLoadBalancerStep(Tenant tenant, String productCode,ProvisioningStep step) {
         return Map.of("step", step.name());
     }
 
-    private Map<String, Object> executeWaitForIpStep(Tenant tenant) {
-        String ip = kubernetesService.waitForExternalIp(tenant.getId());
-        return Map.of("externalIp", ip);
-    }
 
-    private Map<String, Object> executeConfigureDidwwStep(Tenant tenant, ProvisioningStep step) {
-       /* if (tenant.getSipExternalIp() != null) {
-            didwwClient.configureTrunk(tenant.getId(), tenant.getSipExternalIp());
-        } */
-        return Map.of("step", step.name());
-    }
 
     private Map<String, Object> executeDeployDashboardStep(Tenant tenant) {
         String dashboardUrl = "https://" + tenant.getSlug() + ".dalaillama.in";
@@ -410,55 +361,18 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         return Map.of("activatedAt", tenant.getActivatedAt().toString());
     }
 
-    private boolean shouldSkipStep(Tenant tenant, ProvisioningStep step) {
-        // Skip dedicated infra for shared tenants
-        /*
-        if (tenant.getDeploymentModel() == DeploymentModel.SHARED) {
-            if (step == ProvisioningStep.DEPLOY_INFRA_KAFKA ||
-                    step == ProvisioningStep.DEPLOY_INFRA_REDIS ||
-                    step == ProvisioningStep.DEPLOY_INFRA_POSTGRES ||
-                    step == ProvisioningStep.DEPLOY_INFRA_MYSQL) {
-                return true;
-            }
-        } */
 
-        // Skip individual telecom steps - they're all handled by DEPLOY_KAMAILIO
-        if (isIndividualTelecomStep(step)) {
-            return true;
-        }
 
-        return false;
-    }
-
-    private boolean isIndividualTelecomStep(ProvisioningStep step) {
-        return switch (step) {
-            case DEPLOY_RTPENGINE, DEPLOY_COTURN, DEPLOY_WEBRTC_GW, DEPLOY_FREESWITCH,
-                 CREATE_SIP_LOADBALANCER, CREATE_WEBRTC_INGRESS, WAIT_EXTERNAL_IP -> true;
-            default -> false;
-        };
-    }
 
     private TenantStatus mapStepToSubstatus(ProvisioningStep step) {
         return switch (step) {
-            case CREATE_KEYCLOAK_REALM, CREATE_KEYCLOAK_ROLES, CREATE_KEYCLOAK_CLIENT, CREATE_KEYCLOAK_ADMIN
+            case CREATE_KEYCLOAK_REALM,
+                 CREATE_KEYCLOAK_ROLES,
+                 CREATE_KEYCLOAK_CLIENT,
+                 CREATE_KEYCLOAK_ADMIN
                     -> TenantStatus.PROVISIONING_KEYCLOAK;
-            case CREATE_NAMESPACE -> TenantStatus.PROVISIONING_NAMESPACE;
-            case DEPLOY_INFRA_KAFKA, DEPLOY_INFRA_REDIS, DEPLOY_INFRA_POSTGRES, DEPLOY_INFRA_MYSQL, CREATE_KAFKA_TOPICS
-                    -> TenantStatus.PROVISIONING_INFRA;
-            case DEPLOY_KAMAILIO, DEPLOY_RTPENGINE, DEPLOY_COTURN, DEPLOY_WEBRTC_GW
-                    -> TenantStatus.PROVISIONING_TELECOM;
-            case DEPLOY_FREESWITCH -> TenantStatus.PROVISIONING_MEDIA_SERVER;
-            case DEPLOY_AI_SERVICE, DEPLOY_AGENT_SERVICE, DEPLOY_CALL_CONTROL
-                    -> TenantStatus.PROVISIONING_SERVICES;
-            case CREATE_SIP_LOADBALANCER, CREATE_WEBRTC_INGRESS -> TenantStatus.PROVISIONING_LOADBALANCER;
-            case WAIT_EXTERNAL_IP -> TenantStatus.PROVISIONING_WAITING_IP;
-            case CONFIGURE_DIDWW_TRUNK, CONFIGURE_DIDWW_DIDS -> TenantStatus.PROVISIONING_DIDWW;
-            case DEPLOY_CC_DASHBOARD -> TenantStatus.PROVISIONING_DASHBOARD;
-            case CREATE_TENANT_USERS -> TenantStatus.PROVISIONING_USERS;
-            case HEALTH_CHECK -> TenantStatus.HEALTH_CHECK;
-            case FINALIZE -> TenantStatus.ACTIVE;
-            case DEPLOY_AGENT_UI -> TenantStatus.PROVISIONING_AGENT_UI;
-            case CONFIGURE_LOADBALANCER_DNS -> TenantStatus.PROVISIONING_LOADBALANCER_DNS;
+
+            default -> TenantStatus.PROVISIONING_INFRA; // or whatever fits
         };
     }
 

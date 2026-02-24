@@ -2,6 +2,7 @@ package com.dalai.llama.tenant.controller;
 
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
+import com.dalai.llama.tenant.dto.response.ProductAppsResponse;
 import com.dalai.llama.tenant.repository.TenantRepository;
 
 import com.dalai.llama.tenant.service.client.BillingServiceClient;
@@ -64,10 +65,10 @@ public class TenantAppsController {
         }
 
         // Get apps from product-service
-        List<ProductServiceClient.AppInfo> productApps = productClient.getProductApps(tenantId);
+        List<ProductServiceClient.AppInfo> appInfos = productClient.geTenantProductApps(tenantId);
 
         // Build full URLs
-        List<TenantAppInfo> apps = productApps.stream()
+        List<TenantAppInfo> apps = appInfos.stream()
                 .map(app -> TenantAppInfo.builder()
                         .type(app.type())
                         .displayName(app.displayName())

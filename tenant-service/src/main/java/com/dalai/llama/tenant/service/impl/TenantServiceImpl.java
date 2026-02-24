@@ -51,12 +51,12 @@ public class TenantServiceImpl implements TenantService {
     private final TenantAppRepository tenantAppRepository;
     private final TenantMapper tenantMapper;
     private final TenantStateMachine stateMachine;
-    private final ProvisioningOrchestrator orchestrator;
+
     private final ReadinessCheckService readinessCheckService;
     private final TenantEventProducer eventProducer;
     private final ProductServiceClient productServiceClient;
     private final BillingServiceClient billingServiceClient;
-    private final ProvisioningOrchestrator provisioningOrchestrator;
+    private  final ProvisioningOrchestratorImpl provisioningOrchestrator;
     private final ObjectMapper objectMapper;
 
     // TELECOM PROVISIONING
@@ -87,6 +87,7 @@ public class TenantServiceImpl implements TenantService {
         tenant.setExpiresAt(OffsetDateTime.now().plusHours(TENANT_EXPIRY_HOURS));
 
         tenant = tenantRepository.save(tenant);
+
 
         try {
             provisioningOrchestrator.setIdentityProvisioner(tenant);
@@ -263,13 +264,13 @@ public class TenantServiceImpl implements TenantService {
 
     @Override
     public void triggerProvisioning(UUID tenantId) {
-        orchestrator.startProvisioning(tenantId);
+
         log.info("Triggered provisioning for tenant: {}", tenantId);
     }
 
     @Override
     public void retryProvisioning(UUID tenantId) {
-        orchestrator.retryProvisioning(tenantId);
+
         log.info("Retrying provisioning for tenant: {}", tenantId);
     }
 
@@ -278,7 +279,7 @@ public class TenantServiceImpl implements TenantService {
         Tenant tenant = findTenantOrThrow(tenantId);
         log.info("Initiating provisioning restart for tenant: {} due to: {}", tenantId, reason);
         stateMachine.transition(tenant, TenantStatus.PROVISIONING_RESTART, "ADMIN", reason);
-        orchestrator.startProvisioning(tenantId);
+
     }
 
     @Override
@@ -300,7 +301,7 @@ public class TenantServiceImpl implements TenantService {
     @Override
     public void setIdentity(UUID tenantId) {
         Tenant tenant = findTenantOrThrow(tenantId);
-        provisioningOrchestrator.setIdentityProvisioner(tenant);
+
     }
 
     // ================================================================
@@ -414,7 +415,7 @@ public class TenantServiceImpl implements TenantService {
     }
 
     private void activateTenantInternal(Tenant tenant) {
-        provisioningOrchestrator.setIdentityProvisioner(tenant);
+
         stateMachine.transition(tenant, TenantStatus.ACTIVE, "SUBSCRIPTION_ACTIVE", "Subscription activated");
         log.info("Activated tenant: {}", tenant.getId());
     }
@@ -693,6 +694,7 @@ public class TenantServiceImpl implements TenantService {
             return "[]";
         }
     }
+
 
     record AppPanelDto(
             String appType, String displayName, String subdomain, String url,
