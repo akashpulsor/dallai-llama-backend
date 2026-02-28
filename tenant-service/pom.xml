@@ -25,6 +25,13 @@
     <dependencies>
 
         <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>istio-client</artifactId>
+            <version>6.12.1</version>
+        </dependency>
+
+
+        <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
         </dependency>

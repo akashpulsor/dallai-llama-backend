@@ -62,98 +62,14 @@ spring:
   # KAMAILIO DATABASE (Separate datasource)
   # ================================================================
   kamailio-datasource:
-    url: jdbc:postgresql://${KAMAILIO_DB_HOST:localhost}:${KAMAILIO_DB_PORT:5432}/${KAMAILIO_DB_NAME:kamailio}
-    username: ${KAMAILIO_DB_USERNAME:kamailio}
-    password: ${KAMAILIO_DB_PASSWORD:kamailio}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${KAMAILIO_DB_NAME:kamailio_db}?sslmode=disable
+    username: ${DB_USERNAME:kamailio}
+    password: ${DB_PASSWORD:kamailio}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 5
       minimum-idle: 2
 
-# ================================================================
-# DALAI LLAMA PLATFORM CONFIGURATION
-# ================================================================
-dalaillama:
-  domain: ${DALAILLAMA_DOMAIN:dalaillama.in}
-  registry: ${DALAILLAMA_REGISTRY:dalaillama}
-
-  # ════════════════════════════════════════════════════════════════
-  # SHARED INFRASTRUCTURE (Multi-tenant)
-  # ════════════════════════════════════════════════════════════════
-  shared:
-    namespace: ${SHARED_NAMESPACE:dalaillama}
-
-    # PostgreSQL
-    postgres:
-      host: ${SHARED_POSTGRES_HOST:postgres.dalaillama.svc.cluster.local}
-      port: ${SHARED_POSTGRES_PORT:5432}
-      database: ${SHARED_POSTGRES_DB:dalaillama}
-
-    # Redis
-    redis:
-      host: ${SHARED_REDIS_HOST:redis.dalaillama.svc.cluster.local}
-      port: ${SHARED_REDIS_PORT:6379}
-
-    # Kafka
-    kafka:
-      bootstrap: ${SHARED_KAFKA_BOOTSTRAP:kafka.dalaillama.svc.cluster.local:9092}
-
-    # SIP/Telephony
-    sip:
-      host: ${SHARED_SIP_HOST:sip.dalaillama.in}
-      internal: ${SHARED_SIP_INTERNAL:kamailio.dalaillama.svc.cluster.local}
-
-    # TURN
-    turn:
-      host: ${SHARED_TURN_HOST:turn.dalaillama.in}
-
-    # RTPEngine
-    rtpengine:
-      socket: ${SHARED_RTPENGINE_SOCKET:udp:rtpengine.dalaillama.svc.cluster.local:22222}
-
-    # FreeSWITCH
-    freeswitch:
-      host: ${SHARED_FREESWITCH_HOST:freeswitch.dalaillama.svc.cluster.local}
-      esl:
-        port: ${SHARED_FREESWITCH_ESL_PORT:8021}
-        password: ${SHARED_FREESWITCH_ESL_PASSWORD:ClueCon}
-
-    # AI Service
-    ai:
-      host: ${SHARED_AI_HOST:ai-service.dalaillama.svc.cluster.local}
-      port: ${SHARED_AI_PORT:8080}
-      agi:
-        port: ${SHARED_AI_AGI_PORT:4573}
-
-  # ════════════════════════════════════════════════════════════════
-  # KAMAILIO CONFIGURATION
-  # ════════════════════════════════════════════════════════════════
-  kamailio:
-    realm: ${KAMAILIO_REALM:dalaillama.in}
-
-  # ════════════════════════════════════════════════════════════════
-  # RTPENGINE CONFIGURATION
-  # ════════════════════════════════════════════════════════════════
-  rtpengine:
-    control-sock: ${RTPENGINE_SOCKET:udp:rtpengine.dalaillama.svc.cluster.local:22222}
-    recording-path: ${RTPENGINE_RECORDING_PATH:/var/spool/rtpengine}
-
-  # ════════════════════════════════════════════════════════════════
-  # COTURN CONFIGURATION
-  # ════════════════════════════════════════════════════════════════
-  coturn:
-    host: ${COTURN_HOST:turn.dalaillama.in}
-    port: ${COTURN_PORT:3478}
-    tls-port: ${COTURN_TLS_PORT:5349}
-    secret: ${COTURN_SECRET:dalaillama-turn-secret}
-    realm: ${COTURN_REALM:dalaillama.in}
-
-  # ════════════════════════════════════════════════════════════════
-  # ISTIO CONFIGURATION
-  # ════════════════════════════════════════════════════════════════
-  istio:
-    gateway: ${ISTIO_GATEWAY:central-gateway}
-    namespace: ${ISTIO_NAMESPACE:istio-system}
 
 # ================================================================
 # TELECOM STACK IMAGES
@@ -188,7 +104,7 @@ keycloak:
 # ================================================================
 kubernetes:
   master-url: ${KUBERNETES_MASTER_URL:https://127.0.0.1:6443}
-  namespace: ${KUBERNETES_NAMESPACE:dalaillama}
+  namespace: ${KUBERNETES_NAMESPACE:apps}
   trust-certs: ${KUBERNETES_TRUST_CERTS:true}
 
 # ================================================================
@@ -278,7 +194,7 @@ spring:
       on-profile: production
 
 dalaillama:
-  domain: dalaillama.in
+  domain: dalaillama-dev.local:8443
 
   shared:
     postgres:

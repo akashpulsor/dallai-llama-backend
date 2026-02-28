@@ -49,7 +49,7 @@ public interface ProductMapper {
         return EntitlementResponse.builder()
                 .maxAgents(e.getMaxAgents())
                 .maxSupervisors(e.getMaxSupervisors())
-                .maxConcurrentLogins(e.getMaxConcurrentLogins())
+
                 .maxPstnChannels(e.getMaxPstnChannels())
                 .maxDids(e.getMaxDids())
                 .inboundEnabled(e.isInboundEnabled())

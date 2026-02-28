@@ -174,6 +174,12 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
             "ta.tenant.expiresAt < CURRENT_TIMESTAMP + 7 DAY")
     List<TenantApp> findExpiringSoon();
 
+    /**
+     * Find all shared (non-dedicated) tenant apps that are fully provisioned.
+     * Used by IstioHostReconciler to build desired Istio host state.
+     */
+    List<TenantApp> findAllByDeploymentStatusAndDedicatedInfrastructure(
+            ProvisioningTaskStatus status, Boolean dedicated);
 
 }
 

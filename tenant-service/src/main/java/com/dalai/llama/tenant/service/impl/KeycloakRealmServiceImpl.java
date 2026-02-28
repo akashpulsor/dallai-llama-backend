@@ -37,6 +37,7 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             "QUALITY_ANALYST"
     );
 
+
     @Override
     public void createRealm(String realmName, String displayName) {
         log.info("Creating Keycloak realm: {}", realmName);

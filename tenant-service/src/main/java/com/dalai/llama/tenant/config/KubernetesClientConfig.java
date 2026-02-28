@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.config;
 
+import io.fabric8.istio.client.IstioClient;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -38,5 +39,10 @@ public class KubernetesClientConfig {
         return new KubernetesClientBuilder()
                 .withConfig(builder.build())
                 .build();
+    }
+
+    @Bean
+    public IstioClient istioClient(KubernetesClient kubernetesClient) {
+        return kubernetesClient.adapt(IstioClient.class);
     }
 }

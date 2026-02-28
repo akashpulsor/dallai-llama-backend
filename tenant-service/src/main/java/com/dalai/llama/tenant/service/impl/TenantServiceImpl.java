@@ -209,8 +209,6 @@ public class TenantServiceImpl implements TenantService {
                 config.product().code(), config.plan().code(), config.plan().tier(),
                 config.apps() != null ? config.apps().size() : 0);
 
-        // 4. Activate tenant (Keycloak realm)
-        activateTenantInternal(tenant);
 
         // 5. Determine deployment model FROM ENTITLEMENTS
         boolean isDedicated = config.entitlements().dedicatedInfrastructure();
@@ -221,6 +219,8 @@ public class TenantServiceImpl implements TenantService {
 
         // 7. CALL TELECOM PROVISIONING ORCHESTRATOR
         telecomProvisioner.provisionTelecomStack(app, config);
+        // 4. Activate tenant
+        activateTenantInternal(tenant);
 
         log.info("╔══════════════════════════════════════════════════════════════╗");
         log.info("║ SUBSCRIPTION ACTIVATED                                       ║");
@@ -493,9 +493,9 @@ public class TenantServiceImpl implements TenantService {
         setInfrastructureUrls(app, slug, baseDomain, isDedicated);
 
         // KEYCLOAK & FRONTEND
-        app.setKeycloakClientId("dalaillama-" + slug);
-        app.setDashboardUrl("https://" + primaryApp.subdomain() + "." + slug + "." + baseDomain);
-        app.setFrontendService(slug + "-" + primaryApp.subdomain() + "-ui");
+        //app.setKeycloakClientId("dalaillama-" + slug);
+        //app.setDashboardUrl("https://" + primaryApp.subdomain() + "." + slug + "." + baseDomain);
+        //app.setFrontendService(slug + "-" + primaryApp.subdomain() + "-ui");
 
         // APP PANELS JSON
         if (config.apps() != null && !config.apps().isEmpty()) {
@@ -673,14 +673,14 @@ public class TenantServiceImpl implements TenantService {
 
     private String buildAppPanelsJson(List<ProductAppResponse> apps, String tenantSlug, String baseDomain) {
         try {
-            String baseKeycloakClientId = "dalaillama-" + tenantSlug;
             List<AppPanelDto> panels = new ArrayList<>();
 
             for (var appInfo : apps) {
-                String url = "https://" + appInfo.subdomain() + "." + tenantSlug + "." + baseDomain;
-                String clientId = (appInfo.keycloakClientSuffix() == null || appInfo.keycloakClientSuffix().isBlank())
-                        ? baseKeycloakClientId
-                        : baseKeycloakClientId + "-" + appInfo.keycloakClientSuffix();
+                // URL: admin-acme.dalaillama.in
+                String url = "https://" + appInfo.subdomain() + "-" + tenantSlug + "." + baseDomain;
+
+                // ClientId: admin-ui, agent-ui, supervisor-ui
+                String clientId = appInfo.subdomain() + "-ui";
 
                 panels.add(new AppPanelDto(
                         appInfo.appType(), appInfo.displayName(), appInfo.subdomain(), url,

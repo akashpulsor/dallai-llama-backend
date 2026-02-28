@@ -100,7 +100,7 @@ public class PlanEntitlement {
 
     @Column(name = "ai_tokens_per_month")
     @Builder.Default
-    private Integer aiTokensPerMonth = 0;
+    private Long  aiTokensPerMonth = 0L;
 
     // ==================== CALL FEATURES ====================
 
@@ -153,6 +153,11 @@ public class PlanEntitlement {
     @Column(name = "screen_recording_enabled")
     @Builder.Default
     private boolean screenRecordingEnabled = false;
+
+    @Column(name = "monitor_enabled")
+    @Builder.Default
+    private boolean monitorEnabled = false;
+
 
     // ==================== IVR FEATURES ====================
 
@@ -271,6 +276,27 @@ public class PlanEntitlement {
     @Column(name = "sla_tier", length = 20)
     @Builder.Default
     private String slaTier = "STANDARD";
+
+// ==================== CALL DIRECTION ====================
+
+    @Column(name = "inbound_enabled")
+    @Builder.Default
+    private boolean inboundEnabled = true;
+
+    @Column(name = "outbound_enabled")
+    @Builder.Default
+    private boolean outboundEnabled = true;
+
+// ==================== ANALYTICS ====================
+
+    @Column(name = "analytics_enabled")
+    @Builder.Default
+    private boolean analyticsEnabled = false;
+
+
+    @Column(name = "analytics_retention_days")
+    @Builder.Default
+    private Integer analyticsRetentionDays = 30;
 
     // ==================== TIMESTAMPS ====================
 

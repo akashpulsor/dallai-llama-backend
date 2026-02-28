@@ -44,44 +44,35 @@ public class KeycloakClientConfigService {
     private String baseDomain;
 
     /**
-     * Create Keycloak clients for tenant apps
+     * Create Keycloak public clients for each UI app in the tenant's realm.
+     * Realm is named by tenantId: "tenant-{uuid}"
+     * Redirect URIs use flat subdomain: {subdomain}-{slug}.dalaillama.in
      */
     public void createClientsForTenant(TenantApp app) {
-        String tenantSlug = app.getNamespace();
-        String realmName = tenantSlug;
+        String tenantSlug = app.getTenant().getSlug();
 
+        String realmName = app.getTenant().getKeycloakRealmName();
         log.info("Creating Keycloak clients for tenant {} in realm {}", tenantSlug, realmName);
 
         try {
             RealmResource realm = keycloakAdmin.realm(realmName);
-
-            // Parse app panels
             List<AppPanel> apps = parseAppPanels(app.getAppPanels());
-
-            // Track created client IDs to avoid duplicates
             Set<String> createdClients = new HashSet<>();
 
             for (AppPanel panel : apps) {
-                String clientId = panel.keycloakClientId;
+                String clientId = panel.keycloakClientId();
+                if (createdClients.contains(clientId)) continue;
 
-                if (createdClients.contains(clientId)) {
-                    continue; // Skip duplicate
-                }
-
-                // Check if client exists
                 List<ClientRepresentation> existing = realm.clients().findByClientId(clientId);
                 if (!existing.isEmpty()) {
-                    log.debug("Client {} already exists, updating", clientId);
                     updateClient(realm, existing.get(0), panel, tenantSlug);
                 } else {
                     createClient(realm, clientId, panel, tenantSlug);
                 }
-
                 createdClients.add(clientId);
             }
 
             log.info("Created {} Keycloak clients for tenant {}", createdClients.size(), tenantSlug);
-
         } catch (Exception e) {
             log.error("Failed to create Keycloak clients for {}: {}", tenantSlug, e.getMessage());
             throw new RuntimeException("Keycloak client creation failed", e);

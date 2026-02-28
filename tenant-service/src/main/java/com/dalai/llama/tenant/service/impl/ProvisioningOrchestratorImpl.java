@@ -86,9 +86,9 @@ public class ProvisioningOrchestratorImpl  {
 
             ProvisioningTask provisioningTask =initializeProvisioningTask(tenant);
             executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_REALM);
-            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ROLES);
-            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_CLIENT);
-            executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ADMIN);
+            //executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ROLES);
+            //executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_CLIENT);
+            //executeStep(tenant, provisioningTask, ProvisioningStep.CREATE_KEYCLOAK_ADMIN);
         } finally {
             distributedLock.release(lockKey, lockValue);
         }
@@ -224,9 +224,9 @@ public class ProvisioningOrchestratorImpl  {
 
         Map<String, Object> result = switch (step) {
             case CREATE_KEYCLOAK_REALM -> executeKeycloakRealmStep(tenant);
-            case CREATE_KEYCLOAK_ROLES -> executeKeycloakRolesStep(tenant);
-            case CREATE_KEYCLOAK_CLIENT -> executeKeycloakClientStep(tenant);
-            case CREATE_KEYCLOAK_ADMIN -> executeKeycloakAdminStep(tenant);
+//            case CREATE_KEYCLOAK_ROLES -> executeKeycloakRolesStep(tenant);
+//            case CREATE_KEYCLOAK_CLIENT -> executeKeycloakClientStep(tenant);
+//            case CREATE_KEYCLOAK_ADMIN -> executeKeycloakAdminStep(tenant);
 
 
 
@@ -298,7 +298,7 @@ public class ProvisioningOrchestratorImpl  {
 
 
     private Map<String, Object> executeKeycloakRealmStep(Tenant tenant) {
-        String realmName = "tenant-" + tenant.getSlug();
+        String realmName = "tenant-" + tenant.getId();
         keycloakRealmService.createRealm(realmName, tenant.getCompanyName());
         tenant.setKeycloakRealmName(realmName);
         tenantRepository.save(tenant);
@@ -356,9 +356,9 @@ public class ProvisioningOrchestratorImpl  {
     }
 
     private Map<String, Object> executeFinalizeStep(Tenant tenant) {
-        tenant.setActivatedAt(OffsetDateTime.now());
+        tenant.setUpdatedAt(OffsetDateTime.now());
         tenantRepository.save(tenant);
-        return Map.of("activatedAt", tenant.getActivatedAt().toString());
+        return Map.of("realmCreatedAt", tenant.getActivatedAt().toString());
     }
 
 
@@ -366,10 +366,10 @@ public class ProvisioningOrchestratorImpl  {
 
     private TenantStatus mapStepToSubstatus(ProvisioningStep step) {
         return switch (step) {
-            case CREATE_KEYCLOAK_REALM,
-                 CREATE_KEYCLOAK_ROLES,
-                 CREATE_KEYCLOAK_CLIENT,
-                 CREATE_KEYCLOAK_ADMIN
+            case CREATE_KEYCLOAK_REALM
+                 //CREATE_KEYCLOAK_ROLES,
+                 //CREATE_KEYCLOAK_CLIENT,
+                 //CREATE_KEYCLOAK_ADMIN
                     -> TenantStatus.PROVISIONING_KEYCLOAK;
 
             default -> TenantStatus.PROVISIONING_INFRA; // or whatever fits

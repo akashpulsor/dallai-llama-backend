@@ -140,6 +140,10 @@ public class KubernetesConfigDiscoveryService {
         }
     }
 
+    public String getDomain(){
+        return this.baseDomain;
+    }
+
     @Builder
     public record DedicatedEndpoints(
             String postgresUrl, String redisUrl, String kafkaBootstrap,

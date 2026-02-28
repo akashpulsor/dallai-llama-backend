@@ -8,12 +8,16 @@ import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
 import com.dalai.llama.tenant.dto.response.ProductConfigResponse;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -48,15 +52,16 @@ public class TelecomProvisioningOrchestrator {
 
     private final KubernetesConfigDiscoveryService configDiscovery;
     private final KamailioConfigService kamailioConfigService;
-    private final FreePBXConfigService freePBXConfigService;
-    private final RTPEngineConfigService rtpEngineConfigService;
+    private final FreeSwitchConfigService freePBXConfigService;
+    private final RtpEngineConfigService rtpEngineConfigService;
     private final CoTurnConfigService coTurnConfigService;
     private final AiServiceConfigService aiServiceConfigService;
     private final DedicatedNamespaceProvisioner dedicatedProvisioner;
     private final IstioGatewayConfigService istioGatewayService;
     private final KeycloakClientConfigService keycloakClientService;
     private final TenantAppRepository tenantAppRepository;
-
+    private final IstioHostReconciler istioHostReconciler;
+    private final ObjectMapper objectMapper;
     /**
      * Main entry point - provision complete telecom stack
      */
@@ -117,8 +122,11 @@ public class TelecomProvisioningOrchestrator {
 
             // Phase 8: Istio Gateway
             log.info("▶ Phase 8: Istio Gateway Configuration");
-            istioGatewayService.createVirtualServiceForTenant(app);
-
+            buildAppPanelUrls(app);
+            tenantAppRepository.save(app);
+            // Reconciler reads tenant_apps, computes desired hosts, patches Gateway+VS+ConfigMap
+            // No-op if already in sync
+            istioHostReconciler.reconcile();
             // Phase 9: Keycloak Clients
             log.info("▶ Phase 9: Keycloak Client Configuration");
             keycloakClientService.createClientsForTenant(app);
@@ -268,4 +276,53 @@ public class TelecomProvisioningOrchestrator {
         tenantAppRepository.save(app);
         log.info("Telecom config refreshed for {}", app.getNamespace());
     }
+
+    /**
+     * Builds app panel URLs using flat subdomain pattern: {subdomain}-{slug}.{domain}
+     * and saves to TenantApp.appPanels JSON.
+     *
+     * Input:  ProductConfigResponse.apps() → list of app definitions
+     * Output: JSON array in app.appPanels with correct URLs for Istio routing
+     */
+    private void buildAppPanelUrls(TenantApp app) {
+        String slug = app.getTenant().getSlug();
+        String tenantId = app.getTenant().getId().toString();
+        String baseDomain = configDiscovery.getDomain(); // dalaillama.in
+
+        // appPanels already set from createOrUpdateTenantApp, but URLs may use old pattern
+        List<Map<String, Object>> panels = parseAppPanelsAsList(app.getAppPanels());
+
+        for (Map<String, Object> panel : panels) {
+            String subdomain = (String) panel.get("subdomain");
+            // Flat subdomain: admin-acme.dalaillama.in (not admin.acme.dalaillama.in)
+            String url = "https://" + subdomain + "-" + slug + "." + baseDomain;
+            panel.put("url", url);
+        }
+
+        try {
+            app.setAppPanels(objectMapper.writeValueAsString(panels));
+            // Also set dashboardUrl to primary app (admin or first panel)
+            panels.stream()
+                    .filter(p -> "admin".equals(p.get("subdomain")))
+                    .findFirst()
+                    .or(() -> panels.stream().findFirst())
+                    .ifPresent(p -> app.setDashboardUrl((String) p.get("url")));
+        } catch (Exception e) {
+            log.error("Failed to serialize app panels", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseAppPanelsAsList(String json) {
+        if (json == null || json.isBlank()) return new ArrayList<>();
+        try {
+            return objectMapper.readValue(json,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+
+
 }

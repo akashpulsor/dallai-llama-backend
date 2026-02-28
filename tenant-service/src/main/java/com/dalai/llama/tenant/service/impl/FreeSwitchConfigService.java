@@ -1,7 +1,9 @@
 package com.dalai.llama.tenant.service.impl;
 
 import com.dalai.llama.tenant.domain.entity.TenantApp;
+import com.dalai.llama.tenant.dto.request.FreeSwitchDialplanRequest;
 import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
+import com.dalai.llama.tenant.service.client.PbxCoreClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,27 +11,47 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 
+/**
+ * FreeSWITCH Dialplan Configuration (Tenant Service side)
+ *
+ * Responsibility split:
+ *   Tenant Service (here):
+ *     - Product → dialplan generation (AI_CC, CONV_IVR, BASIC_PBX, etc.)
+ *     - Entitlement → feature flag resolution
+ *     - CDR setup with billing rates
+ *     - AGI URL resolution (dedicated vs shared namespace)
+ *     - All the dialplan string generation methods
+ *
+ *   PBX-Core (remote):
+ *     - Stores generated dialplan in DB (tenant_dialplan table)
+ *     - Serves via mod_xml_curl: GET /internal/freeswitch/dialplan?context=tenant_xxx
+ *     - Converts stored dialplan to FreeSWITCH XML format
+ *     - Zero knowledge of products or plan entitlements
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class FreePBXConfigService {
+public class FreeSwitchConfigService {
 
+    private final PbxCoreClient pbxCoreClient;
     private final KubernetesConfigDiscoveryService configDiscovery;
 
     @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
     public String configureForSubscription(TenantApp app, PlanEntitlementResponse e) {
-        log.info("Configuring FreePBX for {} - product: {}", app.getSubscriptionId(), app.getProductCode());
+        log.info("Configuring FreeSWITCH for {} - product: {}",
+                app.getSubscriptionId(), app.getProductCode());
 
         String ctx = "tenant_" + app.getNamespace();
         boolean dedicated = Boolean.TRUE.equals(app.getDedicatedInfrastructure());
         String aiAgiUrl = configDiscovery.getAiAgiUrl(dedicated, app.getNamespace());
 
-        StringBuilder config = new StringBuilder();
-        config.append(generateHeader(app, e));
+        // ── All dialplan generation is BUSINESS LOGIC, stays here ──
+        StringBuilder dialplan = new StringBuilder();
+        dialplan.append(generateHeader(app, e));
 
-        String dialplan = switch (app.getProductCode()) {
+        String productDialplan = switch (app.getProductCode()) {
             case "AI_CC" -> generateAiContactCenter(app, e, ctx, aiAgiUrl);
             case "CONV_IVR" -> generateConversationalIvr(app, e, ctx, aiAgiUrl);
             case "BASIC_PBX" -> generateBasicPbx(app, e, ctx);
@@ -37,17 +59,37 @@ public class FreePBXConfigService {
             case "VIRTUAL_RECEPTIONIST" -> generateVirtualReceptionist(app, e, ctx, aiAgiUrl);
             default -> generateDefault(app, ctx);
         };
+        dialplan.append(productDialplan);
 
-        config.append(dialplan);
-
-        if (e.voicemailEnabled()) config.append(generateVoicemail(app, ctx, e));
-        if (e.maxRingGroups() > 0) config.append(generateRingGroups(ctx, e.maxRingGroups()));
+        if (e.voicemailEnabled()) dialplan.append(generateVoicemail(app, ctx, e));
+        if (e.maxRingGroups() > 0) dialplan.append(generateRingGroups(ctx, e.maxRingGroups()));
         if (e.bargeEnabled() || e.whisperEnabled() || e.listenEnabled())
-            config.append(generateSupervisorFeatures(ctx, e));
+            dialplan.append(generateSupervisorFeatures(ctx, e));
 
-        log.info("FreePBX config generated: {} lines", config.toString().lines().count());
-        return config.toString();
+        String generatedDialplan = dialplan.toString();
+
+        // ── Send to PBX-Core for storage. It serves via mod_xml_curl. ──
+        FreeSwitchDialplanRequest request = FreeSwitchDialplanRequest.builder()
+                .tenantId(app.getTenant().getId())
+                .subscriptionId(app.getSubscriptionId())
+                .namespace(app.getNamespace())
+                .context(ctx)
+                .dialplanContent(generatedDialplan)
+                .productCode(app.getProductCode())
+                .dedicatedInfrastructure(dedicated)
+                .build();
+
+        pbxCoreClient.storeFreeSwitchDialplan(request);
+
+        log.info("FreeSWITCH dialplan sent to PBX-Core for {}: {} lines",
+                app.getNamespace(), generatedDialplan.lines().count());
+
+        return generatedDialplan;
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // Everything below is UNCHANGED — product/business logic
+    // ════════════════════════════════════════════════════════════════
 
     private String generateHeader(TenantApp app, PlanEntitlementResponse e) {
         return String.format("""
@@ -62,9 +104,6 @@ public class FreePBXConfigService {
                 Instant.now(), e.aiBotEnabled(), e.recordingEnabled(), e.maxAgents(), e.maxQueues());
     }
 
-    /**
-     * Common CDR setup block - added to every context
-     */
     private String generateCdrSetup(TenantApp app, PlanEntitlementResponse e) {
         return String.format("""
                  same => n,Set(TENANT_ID=%s)
@@ -80,16 +119,6 @@ public class FreePBXConfigService {
                 app.getSubscriptionId(),
                 app.getProductCode(),
                 e.ratePerMinuteInbound() != null ? e.ratePerMinuteInbound() : "1.5");
-    }
-
-    /**
-     * CDR finalization - set AI minutes and other final values
-     */
-    private String generateCdrFinalize() {
-        return """
-                 same => n,Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Set(CDR(sentiment_score)=${SENTIMENT_SCORE})
-                """;
     }
 
     private String generateAiContactCenter(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
@@ -260,7 +289,6 @@ public class FreePBXConfigService {
     }
 
     private String generateOutboundDialer(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
-        // Outbound uses outbound rate
         String cdrSetup = String.format("""
                  same => n,Set(TENANT_ID=%s)
                  same => n,Set(SUBSCRIPTION_ID=%s)
@@ -442,15 +470,9 @@ public class FreePBXConfigService {
 
     private String generateSupervisorFeatures(String ctx, PlanEntitlementResponse e) {
         StringBuilder sb = new StringBuilder("\n[" + ctx + "-supervisor]\n");
-        if (e.listenEnabled()) {
-            sb.append("exten => _*1X.,1,ChanSpy(PJSIP/${EXTEN:2},q)\n");
-        }
-        if (e.whisperEnabled()) {
-            sb.append("exten => _*2X.,1,ChanSpy(PJSIP/${EXTEN:2},qw)\n");
-        }
-        if (e.bargeEnabled()) {
-            sb.append("exten => _*3X.,1,ChanSpy(PJSIP/${EXTEN:2},qB)\n");
-        }
+        if (e.listenEnabled()) sb.append("exten => _*1X.,1,ChanSpy(PJSIP/${EXTEN:2},q)\n");
+        if (e.whisperEnabled()) sb.append("exten => _*2X.,1,ChanSpy(PJSIP/${EXTEN:2},qw)\n");
+        if (e.bargeEnabled()) sb.append("exten => _*3X.,1,ChanSpy(PJSIP/${EXTEN:2},qB)\n");
         return sb.toString();
     }
 
