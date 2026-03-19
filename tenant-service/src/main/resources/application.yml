@@ -195,7 +195,12 @@ spring:
 
 dalaillama:
   domain: dalaillama-dev.local:8443
-
+  voicebrain:
+    url: ws://127.0.0.1:8600 # get from cluster ENV variable WebSocket URL for VoiceBrain communication
+  ingress:
+    type: ${INGRESS_TYPE:traefik}      # "traefik" or "istio"
+  tls:
+    cert-resolver: ${TLS_CERT_RESOLVER:letsencrypt}
   shared:
     postgres:
       host: postgres-primary.dalaillama.svc.cluster.local

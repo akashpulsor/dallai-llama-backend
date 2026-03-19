@@ -25,7 +25,7 @@
       <module>agent-service</module>
     <module>billing-service</module>
 
-    <module>ai-service</module>
+
     <module>blob-manager</module>
       <module>media-server</module>
       <module>tenant-service</module>

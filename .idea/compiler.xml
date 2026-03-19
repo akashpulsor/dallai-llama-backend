@@ -40,6 +40,7 @@
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
+      <module name="ai-service" target="17" />
       <module name="auth-service" target="17" />
       <module name="com.dalaillama.auth-service" target="21" />
       <module name="content (1)" target="1.8" />

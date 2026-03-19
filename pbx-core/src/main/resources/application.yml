@@ -1,38 +1,110 @@
 server:
-  port: 9080
+  port: 8080
+  shutdown: graceful
 
 spring:
+  application:
+    name: pbx-core
+
+  # ═══ PostgreSQL — owns Kamailio tables + PBX-Core tables ═══
   datasource:
-    # Connects to MySQL using environment variables set in the Kubernetes deployment
-    url: jdbc:mysql://${DB_HOST}:3306/${DB_NAME}?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
-    username: ${DB_USER}
-    password: ${DB_PASSWORD}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pbx_core}
+    username: ${DB_USERNAME:pbxcore}
+    password: ${DB_PASSWORD:changeme}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 600000
+
   jpa:
-    database-platform: org.hibernate.dialect.MySQL8Dialect
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
+    open-in-view: false
     properties:
       hibernate:
-        format_sql: true
-  kafka:
-    # Kafka brokers loaded from the KAFKA_BROKERS environment variable
-    bootstrap-servers: ${KAFKA_BROKERS}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-  redis:
-    # Redis host loaded from the REDIS_HOST environment variable
-    host: ${REDIS_HOST}
-    port: 6379
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: public
+        jdbc.batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # ═══ Flyway ═══
   flyway:
-    url: jdbc:mysql://${DB_HOST}:3306/${DB_NAME}?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
-    user: ${DB_USER}
-    password: ${DB_PASSWORD}
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: "0"
 
-registry:
-  container: docker.io/dalaillama
+  # ═══ Redis ═══
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 5000
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
 
+  # ═══ Keycloak JWT ═══
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://auth.localhost:8081/realms/dalaillama}
+
+# ═══ FreeSWITCH ESL ═══
+freeswitch:
+  esl:
+    host: ${FREESWITCH_ESL_HOST:127.0.0.1}
+    port: ${FREESWITCH_ESL_PORT:8021}
+    password: ${FREESWITCH_ESL_PASSWORD:ClueCon}
+    reconnect-delay-ms: 5000
+    connection-timeout-ms: 10000
+
+# ═══ Kamailio JSONRPC ═══
+kamailio:
+  jsonrpc:
+    url: ${KAMAILIO_JSONRPC_URL:http://127.0.0.1:5060/jsonrpc}
+
+# ═══ CoTURN ═══
+coturn:
+  host: ${COTURN_HOST:turn.dalaillama.in}
+  secret: ${COTURN_SECRET:changeme}
+  default-ttl: 86400
+
+# ═══ Cross-service clients ═══
+dalaillama:
+  tenant-service:
+    url: ${TENANT_SERVICE_URL:http://tenant-service.platform.svc.cluster.local:8080}
+  product-service:
+    url: ${PRODUCT_SERVICE_URL:http://product-service.platform.svc.cluster.local:8080}
+
+# ═══ PBX-Core tuning ═══
+pbxcore:
+  websocket:
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}
+    # Broker type: "simple" (single pod, local dev) or "redis" (multi-pod production).
+    # When "redis": WebSocketEventPublisher publishes to Redis Pub/Sub channel
+    # "ws:{tenantId}:{channel}". Every pod subscribes and relays to local clients.
+    broker: ${WEBSOCKET_BROKER:simple}
+    redis-channel-prefix: "ws:"
+  cache:
+    tenant-config-ttl-minutes: 5
+  dialer:
+    poll-interval-ms: 5000
+    max-concurrent-per-campaign: 10
+# Under existing sip section (NEW — add after kamailio block)
+sip:
+  external-ip: ${SIP_EXTERNAL_IP:}
+  default-domain: ${SIP_DEFAULT_DOMAIN:sip.dalaillama.in}
+  wss-url: ${SIP_WSS_URL:wss://sip.dalaillama.in:7443}
+
+# ═══ Actuator ═══
 management:
   endpoints:
     web:
@@ -40,13 +112,56 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
+      show-details: when_authorized
       probes:
         enabled: true
 
-pbx:
-  ai:
-    routing:
-      timeout-ms: 60
-  core:
-    # Service URL dynamically loaded from the PBX_CORE_URL environment variable (the FQDN of this service)
-    url: ${PBX_CORE_URL}
+# ═══ Logging ═══
+logging:
+  level:
+    com.dalai.llama.pbxcore: DEBUG
+    com.dalai.llama.pbxcore.esl: INFO
+    com.dalai.llama.pbxcore.redis: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.flywaydb: INFO
+
+---
+# ═══ LOCAL DEV ═══
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/pbx_core
+    username: postgres
+    password: postgres
+  data:
+    redis:
+      host: 127.0.0.1
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://auth.localhost:8081/realms/dalaillama
+
+dalaillama:
+  tenant-service:
+    url: http://127.0.0.1:8082
+  product-service:
+    url: http://127.0.0.1:8083
+
+logging:
+  level:
+    com.dalai.llama.pbxcore: TRACE
+
+---
+# ═══ K3D ═══
+spring:
+  config:
+    activate:
+      on-profile: k3d
+  datasource:
+    url: jdbc:postgresql://pbx-core-postgresql.telecom.svc.cluster.local:5432/pbx_core
+  data:
+    redis:
+      host: redis.platform.svc.cluster.local

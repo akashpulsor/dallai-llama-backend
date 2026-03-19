@@ -12,21 +12,23 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 
 /**
- * FreeSWITCH Dialplan Configuration (Tenant Service side)
+ * FreeSWITCH Dialplan Configuration — generates XML dialplan per tenant.
  *
- * Responsibility split:
- *   Tenant Service (here):
- *     - Product → dialplan generation (AI_CC, CONV_IVR, BASIC_PBX, etc.)
- *     - Entitlement → feature flag resolution
- *     - CDR setup with billing rates
- *     - AGI URL resolution (dedicated vs shared namespace)
- *     - All the dialplan string generation methods
+ * KEY CHANGE FROM PREVIOUS VERSION:
+ *   OLD: Generated Asterisk extensions.conf format with AGI() calls
+ *   NEW: Generates FreeSWITCH XML format with mod_audio_stream WebSocket to voice-brain
  *
- *   PBX-Core (remote):
- *     - Stores generated dialplan in DB (tenant_dialplan table)
- *     - Serves via mod_xml_curl: GET /internal/freeswitch/dialplan?context=tenant_xxx
- *     - Converts stored dialplan to FreeSWITCH XML format
- *     - Zero knowledge of products or plan entitlements
+ * For AI products (CONV_IVR, VIRTUAL_RECEPTIONIST, AI_CC, OUTBOUND_DIALER):
+ *   FreeSWITCH connects bidirectional audio to voice-brain via WebSocket:
+ *     <action application="socket" data="ws://voice-brain:8600/audio/${uuid}?tenant_id=...&bot_id=..."/>
+ *
+ *   voice-brain handles everything: STT, LLM, TTS, intent detection, escalation.
+ *   When voice-brain escalates, it calls PBX-Core /internal/ai/escalation
+ *   → PBX-Core sends ESL uuid_transfer to FreeSWITCH → call routes to queue/agent.
+ *
+ * Flow:
+ *   Provisioning: tenant-service → generates XML → POST to PBX-Core → stored in tenant_dialplan
+ *   Runtime: FreeSWITCH → mod_xml_curl GET /internal/freeswitch/dialplan → PBX-Core returns stored XML
  */
 @Slf4j
 @Service
@@ -34,467 +36,294 @@ import java.time.Instant;
 public class FreeSwitchConfigService {
 
     private final PbxCoreClient pbxCoreClient;
-    private final KubernetesConfigDiscoveryService configDiscovery;
 
     @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
+    @Value("${dalaillama.voicebrain.url:ws://127.0.0.1:8600}")
+    private String voiceBrainUrl;
+
     public String configureForSubscription(TenantApp app, PlanEntitlementResponse e) {
-        log.info("Configuring FreeSWITCH for {} - product: {}",
-                app.getSubscriptionId(), app.getProductCode());
+        log.info("Generating FreeSWITCH XML dialplan: tenant={} product={}",
+                app.getNamespace(), app.getProductCode());
 
         String ctx = "tenant_" + app.getNamespace();
-        boolean dedicated = Boolean.TRUE.equals(app.getDedicatedInfrastructure());
-        String aiAgiUrl = configDiscovery.getAiAgiUrl(dedicated, app.getNamespace());
+        String tenantId = app.getTenant().getId().toString();
 
-        // ── All dialplan generation is BUSINESS LOGIC, stays here ──
-        StringBuilder dialplan = new StringBuilder();
-        dialplan.append(generateHeader(app, e));
-
-        String productDialplan = switch (app.getProductCode()) {
-            case "AI_CC" -> generateAiContactCenter(app, e, ctx, aiAgiUrl);
-            case "CONV_IVR" -> generateConversationalIvr(app, e, ctx, aiAgiUrl);
-            case "BASIC_PBX" -> generateBasicPbx(app, e, ctx);
-            case "OUTBOUND_DIALER" -> generateOutboundDialer(app, e, ctx, aiAgiUrl);
-            case "VIRTUAL_RECEPTIONIST" -> generateVirtualReceptionist(app, e, ctx, aiAgiUrl);
-            default -> generateDefault(app, ctx);
+        String xml = switch (app.getProductCode()) {
+            case "AI_CC" -> generateAiContactCenter(ctx, tenantId, app, e);
+            case "CONV_IVR" -> generateConversationalIvr(ctx, tenantId, app, e);
+            case "BASIC_PBX" -> generateBasicPbx(ctx, tenantId, app, e);
+            case "OUTBOUND_DIALER" -> generateOutboundDialer(ctx, tenantId, app, e);
+            case "VIRTUAL_RECEPTIONIST" -> generateVirtualReceptionist(ctx, tenantId, app, e);
+            default -> generateDefault(ctx, tenantId);
         };
-        dialplan.append(productDialplan);
 
-        if (e.voicemailEnabled()) dialplan.append(generateVoicemail(app, ctx, e));
-        if (e.maxRingGroups() > 0) dialplan.append(generateRingGroups(ctx, e.maxRingGroups()));
-        if (e.bargeEnabled() || e.whisperEnabled() || e.listenEnabled())
-            dialplan.append(generateSupervisorFeatures(ctx, e));
+        // Wrap in full document
+        String dialplanXml = wrapDocument(ctx, xml, app, e);
 
-        String generatedDialplan = dialplan.toString();
-
-        // ── Send to PBX-Core for storage. It serves via mod_xml_curl. ──
+        // Send to PBX-Core for storage
         FreeSwitchDialplanRequest request = FreeSwitchDialplanRequest.builder()
                 .tenantId(app.getTenant().getId())
                 .subscriptionId(app.getSubscriptionId())
                 .namespace(app.getNamespace())
                 .context(ctx)
-                .dialplanContent(generatedDialplan)
+                .dialplanContent(dialplanXml)
                 .productCode(app.getProductCode())
-                .dedicatedInfrastructure(dedicated)
+                .dedicatedInfrastructure(Boolean.TRUE.equals(app.getDedicatedInfrastructure()))
                 .build();
 
         pbxCoreClient.storeFreeSwitchDialplan(request);
 
-        log.info("FreeSWITCH dialplan sent to PBX-Core for {}: {} lines",
-                app.getNamespace(), generatedDialplan.lines().count());
+        log.info("FreeSWITCH dialplan stored: tenant={} product={} lines={}",
+                app.getNamespace(), app.getProductCode(), dialplanXml.lines().count());
 
-        return generatedDialplan;
+        return dialplanXml;
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Everything below is UNCHANGED — product/business logic
-    // ════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // CONV_IVR — Bot handles full conversation via voice-brain
+    // ═══════════════════════════════════════════════════════════
 
-    private String generateHeader(TenantApp app, PlanEntitlementResponse e) {
-        return String.format("""
-                ; ================================================================
-                ; FreeSWITCH Dialplan - Tenant: %s
-                ; Product: %s | Plan: %s | Tier: %s
-                ; Generated: %s
-                ; AI: %s | Recording: %s | Agents: %d | Queues: %d
-                ; ================================================================
-                
-                """, app.getNamespace(), app.getProductCode(), app.getPlanCode(), app.getPlanTier(),
-                Instant.now(), e.aiBotEnabled(), e.recordingEnabled(), e.maxAgents(), e.maxQueues());
+    private String generateConversationalIvr(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
+        String ws = voiceBrainWsUrl(tenantId, "CONV_IVR");
+        return """
+              <!-- CONVERSATIONAL IVR — voice-brain handles entire call -->
+              <extension name="conv_ivr_inbound">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  %s
+                  %s
+                  <!-- Bidirectional audio to voice-brain: STT→LLM→TTS→intent→escalation -->
+                  <action application="socket" data="%s&amp;direction=INBOUND"/>
+                  <!-- After voice-brain disconnects (escalation or end), fallback -->
+                  %s
+                </condition>
+              </extension>
+        """.formatted(
+                cdrVars(tenantId, app),
+                recording(e),
+                ws,
+                voicemailFallback(ctx, e)
+        );
     }
 
-    private String generateCdrSetup(TenantApp app, PlanEntitlementResponse e) {
-        return String.format("""
-                 same => n,Set(TENANT_ID=%s)
-                 same => n,Set(SUBSCRIPTION_ID=%s)
-                 same => n,Set(PRODUCT_CODE=%s)
-                 same => n,Set(RATE_PER_MIN=%s)
-                 same => n,Set(CDR(tenant_id)=${TENANT_ID})
-                 same => n,Set(CDR(subscription_id)=${SUBSCRIPTION_ID})
-                 same => n,Set(CDR(product_code)=${PRODUCT_CODE})
-                 same => n,Set(CDR(rate_per_minute)=${RATE_PER_MIN})
-                """,
-                app.getTenant().getId(),
-                app.getSubscriptionId(),
-                app.getProductCode(),
-                e.ratePerMinuteInbound() != null ? e.ratePerMinuteInbound() : "1.5");
+    // ═══════════════════════════════════════════════════════════
+    // VIRTUAL RECEPTIONIST — Bot takes messages, books appointments
+    // ═══════════════════════════════════════════════════════════
+
+    private String generateVirtualReceptionist(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
+        String ws = voiceBrainWsUrl(tenantId, "VIRTUAL_RECEPTIONIST");
+        return """
+              <!-- VIRTUAL RECEPTIONIST — bot greets, takes messages, books appointments -->
+              <extension name="virtual_receptionist_inbound">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  %s
+                  %s
+                  <action application="socket" data="%s&amp;direction=INBOUND"/>
+                  %s
+                </condition>
+              </extension>
+        """.formatted(
+                cdrVars(tenantId, app),
+                recording(e),
+                ws,
+                voicemailFallback(ctx, e)
+        );
     }
 
-    private String generateAiContactCenter(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
-        String cdrSetup = generateCdrSetup(app, e);
+    // ═══════════════════════════════════════════════════════════
+    // AI CONTACT CENTER — Agent talks, voice-brain listens + assists
+    // ═══════════════════════════════════════════════════════════
 
-        return String.format("""
-                ; ==================== AI CONTACT CENTER ====================
-                
-                [%s]
-                exten => _X.,1,NoOp(AI Contact Center: ${EXTEN})
-                %s
-                 same => n,Set(AI_MINUTES_USED=0)
-                 same => n,Answer()
-                 same => n,Goto(%s-incoming,${EXTEN},1)
-                
-                [%s-incoming]
-                exten => _X.,1,Set(CALL_ID=${UNIQUEID})
-                 same => n,Set(CALLER_ID=${CALLERID(num)})
-                 same => n,Set(AI_START=${EPOCH})
-                 %s
-                 same => n,AGI(%s/greeting,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${AI_START}] / 60)])
-                 same => n,Set(AI_INTENT=${AI_INTENT})
-                 same => n,GotoIf($["${AI_INTENT}"="AGENT"]?%s-queue,${EXTEN},1)
-                 same => n,GotoIf($["${AI_INTENT}"="SELF_SERVICE"]?%s-selfservice,s,1)
-                 same => n,Goto(%s-conversation,${EXTEN},1)
-                
-                [%s-conversation]
-                exten => _X.,1,Set(CONV_START=${EPOCH})
-                 same => n,AGI(%s/conversation,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${CONV_START}] / 60)])
-                 same => n,GotoIf($["${AI_ACTION}"="TRANSFER"]?%s-queue,${EXTEN},1)
-                 same => n,GotoIf($["${AI_ACTION}"="END"]?hangup)
-                 same => n,Goto(1)
-                 same => n(hangup),Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(goodbye)
-                 same => n,Hangup()
-                
-                [%s-selfservice]
-                exten => s,1,Set(SS_START=${EPOCH})
-                 same => n,AGI(%s/selfservice,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${SS_START}] / 60)])
-                 same => n,GotoIf($["${RESOLVED}"="true"]?done)
-                 same => n,Goto(%s-queue,s,1)
-                 same => n(done),Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(goodbye)
-                 same => n,Hangup()
-                
-                [%s-queue]
-                exten => _X.,1,NoOp(Routing to Queue)
-                 same => n,Set(QUEUE=%s-default)
-                 same => n,Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 %s
-                 same => n,Queue(${QUEUE},tTkK,,,300)
-                 same => n,GotoIf($["${QUEUESTATUS}"="TIMEOUT"]?%s-voicemail,${EXTEN},1)
-                 same => n,Hangup()
-                
-                """, ctx, cdrSetup, ctx,
-                ctx, e.recordingEnabled() ? "same => n,MixMonitor(${UNIQUEID}.wav,b)" : "; no recording",
-                aiAgi, ctx, ctx, ctx,
-                ctx, aiAgi, ctx,
-                ctx, aiAgi, ctx,
-                ctx, app.getNamespace(), generateQueueFeatures(e), ctx);
+    private String generateAiContactCenter(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
+        String ws = voiceBrainWsUrl(tenantId, "AI_CC");
+        return """
+              <!-- AI CONTACT CENTER — fork audio to voice-brain for STT + sentiment, bridge to agent -->
+              <extension name="ai_cc_inbound">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  %s
+                  %s
+                  <!-- Fork audio to voice-brain (one-way listen for transcript + sentiment) -->
+                  <action application="export" data="execute_on_answer=uuid_audio_fork ${uuid} %s&amp;direction=INBOUND both"/>
+                  <!-- Bridge to agent/queue -->
+                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@${sip_h_X-Tenant-ID}"/>
+                  %s
+                </condition>
+              </extension>
+        """.formatted(
+                cdrVars(tenantId, app),
+                recording(e),
+                ws,
+                voicemailFallback(ctx, e)
+        );
     }
 
-    private String generateConversationalIvr(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
-        String cdrSetup = generateCdrSetup(app, e);
+    // ═══════════════════════════════════════════════════════════
+    // BASIC PBX — Standard IVR + optional transcript via voice-brain
+    // ═══════════════════════════════════════════════════════════
 
-        return String.format("""
-                ; ==================== CONVERSATIONAL IVR ====================
-                
-                [%s]
-                exten => _X.,1,NoOp(Conversational IVR: ${EXTEN})
-                %s
-                 same => n,Set(AI_MINUTES_USED=0)
-                 same => n,Answer()
-                 same => n,Goto(%s-ivr,${EXTEN},1)
-                
-                [%s-ivr]
-                exten => _X.,1,Set(CALL_ID=${UNIQUEID})
-                 same => n,Set(SESSION_START=${EPOCH})
-                 %s
-                 same => n(loop),Set(TURN_START=${EPOCH})
-                 same => n,AGI(%s/conversational-ivr,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${TURN_START}] / 60)])
-                 same => n,Set(INTENT=${AI_INTENT})
-                 same => n,Set(CONFIDENCE=${AI_CONFIDENCE})
-                 same => n,GotoIf($["${INTENT}"="END"]?end)
-                 same => n,GotoIf($["${INTENT}"="TRANSFER"]?transfer)
-                 same => n,GotoIf($[${CONFIDENCE}<0.5]?clarify)
-                 same => n,Goto(loop)
-                 same => n(clarify),AGI(%s/clarify,${TENANT_ID},${CALL_ID})
-                 same => n,Goto(loop)
-                 same => n(transfer),Goto(%s-handoff,${EXTEN},1)
-                 same => n(end),Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(goodbye)
-                 same => n,Hangup()
-                
-                [%s-handoff]
-                exten => _X.,1,Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(please-hold)
-                 same => n,Queue(%s-handoff,tT,,,180)
-                 same => n,Hangup()
-                
-                %s
-                """, ctx, cdrSetup, ctx,
-                ctx, e.recordingEnabled() ? "same => n,MixMonitor(${UNIQUEID}.wav,b)" : "",
-                aiAgi, aiAgi, ctx,
-                ctx, app.getNamespace(),
-                e.ivrMultiLanguageEnabled() ? generateMultiLanguage(ctx, aiAgi) : "");
+    private String generateBasicPbx(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
+        String ws = voiceBrainWsUrl(tenantId, "BASIC_PBX");
+        boolean aiEnabled = e.aiBotEnabled() || e.aiTranscriptionEnabled();
+
+        return """
+              <!-- BASIC PBX — DTMF IVR menu, optional AI transcript -->
+              <extension name="basic_pbx_inbound">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  %s
+                  %s
+                  %s
+                  <!-- Bridge to routing target (extension, queue, ring group) -->
+                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@${sip_h_X-Tenant-ID}"/>
+                  %s
+                </condition>
+              </extension>
+
+              <!-- Internal extension dialing -->
+              <extension name="basic_pbx_extensions">
+                <condition field="destination_number" expression="^(1\\d{2})$">
+                  <action application="bridge" data="sofia/internal/$1@${sip_h_X-Tenant-ID}"/>
+                </condition>
+              </extension>
+        """.formatted(
+                cdrVars(tenantId, app),
+                recording(e),
+                aiEnabled ? """
+                  <!-- Fork audio to voice-brain for live transcript -->
+                  <action application="export" data="execute_on_answer=uuid_audio_fork ${uuid} %s&amp;direction=INBOUND both"/>
+                """.formatted(ws) : "<!-- AI not enabled -->",
+                voicemailFallback(ctx, e)
+        );
     }
 
-    private String generateBasicPbx(TenantApp app, PlanEntitlementResponse e, String ctx) {
-        String cdrSetup = generateCdrSetup(app, e);
+    // ═══════════════════════════════════════════════════════════
+    // OUTBOUND DIALER — Bot runs campaign, DialerEngine originates
+    // ═══════════════════════════════════════════════════════════
 
-        return String.format("""
-                ; ==================== BASIC PBX ====================
-                
-                [%s]
-                exten => _X.,1,NoOp(Basic PBX: ${EXTEN})
-                %s
-                 same => n,Answer()
-                 same => n,Goto(%s-ivr,s,1)
-                
-                [%s-ivr]
-                exten => s,1,NoOp(Main IVR)
-                 %s
-                 same => n(menu),Background(welcome)
-                 same => n,WaitExten(5)
-                
-                exten => 1,1,Goto(%s-sales,s,1)
-                exten => 2,1,Goto(%s-support,s,1)
-                exten => 3,1,Goto(%s-directory,s,1)
-                exten => 0,1,Goto(%s-operator,s,1)
-                exten => i,1,Playback(invalid)
-                 same => n,Goto(s,menu)
-                exten => t,1,Goto(%s-operator,s,1)
-                
-                [%s-extensions]
-                exten => _1XX,1,Dial(PJSIP/${EXTEN}@%s,30,tT)
-                 same => n,GotoIf($["${DIALSTATUS}"="NOANSWER"]?%s-voicemail,${EXTEN},1)
-                 same => n,Hangup()
-                
-                [%s-sales]
-                exten => s,1,Queue(%s-sales,tT,,,120)
-                 same => n,Goto(%s-voicemail,sales,1)
-                
-                [%s-support]
-                exten => s,1,Queue(%s-support,tT,,,180)
-                 same => n,Goto(%s-voicemail,support,1)
-                
-                [%s-operator]
-                exten => s,1,Queue(%s-operator,tT,,,60)
-                 same => n,Hangup()
-                
-                [%s-directory]
-                exten => s,1,Directory(%s,%s,f)
-                 same => n,Hangup()
-                
-                """, ctx, cdrSetup, ctx,
-                ctx, e.recordingEnabled() ? "same => n,MixMonitor(${UNIQUEID}.wav,b)" : "",
-                ctx, ctx, ctx, ctx, ctx,
-                ctx, app.getNamespace(), ctx,
-                ctx, app.getNamespace(), ctx,
-                ctx, app.getNamespace(), ctx,
-                ctx, app.getNamespace(),
-                ctx, ctx, ctx);
+    private String generateOutboundDialer(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
+        // Outbound: DialerEngine sets X-Campaign-ID, X-Contact-ID, X-Bot-ID via ESL originate
+        return """
+              <!-- OUTBOUND DIALER — voice-brain runs campaign script -->
+              <extension name="outbound_dialer">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  %s
+                  %s
+                  %s
+                  <!-- voice-brain fetches campaign + contact context from PBX-Core -->
+                  <action application="socket" data="%s/audio/${uuid}?tenant_id=%s&amp;product_code=OUTBOUND_DIALER&amp;bot_id=${sip_h_X-Bot-ID}&amp;campaign_id=${sip_h_X-Campaign-ID}&amp;contact_id=${sip_h_X-Contact-ID}&amp;direction=OUTBOUND"/>
+                  <action application="hangup" data="NORMAL_CLEARING"/>
+                </condition>
+              </extension>
+
+              <!-- Callback: when lead calls back the campaign DID -->
+              <extension name="outbound_dialer_callback">
+                <condition field="${sip_h_X-Routing-Type}" expression="CALLBACK">
+                  <action application="answer"/>
+                  %s
+                  <action application="queue" data="%s-callback"/>
+                  <action application="hangup"/>
+                </condition>
+              </extension>
+        """.formatted(
+                cdrVars(tenantId, app),
+                recording(e),
+                e.amdEnabled() ? """
+                  <action application="amd"/>
+                  <action application="set" data="CDR(amd_result)=${amd_result}"/>
+                """ : "<!-- AMD not enabled -->",
+                voiceBrainUrl, tenantId,
+                cdrVars(tenantId, app),
+                app.getNamespace()
+        );
     }
 
-    private String generateOutboundDialer(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
-        String cdrSetup = String.format("""
-                 same => n,Set(TENANT_ID=%s)
-                 same => n,Set(SUBSCRIPTION_ID=%s)
-                 same => n,Set(PRODUCT_CODE=%s)
-                 same => n,Set(RATE_PER_MIN=%s)
-                 same => n,Set(CDR(tenant_id)=${TENANT_ID})
-                 same => n,Set(CDR(subscription_id)=${SUBSCRIPTION_ID})
-                 same => n,Set(CDR(product_code)=${PRODUCT_CODE})
-                 same => n,Set(CDR(rate_per_minute)=${RATE_PER_MIN})
-                 same => n,Set(CDR(direction)=OUTBOUND)
-                """,
-                app.getTenant().getId(),
-                app.getSubscriptionId(),
-                app.getProductCode(),
-                e.ratePerMinuteOutbound() != null ? e.ratePerMinuteOutbound() : "1.5");
+    // ═══════════════════════════════════════════════════════════
+    // DEFAULT — Unknown product, play message and hangup
+    // ═══════════════════════════════════════════════════════════
 
-        return String.format("""
-                ; ==================== OUTBOUND DIALER ====================
-                
-                [%s]
-                exten => _X.,1,NoOp(Dialer Callback: ${EXTEN})
-                %s
-                 same => n,Answer()
-                 same => n,Goto(%s-callback,${EXTEN},1)
-                
-                [%s-outbound]
-                exten => _X.,1,NoOp(Outbound: ${EXTEN})
-                %s
-                 same => n,Set(CAMPAIGN_ID=${CAMPAIGN_ID})
-                 same => n,Set(LEAD_ID=${LEAD_ID})
-                 same => n,Set(CDR(campaign_id)=${CAMPAIGN_ID})
-                 same => n,Set(CDR(lead_id)=${LEAD_ID})
-                 %s
-                 %s
-                 same => n,Dial(PJSIP/${EXTEN}@epsilon,60,tTg)
-                 same => n,Set(CDR(dial_status)=${DIALSTATUS})
-                 same => n,AGI(%s/dialer-result,${TENANT_ID},${CAMPAIGN_ID},${LEAD_ID},${DIALSTATUS})
-                 same => n,Hangup()
-                
-                [%s-amd]
-                exten => _X.,1,AMD()
-                 same => n,Set(AMD=${AMDSTATUS})
-                 same => n,Set(CDR(amd_result)=${AMDSTATUS})
-                 same => n,GotoIf($["${AMD}"="MACHINE"]?machine)
-                 same => n,Goto(%s-agent,${EXTEN},1)
-                 same => n(machine),Playback(vm-message)
-                 same => n,Hangup()
-                
-                [%s-agent]
-                exten => _X.,1,Playback(please-hold)
-                 same => n,Queue(%s-dialer,tT,,,30)
-                 same => n,Hangup()
-                
-                [%s-callback]
-                exten => _X.,1,Playback(callback-welcome)
-                 same => n,Queue(%s-callback,tT,,,120)
-                 same => n,Hangup()
-                
-                %s
-                """, ctx, cdrSetup, ctx,
-                ctx, cdrSetup,
-                e.recordingEnabled() ? "same => n,MixMonitor(${UNIQUEID}.wav,b)" : "",
-                e.amdEnabled() ? "same => n,Goto(" + ctx + "-amd,${EXTEN},1)" : "",
-                aiAgi,
-                ctx, ctx,
-                ctx, app.getNamespace(),
-                ctx, app.getNamespace(),
-                e.dncManagementEnabled() ? generateDncCheck(ctx) : "");
+    private String generateDefault(String ctx, String tenantId) {
+        return """
+              <extension name="default_handler">
+                <condition field="destination_number" expression="^(.*)$">
+                  <action application="answer"/>
+                  <action application="playback" data="ivr/ivr-welcome.wav"/>
+                  <action application="hangup" data="NORMAL_CLEARING"/>
+                </condition>
+              </extension>
+        """;
     }
 
-    private String generateVirtualReceptionist(TenantApp app, PlanEntitlementResponse e, String ctx, String aiAgi) {
-        String cdrSetup = generateCdrSetup(app, e);
+    // ═══════════════════════════════════════════════════════════
+    // HELPERS
+    // ═══════════════════════════════════════════════════════════
 
-        return String.format("""
-                ; ==================== VIRTUAL RECEPTIONIST ====================
-                
-                [%s]
-                exten => _X.,1,NoOp(Virtual Receptionist: ${EXTEN})
-                %s
-                 same => n,Set(AI_MINUTES_USED=0)
-                 same => n,Answer()
-                 same => n,Goto(%s-receptionist,${EXTEN},1)
-                
-                [%s-receptionist]
-                exten => _X.,1,Set(CALL_ID=${UNIQUEID})
-                 %s
-                 same => n,Set(GREET_START=${EPOCH})
-                 same => n,AGI(%s/receptionist-greeting,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${GREET_START}] / 60)])
-                 same => n(loop),Set(TURN_START=${EPOCH})
-                 same => n,AGI(%s/receptionist,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${TURN_START}] / 60)])
-                 same => n,Set(INTENT=${AI_INTENT})
-                 same => n,GotoIf($["${INTENT}"="APPOINTMENT"]?%s-appointment,s,1)
-                 same => n,GotoIf($["${INTENT}"="MESSAGE"]?%s-message,s,1)
-                 same => n,GotoIf($["${INTENT}"="TRANSFER"]?%s-transfer,s,1)
-                 same => n,GotoIf($["${INTENT}"="END"]?end)
-                 same => n,Goto(loop)
-                 same => n(end),Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(goodbye)
-                 same => n,Hangup()
-                
-                [%s-appointment]
-                exten => s,1,Set(APPT_START=${EPOCH})
-                 same => n,AGI(%s/appointment,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${APPT_START}] / 60)])
-                 same => n,Goto(%s-receptionist,s,loop)
-                
-                [%s-message]
-                exten => s,1,AGI(%s/message-intro,${TENANT_ID},${CALL_ID})
-                 same => n,Record(${TENANT_ID}/msg/${UNIQUEID}:wav,5,60,kq)
-                 same => n,Set(TRANS_START=${EPOCH})
-                 same => n,AGI(%s/transcribe,${TENANT_ID},${CALL_ID})
-                 same => n,Set(AI_MINUTES_USED=$[${AI_MINUTES_USED} + ($[${EPOCH} - ${TRANS_START}] / 60)])
-                 same => n,Playback(message-received)
-                 same => n,Goto(%s-receptionist,s,loop)
-                
-                [%s-transfer]
-                exten => s,1,Set(TARGET=${AI_TARGET})
-                 same => n,Set(CDR(ai_minutes)=${AI_MINUTES_USED})
-                 same => n,Playback(please-hold)
-                 same => n,Dial(PJSIP/${TARGET}@%s,30,tT)
-                 same => n,Goto(%s-voicemail,${TARGET},1)
-                
-                """, ctx, cdrSetup, ctx,
-                ctx, e.recordingEnabled() ? "same => n,MixMonitor(${UNIQUEID}.wav,b)" : "",
-                aiAgi, aiAgi, ctx, ctx, ctx,
-                ctx, aiAgi, ctx,
-                ctx, aiAgi, aiAgi, ctx,
-                ctx, app.getNamespace(), ctx);
+    private String wrapDocument(String ctx, String extensionsXml, TenantApp app, PlanEntitlementResponse e) {
+        return """
+            <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+            <!--
+              Tenant: %s | Product: %s | Plan: %s
+              Generated: %s
+              AI: %s | Recording: %s | Agents: %d | Queues: %d
+              voice-brain: %s
+            -->
+            <document type="freeswitch/xml">
+              <section name="dialplan" description="Dalai LLAMA - %s">
+                <context name="%s">
+                  %s
+                </context>
+              </section>
+            </document>
+        """.formatted(
+                app.getNamespace(), app.getProductCode(), app.getPlanCode(),
+                Instant.now(),
+                e.aiBotEnabled(), e.recordingEnabled(), e.maxAgents(), e.maxQueues(),
+                voiceBrainUrl,
+                app.getNamespace(), ctx, extensionsXml
+        );
     }
 
-    private String generateDefault(TenantApp app, String ctx) {
-        return String.format("""
-                [%s]
-                exten => _X.,1,NoOp(Default: ${EXTEN})
-                 same => n,Set(TENANT_ID=%s)
-                 same => n,Set(CDR(tenant_id)=${TENANT_ID})
-                 same => n,Answer()
-                 same => n,Playback(welcome)
-                 same => n,Hangup()
-                """, ctx, app.getTenant().getId());
+    /**
+     * Build voice-brain WebSocket URL.
+     * bot_id comes from SIP header X-Bot-ID (set by Kamailio from /authorize/inbound response).
+     */
+    private String voiceBrainWsUrl(String tenantId, String productCode) {
+        return "%s/audio/${uuid}?tenant_id=%s&amp;product_code=%s&amp;bot_id=${sip_h_X-Bot-ID}".formatted(
+                voiceBrainUrl, tenantId, productCode);
     }
 
-    private String generateQueueFeatures(PlanEntitlementResponse e) {
-        StringBuilder sb = new StringBuilder();
-        if (e.bargeEnabled()) sb.append(" same => n,Set(BARGE=1)\n");
-        if (e.whisperEnabled()) sb.append(" same => n,Set(WHISPER=1)\n");
-        if (e.listenEnabled()) sb.append(" same => n,Set(LISTEN=1)\n");
-        return sb.toString();
+    private String cdrVars(String tenantId, TenantApp app) {
+        return """
+                  <action application="set" data="tenant_id=%s"/>
+                  <action application="set" data="subscription_id=%s"/>
+                  <action application="set" data="product_code=%s"/>
+                  <action application="set" data="accountcode=%s"/>
+        """.formatted(tenantId, app.getSubscriptionId(), app.getProductCode(), tenantId);
     }
 
-    private String generateVoicemail(TenantApp app, String ctx, PlanEntitlementResponse e) {
-        return String.format("""
-                
-                [%s-voicemail]
-                exten => _X.,1,VoiceMail(${EXTEN}@%s,u)
-                 %s
-                 same => n,Hangup()
-                
-                exten => *98,1,VoiceMailMain(@%s)
-                 same => n,Hangup()
-                """, ctx, app.getNamespace(),
-                e.voicemailTranscriptionEnabled() ?
-                        "same => n,AGI(agi://ai-service:4573/transcribe-voicemail,${TENANT_ID},${EXTEN})" : "",
-                app.getNamespace());
-    }
-
-    private String generateRingGroups(String ctx, int maxGroups) {
-        StringBuilder sb = new StringBuilder("\n[" + ctx + "-ringgroups]\n");
-        for (int i = 1; i <= Math.min(maxGroups, 5); i++) {
-            sb.append(String.format("""
-                exten => %d00,1,Dial(PJSIP/member1&PJSIP/member2,30,tT)
-                 same => n,Hangup()
-                """, i));
+    private String recording(PlanEntitlementResponse e) {
+        if (e.recordingEnabled()) {
+            return """
+                  <action application="set" data="RECORD_STEREO=true"/>
+                  <action application="set" data="execute_on_answer=record_session /recordings/${uuid}.wav"/>
+            """;
         }
-        return sb.toString();
+        return "<!-- recording not enabled -->";
     }
 
-    private String generateSupervisorFeatures(String ctx, PlanEntitlementResponse e) {
-        StringBuilder sb = new StringBuilder("\n[" + ctx + "-supervisor]\n");
-        if (e.listenEnabled()) sb.append("exten => _*1X.,1,ChanSpy(PJSIP/${EXTEN:2},q)\n");
-        if (e.whisperEnabled()) sb.append("exten => _*2X.,1,ChanSpy(PJSIP/${EXTEN:2},qw)\n");
-        if (e.bargeEnabled()) sb.append("exten => _*3X.,1,ChanSpy(PJSIP/${EXTEN:2},qB)\n");
-        return sb.toString();
-    }
-
-    private String generateMultiLanguage(String ctx, String aiAgi) {
-        return String.format("""
-                
-                [%s-language]
-                exten => s,1,AGI(%s/detect-language,${TENANT_ID},${CALL_ID})
-                 same => n,Set(CHANNEL(language)=${DETECTED_LANG})
-                 same => n,Return()
-                """, ctx, aiAgi);
-    }
-
-    private String generateDncCheck(String ctx) {
-        return String.format("""
-                
-                [%s-dnc]
-                exten => _X.,1,Set(DNC=${SHELL(curl -s localhost:8080/api/dnc/${EXTEN})})
-                 same => n,GotoIf($["${DNC}"="true"]?blocked)
-                 same => n,Return()
-                 same => n(blocked),Set(CDR(dnc)=1)
-                 same => n,Hangup()
-                """, ctx);
+    private String voicemailFallback(String ctx, PlanEntitlementResponse e) {
+        if (e.voicemailEnabled()) {
+            return """
+                  <!-- Fallback to voicemail if no answer -->
+                  <action application="voicemail" data="default ${tenant_id}"/>
+            """;
+        }
+        return """
+                  <action application="hangup" data="NORMAL_CLEARING"/>
+        """;
     }
 }

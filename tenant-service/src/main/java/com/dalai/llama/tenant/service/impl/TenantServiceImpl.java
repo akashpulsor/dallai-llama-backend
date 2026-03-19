@@ -492,10 +492,6 @@ public class TenantServiceImpl implements TenantService {
         // INFRASTRUCTURE URLs
         setInfrastructureUrls(app, slug, baseDomain, isDedicated);
 
-        // KEYCLOAK & FRONTEND
-        //app.setKeycloakClientId("dalaillama-" + slug);
-        //app.setDashboardUrl("https://" + primaryApp.subdomain() + "." + slug + "." + baseDomain);
-        //app.setFrontendService(slug + "-" + primaryApp.subdomain() + "-ui");
 
         // APP PANELS JSON
         if (config.apps() != null && !config.apps().isEmpty()) {
@@ -655,7 +651,7 @@ public class TenantServiceImpl implements TenantService {
             app.setFreeswitchEslPort(8021);
             app.setFreeswitchEslPassword(infra.freeswitchEslPassword());
         } else {
-            app.setPostgresUrl(configDiscovery.getSharedPostgresUrl() + "?currentSchema=" + slug);
+            app.setPostgresUrl(configDiscovery.getSharedPostgresUrl() );
             app.setRedisUrl(configDiscovery.getSharedRedisUrl());
             app.setKafkaBootstrap(configDiscovery.getSharedKafkaBootstrap());
             String sipHost = configDiscovery.getSharedSipHost();
@@ -663,7 +659,7 @@ public class TenantServiceImpl implements TenantService {
             app.setSipUdpUrl("sip:" + sipHost + ":5060");
             app.setSipTlsUrl("sips:" + sipHost + ":5061");
             app.setTurnUrl("turn:" + configDiscovery.getSharedTurnHost() + ":3478");
-            app.setWebsocketUrl("wss://ws." + baseDomain + "/ws");
+            app.setWebsocketUrl("wss://agent-" +slug +"."+ baseDomain + "/ws");
             app.setRtpengineSock(configDiscovery.getSharedRtpengineSocket());
             app.setFreeswitchEslHost(configDiscovery.getSharedFreeswitchHost());
             app.setFreeswitchEslPort(configDiscovery.getSharedFreeswitchEslPort());
@@ -685,7 +681,7 @@ public class TenantServiceImpl implements TenantService {
                 panels.add(new AppPanelDto(
                         appInfo.appType(), appInfo.displayName(), appInfo.subdomain(), url,
                         appInfo.icon(), appInfo.displayOrder(), clientId,
-                        appInfo.frontendImage(), appInfo.requiredRoles()
+                        appInfo.frontendImage(), appInfo.requiredRoles(),appInfo.enabled()
                 ));
             }
             return objectMapper.writeValueAsString(panels);
@@ -699,6 +695,6 @@ public class TenantServiceImpl implements TenantService {
     record AppPanelDto(
             String appType, String displayName, String subdomain, String url,
             String icon, int displayOrder, String keycloakClientId,
-            String frontendImage, String requiredRoles
+            String frontendImage, String requiredRoles, boolean enabled
     ) {}
 }

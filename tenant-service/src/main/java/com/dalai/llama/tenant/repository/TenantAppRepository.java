@@ -23,6 +23,7 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
     @Query("DELETE FROM TenantApp ta WHERE ta.tenant.id = :tenantId")
     void deleteByTenantId(@Param("tenantId") UUID tenantId);
 
+    Optional<TenantApp> findFirstByTenantId(UUID tenantId);
     // ==================== FIND BY SUBSCRIPTION ====================
 
     Optional<TenantApp> findBySubscriptionId(UUID subscriptionId);

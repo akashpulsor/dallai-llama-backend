@@ -37,7 +37,7 @@ public record PlanEntitlementResponse(
         boolean aiVoiceMorphEnabled,
         boolean aiAgentAssistEnabled,
         long aiTokensPerMonth,
-
+        boolean aiTranscriptionEnabled,
         // ==================== CALL FEATURES ====================
         boolean bargeEnabled,
         boolean whisperEnabled,

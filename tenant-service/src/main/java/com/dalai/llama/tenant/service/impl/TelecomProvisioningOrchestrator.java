@@ -61,6 +61,7 @@ public class TelecomProvisioningOrchestrator {
     private final KeycloakClientConfigService keycloakClientService;
     private final TenantAppRepository tenantAppRepository;
     private final IstioHostReconciler istioHostReconciler;
+    private final  TraefikHostReconciler traefikHostReconciler;
     private final ObjectMapper objectMapper;
     /**
      * Main entry point - provision complete telecom stack
@@ -126,6 +127,7 @@ public class TelecomProvisioningOrchestrator {
             tenantAppRepository.save(app);
             // Reconciler reads tenant_apps, computes desired hosts, patches Gateway+VS+ConfigMap
             // No-op if already in sync
+            traefikHostReconciler.reconcile();
             istioHostReconciler.reconcile();
             // Phase 9: Keycloak Clients
             log.info("▶ Phase 9: Keycloak Client Configuration");
@@ -224,9 +226,9 @@ public class TelecomProvisioningOrchestrator {
         aiServiceConfigService.removeSubscriptionConfig(app.getTenant().getId().toString());
 
         // Remove Istio VirtualServices
-        istioGatewayService.deleteVirtualServicesForTenant(app.getNamespace(),
-                isDedicated ? app.getNamespace() : "dalaillama");
-
+       // istioGatewayService.deleteVirtualServicesForTenant(app.getNamespace(),
+       //         isDedicated ? app.getNamespace() : "dalaillama");
+        traefikHostReconciler.deleteForTenant(app.getTenant().getSlug());
         // Remove Keycloak clients
         keycloakClientService.deleteClientsForTenant(app.getNamespace());
 
