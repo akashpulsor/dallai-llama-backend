@@ -110,6 +110,9 @@ public class CallRecord {
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
+    @Column(name = "transcript_url")
+    private String transcriptUrl;
+
     @PrePersist
     void prePersist() { createdAt = Instant.now(); }
 }

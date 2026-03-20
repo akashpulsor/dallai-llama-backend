@@ -33,6 +33,24 @@ import java.util.*;
  * Outbound additional checks:
  *   6. DNC list (DncEntryRepository — reject if number is on DNC)
  *   7. Balance check (ProductServiceClient — sufficient credits?)
+ * Call authorization — the single most critical runtime path in PBX-Core.
+ *
+ * Called by Kamailio http_client on EVERY inbound/outbound INVITE:
+ *   POST /internal/kamailio/authorize/inbound
+ *   POST /internal/kamailio/authorize/outbound
+ *
+ * Must respond within ~3 seconds (Kamailio's http_client timeout).
+ *
+ * Inbound check order (fail-fast):
+ *   1. Resolve tenant by DID (TenantConfigCacheService — Redis/DB/HTTP)
+ *   2. Tenant status check (ACTIVE? not SUSPENDED/DEPROVISIONED?)
+ *   3. Subscription validity (ProductServiceClient — billing ok?)
+ *   4. Channel limit (ChannelCounterService — Redis atomic read)
+ *   5. Routing resolution (RoutingPolicyRepository — DB query, cached after first call)
+ *
+ * Outbound additional checks:
+ *   6. DNC list (DncEntryRepository — reject if number is on DNC)
+ *   7. Balance check (ProductServiceClient — sufficient credits?)
  */
 @Slf4j
 @Service
@@ -108,6 +126,17 @@ public class CallAuthorizationService {
         result.put("sipDomain", extractString(config, "sipEndpointDomain", domain));
         result.put("aiEnabled", extractBool(config, "aiBotEnabled", false));
         result.put("recordingEnabled", extractBool(config, "recordingEnabled", false));
+
+        // Bot ID — for AI products, Kamailio passes this to FreeSWITCH → voice-brain
+        // Resolved from: routing target (if AI_BOT:botId) → config cache → null (voice-brain uses default)
+        String botId = null;
+        if (routing.target != null && routing.target.startsWith("AI_BOT:")) {
+            botId = routing.target.substring("AI_BOT:".length());
+        }
+        if (botId == null) {
+            botId = extractString(config, "defaultBotId", null);
+        }
+        result.put("botId", botId);
 
         log.info("Auth GRANTED inbound: DID={} tenant={} route={}:{}", didNumber, tenantId, routing.type, routing.target);
         return result;
@@ -239,8 +268,8 @@ public class CallAuthorizationService {
 
     private RoutingResult defaultRoutingForProduct(String productCode) {
         return switch (productCode) {
-            case "CONVERSATIONAL_IVR" -> new RoutingResult("AI_BOT", "default");
-            case "AI_CONTACT_CENTER" -> new RoutingResult("QUEUE", "default");
+            case "CONV_IVR" -> new RoutingResult("AI_BOT", "default");
+            case "AI_CC" -> new RoutingResult("QUEUE", "default");
             case "OUTBOUND_DIALER" -> new RoutingResult("AI_BOT", "dialer");
             case "VIRTUAL_RECEPTIONIST" -> new RoutingResult("AI_BOT", "receptionist");
             default -> new RoutingResult("QUEUE", "default"); // BASIC_PBX
