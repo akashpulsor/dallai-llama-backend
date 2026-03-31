@@ -26,24 +26,29 @@ class InputNoiseReducer(FrameProcessor):
         self,
         sample_rate: int = 16000,
         highpass_hz: float = 80.0,
+        lowpass_hz: float = 3400.0,
         gate_ratio: float = 2.5,
-        attenuation: float = 0.15,
+        attenuation: float = 0.08,
         enabled: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.sample_rate = sample_rate
         self.highpass_hz = highpass_hz
+        self.lowpass_hz = lowpass_hz
         self.gate_ratio = gate_ratio
         self.attenuation = attenuation
         self.enabled = enabled
         self._prev_x = 0.0
         self._prev_y = 0.0
+        self._lp_prev = 0.0
         self._noise_floor = 250.0
 
         rc = 1.0 / (2.0 * pi * max(self.highpass_hz, 1.0))
         dt = 1.0 / float(self.sample_rate)
         self._hp_alpha = rc / (rc + dt)
+        lp_rc = 1.0 / (2.0 * pi * max(self.lowpass_hz, 1.0))
+        self._lp_alpha = dt / (lp_rc + dt)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -68,7 +73,7 @@ class InputNoiseReducer(FrameProcessor):
         # Remove DC offset.
         samples -= np.mean(samples)
 
-        # Simple one-pole high-pass filter.
+        # Simple telephony-style band-pass: high-pass for rumble, low-pass for hiss.
         alpha = self._hp_alpha
         prev_x = self._prev_x
         prev_y = self._prev_y
@@ -81,6 +86,13 @@ class InputNoiseReducer(FrameProcessor):
         self._prev_x = prev_x
         self._prev_y = prev_y
 
+        lp_alpha = self._lp_alpha
+        lp_prev = self._lp_prev
+        for i, x in enumerate(filtered):
+            lp_prev = lp_prev + lp_alpha * (x - lp_prev)
+            filtered[i] = lp_prev
+        self._lp_prev = lp_prev
+
         rms = float(np.sqrt(np.mean(filtered ** 2)))
 
         # Track a conservative noise floor so short speech bursts do not raise it aggressively.
@@ -90,6 +102,8 @@ class InputNoiseReducer(FrameProcessor):
             self._noise_floor = 0.995 * self._noise_floor + 0.005 * self._noise_floor
 
         threshold = max(self._noise_floor * self.gate_ratio, 300.0)
+        if rms < threshold * 0.65:
+            return b"\x00" * len(pcm_data)
         if rms < threshold:
             filtered *= self.attenuation
 

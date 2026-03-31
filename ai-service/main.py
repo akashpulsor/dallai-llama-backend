@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi.staticfiles import StaticFiles
 import httpx
 from pydantic import BaseModel, Field
 from pipecat.frames.frames import TTSSpeakFrame
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import settings
 from pipeline.callbacks import pbx_core_client
+from api.provider_catalog import router as provider_catalog_router
 from api.websocket_handler import handle_audio_websocket, active_calls, active_sessions
 from api.test_console import router as test_router
 from db.analytics_store import fetch_summary, fetch_timeline, store_event as persist_analytics_event
@@ -67,10 +69,30 @@ def _startup_warnings() -> list[str]:
     warnings: list[str] = []
     if settings.default_llm_provider.lower() == "openai" and not settings.openai_api_key:
         warnings.append("default_llm_provider is openai but VB_OPENAI_API_KEY is not set")
+    if settings.default_llm_provider.lower() == "google" and not settings.google_api_key:
+        warnings.append("default_llm_provider is google but VB_GOOGLE_API_KEY is not set")
+    if settings.default_llm_provider.lower() == "vertex":
+        if not settings.google_project_id:
+            warnings.append("default_llm_provider is vertex but VB_GOOGLE_PROJECT_ID is not set")
+        if not (settings.google_credentials_path or settings.google_credentials_json):
+            warnings.append(
+                "default_llm_provider is vertex but VB_GOOGLE_CREDENTIALS_PATH or VB_GOOGLE_CREDENTIALS_JSON is not set"
+            )
     if settings.default_stt_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         warnings.append("default_stt_provider is deepgram but VB_DEEPGRAM_API_KEY is not set")
+    if settings.default_stt_provider.lower() == "openai" and not settings.openai_api_key:
+        warnings.append("default_stt_provider is openai but VB_OPENAI_API_KEY is not set")
     if settings.default_tts_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         warnings.append("default_tts_provider is deepgram but VB_DEEPGRAM_API_KEY is not set")
+    if settings.default_tts_provider.lower() == "kokoro" and not settings.kokoro_base_url:
+        warnings.append("default_tts_provider is kokoro but VB_KOKORO_BASE_URL is not set")
+    if settings.default_tts_provider.lower() == "google":
+        if not settings.google_project_id:
+            warnings.append("default_tts_provider is google but VB_GOOGLE_PROJECT_ID is not set")
+        if not (settings.google_credentials_path or settings.google_credentials_json):
+            warnings.append(
+                "default_tts_provider is google but VB_GOOGLE_CREDENTIALS_PATH or VB_GOOGLE_CREDENTIALS_JSON is not set"
+            )
     if settings.default_llm_provider.lower() == "ollama" and not settings.ollama_base_url:
         warnings.append("default_llm_provider is ollama but VB_OLLAMA_BASE_URL is not set")
     if settings.database_url is None:
@@ -162,11 +184,21 @@ app = FastAPI(
         "Telephony voice AI service for websocket audio, live transcripts, "
         "LLM orchestration, sentiment, and intent tracking."
     ),
+    openapi_tags=[
+        {"name": "system", "description": "Health, readiness, and service-level endpoints."},
+        {"name": "providers", "description": "Provider catalog endpoints for UI configuration and test console use."},
+        {"name": "test-console", "description": "Local browser test console endpoints and websocket helpers."},
+        {"name": "calls", "description": "Active call inspection endpoints."},
+        {"name": "analytics", "description": "Analytics timeline, summary, and question-answering endpoints."},
+        {"name": "admin", "description": "Admin speech injection and active call control endpoints."},
+    ],
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.include_router(provider_catalog_router)
 app.include_router(test_router)
 
 
@@ -215,20 +247,43 @@ async def ready():
     if settings.default_llm_provider.lower() == "openai" and not settings.openai_api_key:
         checks["llm"] = False
         details["llm"] = "VB_OPENAI_API_KEY is not set"
+    elif settings.default_llm_provider.lower() == "google" and not settings.google_api_key:
+        checks["llm"] = False
+        details["llm"] = "VB_GOOGLE_API_KEY is not set"
     elif settings.default_llm_provider.lower() == "ollama" and not settings.ollama_base_url:
         checks["llm"] = False
         details["llm"] = "VB_OLLAMA_BASE_URL is not set"
+    elif settings.default_llm_provider.lower() == "vertex":
+        if not settings.google_project_id:
+            checks["llm"] = False
+            details["llm"] = "VB_GOOGLE_PROJECT_ID is not set"
+        elif not (settings.google_credentials_path or settings.google_credentials_json):
+            checks["llm"] = False
+            details["llm"] = "VB_GOOGLE_CREDENTIALS_PATH or VB_GOOGLE_CREDENTIALS_JSON is not set"
 
     if settings.default_stt_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         checks["stt"] = False
         details["stt"] = "VB_DEEPGRAM_API_KEY is not set"
+    elif settings.default_stt_provider.lower() == "openai" and not settings.openai_api_key:
+        checks["stt"] = False
+        details["stt"] = "VB_OPENAI_API_KEY is not set"
 
     if settings.default_tts_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         checks["tts"] = False
         details["tts"] = "VB_DEEPGRAM_API_KEY is not set"
+    elif settings.default_tts_provider.lower() == "kokoro" and not settings.kokoro_base_url:
+        checks["tts"] = False
+        details["tts"] = "VB_KOKORO_BASE_URL is not set"
     elif settings.default_tts_provider.lower() == "openai" and not settings.openai_api_key:
         checks["tts"] = False
         details["tts"] = "VB_OPENAI_API_KEY is not set"
+    elif settings.default_tts_provider.lower() == "google":
+        if not settings.google_project_id:
+            checks["tts"] = False
+            details["tts"] = "VB_GOOGLE_PROJECT_ID is not set"
+        elif not (settings.google_credentials_path or settings.google_credentials_json):
+            checks["tts"] = False
+            details["tts"] = "VB_GOOGLE_CREDENTIALS_PATH or VB_GOOGLE_CREDENTIALS_JSON is not set"
 
     ready_state = all(checks.values())
     return {

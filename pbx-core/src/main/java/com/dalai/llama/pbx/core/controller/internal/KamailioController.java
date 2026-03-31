@@ -58,6 +58,28 @@ import java.util.*;
  *
  * ALL responses MUST be <3 seconds (Kamailio http_client timeout).
  */
+
+
+
+/**
+ * Kamailio integration controller — the ONLY interface between Kamailio and telecom data.
+ *
+ * Kamailio has NO direct DB access. EVERY lookup comes through PBX-Core HTTP.
+ *
+ * Endpoints (in call flow order):
+ *   POST /auth/digest              → HA1 for SIP digest validation
+ *   GET  /domain/{domain}/exists   → domain ownership check
+ *   POST /authorize/inbound        → full auth + routing + botId
+ *   POST /authorize/outbound       → DNC + balance + channel limit
+ *   GET  /dispatcher/{setId}       → FreeSWITCH destinations
+ *   POST /events/call-start        → CDR create + channel counter++
+ *   POST /events/call-end          → CDR finalize + channel counter--
+ *
+ * Note: AI escalation is at /internal/ai/escalation (AiController), NOT here.
+ *       voice-brain calls AiController directly for transfers/hangups.
+ *
+ * ALL responses MUST be <3 seconds (Kamailio http_client timeout).
+ */
 @Slf4j
 @RestController
 @RequestMapping("/internal/kamailio")
@@ -72,27 +94,15 @@ public class KamailioController {
     private final ChannelCounterService channelCounter;
     private final ActiveCallTracker callTracker;
     private final RtpEngineConfigRedisService rtpEngineRedis;
-    private final CallControlService callControlService;
 
     // ═══════════════════════════════════════════════════════════
     // 1. DIGEST AUTH — Kamailio gets HA1 to validate SIP credentials
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * SIP digest authentication — HA1 lookup.
-     *
-     * Kamailio's auth module calls this when it receives a REGISTER or INVITE
-     * with Authorization header. Kamailio extracts username + domain from
-     * the SIP Authorization header and sends them here.
-     *
-     * PBX-Core returns the HA1 hash. Kamailio does the actual digest
-     * validation (nonce comparison, replay protection) locally.
-     *
      * Request:  {"username": "1001", "domain": "tenant-acme.dalaillama.in"}
-     * Response: {"ha1": "a1b2c3...", "ha1b": "d4e5f6...", "tenant_id": "...",
-     *            "subscriber_type": "AGENT", "display_name": "John", "is_active": true}
-     *
-     * If subscriber not found or inactive → 404 → Kamailio sends 403 to client.
+     * Response: {"ha1": "...", "ha1b": "...", "tenant_id": "...",
+     *            "subscriber_type": "AGENT", "display_name": "...", "is_active": true}
      */
     @PostMapping("/auth/digest")
     public ResponseEntity<Map<String, Object>> digestAuth(@RequestBody Map<String, String> body) {
@@ -131,16 +141,9 @@ public class KamailioController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 2. DOMAIN CHECK — is this Request-URI domain ours?
+    // 2. DOMAIN CHECK
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Kamailio checks if the Request-URI domain belongs to our platform.
-     * Called early in request_route before any heavy processing.
-     *
-     * Returns 200 with domain info if exists, 404 if not.
-     * Kamailio uses 404 to decide: relay externally or reject.
-     */
     @GetMapping("/domain/{domain}/exists")
     public ResponseEntity<Map<String, Object>> domainExists(@PathVariable String domain) {
         return domainRepository.findByDomain(domain)
@@ -157,16 +160,9 @@ public class KamailioController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 3. DISPATCHER — get FreeSWITCH destinations for routing
+    // 3. DISPATCHER — FreeSWITCH destinations
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Returns FreeSWITCH destinations for a dispatcher set.
-     * Kamailio uses this instead of ds_select_dst (which needs DB).
-     *
-     * Response: list of destinations with priority + flags.
-     * Kamailio picks the highest-priority available destination.
-     */
     @GetMapping("/dispatcher/{setId}")
     public ResponseEntity<Map<String, Object>> getDispatchers(@PathVariable Integer setId) {
         List<Dispatcher> dispatchers = dispatcherRepository.findBySetid(setId);
@@ -195,21 +191,12 @@ public class KamailioController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 4. CALL AUTHORIZATION — full auth + routing for INVITE
+    // 4. CALL AUTHORIZATION
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Inbound call authorization — the BIG one.
-     *
-     * Kamailio calls this after domain check passes, before routing to FreeSWITCH.
-     * PBX-Core does: tenant resolve → subscription check → channel limit →
-     *                routing policy → product-based default routing.
-     *
-     * Response includes EVERYTHING Kamailio needs to route the call:
-     *   - tenantId, subscriptionId (for SIP headers → FreeSWITCH)
-     *   - routingTarget, dispatcherSet (where to send the INVITE)
-     *   - productCode, aiEnabled, recordingEnabled (for SIP headers → FreeSWITCH dialplan)
-     *   - rtpengine hints (codecs, recording, AI fork)
+     * Inbound — resolves tenant, checks subscription/channels, returns routing + botId.
+     * Enriches with RTPEngine hints from Redis.
      */
     @PostMapping("/authorize/inbound")
     public ResponseEntity<Map<String, Object>> authorizeInbound(@RequestBody Map<String, String> body) {
@@ -222,14 +209,11 @@ public class KamailioController {
 
         boolean allowed = Boolean.TRUE.equals(result.get("allowed"));
 
-        // If allowed, enrich with RTPEngine hints from Redis
         if (allowed && result.get("tenantId") != null) {
             UUID tenantId = UUID.fromString(result.get("tenantId").toString());
             rtpEngineRedis.get(tenantId).ifPresent(rtpConfig -> {
                 result.put("rtpengine_codecs", rtpConfig.get("codecs"));
                 result.put("rtpengine_recording", rtpConfig.get("recording_enabled"));
-                result.put("rtpengine_ai_fork", rtpConfig.get("ai_fork_enabled"));
-                result.put("rtpengine_ai_fork_target", rtpConfig.get("ai_fork_target"));
             });
         }
 
@@ -237,7 +221,7 @@ public class KamailioController {
     }
 
     /**
-     * Outbound call authorization.
+     * Outbound — DNC check, balance check, channel limit.
      */
     @PostMapping("/authorize/outbound")
     public ResponseEntity<Map<String, Object>> authorizeOutbound(@RequestBody Map<String, String> body) {
@@ -256,8 +240,7 @@ public class KamailioController {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Call started — INVITE forwarded to FreeSWITCH.
-     * Creates CDR + increments channel counter + tracks in Redis.
+     * Call started — creates CDR, increments channel counter, tracks in Redis.
      */
     @PostMapping("/events/call-start")
     public ResponseEntity<Void> callStart(@RequestBody Map<String, String> body) {
@@ -284,7 +267,7 @@ public class KamailioController {
                 body.get("productCode")
         );
 
-        // Active call tracker (Redis)
+        // Active call tracker (Redis) — stores direction for call-end to read
         callTracker.trackCall(callId, tenantId, Map.of(
                 "direction", direction,
                 "caller_number", body.getOrDefault("callerNumber", ""),
@@ -300,135 +283,44 @@ public class KamailioController {
     }
 
     /**
-     * Call ended — BYE received or timeout.
-     * Updates CDR + decrements channel counter + removes from Redis.
+     * Call ended — finalizes CDR, decrements channel counter, removes from Redis.
+     *
+     * CRITICAL FIX: Kamailio BYE handler does NOT reliably send "direction" because
+     * $avp() variables don't persist across SIP transactions (INVITE and BYE are
+     * separate transactions). So we read direction from ActiveCallTracker in Redis
+     * (stored during call-start) BEFORE removing the tracker entry.
+     *
+     * Without this fix, all outbound call endings would decrement the INBOUND counter
+     * (because the default was "INBOUND"), causing counter drift over time.
      */
     @PostMapping("/events/call-end")
     public ResponseEntity<Void> callEnd(@RequestBody Map<String, String> body) {
         UUID tenantId = UUID.fromString(body.get("tenantId"));
         String callId = body.get("callId");
-        String direction = body.getOrDefault("direction", "INBOUND");
 
-        // Channel counter
+        // Direction: prefer Kamailio body if present, fallback to Redis (source of truth)
+        String direction = body.get("direction");
+        if (direction == null || direction.isBlank()) {
+            Optional<Map<Object, Object>> tracked = callTracker.getCallDetail(callId);
+            direction = tracked.map(m -> String.valueOf(m.getOrDefault("direction", "INBOUND")))
+                    .orElse("INBOUND");
+        }
+
+        // Channel counter — now using correct direction from Redis
         if ("INBOUND".equalsIgnoreCase(direction)) {
             channelCounter.decrementInbound(tenantId);
         } else {
             channelCounter.decrementOutbound(tenantId);
         }
 
-        // CDR
+        // CDR — finalize with hangup cause, calculate billing cost, send Kafka event
         cdrService.markEnded(callId, body.get("hangupCause"));
 
-        // Active call tracker
+        // Active call tracker — remove AFTER reading direction
         callTracker.removeCall(callId, tenantId);
 
-        log.info("Call ended: callId={} tenant={} cause={}", callId, tenantId, body.get("hangupCause"));
+        log.info("Call ended: callId={} tenant={} dir={} cause={}",
+                callId, tenantId, direction, body.get("hangupCause"));
         return ResponseEntity.ok().build();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // 6. AI ESCALATION — voice-brain triggers call transfer/hangup
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * AI service (voice-brain) calls this to escalate a call.
-     *
-     * Escalation types:
-     *   TRANSFER_QUEUE   → transfer call to a queue (ESL uuid_transfer)
-     *   TRANSFER_AGENT   → transfer to specific agent extension
-     *   TRANSFER_EXTERNAL → transfer to external number
-     *   HANGUP           → end the call (bot said goodbye)
-     *
-     * voice-brain sends:
-     *   {
-     *     "call_id": "abc-123",
-     *     "tenant_id": "...",
-     *     "escalation_type": "TRANSFER_QUEUE",
-     *     "target": "sales_queue",
-     *     "reason": "caller requested agent",
-     *     "transcript_summary": "Caller asked about pricing...",
-     *     "sentiment_score": -0.3,
-     *     "intent": "billing_inquiry",
-     *     "context": {"custom_field": "value"}
-     *   }
-     */
-    @PostMapping("/escalation")
-    public ResponseEntity<Map<String, Object>> escalate(@RequestBody Map<String, Object> body) {
-        String callId = (String) body.get("call_id");
-        String tenantIdStr = (String) body.get("tenant_id");
-        String escalationType = (String) body.get("escalation_type");
-        String target = (String) body.get("target");
-        String reason = (String) body.get("reason");
-
-        if (callId == null || escalationType == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "call_id and escalation_type required"));
-        }
-
-        UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : null;
-
-        log.info("AI escalation: callId={} type={} target={} reason={}", callId, escalationType, target, reason);
-
-        // Update CDR with AI context
-        String transcript = (String) body.get("transcript_summary");
-        if (transcript != null) {
-            cdrService.setTranscript(callId, transcript, null);
-        }
-        Object sentiment = body.get("sentiment_score");
-        if (sentiment instanceof Number n) {
-            cdrService.setTranscript(callId, null, java.math.BigDecimal.valueOf(n.doubleValue()));
-        }
-
-        // Update active call tracker
-        callTracker.updateField(callId, "escalation_type", escalationType);
-        callTracker.updateField(callId, "escalation_reason", reason != null ? reason : "");
-
-        // Execute the escalation via ESL
-        String result;
-        try {
-            result = switch (escalationType.toUpperCase()) {
-                case "TRANSFER_QUEUE" -> {
-                    // Transfer to queue — FreeSWITCH dialplan handles queue routing
-                    String context = tenantId != null ? "tenant_" + tenantId : "default";
-                    yield callControlService.transfer(callId, target, context);
-                }
-                case "TRANSFER_AGENT" -> {
-                    // Transfer to agent extension
-                    String context = tenantId != null ? "tenant_" + tenantId : "default";
-                    yield callControlService.transfer(callId, target, context);
-                }
-                case "TRANSFER_EXTERNAL" -> {
-                    // Transfer to external number via trunk
-                    yield callControlService.transfer(callId, target, "default");
-                }
-                case "HANGUP" -> {
-                    yield callControlService.hangup(callId, "NORMAL_CLEARING");
-                }
-                default -> {
-                    log.warn("Unknown escalation type: {}", escalationType);
-                    yield "UNKNOWN_TYPE";
-                }
-            };
-        } catch (Exception e) {
-            log.error("Escalation failed for callId={}: {}", callId, e.getMessage());
-            return ResponseEntity.status(500).body(Map.of(
-                    "error", "escalation_failed",
-                    "message", e.getMessage()
-            ));
-        }
-
-        // Publish escalation event to WebSocket
-        if (tenantId != null) {
-            callTracker.updateStatus(callId, "TRANSFERRED");
-        }
-
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("call_id", callId);
-        response.put("escalation_type", escalationType);
-        response.put("target", target);
-        response.put("result", result);
-        response.put("status", "executed");
-
-        log.info("AI escalation executed: callId={} type={} target={}", callId, escalationType, target);
-        return ResponseEntity.ok(response);
     }
 }

@@ -62,6 +62,17 @@ All service settings use the `VB_` prefix.
 | `VB_INDIC_TTS_VOICE` | No | Voice preset. |
 | `VB_INDIC_TTS_EMOTION` | No | Emotion preset. |
 
+### Optional Kokoro HTTP TTS
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `VB_KOKORO_BASE_URL` | Only if using `kokoro` | Base URL for the Kokoro TTS HTTP service. |
+| `VB_KOKORO_TIMEOUT_SECONDS` | No | Request timeout for Kokoro synthesis. |
+| `VB_KOKORO_SAMPLE_RATE` | No | Output sample rate expected from Kokoro service. |
+| `VB_KOKORO_VOICE_MALE` | No | Default male voice mapping for `bot.voice_gender=male`. |
+| `VB_KOKORO_VOICE_FEMALE` | No | Default female voice mapping for `bot.voice_gender=female`. |
+| `VB_KOKORO_SPEED` | No | Default speaking speed. |
+
 ### Optional RVC
 
 | Variable | Required | Purpose |
@@ -90,7 +101,14 @@ Recommended baseline:
 - TTS: provider with Indian voices, not Deepgram Aura English voices
 - LLM: `openai` or a low-latency hosted model
 
-Current code supports `openai`, `deepgram`, `ollama`, and local `indic_tts`. If you move to Google or another Indian-voice provider, add that provider in the TTS selection layer before deployment.
+Current code supports `openai`, `deepgram`, `ollama`, `google`, `vertex`, local `indic_tts`, and URL-backed `kokoro`.
+
+Recommended production shape:
+
+- `ai-service` as the telephony orchestration API
+- separate LLM service endpoint
+- separate Kokoro TTS endpoint
+- provider URLs configured through environment variables, not hardcoded in bot logic
 
 ## Docker
 

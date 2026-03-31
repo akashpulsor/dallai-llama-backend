@@ -367,9 +367,31 @@ public class AgentService {
         subscriber.setHa1b(ha1b);
         subscriber.setDisplayName(displayName);
         subscriber.setIsActive(true);
+
+        // Set namespace from SIP domain: "tenant-acme.dalaillama.in" → "acme"
+        // FreeSWITCH directory uses this for user_context = "tenant_{namespace}"
+        // which must match dialplan context in tenant_dialplan table
+        if (subscriber.getNamespace() == null || subscriber.getNamespace().isBlank()) {
+            subscriber.setNamespace(deriveNamespace(domain));
+        }
+
         subscriberRepository.save(subscriber);
     }
 
+    /**
+     * Derive namespace (tenant slug) from SIP domain.
+     * "tenant-acme.dalaillama.in" → "acme"
+     */
+    private String deriveNamespace(String sipDomain) {
+        if (sipDomain != null && sipDomain.contains(".")) {
+            String firstPart = sipDomain.split("\\.")[0];
+            if (firstPart.startsWith("tenant-")) {
+                return firstPart.substring("tenant-".length());
+            }
+            return firstPart;
+        }
+        return sipDomain;
+    }
     /**
      * Generate a secure random SIP password.
      * 16 chars, alphanumeric — strong enough for SIP digest auth.

@@ -20,7 +20,6 @@ import java.util.Optional;
  *   <param name="gateway-url" value="http://pbx-core:8080/internal/freeswitch/dialplan"/>
  *
  * These replace static XML files — PBX-Core serves config dynamically from DB.
- * No auth (FreeSWITCH is on bare-metal, same network as PBX-Core).
  */
 @Slf4j
 @RestController
@@ -35,8 +34,9 @@ public class FreeSwitchXmlController {
      * Directory lookup — FreeSWITCH asks "who is user X on domain Y?"
      * Returns subscriber credentials + tenant context variables.
      *
-     * FreeSWITCH sends (POST with form-encoded, or GET with query params):
-     *   domain={sip_domain}&user={username}&action=sip_auth
+     * CRITICAL: user_context must be "tenant_{namespace}" (e.g., "tenant_acme")
+     * to match the dialplan context stored in tenant_dialplan table.
+     * The namespace comes from subscriber.namespace column (set during agent creation).
      */
     @GetMapping(value = "/directory", produces = MediaType.APPLICATION_XML_VALUE)
     public String directory(@RequestParam String domain,
@@ -54,7 +54,13 @@ public class FreeSwitchXmlController {
 
         Subscriber sub = subOpt.get();
 
-        // Build FreeSWITCH directory XML with subscriber credentials and tenant variables
+        // Resolve namespace for user_context — must match dialplan context "tenant_{namespace}"
+        String namespace = sub.getNamespace();
+        if (namespace == null || namespace.isBlank()) {
+            // Fallback: derive from domain "tenant-acme.dalaillama.in" → "acme"
+            namespace = deriveNamespace(domain);
+        }
+
         return """
                 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
                 <document type="freeswitch/xml">
@@ -70,6 +76,7 @@ public class FreeSwitchXmlController {
                         <variables>
                           <variable name="tenant_id" value="%s"/>
                           <variable name="subscription_id" value="%s"/>
+                          <variable name="namespace" value="%s"/>
                           <variable name="subscriber_type" value="%s"/>
                           <variable name="display_name" value="%s"/>
                           <variable name="user_context" value="tenant_%s"/>
@@ -86,9 +93,10 @@ public class FreeSwitchXmlController {
                 sub.getHa1(),
                 sub.getTenantId(),
                 sub.getSubscriptionId(),
+                namespace,
                 sub.getSubscriberType(),
                 sub.getDisplayName() != null ? escapeXml(sub.getDisplayName()) : sub.getUsername(),
-                sub.getTenantId(),
+                namespace,  // user_context = tenant_{namespace} — matches dialplan context
                 sub.getDisplayName() != null ? escapeXml(sub.getDisplayName()) : sub.getUsername(),
                 sub.getUsername(),
                 sub.getTenantId()
@@ -96,11 +104,8 @@ public class FreeSwitchXmlController {
     }
 
     /**
-     * Dialplan lookup — FreeSWITCH asks "what do I do with call to destination in context?"
-     * Returns pre-generated dialplan XML from tenant_dialplan table.
-     *
-     * FreeSWITCH sends:
-     *   context=tenant_{slug}&destination_number=1001&Caller-Caller-ID-Number=+91...
+     * Dialplan lookup — returns pre-generated XML from tenant_dialplan table.
+     * Context = "tenant_{namespace}" set by directory's user_context variable.
      */
     @GetMapping(value = "/dialplan", produces = MediaType.APPLICATION_XML_VALUE)
     public String dialplan(@RequestParam String context,
@@ -117,13 +122,27 @@ public class FreeSwitchXmlController {
             return defaultDialplan(context, destNumber);
         }
 
-        // Return pre-generated XML from DB — tenant-service built this during provisioning
         return dpOpt.get().getDialplanXml();
     }
 
     // ═══════════════════════════════════════════════════════════
-    // XML TEMPLATES
+    // HELPERS
     // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Derive namespace from SIP domain when subscriber.namespace is null.
+     * "tenant-acme.dalaillama.in" → "acme"
+     */
+    private String deriveNamespace(String sipDomain) {
+        if (sipDomain != null && sipDomain.contains(".")) {
+            String firstPart = sipDomain.split("\\.")[0]; // "tenant-acme"
+            if (firstPart.startsWith("tenant-")) {
+                return firstPart.substring("tenant-".length()); // "acme"
+            }
+            return firstPart;
+        }
+        return sipDomain;
+    }
 
     private static final String NOT_FOUND_XML = """
             <?xml version="1.0" encoding="UTF-8" standalone="no"?>

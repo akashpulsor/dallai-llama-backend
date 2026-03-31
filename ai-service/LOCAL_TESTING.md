@@ -2,6 +2,94 @@
 
 ## Option 1: Browser Test (No FreeSWITCH needed)
 
+### Recommended local Hinglish stack
+Use this when you want a lightweight local LLM and a Hindi-friendly voice path:
+
+```bash
+export VB_DEFAULT_STT_PROVIDER=deepgram
+export VB_DEFAULT_LLM_PROVIDER=ollama
+export VB_OLLAMA_BASE_URL=http://localhost:11434/v1
+export VB_OLLAMA_LLM_MODEL=gemma2:2b
+export VB_DEFAULT_TTS_PROVIDER=indic_tts
+export VB_INDIC_TTS_BASE_URL=http://127.0.0.1:5005/synthesize
+export VB_INDIC_TTS_VOICE=female
+export VB_INDIC_TTS_SAMPLE_RATE=16000
+export VB_DEEPGRAM_API_KEY=your-deepgram-api-key
+```
+
+Notes:
+- `gemma2:2b` is the lightest model already wired in this service config.
+- STT still uses Deepgram here because the pipeline currently only implements Deepgram live STT.
+- The fallback browser-test bot already speaks in Hinglish and uses `language=hi`.
+- If PBX-Core is unavailable, the test flow now respects your configured default TTS provider instead of forcing Deepgram TTS.
+
+### Hosted stack: Vertex Gemma + Google TTS
+Use this when you want managed infra now and the option to swap in your own model later:
+
+```bash
+export VB_DEFAULT_LLM_PROVIDER=vertex
+export VB_VERTEX_LLM_MODEL=gemma3-4b-it
+export VB_GOOGLE_PROJECT_ID=your-gcp-project
+export VB_GOOGLE_LOCATION=global
+export VB_GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json
+
+export VB_DEFAULT_TTS_PROVIDER=google
+export VB_GOOGLE_TTS_MODE=chirp
+export VB_GOOGLE_TTS_VOICE=hi-IN-Chirp3-HD-Pulcherrima
+
+export VB_DEFAULT_STT_PROVIDER=deepgram
+export VB_DEEPGRAM_API_KEY=your-deepgram-api-key
+```
+
+Notes:
+- `vertex` uses Pipecat's `GoogleVertexLLMService`.
+- `google` TTS supports two modes here: `chirp` and `gemini`.
+- If you switch `VB_GOOGLE_TTS_MODE=gemini`, set `VB_GOOGLE_GEMINI_TTS_MODEL` and keep the voice compatible with Gemini TTS.
+- If by "Vostral" you mean Mistral `Voxtral`, that is an audio/chat-transcription family, not a TTS voice provider.
+- For bot-level voice selection, send `bot.voice_gender` as `male` or `female`, or send `bot.voice_id` to force an exact provider voice ID.
+
+### Hosted stack: Gemini API key + Kokoro Hindi TTS
+```bash
+export VB_DEFAULT_LLM_PROVIDER=google
+export VB_GOOGLE_API_KEY=your-google-api-key
+export VB_GOOGLE_LLM_MODEL=gemini-2.5-flash-lite
+
+export VB_DEFAULT_TTS_PROVIDER=kokoro
+export VB_KOKORO_BASE_URL=http://127.0.0.1:5006/synthesize
+```
+
+Notes:
+- Official Kokoro Hindi voices are `hf_alpha`, `hf_beta`, `hm_omega`, and `hm_psi`.
+- `bot.voice_gender` maps to `hf_alpha` for female and `hm_omega` for male by default.
+- `bot.voice_id` overrides the gender mapping if you want a specific Kokoro voice.
+- Run Kokoro as a separate local or remote HTTP service; later you can just change `VB_KOKORO_BASE_URL` to a Kubernetes service URL.
+
+### Run Kokoro locally first
+In a second terminal:
+
+```bash
+cd kokoro_server
+python -m pip install -r requirements.txt
+python -m uvicorn app:app --host 0.0.0.0 --port 5006
+```
+
+Health check:
+
+```bash
+curl http://localhost:5006/health
+```
+
+Direct TTS smoke test:
+
+```bash
+curl -X POST http://localhost:5006/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Namaste, main aapki kaise madad kar sakti hoon?","voice":"hf_alpha","language":"hi","speed":1.0,"sample_rate":16000}' \
+  --output kokoro-test.wav
+```
+
+Then start `ai-service` and keep `VB_KOKORO_BASE_URL=http://127.0.0.1:5006/synthesize`.
+
 ### Prerequisites
 ```bash
 # API keys (get from respective providers)

@@ -1,6 +1,7 @@
 package com.dalai.llama.pbx.core.repository.campaign;
 
 
+import com.dalai.llama.pbx.core.domain.entity.campaign.Campaign;
 import com.dalai.llama.pbx.core.domain.entity.campaign.CampaignContact;
 import com.dalai.llama.pbx.core.domain.enums.ContactStatus;
 import org.springframework.data.domain.Page;
@@ -98,4 +99,6 @@ public interface CampaignContactRepository extends JpaRepository<CampaignContact
             "c.lastAttemptAt = :attemptedAt, c.nextAttemptAt = :nextAttempt, " +
             "c.updatedAt = CURRENT_TIMESTAMP WHERE c.id = :contactId")
     int updateDialResult(UUID contactId, ContactStatus status, Instant attemptedAt, Instant nextAttempt);
+
+    boolean existsByCampaignAndPhoneNumber(Campaign campaign, String phoneNumber);
 }

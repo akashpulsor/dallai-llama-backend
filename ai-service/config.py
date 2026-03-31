@@ -39,11 +39,37 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_llm_model: str = "gemma2:2b"
 
+    # Google Vertex AI / Google Cloud
+    google_api_key: Optional[str] = None
+    google_project_id: Optional[str] = None
+    google_location: str = "global"
+    google_credentials_path: Optional[str] = None
+    google_credentials_json: Optional[str] = None
+    google_llm_model: str = "gemini-2.5-flash-lite"
+    google_gemini_live_llm_model: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    google_gemini_live_voice: str = "Charon"
+    vertex_llm_model: str = "gemma3-4b-it"
+    google_tts_voice: str = "hi-IN-Chirp3-HD-Pulcherrima"
+    google_tts_voice_male: str = "hi-IN-Chirp3-HD-Puck"
+    google_tts_voice_female: str = "hi-IN-Chirp3-HD-Pulcherrima"
+    google_tts_mode: str = "chirp"
+    google_gemini_tts_model: str = "gemini-2.5-flash-tts"
+
     # Local Indic TTS test server
     indic_tts_base_url: str = "http://127.0.0.1:5005/synthesize"
     indic_tts_sample_rate: int = 16000
     indic_tts_voice: str = "female"
+    indic_tts_voice_male: str = "male"
+    indic_tts_voice_female: str = "female"
     indic_tts_emotion: str = "neutral"
+
+    # Kokoro local/remote HTTP TTS service
+    kokoro_base_url: str = "http://127.0.0.1:5006/synthesize"
+    kokoro_timeout_seconds: float = 45.0
+    kokoro_sample_rate: int = 16000
+    kokoro_voice_male: str = "hm_omega"
+    kokoro_voice_female: str = "hf_alpha"
+    kokoro_speed: float = 1.0
 
     # Deepgram
     deepgram_api_key: Optional[str] = None

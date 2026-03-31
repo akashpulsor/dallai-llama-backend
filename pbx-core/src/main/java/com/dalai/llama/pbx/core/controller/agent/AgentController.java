@@ -182,4 +182,6 @@ public class AgentController {
     public ResponseEntity<List<Agent>> available(@RequestParam UUID tenant_id) {
         return ResponseEntity.ok(agentService.getAvailableAgents(tenant_id));
     }
+
+
 }

@@ -89,6 +89,22 @@ public class CampaignContact {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
+    @Column(name = "answered_at")
+    private Instant answeredAt;
+
+    @Column(name = "hangup_cause", length = 50)
+    private String hangupCause;
+
+    @Column(name = "crm_id", length = 100)
+    private String crmId;  // Salesforce Lead ID, HubSpot contact ID, etc.
+
+    @Column(name = "crm_provider", length = 30)
+    private String crmProvider;  // SALESFORCE, HUBSPOT, etc.
+
+    @Column(name = "source", length = 20)
+    @Builder.Default
+    private String source = "CSV";  // CSV, CRM, API, MANUAL
+
     @PrePersist
     void prePersist() { createdAt = updatedAt = Instant.now(); }
 

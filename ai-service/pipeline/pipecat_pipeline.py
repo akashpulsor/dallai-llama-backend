@@ -22,17 +22,21 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.frames.frames import (
     Frame, TextFrame, TranscriptionFrame, InterimTranscriptionFrame, LLMTextFrame,
-    LLMFullResponseStartFrame, LLMFullResponseEndFrame, EndFrame,
+    LLMFullResponseStartFrame, LLMFullResponseEndFrame, EndFrame, TTSSpeakFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
 from pipecat.services.openai import OpenAILLMService, OpenAITTSService
+from pipecat.services.openai.stt import OpenAIRealtimeSTTService
 from pipecat.services.ollama.llm import OLLamaLLMService
 from pipecat.services.deepgram import DeepgramSTTService, DeepgramTTSService
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.transcriptions.language import Language
 
 from pipeline.callbacks import pbx_core_client
 from pipeline.processors.intent.detector import IntentTracker
@@ -41,12 +45,184 @@ from pipeline.processors.audio.input_noise_reducer import InputNoiseReducer
 from pipeline.processors.audio.rvc_processor import RvcProcessor
 from pipeline.processors.audio.post_processor import AudioPostProcessor
 from pipeline.services.indic_tts import IndicHttpTTSService
+from pipeline.services.kokoro_tts import KokoroHttpTTSService
 from pipeline.serializers.raw_pcm import RawPCMSerializer
 from models.call_context import CallContext
 from config import settings
 from db.analytics_store import store_event as persist_analytics_event
 
 logger = logging.getLogger(__name__)
+
+TRANSCRIPT_INTENT_SUFFIX = """
+Classify the caller's latest transcript into JSON only:
+{"intent":"greeting|goodbye|interested|not_interested|pricing|technical_support|demo_request|callback_request|human_agent|feature_question|product_comparison|unknown","intent_confidence":0.0-1.0,"sentiment_hint":"positive|neutral|negative"}
+Return JSON only. No markdown. No explanation.
+"""
+
+
+def _google_credentials_kwargs(overrides: dict | None = None) -> dict:
+    overrides = overrides or {}
+    kwargs: dict = {
+        "project_id": overrides.get("project_id", settings.google_project_id),
+        "location": overrides.get("location", settings.google_location),
+    }
+    credentials_json = overrides.get("credentials_json") or overrides.get("credentials")
+    credentials_path = overrides.get("credentials_path")
+    if credentials_json:
+        kwargs["credentials"] = credentials_json
+    elif settings.google_credentials_json:
+        kwargs["credentials"] = settings.google_credentials_json
+    if credentials_path:
+        kwargs["credentials_path"] = credentials_path
+    elif settings.google_credentials_path:
+        kwargs["credentials_path"] = settings.google_credentials_path
+    return kwargs
+
+
+def _google_tts_credentials_kwargs(overrides: dict | None = None) -> dict:
+    overrides = overrides or {}
+    kwargs: dict = {}
+    credentials_json = overrides.get("credentials_json") or overrides.get("credentials")
+    credentials_path = overrides.get("credentials_path")
+    if credentials_json:
+        kwargs["credentials"] = credentials_json
+    elif settings.google_credentials_json:
+        kwargs["credentials"] = settings.google_credentials_json
+    if credentials_path:
+        kwargs["credentials_path"] = credentials_path
+    elif settings.google_credentials_path:
+        kwargs["credentials_path"] = settings.google_credentials_path
+    return kwargs
+
+
+def _google_stt_credentials_kwargs(overrides: dict | None = None) -> dict:
+    overrides = overrides or {}
+    kwargs: dict = {
+        "location": overrides.get("location") or settings.google_location or "global",
+    }
+    credentials_json = overrides.get("credentials_json") or overrides.get("credentials")
+    credentials_path = overrides.get("credentials_path")
+    if credentials_json:
+        kwargs["credentials"] = credentials_json
+    elif settings.google_credentials_json:
+        kwargs["credentials"] = settings.google_credentials_json
+    if credentials_path:
+        kwargs["credentials_path"] = credentials_path
+    elif settings.google_credentials_path:
+        kwargs["credentials_path"] = settings.google_credentials_path
+    return kwargs
+
+
+def _is_native_audio_llm_provider(provider_name: str) -> bool:
+    return (provider_name or "").lower() == "gemini_live"
+
+
+def _load_google_services():
+    try:
+        from pipecat.services.google.llm import GoogleLLMService
+        from pipecat.services.google.llm_vertex import GoogleVertexLLMService
+        from pipecat.services.google.gemini_live import GeminiLiveLLMService
+        from pipecat.services.google.stt import GoogleSTTService
+        from pipecat.services.google.tts import GoogleTTSService, GeminiTTSService
+    except Exception as exc:
+        raise RuntimeError(
+            "Google provider initialization failed. Pipecat's Google package imports STT modules during package load, so the runtime must include "
+            "google-genai, google-cloud-texttospeech, google-cloud-speech, and google-auth. "
+            f"Original error: {exc}"
+        ) from exc
+    return GoogleLLMService, GoogleTTSService, GoogleVertexLLMService, GeminiTTSService, GoogleSTTService, GeminiLiveLLMService
+
+
+def _resolve_tts_voice(ctx: CallContext, provider_name: str) -> str:
+    if ctx.bot.voice_id:
+        return ctx.bot.voice_id
+    if ctx.providers.tts_voice:
+        return ctx.providers.tts_voice
+
+    gender = (ctx.bot.voice_gender or ctx.providers.tts_gender or "").strip().lower()
+    if provider_name == "google":
+        if gender == "male":
+            return settings.google_tts_voice_male
+        if gender == "female":
+            return settings.google_tts_voice_female
+        return settings.google_tts_voice
+    if provider_name == "indic_tts":
+        if gender == "male":
+            return settings.indic_tts_voice_male
+        if gender == "female":
+            return settings.indic_tts_voice_female
+        return settings.indic_tts_voice
+    if provider_name == "kokoro":
+        if gender == "male":
+            return settings.kokoro_voice_male
+        if gender == "female":
+            return settings.kokoro_voice_female
+        return settings.kokoro_voice_female
+    return ctx.providers.tts_voice or settings.openai_tts_voice
+
+
+def _resolve_tts_sample_rate(ctx: CallContext, provider_name: str) -> int:
+    configured = ctx.providers.tts_options.get("sample_rate")
+    if configured not in (None, ""):
+        try:
+            return int(configured)
+        except (TypeError, ValueError):
+            logger.warning("Invalid TTS sample rate override: call=%s value=%s", ctx.call_id, configured)
+    if provider_name == "gemini_live":
+        return 16000
+    if provider_name in {"openai", "google", "deepgram"}:
+        return 24000
+    return 16000
+
+
+def _resolve_native_audio_voice(ctx: CallContext) -> str:
+    if (ctx.bot.voice_provider or "").lower() == "gemini_live" and ctx.bot.voice_id:
+        return ctx.bot.voice_id
+    return (
+        ctx.providers.llm_options.get("voice_id")
+        or ctx.bot.voice_id
+        or ctx.providers.tts_voice
+        or settings.google_gemini_live_voice
+    )
+
+
+def _resolve_stt_language(ctx: CallContext) -> str:
+    provider_name = (ctx.providers.stt_provider or settings.default_stt_provider or "").lower()
+    language = (ctx.bot.language or "en").strip()
+    if provider_name == "deepgram":
+        mapping = {
+            "hi-IN": "hi",
+            "en-IN": "en",
+            "en-US": "en-US",
+        }
+        return mapping.get(language, language)
+    return language
+
+
+def _resolve_google_stt_language(ctx: CallContext) -> Language:
+    language = (_resolve_stt_language(ctx) or "en-US").strip()
+    try:
+        return Language(language)
+    except ValueError:
+        base_code = language.split("-", 1)[0].lower()
+        fallback_map = {
+            "hi": Language.HI,
+            "en": Language.EN_US,
+        }
+        return fallback_map.get(base_code, Language.EN_US)
+
+
+def _resolve_openai_stt_language(ctx: CallContext) -> Language:
+    language = (_resolve_stt_language(ctx) or "en-US").strip()
+    try:
+        return Language(language)
+    except ValueError:
+        base_code = language.split("-", 1)[0].lower()
+        fallback_map = {
+            "hi": Language.HI,
+            "en": Language.EN_US,
+        }
+        return fallback_map.get(base_code, Language.EN_US)
 
 
 def _normalize_llm_json(raw: str) -> str:
@@ -83,11 +259,257 @@ def _extract_json_payload(raw: str) -> str:
     return text
 
 
+def _extract_response_from_json_like_text(raw: str) -> str | None:
+    match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, flags=re.DOTALL)
+    if not match:
+        return None
+    value = match.group(1)
+    value = value.replace('\\"', '"').replace("\\n", " ").replace("\\t", " ")
+    return value.strip()
+
+
+def _extract_intent_json(raw: str) -> tuple[str, float, str]:
+    fallback_intent = _infer_intent_from_user_text(raw, "unknown")
+    fallback = (fallback_intent, 0.55 if fallback_intent != "unknown" else 0.0, "neutral")
+    if not raw:
+        return fallback
+    payload = _extract_json_payload(raw)
+    try:
+        parsed = json.loads(payload)
+        intent = str(parsed.get("intent", "unknown")).strip() or "unknown"
+        confidence = float(parsed.get("intent_confidence", 0.0))
+        sentiment_hint = str(parsed.get("sentiment_hint", "neutral")).strip() or "neutral"
+        return intent, confidence, sentiment_hint
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        return fallback
+
+
+def _gender_value(ctx: CallContext) -> str:
+    return (ctx.bot.voice_gender or ctx.providers.tts_gender or "").strip().lower()
+
+
+def _is_male_voice(ctx: CallContext) -> bool:
+    return _gender_value(ctx) == "male"
+
+
+def _listening_phrase(ctx: CallContext) -> str:
+    return "main sun raha hoon" if _is_male_voice(ctx) else "main sun rahi hoon"
+
+
+def _help_phrase(ctx: CallContext) -> str:
+    return "main help karta hoon" if _is_male_voice(ctx) else "main help karti hoon"
+
+
+def _intent_classifier_prompt(ctx: CallContext, transcript: str) -> list[dict]:
+    allowed = ctx.bot.allowed_intents or [
+        "greeting",
+        "goodbye",
+        "interested",
+        "not_interested",
+        "pricing",
+        "technical_support",
+        "demo_request",
+        "callback_request",
+        "human_agent",
+        "feature_question",
+        "product_comparison",
+        "unknown",
+    ]
+    system = (
+        "You classify live caller transcripts for a telephony assistant. "
+        "Pick the closest intent from this list only: "
+        f"{', '.join(allowed)}.\n"
+        "Use the transcript exactly as heard, including mixed Hindi-English telephony language.\n"
+        f"{TRANSCRIPT_INTENT_SUFFIX}"
+    )
+    if ctx.user_profile:
+        system += f"\nKnown caller profile: {json.dumps(ctx.user_profile, ensure_ascii=True)}"
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": transcript},
+    ]
+
+
+async def _classify_transcript_with_model(ctx: CallContext, transcript: str) -> tuple[str, float, str]:
+    if not transcript.strip():
+        return "unknown", 0.0, "neutral"
+
+    llm_provider = (ctx.providers.llm_provider or settings.default_llm_provider or "openai").lower()
+    messages = _intent_classifier_prompt(ctx, transcript)
+
+    try:
+        if llm_provider == "ollama":
+            base_url = (ctx.providers.llm_options.get("base_url") or settings.ollama_base_url).rstrip("/")
+            url = f"{base_url}/chat/completions"
+            payload = {
+                "model": ctx.providers.llm_model or settings.ollama_llm_model,
+                "messages": messages,
+                "temperature": 0.1,
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=12)) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+            raw = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            return _extract_intent_json(raw)
+
+        if llm_provider in {"google", "gemini_live"}:
+            api_key = ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key
+            if api_key:
+                model = settings.google_llm_model if llm_provider == "gemini_live" else (ctx.providers.llm_model or settings.google_llm_model)
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": f"{messages[0]['content']}\n\nTranscript: {transcript}"}]}],
+                    "generationConfig": {"temperature": 0.1},
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=12)) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+                raw = "".join(part.get("text", "") for part in parts).strip()
+                return _extract_intent_json(raw)
+
+        api_key = ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.openai_api_key
+        if api_key:
+            url = "https://api.openai.com/v1/chat/completions"
+            payload = {
+                "model": ctx.providers.llm_model or settings.openai_llm_model,
+                "messages": messages,
+                "temperature": 0.1,
+            }
+            headers = {"Authorization": f"Bearer {api_key}"}
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=12)) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+            raw = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            return _extract_intent_json(raw)
+    except Exception as exc:
+        logger.warning("Transcript intent classification failed: call=%s provider=%s err=%s", ctx.call_id, llm_provider, exc)
+
+    fallback_intent = _infer_intent_from_user_text(transcript, "unknown")
+    fallback_conf = 0.55 if fallback_intent != "unknown" else 0.0
+    return fallback_intent, fallback_conf, "neutral"
+
+
+def _fast_transcript_intent(text: str) -> tuple[str, float, str]:
+    normalized = _normalize_text_for_compare(text)
+    if not normalized:
+        return "unknown", 0.0, "neutral"
+    if _is_simple_greeting(text):
+        return "greeting", 0.98, "neutral"
+    if any(token in normalized for token in ["bye", "goodbye", "thank you", "thanks", "phir milte", "alvida"]):
+        return "goodbye", 0.96, "positive"
+    if any(token in normalized for token in ["human", "agent", "representative", "insaan", "aadmi se baat", "person se baat"]):
+        return "human_agent", 0.95, "neutral"
+    if any(token in normalized for token in ["demo", "walkthrough", "dikhaiye", "dikhao"]):
+        return "demo_request", 0.92, "positive"
+    if any(token in normalized for token in ["callback", "call back", "baad mein call", "later call"]):
+        return "callback_request", 0.92, "neutral"
+    if any(token in normalized for token in ["price", "pricing", "cost", "rate", "plan", "quote", "quotation", "keemat", "daam"]):
+        return "pricing", 0.94, "neutral"
+    if any(token in normalized for token in ["support", "issue", "problem", "error", "not working", "technical", "trouble", "dikat", "samasya"]):
+        return "technical_support", 0.93, "negative"
+    if any(token in normalized for token in ["compare", "comparison", "difference", "vs", "better"]):
+        return "product_comparison", 0.9, "neutral"
+    if any(token in normalized for token in ["feature", "features", "capability", "kya kya", "kaisa product", "product"]):
+        return "feature_question", 0.88, "neutral"
+    if any(token in normalized for token in ["not interested", "no need", "mat chahiye", "nahi chahiye", "busy"]):
+        return "not_interested", 0.9, "negative"
+    if any(token in normalized for token in ["need", "want", "looking for", "requirement", "chahiye", "chaahiye", "mujhe", "hume", "phone system", "telephone", "sip", "trunk"]):
+        return "interested", 0.82, "neutral"
+    return "unknown", 0.0, "neutral"
+
+
 def _normalize_text_for_compare(text: str) -> str:
     text = text.lower().strip()
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _extract_user_profile(text: str) -> dict:
+    profile: dict = {}
+    if not text:
+        return profile
+
+    name_match = re.search(r"\b(?:i am|i'm|my name is|this is)\s+([A-Za-z][A-Za-z\s]{1,40})", text, flags=re.IGNORECASE)
+    if name_match:
+        profile["name"] = name_match.group(1).strip(" .,!?")
+
+    hindi_name_match = re.search(r"(?:mera naam|meri name|naam hai)\s+([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s]{1,40})", text, flags=re.IGNORECASE)
+    if hindi_name_match and "name" not in profile:
+        profile["name"] = hindi_name_match.group(1).strip(" .,!?")
+
+    devanagari_name_match = re.search(r"(?:मेरा नाम|ये मेरा नाम|यह मेरा नाम|नाम है)\s+([\u0900-\u097F\s]{2,40})", text)
+    if devanagari_name_match and "name" not in profile:
+        candidate = devanagari_name_match.group(1).strip(" .,!?")
+        candidate = re.sub(r"\s+है$", "", candidate).strip()
+        if candidate:
+            profile["name"] = candidate
+
+    company_match = re.search(r"\b(?:from|at|with)\s+([A-Za-z][A-Za-z0-9&.,\-\s]{1,50})", text, flags=re.IGNORECASE)
+    if company_match:
+        profile["company"] = company_match.group(1).strip(" .,!?")
+
+    explicit_company_match = re.search(r"(?:my company is|meri company hai|company hai|company is)\s+([A-Za-z0-9&.,\-\s]+)", text, flags=re.IGNORECASE)
+    if explicit_company_match:
+        profile["company"] = explicit_company_match.group(1).strip(" .,!?")
+
+    devanagari_company_match = re.search(r"(?:मेरी कंपनी है|मेरी company है|company है)\s+([A-Za-z0-9\u0900-\u097F&.,\-\s]+)", text, flags=re.IGNORECASE)
+    if devanagari_company_match:
+        profile["company"] = devanagari_company_match.group(1).strip(" .,!?")
+
+    domain_match = re.search(r"\b([A-Za-z0-9\-]+\s*(?:dot|\.)\s*(?:com|in|org|net))\b", text, flags=re.IGNORECASE)
+    if domain_match:
+        profile["company"] = domain_match.group(1).replace(" dot ", ".").replace(" ", "")
+
+    requirement_match = re.search(r"\b(?:need|looking for|want|require|searching for)\b(.+)", text, flags=re.IGNORECASE)
+    if requirement_match:
+        profile["requirement"] = requirement_match.group(1).strip(" .,!?")
+
+    hindi_requirement_match = re.search(
+        r"(?:मुझे|हमें|अभी बताइए|जानना है|चाहिए|कीमत|प्राइस|प्रोडक्ट|product|pricing|price|sip)\s+(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if hindi_requirement_match and "requirement" not in profile:
+        candidate = hindi_requirement_match.group(0).strip(" .,!?")
+        if candidate:
+            profile["requirement"] = candidate
+
+    if "requirement" not in profile and re.search(r"\b(phone system|telephone|ivr|calling|dialer|support|pricing|product|price|sip)\b", text, flags=re.IGNORECASE):
+        profile["requirement"] = text.strip(" .,!?")
+
+    return profile
+
+
+def _conversation_state_prompt(ctx: CallContext) -> str:
+    missing: list[str] = []
+    if not (ctx.user_profile.get("name") or (ctx.contact or {}).get("name")):
+        missing.append("name")
+    if not (ctx.user_profile.get("company") or (ctx.contact or {}).get("company")):
+        missing.append("company")
+    if not ctx.user_profile.get("requirement"):
+        missing.append("requirement")
+
+    lines = [
+        "\n\nCONVERSATION STATE:",
+        f"- Assistant turns already spoken: {ctx.turn_count}",
+        f"- User profile collected so far: {json.dumps(ctx.user_profile, ensure_ascii=True)}",
+    ]
+    if missing:
+        lines.append(f"- Collect these details early in the call: {', '.join(missing)}")
+    else:
+        lines.append("- Basic user details are collected. Continue with personalized follow-up.")
+    if ctx.conversation_history:
+        lines.append("- Recent conversation:")
+        for turn in ctx.conversation_history[-6:]:
+            content = (turn.get("content") or "").strip()
+            if content:
+                lines.append(f"  {turn.get('role', 'unknown')}: {content[:180]}")
+    return "\n".join(lines)
 
 
 def _strip_emoji(text: str) -> str:
@@ -106,6 +528,176 @@ def _is_near_duplicate_reply(new_text: str, history: list[dict]) -> bool:
         if new_norm == prior_norm or new_norm in prior_norm or prior_norm in new_norm:
             return True
     return False
+
+
+def _looks_like_meta_reply(text: str) -> bool:
+    lowered = text.lower()
+    bad_markers = [
+        "*note:",
+        "you have to mention",
+        "before i can help",
+        "before i can even think",
+        "i'm here to help, so",
+    ]
+    return any(marker in lowered for marker in bad_markers)
+
+
+def _is_simple_greeting(text: str) -> bool:
+    normalized = _normalize_text_for_compare(text)
+    return normalized in {
+        "hello",
+        "hi",
+        "hey",
+        "hello ji",
+        "hi ji",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "namaste",
+        "namaskar",
+    }
+
+
+def _is_low_information_fragment(text: str) -> bool:
+    normalized = _normalize_text_for_compare(text)
+    return normalized in {
+        "",
+        "ji",
+        "जी",
+        "haan",
+        "han",
+        "ha",
+        "hai",
+        "है",
+        "h",
+        "ok",
+        "okay",
+        "accha",
+        "achha",
+        "अच्छा",
+        "are",
+        "arre",
+        "अरे",
+        "dot",
+        "com",
+        "party hai",
+    }
+
+
+def _active_listening_reply(ctx: CallContext) -> str:
+    return f"Ji, {_listening_phrase(ctx)}. Sabse pehle aapka naam bata dijiye."
+
+
+def _missing_profile_fields(ctx: CallContext) -> list[str]:
+    missing: list[str] = []
+    if not (ctx.user_profile.get("name") or (ctx.contact or {}).get("name")):
+        missing.append("name")
+    if not (ctx.user_profile.get("company") or (ctx.contact or {}).get("company")):
+        missing.append("company")
+    if not ctx.user_profile.get("requirement"):
+        missing.append("requirement")
+    return missing
+
+
+def _next_onboarding_reply(ctx: CallContext, user_text: str) -> str | None:
+    missing = _missing_profile_fields(ctx)
+    if not missing:
+        return None
+    if missing[0] == "name" and not (ctx.user_profile.get("name") or (ctx.contact or {}).get("name")):
+        ctx.user_profile["_name_retry"] = int(ctx.user_profile.get("_name_retry", 0)) + 1
+    if missing[0] == "company" and not (ctx.user_profile.get("company") or (ctx.contact or {}).get("company")):
+        ctx.user_profile["_company_retry"] = int(ctx.user_profile.get("_company_retry", 0)) + 1
+    if missing[0] == "requirement" and not ctx.user_profile.get("requirement"):
+        ctx.user_profile["_requirement_retry"] = int(ctx.user_profile.get("_requirement_retry", 0)) + 1
+    if _is_simple_greeting(user_text):
+        first_missing = missing[0]
+        if first_missing == "name":
+            return _active_listening_reply(ctx)
+        if first_missing == "company":
+            return f"Ji, {_listening_phrase(ctx)}. Ab aapki company ka naam bata dijiye."
+        return f"Ji, {_listening_phrase(ctx)}. Ab batayein aapko phone system mein exactly kis cheez ki requirement hai."
+    first_missing = missing[0]
+    if first_missing == "name":
+        if int(ctx.user_profile.get("_name_retry", 0)) >= 3:
+            return "Kripya apna naam dheere se boliye, ya English letters mein spell kijiye."
+        return "Sure. Sabse pehle aapka naam bata dijiye."
+    if first_missing == "company":
+        if _normalize_text_for_compare(user_text) in {"meri company hai", "my company is", "company hai"}:
+            return "Ji, company ka naam poora bol dijiye."
+        if int(ctx.user_profile.get("_company_retry", 0)) >= 3:
+            return "Kripya company ka naam poora boliye. Agar website hai to domain bhi bol sakte hain."
+        return "Thank you. Ab aapki company ka naam bata dijiye."
+    requirement = ctx.user_profile.get("requirement")
+    if requirement:
+        return "Samajh gaya. Aapko phone system ke baare mein help chahiye. Ab ek line mein batayein ki aapki exact requirement kya hai."
+    if int(ctx.user_profile.get("_requirement_retry", 0)) >= 3:
+        return "Ek simple line mein batayein: aapko pricing, features, support, ya SIP setup mein se kis cheez mein help chahiye?"
+    return "Theek hai. Ab batayein aapko phone system mein exactly kis cheez ki requirement hai."
+
+
+def _is_onboarding_complete(ctx: CallContext) -> bool:
+    return not _missing_profile_fields(ctx)
+
+
+def _should_run_onboarding(ctx: CallContext) -> bool:
+    return ctx.is_bot_mode and not _is_onboarding_complete(ctx)
+
+
+def _infer_intent_from_user_text(user_text: str, fallback: str) -> str:
+    normalized = _normalize_text_for_compare(user_text)
+    if _is_simple_greeting(user_text):
+        return "greeting"
+    if any(token in normalized for token in ["price", "pricing", "cost", "plan", "rate"]):
+        return "pricing"
+    if any(token in normalized for token in ["support", "issue", "problem", "help"]):
+        return "technical_support"
+    if any(token in normalized for token in ["interested", "need", "want", "looking for", "system", "telephone"]):
+        return "interested"
+    return fallback
+
+
+def _asks_for_collected_profile(text: str) -> bool:
+    normalized = _normalize_text_for_compare(text)
+    markers = [
+        "your name",
+        "aapka naam",
+        "company name",
+        "company ka naam",
+        "company ka naam hai",
+        "what is your company",
+        "tell me your company",
+        "could you tell me your name",
+        "kitne people",
+        "kitne log",
+        "staff hain",
+    ]
+    return any(marker in normalized for marker in markers)
+
+
+def _post_onboarding_guard_reply(ctx: CallContext, user_text: str, response_text: str) -> str | None:
+    if not _is_onboarding_complete(ctx):
+        return None
+    normalized_user = _normalize_text_for_compare(user_text)
+    if _is_simple_greeting(response_text) or _asks_for_collected_profile(response_text):
+        requirement = ctx.user_profile.get("requirement") or user_text
+        company = ctx.user_profile.get("company")
+        if company:
+            return (
+                f"Samajh gaya. {company} ke liye aapko {requirement} mein help chahiye. "
+                "Kya aap pricing, features, ya setup details chahte hain?"
+            )
+        return (
+            f"Samajh gaya. Aapko {requirement} mein help chahiye. "
+            "Kya aap pricing, features, ya setup details chahte hain?"
+        )
+    if ctx.user_profile.get("company") and any(token in normalized_user for token in ["sip", "pricing", "price", "solution", "trunk", "planning", "features", "setup"]):
+        normalized_response = _normalize_text_for_compare(response_text)
+        if any(marker in normalized_response for marker in ["company ka naam", "your company", "what company", "staff hain", "kitne people"]):
+            return (
+                f"Samajh gaya. {ctx.user_profile.get('company')} ke liye aapko {ctx.user_profile.get('requirement') or user_text} chahiye. "
+                f"{_help_phrase(ctx).capitalize()}. Kya aap pricing, features, ya setup process se shuru karna chahte hain?"
+            )
+    return None
 
 
 def _store_event(call_id: str, event: dict):
@@ -181,6 +773,95 @@ class TranscriptRelayProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class TranscriptIntentProcessor(FrameProcessor):
+    def __init__(self, ctx: CallContext, tracker: IntentTracker, **kw):
+        super().__init__(**kw)
+        self.ctx = ctx
+        self.tracker = tracker
+        self._last_text = ""
+        self._last_intent = ""
+        self._last_at = 0.0
+        self._inflight_texts: set[str] = set()
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            text = (frame.text or "").strip()
+            if text and not _is_low_information_fragment(text):
+                asyncio.create_task(self._classify(text))
+        await self.push_frame(frame, direction)
+
+    async def _classify(self, text: str):
+        normalized = _normalize_text_for_compare(text)
+        if not normalized:
+            return
+        now = time.time()
+        if normalized == self._last_text and now - self._last_at < 4:
+            return
+        if normalized in self._inflight_texts:
+            return
+        fast_intent, fast_confidence, fast_sentiment = _fast_transcript_intent(text)
+        if fast_intent != "unknown":
+            self._publish_intent(text, fast_intent, fast_confidence, fast_sentiment, "transcript_fast")
+            if fast_confidence >= 0.9:
+                return
+        self._inflight_texts.add(normalized)
+        try:
+            intent, confidence, sentiment_hint = await _classify_transcript_with_model(self.ctx, text)
+            if intent == "unknown" and confidence <= 0:
+                return
+            if fast_intent != "unknown" and intent == fast_intent and confidence <= fast_confidence:
+                return
+            self._publish_intent(text, intent, confidence, sentiment_hint, "transcript_model")
+        finally:
+            self._inflight_texts.discard(normalized)
+
+    def _publish_intent(self, text: str, intent: str, confidence: float, sentiment_hint: str, source: str):
+        normalized = _normalize_text_for_compare(text)
+        now = time.time()
+        if intent == self._last_intent and normalized == self._last_text and now - self._last_at < 10:
+            return
+        self._last_text = normalized
+        self._last_intent = intent
+        self._last_at = now
+        logger.info(
+            "Transcript intent classified: call=%s source=%s intent=%s conf=%.3f text=%s",
+            self.ctx.call_id,
+            source,
+            intent,
+            confidence,
+            text[:200],
+        )
+        self.tracker.record(text, intent, confidence, speaker="CALLER", sentiment_hint=sentiment_hint)
+        self.ctx.add_intent(text, intent, confidence, "CALLER_TRANSCRIPT")
+        asyncio.create_task(
+            persist_analytics_event(
+                call_id=self.ctx.call_id,
+                tenant_id=self.ctx.tenant_id,
+                product_code=self.ctx.product_code,
+                speaker="CALLER",
+                event_type="transcript_intent",
+                utterance=text,
+                intent=intent,
+                intent_confidence=confidence,
+                tone_label=sentiment_hint,
+                turn_index=self.ctx.turn_count,
+                metadata_json={"source": source},
+            )
+        )
+        _store_event(
+            self.ctx.call_id,
+            {
+                "type": "caller_intent",
+                "text": text,
+                "intent": intent,
+                "intent_confidence": confidence,
+                "sentiment_hint": sentiment_hint,
+                "source": source,
+            },
+        )
+
+
 class UserLLMTriggerProcessor(FrameProcessor):
     """Convert final STT transcriptions into direct LLM context frames."""
 
@@ -188,6 +869,111 @@ class UserLLMTriggerProcessor(FrameProcessor):
         super().__init__(**kw)
         self.ctx = ctx
         self.context = context
+        self._pending_text = ""
+        self._pending_task: asyncio.Task | None = None
+
+    async def _emit_assistant_reply(self, text: str, intent: str = "onboarding", confidence: float = 1.0):
+        self.ctx.add_conversation_turn("assistant", text)
+        self.context.add_message({"role": "assistant", "content": text})
+        while len(self.context.messages) > 12:
+            self.context.messages.pop(1)
+        asyncio.create_task(
+            persist_analytics_event(
+                call_id=self.ctx.call_id,
+                tenant_id=self.ctx.tenant_id,
+                product_code=self.ctx.product_code,
+                speaker="BOT",
+                event_type="bot_response",
+                utterance=text,
+                intent=intent,
+                intent_confidence=confidence,
+                turn_index=self.ctx.turn_count,
+                metadata_json={"source": "onboarding_controller"},
+            )
+        )
+        _store_event(
+            self.ctx.call_id,
+            {"type": "bot_response", "text": text, "intent": intent, "intent_confidence": confidence},
+        )
+        await self.push_frame(TTSSpeakFrame(text=text, append_to_context=False))
+
+    def _looks_incomplete(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        if not normalized:
+            return True
+        if _is_low_information_fragment(text):
+            return True
+        missing = _missing_profile_fields(self.ctx)
+        current_field = missing[0] if missing else None
+        if len(normalized.split()) <= 2:
+            if current_field in {"company", "requirement"}:
+                return True
+        continuation_phrases = (
+            "i want",
+            "we want",
+            "looking for",
+            "need",
+            "phone system",
+            "telephone",
+            "pricing",
+        )
+        if any(normalized.endswith(phrase) for phrase in continuation_phrases):
+            return True
+        if current_field == "company":
+            if any(prefix in normalized for prefix in ("meri company", "company ka naam", "company hai", "my company")):
+                return True
+            if re.fullmatch(r"[a-z0-9\-]+", normalized):
+                return True
+            if normalized.endswith(("dot", "dot com", "com", "dot in", "in", "dot org", "org")):
+                return True
+        if current_field == "requirement":
+            if normalized.endswith(("pricing", "price", "sip", "product", "feature", "support")):
+                return True
+        if normalized.endswith((",", "-", "/", "&")):
+            return True
+        return False
+
+    async def _emit_pending(self, direction: FrameDirection):
+        text = self._pending_text.strip()
+        self._pending_text = ""
+        self._pending_task = None
+        if not text:
+            return
+        if _is_low_information_fragment(text):
+            return
+        self.ctx.user_profile.update(_extract_user_profile(text))
+        if self.ctx.user_profile.get("name"):
+            self.ctx.user_profile.pop("_name_retry", None)
+        if self.ctx.user_profile.get("company"):
+            self.ctx.user_profile.pop("_company_retry", None)
+        if self.ctx.user_profile.get("requirement"):
+            self.ctx.user_profile.pop("_requirement_retry", None)
+        self.ctx.add_conversation_turn("user", text)
+        if self.context.messages:
+            first_message = self.context.messages[0]
+            if isinstance(first_message, dict) and first_message.get("role") == "system":
+                first_message["content"] = build_system_prompt(self.ctx)
+        if _should_run_onboarding(self.ctx):
+            reply = _next_onboarding_reply(self.ctx, text)
+            if reply:
+                await self._emit_assistant_reply(reply)
+                return
+        self.context.add_message({"role": "user", "content": text})
+        while len(self.context.messages) > 12:
+            self.context.messages.pop(1)
+        logger.info("Triggering LLM from transcript: call=%s text=%s", self.ctx.call_id, text[:200])
+        await self.push_frame(OpenAILLMContextFrame(self.context), direction)
+
+    async def _flush_pending(self, direction: FrameDirection):
+        missing = _missing_profile_fields(self.ctx)
+        current_field = missing[0] if missing else None
+        delay = 0.4
+        if current_field == "company":
+            delay = 1.0
+        elif current_field == "requirement":
+            delay = 0.7
+        await asyncio.sleep(delay)
+        await self._emit_pending(direction)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -196,12 +982,16 @@ class UserLLMTriggerProcessor(FrameProcessor):
             text = frame.text.strip()
             if not text:
                 return
-            self.ctx.add_conversation_turn("user", text)
-            self.context.add_message({"role": "user", "content": text})
-            while len(self.context.messages) > 8:
-                self.context.messages.pop(1)
-            logger.info("Triggering LLM from transcript: call=%s text=%s", self.ctx.call_id, text[:200])
-            await self.push_frame(OpenAILLMContextFrame(self.context), direction)
+            if self._pending_task and not self._pending_task.done():
+                self._pending_task.cancel()
+                combined = f"{self._pending_text} {text}".strip()
+            else:
+                combined = text
+            self._pending_text = combined
+            if self._looks_incomplete(combined):
+                self._pending_task = asyncio.create_task(self._flush_pending(direction))
+                return
+            await self._emit_pending(direction)
             return
 
         if isinstance(frame, InterimTranscriptionFrame):
@@ -250,10 +1040,18 @@ class IntentCheckProcessor(FrameProcessor):
             esc = bool(p.get("escalate", False))
             esc_reason = p.get("escalate_reason")
         except (json.JSONDecodeError, ValueError):
-            pass
+            extracted = _extract_response_from_json_like_text(raw)
+            if extracted:
+                resp = extracted
         resp = _strip_emoji(resp).strip()
-        if intent == "greeting" and self.ctx.turn_count > 0:
-            resp = "Haan ji, main sun rahi hoon. Aapko phone system mein exactly kya chahiye?"
+        utt = self.ctx.conversation_history[-1]["content"] if self.ctx.conversation_history else ""
+        intent = _infer_intent_from_user_text(utt, intent)
+        if self.ctx.turn_count > 0 and (intent == "greeting" or _is_simple_greeting(utt) or _is_simple_greeting(resp)):
+            resp = _active_listening_reply(self.ctx)
+        onboarding_reply = _next_onboarding_reply(self.ctx, utt)
+        if onboarding_reply:
+            resp = onboarding_reply
+            conf = max(conf, 0.85 if intent != "unknown" else 0.7)
         if _is_near_duplicate_reply(resp, self.ctx.conversation_history):
             logger.warning(
                 "Suppressing near-duplicate assistant reply: call=%s response=%s",
@@ -261,10 +1059,16 @@ class IntentCheckProcessor(FrameProcessor):
                 resp[:200],
             )
             resp = self.ctx.bot.fallback_message or "Ji, aap apni exact requirement batayein."
+        if _looks_like_meta_reply(resp):
+            logger.warning("Suppressing meta/policy-style assistant reply: call=%s response=%s", self.ctx.call_id, resp[:200])
+            resp = "I understand you need a phone system. Please tell me your name and company, and then I can suggest the right option."
+        guarded = _post_onboarding_guard_reply(self.ctx, utt, resp)
+        if guarded:
+            logger.warning("Rewriting post-onboarding regression reply: call=%s response=%s", self.ctx.call_id, resp[:200])
+            resp = guarded
         logger.info("LLM parsed: call=%s intent=%s conf=%.3f escalate=%s response=%s",
                     self.ctx.call_id, intent, conf, esc, resp[:200])
 
-        utt = self.ctx.conversation_history[-1]["content"] if self.ctx.conversation_history else ""
         self.tracker.record(utterance=utt, intent=intent, confidence=conf, speaker="CALLER")
         self.ctx.add_intent(utt, intent, conf, "CALLER")
         self.ctx.add_conversation_turn("assistant", resp)
@@ -389,8 +1193,17 @@ Response rules:
 - Keep the spoken response short: usually 1-2 sentences, max 35 words unless the user explicitly asks for detail.
 - Sound natural and human.
 - Use simple Indian Hinglish with clean pronunciation-friendly wording.
+- Keep one language dominant per reply. If the caller speaks mostly English, reply mostly in English with only light natural Hindi. If the caller speaks mostly Hindi, reply mostly in Hindi with light natural English.
+- Never force unnatural Hinglish. Avoid phrases that sound translated, theatrical, or grammatically broken.
 - After the first bot greeting, do not greet again.
 - If the caller only says hello/hi after your greeting, briefly acknowledge and ask one business question.
+- In the first 1-2 user turns, collect missing basics in a natural order: name, company, and requirement, unless already known.
+- Show that you heard the caller by briefly referring to the relevant part of what they said before asking the next question.
+- Do not ignore the caller's latest message. Respond to it first, then move the conversation forward.
+- Avoid repeating filler words like "haan ji", "sure", "okay", or the same acknowledgement in back-to-back turns.
+- If you already asked for a detail and the caller answered, do not ask for the same detail again.
+- Never output internal notes, policy reminders, instructions, stage directions, or commentary about what the user must do.
+- Do not scold the caller or say things like "before I can help" or "you have to mention".
 - Do not use jokes, slang, or playful expressions.
 - Do not repeat the same point twice in one reply.
 - Do not repeat your previous reply unless the user explicitly asks you to repeat.
@@ -429,6 +1242,8 @@ def build_system_prompt(ctx: CallContext) -> str:
             prompt += f"\nThis is attempt #{attempt + 1}. Previous disposition: {ctx.contact.get('disposition', 'no answer')}"
         prompt += "\n\nUse this information to personalize the conversation. Address them by name."
 
+    prompt += _conversation_state_prompt(ctx)
+
     # Intent suffix (forces JSON response with intent detection)
     prompt += INTENT_SUFFIX
 
@@ -452,7 +1267,8 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
     vad = SileroVADAnalyzer(sample_rate=16000, params=VADParams(stop_secs=0.8))
 
     # Transport
-    tts_sample_rate = 24000 if ctx.providers.tts_provider == "openai" else 16000
+    tts_provider_name = (ctx.providers.tts_provider or settings.default_tts_provider).lower()
+    tts_sample_rate = _resolve_tts_sample_rate(ctx, tts_provider_name)
     logger.info("Initializing transport: call=%s audio_in=%s audio_out=%s tts_sample_rate=%s",
                 ctx.call_id, True, ctx.is_bot_mode, tts_sample_rate)
     transport = FastAPIWebsocketTransport(
@@ -482,24 +1298,67 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
     )
     logger.info("Input noise reducer enabled: call=%s highpass_hz=%s", ctx.call_id, settings.audio_highpass_hz)
 
+    stt_provider_name = (ctx.providers.stt_provider or settings.default_stt_provider or "deepgram").lower()
+    stt_language = _resolve_stt_language(ctx)
     logger.info("Initializing STT: call=%s provider=%s model=%s language=%s",
                 ctx.call_id, ctx.providers.stt_provider, ctx.providers.stt_model or settings.deepgram_stt_model,
-                ctx.bot.language)
-    stt = DeepgramSTTService(
-        api_key=deepgram_key,
-        live_options=LiveOptions(
-            model=ctx.providers.stt_model or settings.deepgram_stt_model,
-            language=ctx.bot.language,
-            interim_results=True,
-            smart_format=True,
-            vad_events=True,
+                stt_language)
+    if stt_provider_name == "google":
+        _, _, _, _, GoogleSTTService, _ = _load_google_services()
+        google_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or "latest_long"
+        google_stt_location = ctx.providers.stt_options.get("location") or settings.google_location or "global"
+        logger.info(
+            "Using Google STT: call=%s model=%s language=%s location=%s",
+            ctx.call_id,
+            google_stt_model,
+            stt_language,
+            google_stt_location,
+        )
+        stt = GoogleSTTService(
             sample_rate=16000,
-            encoding="linear16",
-            channels=1,
-        ),
-        sample_rate=16000,
-        should_interrupt=False,
-    )
+            params=GoogleSTTService.InputParams(
+                languages=[_resolve_google_stt_language(ctx)],
+                model=google_stt_model,
+                enable_automatic_punctuation=True,
+                enable_interim_results=True,
+                enable_voice_activity_events=True,
+            ),
+            **_google_stt_credentials_kwargs(ctx.providers.stt_options),
+        )
+    elif stt_provider_name == "openai":
+        openai_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or settings.openai_stt_model
+        openai_stt_base_url = ctx.providers.stt_options.get("base_url")
+        logger.info(
+            "Using OpenAI Realtime STT: call=%s model=%s language=%s base_url=%s",
+            ctx.call_id,
+            openai_stt_model,
+            stt_language,
+            openai_stt_base_url or "default",
+        )
+        stt = OpenAIRealtimeSTTService(
+            api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or openai_key,
+            model=openai_stt_model,
+            base_url=openai_stt_base_url or "wss://api.openai.com/v1/realtime",
+            language=_resolve_openai_stt_language(ctx),
+            turn_detection=False,
+            should_interrupt=False,
+        )
+    else:
+        stt = DeepgramSTTService(
+            api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or deepgram_key,
+            live_options=LiveOptions(
+                model=ctx.providers.stt_model or settings.deepgram_stt_model,
+                language=stt_language,
+                interim_results=True,
+                smart_format=True,
+                vad_events=True,
+                sample_rate=16000,
+                encoding="linear16",
+                channels=1,
+            ),
+            sample_rate=16000,
+            should_interrupt=False,
+        )
 
     # LLM
     logger.info("Initializing LLM: call=%s provider=%s model=%s", ctx.call_id, ctx.providers.llm_provider,
@@ -507,42 +1366,139 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
     llm_provider = (ctx.providers.llm_provider or settings.default_llm_provider or "openai").lower()
     if llm_provider == "ollama":
         llm_model = ctx.providers.llm_model or settings.ollama_llm_model
-        logger.info("Using Ollama LLM: call=%s model=%s base_url=%s", ctx.call_id, llm_model, settings.ollama_base_url)
-        llm = OLLamaLLMService(model=llm_model, base_url=settings.ollama_base_url)
+        ollama_base_url = ctx.providers.llm_options.get("base_url", settings.ollama_base_url)
+        logger.info("Using Ollama LLM: call=%s model=%s base_url=%s", ctx.call_id, llm_model, ollama_base_url)
+        llm = OLLamaLLMService(model=llm_model, base_url=ollama_base_url)
+    elif llm_provider == "google":
+        GoogleLLMService, _, _, _, _, _ = _load_google_services()
+        llm_model = ctx.providers.llm_model or settings.google_llm_model
+        logger.info("Using Google LLM: call=%s model=%s", ctx.call_id, llm_model)
+        llm = GoogleLLMService(
+            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
+            model=llm_model,
+        )
+    elif llm_provider == "gemini_live":
+        _, _, _, _, _, GeminiLiveLLMService = _load_google_services()
+        llm_model = ctx.providers.llm_model or settings.google_gemini_live_llm_model
+        llm_voice = _resolve_native_audio_voice(ctx)
+        logger.info("Using Gemini Live LLM: call=%s model=%s voice=%s language=%s", ctx.call_id, llm_model, llm_voice, ctx.bot.language)
+        llm = GeminiLiveLLMService(
+            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
+            model=llm_model,
+            voice_id=llm_voice,
+            system_instruction=build_system_prompt(ctx),
+        )
+    elif llm_provider == "vertex":
+        _, _, GoogleVertexLLMService, _, _, _ = _load_google_services()
+        llm_model = ctx.providers.llm_model or settings.vertex_llm_model
+        logger.info(
+            "Using Vertex LLM: call=%s model=%s project=%s location=%s",
+            ctx.call_id,
+            llm_model,
+            ctx.providers.llm_options.get("project_id", settings.google_project_id),
+            ctx.providers.llm_options.get("location", settings.google_location),
+        )
+        llm = GoogleVertexLLMService(
+            model=llm_model,
+            **_google_credentials_kwargs(ctx.providers.llm_options),
+        )
     else:
         llm_model = ctx.providers.llm_model or settings.openai_llm_model
-        llm = OpenAILLMService(api_key=openai_key, model=llm_model)
+        llm = OpenAILLMService(
+            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or openai_key,
+            model=llm_model,
+        )
 
     # TTS
-    if ctx.providers.tts_provider == "indic_tts":
+    if _is_native_audio_llm_provider(llm_provider):
+        active_tts_provider = "gemini_live"
+        tts = None
+    elif ctx.providers.tts_provider == "indic_tts":
         aiohttp_session = aiohttp.ClientSession()
+        resolved_voice = _resolve_tts_voice(ctx, "indic_tts")
+        indic_base_url = ctx.providers.tts_options.get("base_url", settings.indic_tts_base_url)
         logger.info(
-            "Initializing TTS: call=%s provider=indic_tts url=%s voice=%s emotion=%s",
+            "Initializing TTS: call=%s provider=indic_tts url=%s voice=%s gender=%s emotion=%s",
             ctx.call_id,
-            settings.indic_tts_base_url,
-            ctx.providers.tts_voice or settings.indic_tts_voice,
+            indic_base_url,
+            resolved_voice,
+            ctx.bot.voice_gender or ctx.providers.tts_gender,
             settings.indic_tts_emotion,
         )
         tts = IndicHttpTTSService(
-            base_url=settings.indic_tts_base_url,
+            base_url=indic_base_url,
             aiohttp_session=aiohttp_session,
-            voice=ctx.providers.tts_voice or settings.indic_tts_voice,
+            voice=resolved_voice,
             language=ctx.bot.language,
             emotion=settings.indic_tts_emotion,
-            sample_rate=settings.indic_tts_sample_rate,
+            sample_rate=tts_sample_rate,
         )
         active_tts_provider = "indic_tts"
+    elif tts_provider_name == "google":
+        _, GoogleTTSService, _, GeminiTTSService, _, _ = _load_google_services()
+        google_kwargs = _google_tts_credentials_kwargs(ctx.providers.tts_options)
+        google_voice = _resolve_tts_voice(ctx, "google")
+        google_mode = str(ctx.providers.tts_options.get("mode", settings.google_tts_mode)).lower()
+        logger.info(
+            "Initializing TTS: call=%s provider=google mode=%s voice=%s gender=%s language=%s endpoint=%s",
+            ctx.call_id,
+            google_mode,
+            google_voice,
+            ctx.bot.voice_gender or ctx.providers.tts_gender,
+            ctx.bot.language,
+            "default",
+        )
+        if google_mode == "gemini":
+            tts = GeminiTTSService(
+                model=ctx.providers.tts_options.get("model", settings.google_gemini_tts_model),
+                voice_id=google_voice,
+                sample_rate=tts_sample_rate,
+                params=GeminiTTSService.InputParams(language=ctx.bot.language),
+                **google_kwargs,
+            )
+        else:
+            tts = GoogleTTSService(
+                voice_id=google_voice,
+                sample_rate=tts_sample_rate,
+                params=GoogleTTSService.InputParams(language=ctx.bot.language),
+                **google_kwargs,
+            )
+        active_tts_provider = "google"
+    elif tts_provider_name == "kokoro":
+        kokoro_voice = _resolve_tts_voice(ctx, "kokoro")
+        kokoro_base_url = ctx.providers.tts_options.get("base_url", settings.kokoro_base_url)
+        kokoro_speed = ctx.providers.tts_options.get("speed", ctx.bot.voice_speed or settings.kokoro_speed)
+        logger.info(
+            "Initializing TTS: call=%s provider=kokoro url=%s voice=%s gender=%s language=%s",
+            ctx.call_id,
+            kokoro_base_url,
+            kokoro_voice,
+            ctx.bot.voice_gender or ctx.providers.tts_gender,
+            ctx.bot.language,
+        )
+        tts = KokoroHttpTTSService(
+            base_url=kokoro_base_url,
+            voice=kokoro_voice,
+            language=ctx.bot.language,
+            speed=kokoro_speed,
+            timeout_seconds=settings.kokoro_timeout_seconds,
+            sample_rate=tts_sample_rate,
+        )
+        active_tts_provider = "kokoro"
     elif ctx.providers.tts_provider == "deepgram" and deepgram_key:
         logger.info("Initializing TTS: call=%s provider=deepgram voice=%s", ctx.call_id,
                     ctx.providers.tts_voice or settings.deepgram_tts_model)
-        tts = DeepgramTTSService(api_key=deepgram_key, voice=ctx.providers.tts_voice or settings.deepgram_tts_model)
+        tts = DeepgramTTSService(
+            api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or deepgram_key,
+            voice=ctx.providers.tts_voice or settings.deepgram_tts_model,
+        )
         active_tts_provider = "deepgram"
     else:
         logger.info("Initializing TTS: call=%s provider=openai model=%s voice=%s", ctx.call_id,
                     ctx.providers.tts_model or settings.openai_tts_model,
                     ctx.providers.tts_voice or settings.openai_tts_voice)
         tts = OpenAITTSService(
-            api_key=ctx.providers.tts_api_key or openai_key,
+            api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or openai_key,
             model=ctx.providers.tts_model or settings.openai_tts_model,
             voice=ctx.providers.tts_voice or settings.openai_tts_voice,
         )
@@ -555,29 +1511,45 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
     system_prompt = build_system_prompt(ctx)
     logger.debug("System prompt built: call=%s length=%s", ctx.call_id, len(system_prompt))
     messages = [{"role": "system", "content": system_prompt}]
-    context = OpenAILLMContext(messages=messages)
-    context_aggregator = llm.create_context_aggregator(context)
+    if _is_native_audio_llm_provider(llm_provider):
+        context = LLMContext(messages=messages)
+        context_aggregator = LLMContextAggregatorPair(context)
+    else:
+        context = OpenAILLMContext(messages=messages)
+        context_aggregator = llm.create_context_aggregator(context)
 
     # Custom processors
     esc_intents, esc_actions = _parse_escalation(ctx)
     tracker = IntentTracker(escalation_intents=esc_intents, intent_actions=esc_actions)
     sentiment = SentimentAnalyzer() if ctx.sentiment_enabled else None
     transcript_relay = TranscriptRelayProcessor(ctx, sentiment)
-    user_trigger = UserLLMTriggerProcessor(ctx, context)
+    transcript_intent = TranscriptIntentProcessor(ctx, tracker)
+    user_trigger = UserLLMTriggerProcessor(ctx, context) if not _is_native_audio_llm_provider(llm_provider) else None
     intent_check = IntentCheckProcessor(ctx, tracker)
     call_end = CallEndProcessor(ctx, tracker)
 
     # Build processor chain
-    processors = [
-        transport.input(),
-        input_noise_reducer,
-        stt,
-        transcript_relay,
-        user_trigger,
-        llm,
-        intent_check,
-        tts,
-    ]
+    if _is_native_audio_llm_provider(llm_provider):
+        processors = [
+            transport.input(),
+            input_noise_reducer,
+            transcript_relay,
+            transcript_intent,
+            llm,
+            intent_check,
+        ]
+    else:
+        processors = [
+            transport.input(),
+            input_noise_reducer,
+            stt,
+            transcript_relay,
+            transcript_intent,
+            user_trigger,
+            llm,
+            intent_check,
+            tts,
+        ]
     logger.info("Base processors ready: call=%s count=%s", ctx.call_id, len(processors))
 
     # RVC (voice conversion — optional, after TTS)
@@ -591,8 +1563,8 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
         processors.append(rvc)
         logger.info("RVC enabled: model=%s server=%s", ctx.providers.rvc_model_id, settings.rvc_server_url)
 
-    # Audio post-processing (noise gate + normalization — always on)
-    post_process_enabled = active_tts_provider not in {"deepgram"}
+    # Keep provider audio untouched unless RVC is active.
+    post_process_enabled = ctx.providers.rvc_enabled
     processors.append(AudioPostProcessor(enabled=post_process_enabled))
     logger.info("Audio post processor enabled: call=%s enabled=%s", ctx.call_id, post_process_enabled)
 

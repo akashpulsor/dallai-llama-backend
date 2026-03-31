@@ -92,6 +92,7 @@ coturn:
   default-ttl: 86400
 
 # ═══ Cross-service clients ═══
+# ═══ Cross-service clients ═══
 dalaillama:
   tenant-service:
     url: ${TENANT_SERVICE_URL:http://tenant-service.platform.svc.cluster.local:8080}
@@ -99,12 +100,18 @@ dalaillama:
     url: ${PRODUCT_SERVICE_URL:http://product-service.platform.svc.cluster.local:8080}
 
   storage:
-    endpoint: http://minio.dalaillama.in:9000
-    bucket: dalaillama-media
-    access-key: minioadmin
-    secret-key: changeme
-    region: us-east-1
-    public-url: https://media.dalaillama.in   # CDN/reverse proxy URL
+    endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    access-key: ${MINIO_ACCESS_KEY:dalaillama-admin}
+    secret-key: ${MINIO_SECRET_KEY:minio-secret-123}
+    region: ${MINIO_REGION:us-east-1}
+    public-url: ${MINIO_PUBLIC_URL:https://media.dalaillama.in}
+    buckets:
+      recordings: ${MINIO_BUCKET_RECORDINGS:call-recordings}
+      voicemail: ${MINIO_BUCKET_VOICEMAIL:voicemail}
+      exports: ${MINIO_BUCKET_EXPORTS:campaign-exports}
+      knowledge: ${MINIO_BUCKET_KNOWLEDGE:bot-knowledge}
+      cdr: ${MINIO_BUCKET_CDR:cdr-archives}
+# CDN/reverse proxy URL
 # ═══ PBX-Core tuning ═══
 pbxcore:
   websocket:

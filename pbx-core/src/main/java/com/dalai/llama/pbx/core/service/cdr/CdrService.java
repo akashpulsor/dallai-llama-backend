@@ -185,7 +185,7 @@ public class CdrService {
     public void uploadRecording(String callId, byte[] audioData) {
         cdrRepository.findByCallId(callId).ifPresent(cdr -> {
             String path = buildRecordingPath(cdr);
-            String url = blobStorage.upload(path, audioData, "audio/wav");
+            String url = blobStorage.upload(blobStorage.getRecordingsBucket(),path, audioData, "audio/wav");
             cdr.setRecordingUrl(url);
             cdrRepository.save(cdr);
             log.debug("Recording uploaded: callId={} path={}", callId, path);
@@ -227,7 +227,7 @@ public class CdrService {
             // Full diarized transcript to MinIO (for detailed view / export)
             if (diarizedJson != null && !diarizedJson.isBlank()) {
                 String path = buildTranscriptPath(cdr);
-                String url = blobStorage.upload(path, diarizedJson.getBytes(), "application/json");
+                String url = blobStorage.upload(blobStorage.getRecordingsBucket(),path, diarizedJson.getBytes(), "application/json");
                 cdr.setTranscriptUrl(url);
                 log.debug("Transcript uploaded: callId={} path={}", callId, path);
             }

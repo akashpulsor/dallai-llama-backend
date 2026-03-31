@@ -9,13 +9,17 @@ class ProviderConfig:
     stt_provider: str = "deepgram"
     stt_model: Optional[str] = None
     stt_api_key: Optional[str] = None
+    stt_options: dict = field(default_factory=dict)
     tts_provider: str = "openai"
     tts_model: Optional[str] = None
-    tts_voice: str = "alloy"
+    tts_voice: Optional[str] = None
+    tts_gender: Optional[str] = None
     tts_api_key: Optional[str] = None
+    tts_options: dict = field(default_factory=dict)
     llm_provider: str = "openai"
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
+    llm_options: dict = field(default_factory=dict)
     rvc_enabled: bool = False
     rvc_model_id: Optional[str] = None
 
@@ -40,6 +44,7 @@ class BotConfig:
     sentiment_tracking: bool = False
     voice_provider: Optional[str] = None
     voice_id: Optional[str] = None
+    voice_gender: Optional[str] = None
     voice_speed: float = 1.0
 
 
@@ -73,6 +78,7 @@ class CallContext:
     # Campaign + contact context (outbound dialer, populated from PBX-Core)
     campaign: dict = field(default_factory=dict)
     contact: dict = field(default_factory=dict)
+    user_profile: dict = field(default_factory=dict)
 
     # Conversation state
     conversation_history: list[dict] = field(default_factory=list)
