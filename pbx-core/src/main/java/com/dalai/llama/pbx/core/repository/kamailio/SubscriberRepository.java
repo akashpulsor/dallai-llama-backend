@@ -1,6 +1,7 @@
 package com.dalai.llama.pbx.core.repository.kamailio;
 
 import com.dalai.llama.pbx.core.domain.entity.kamailio.Subscriber;
+import com.dalai.llama.pbx.core.domain.enums.SubscriberType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;

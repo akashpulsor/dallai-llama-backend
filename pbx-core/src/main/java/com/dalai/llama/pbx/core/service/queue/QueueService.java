@@ -164,13 +164,13 @@ public class QueueService {
 
     private Optional<Agent> pickByPriorityAndAvailability(UUID queueId) {
         List<QueueMember> available = memberRepository.findAvailableMembersByQueueId(queueId);
-        return available.isEmpty() ? Optional.empty() : Optional.of(available.getFirst().getAgent());
+        return available.isEmpty() ? Optional.empty() : Optional.of(available.get(0).getAgent());
     }
 
     private Optional<Agent> pickBySkills(UUID queueId, String skill) {
         List<QueueMember> available = memberRepository.findAvailableMembersByQueueId(queueId);
         if (skill == null || skill.isBlank()) {
-            return available.isEmpty() ? Optional.empty() : Optional.of(available.getFirst().getAgent());
+            return available.isEmpty() ? Optional.empty() : Optional.of(available.get(0).getAgent());
         }
 
         // Filter members who have the required skill

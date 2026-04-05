@@ -12,10 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * TURN credential generation and management.
@@ -65,10 +62,10 @@ public class TurnCredentialService {
         }
 
         // DB fallback — find valid (non-expired) credential
-        var dbCreds = dbRepository.findByTenantIdAndExpiresAtAfterOrderByCreatedAtDesc(
+        List<TurnCredentialsCache> dbCreds = dbRepository.findByTenantIdAndExpiresAtAfterOrderByCreatedAtDesc(
                 tenantId, Instant.now());
         if (!dbCreds.isEmpty()) {
-            TurnCredentialsCache cred = dbCreds.getFirst();
+            TurnCredentialsCache cred = dbCreds.get(0);
             // Warm Redis
             int remainingTtl = (int) Instant.now().until(cred.getExpiresAt(), ChronoUnit.SECONDS);
             redisService.store(tenantSlug, cred.getUsername(), cred.getPassword(),

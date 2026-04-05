@@ -285,8 +285,8 @@ public class ProvisioningService {
 
         // Find tenantId from subscriber rows (they all share same subscription)
         var subscribers = subscriberRepository.findBySubscriptionId(subscriptionId);
-        UUID tenantId = subscribers.isEmpty() ? null : subscribers.getFirst().getTenantId();
-        String domain = subscribers.isEmpty() ? null : subscribers.getFirst().getDomain();
+        UUID tenantId = subscribers.isEmpty() ? null : subscribers.get(0).getTenantId();
+        String domain = subscribers.isEmpty() ? null : subscribers.get(0).getDomain();
         String didNumber = null;
 
         // Find DID from domain
