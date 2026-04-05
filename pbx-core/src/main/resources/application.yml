@@ -87,7 +87,7 @@ kamailio:
 
 # ═══ CoTURN ═══
 coturn:
-  host: ${COTURN_HOST:turn.dalaillama.in}
+  host: ${TURN_DOMAIN:turn.dalaillama.in}
   secret: ${COTURN_SECRET:changeme}
   default-ttl: 86400
 
@@ -126,12 +126,12 @@ pbxcore:
   dialer:
     poll-interval-ms: 5000
     max-concurrent-per-campaign: 10
-# Under existing sip section (NEW — add after kamailio block)
-sip:
-  external-ip: ${SIP_EXTERNAL_IP:}
-  default-domain: ${SIP_DEFAULT_DOMAIN:sip.dalaillama.in}
-  wss-url: ${SIP_WSS_URL:wss://sip.dalaillama.in:7443}
 
+
+sip:
+  external-ip: ${TELECOM_PUBLIC_IP:}
+  default-domain: ${SIP_DOMAIN:sip.dalaillama.in}
+  wss-url: ${SIP_WSS_URL:wss://${SIP_DOMAIN:sip.dalaillama.in}:7443}
 # ═══ Actuator ═══
 management:
   endpoints:
