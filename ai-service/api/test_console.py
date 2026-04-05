@@ -12,8 +12,10 @@ import logging
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, Depends, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
+
+from auth.keycloak import authorize_websocket, require_auth
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +42,7 @@ def add_event(call_id: str, event: dict):
 
 
 @router.get("/test/events/{call_id}")
-async def get_events(call_id: str, since: float = 0):
+async def get_events(call_id: str, since: float = 0, _: dict = Depends(require_auth)):
     events = [e for e in call_events.get(call_id, []) if e.get("ts", 0) > since]
     return JSONResponse({"events": events})
 
@@ -410,7 +412,7 @@ loadCatalog();
 
 
 @router.get("/test", response_class=HTMLResponse)
-async def test_page():
+async def test_page(_: dict = Depends(require_auth)):
     return TEST_HTML
 
 
@@ -437,6 +439,7 @@ async def test_ws(
     llm_api_key: str = None,
     tts_api_key: str = None,
 ):
+    await authorize_websocket(websocket)
     from api.websocket_handler import handle_audio_websocket
 
     await handle_audio_websocket(

@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 import httpx
 from pydantic import BaseModel, Field
@@ -22,12 +22,15 @@ import uvicorn
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import settings
+from auth.keycloak import require_auth
 from pipeline.callbacks import pbx_core_client
+from api.bot_config import router as bot_config_router
 from api.provider_catalog import router as provider_catalog_router
 from api.websocket_handler import handle_audio_websocket, active_calls, active_sessions
 from api.test_console import router as test_router
 from db.analytics_store import fetch_summary, fetch_timeline, store_event as persist_analytics_event
-from db.database import close_database, init_database, ping_database
+from db.database import close_database, init_database, ping_database, run_migrations
+from db.provider_catalog_store import seed_provider_catalog
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -67,6 +70,17 @@ class AnalyticsChatIn(BaseModel):
 
 def _startup_warnings() -> list[str]:
     warnings: list[str] = []
+    if settings.auth_enabled:
+        if not settings.keycloak_realm:
+            warnings.append("auth_enabled is true but KEYCLOAK_REALM is not set")
+        if not settings.keycloak_client_id:
+            warnings.append("auth_enabled is true but KEYCLOAK_CLIENT_ID is not set")
+        if not (settings.keycloak_jwks_url or settings.keycloak_server_url):
+            warnings.append("auth_enabled is true but KEYCLOAK_JWKS_URL or KEYCLOAK_SERVER_URL is not set")
+        if settings.auth_allow_unsafe_dev_tokens:
+            warnings.append("AUTH_ALLOW_UNSAFE_DEV_TOKENS is enabled; signature verification bypass is unsafe outside development")
+    elif settings.auth_allow_unsafe_dev_tokens:
+        warnings.append("AUTH_ALLOW_UNSAFE_DEV_TOKENS is set while AUTH_ENABLED is false; this setting has no effect")
     if settings.default_llm_provider.lower() == "openai" and not settings.openai_api_key:
         warnings.append("default_llm_provider is openai but VB_OPENAI_API_KEY is not set")
     if settings.default_llm_provider.lower() == "google" and not settings.google_api_key:
@@ -95,6 +109,10 @@ def _startup_warnings() -> list[str]:
             )
     if settings.default_llm_provider.lower() == "ollama" and not settings.ollama_base_url:
         warnings.append("default_llm_provider is ollama but VB_OLLAMA_BASE_URL is not set")
+    if settings.google_credentials_path and settings.google_credentials_json:
+        warnings.append("Both GOOGLE_CREDENTIALS_PATH and GOOGLE_CREDENTIALS_JSON are set; JSON will take precedence in runtime helpers")
+    if settings.default_tts_provider.lower() == "google" and settings.google_tts_mode.lower() == "gemini" and not settings.google_credentials_json and not settings.google_credentials_path:
+        warnings.append("google_tts_mode is gemini but Google TTS credentials are not configured")
     if settings.database_url is None:
         warnings.append("VB_DATABASE_URL is not set; persistent analytics endpoints will be unavailable")
     return warnings
@@ -157,6 +175,8 @@ async def _ask_analytics_llm(question: str, payload: dict) -> str:
 async def lifespan(app: FastAPI):
     pbx_core_client.init(settings.pbx_core_url)
     init_database()
+    applied_migrations = await run_migrations()
+    await seed_provider_catalog()
     warnings = _startup_warnings()
     logger.info(
         "voice-brain starting: port=%d public_url=%s pbx=%s db=%s stt=%s tts=%s llm=%s rvc=%s",
@@ -171,6 +191,8 @@ async def lifespan(app: FastAPI):
     )
     for warning in warnings:
         logger.warning("startup check: %s", warning)
+    if applied_migrations:
+        logger.info("database migrations applied: %s", ", ".join(applied_migrations))
     yield
     await pbx_core_client.close()
     await close_database()
@@ -187,6 +209,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "system", "description": "Health, readiness, and service-level endpoints."},
         {"name": "providers", "description": "Provider catalog endpoints for UI configuration and test console use."},
+        {"name": "bot-configs", "description": "Tenant-scoped bot/provider configuration bundles for PBX-Core and UI flows."},
         {"name": "test-console", "description": "Local browser test console endpoints and websocket helpers."},
         {"name": "calls", "description": "Active call inspection endpoints."},
         {"name": "analytics", "description": "Analytics timeline, summary, and question-answering endpoints."},
@@ -199,6 +222,7 @@ app = FastAPI(
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(provider_catalog_router)
+app.include_router(bot_config_router)
 app.include_router(test_router)
 
 
@@ -294,7 +318,7 @@ async def ready():
 
 
 @app.get("/calls", tags=["calls"], summary="List active calls")
-async def calls():
+async def calls(_: dict = Depends(require_auth)):
     return {"count": len(active_calls), "calls": [
         {"call_id": cid, "tenant_id": c.tenant_id, "product": c.product_code,
          "turns": c.turn_count, "intents": len(c.intent_log), "sentiment": c.current_sentiment}
@@ -307,7 +331,7 @@ async def calls():
     tags=["admin"],
     summary="Get deep live insight for an active call",
 )
-async def admin_call_insights(call_id: str):
+async def admin_call_insights(call_id: str, _: dict = Depends(require_auth)):
     session = active_sessions.get(call_id)
     if not session:
         raise HTTPException(status_code=404, detail="Active call not found")
@@ -358,7 +382,7 @@ async def admin_call_insights(call_id: str):
     tags=["admin"],
     summary="Inject admin speech into an active call",
 )
-async def admin_speak(call_id: str, payload: AdminSpeakIn):
+async def admin_speak(call_id: str, payload: AdminSpeakIn, _: dict = Depends(require_auth)):
     session = active_sessions.get(call_id)
     if not session:
         raise HTTPException(status_code=404, detail="Active call not found")
@@ -386,7 +410,7 @@ async def admin_speak(call_id: str, payload: AdminSpeakIn):
     tags=["analytics"],
     summary="Get in-memory intent timeline for a tenant",
 )
-async def intent_timeline(tenant_id: str):
+async def intent_timeline(tenant_id: str, _: dict = Depends(require_auth)):
     buckets: dict[str, dict] = defaultdict(
         lambda: {"count": 0, "top_intent": None, "top_intent_confidence": 0.0, "intents": defaultdict(int)}
     )
@@ -425,7 +449,7 @@ async def intent_timeline(tenant_id: str):
 
 
 @app.post("/analytics/events", tags=["analytics"], summary="Persist an analytics event")
-async def create_analytics_event(event: AnalyticsEventIn):
+async def create_analytics_event(event: AnalyticsEventIn, _: dict = Depends(require_auth)):
     if not settings.database_url:
         raise HTTPException(status_code=503, detail="Database is not configured")
     await persist_analytics_event(**event.model_dump())
@@ -441,6 +465,7 @@ async def analytics_overview(
     tenant_id: str,
     from_ts: datetime | None = Query(default=None),
     to_ts: datetime | None = Query(default=None),
+    _: dict = Depends(require_auth),
 ):
     if not settings.database_url:
         raise HTTPException(status_code=503, detail="Database is not configured")
@@ -464,6 +489,7 @@ async def analytics_timeline(
     speaker: Literal["customer", "bot", "agent"],
     from_ts: datetime | None = Query(default=None),
     to_ts: datetime | None = Query(default=None),
+    _: dict = Depends(require_auth),
 ):
     if not settings.database_url:
         raise HTTPException(status_code=503, detail="Database is not configured")
@@ -488,6 +514,7 @@ async def analytics_chat(
     payload: AnalyticsChatIn,
     from_ts: datetime | None = Query(default=None),
     to_ts: datetime | None = Query(default=None),
+    _: dict = Depends(require_auth),
 ):
     if not settings.database_url:
         raise HTTPException(status_code=503, detail="Database is not configured")

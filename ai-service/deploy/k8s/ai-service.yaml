@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service
+  labels:
+    app: ai-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-service
+  template:
+    metadata:
+      labels:
+        app: ai-service
+    spec:
+      containers:
+        - name: ai-service
+          image: your-registry/ai-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8601
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "8601"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: SERVICE_NAME
+              value: "voice-brain"
+            - name: SERVICE_PUBLIC_URL
+              value: "http://ai-service.default.svc.cluster.local:8601"
+            - name: PBX_CORE_URL
+              value: "http://pbx-core.default.svc.cluster.local:8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ai-service-secrets
+                  key: database-url
+            - name: AUTH_ENABLED
+              value: "true"
+            - name: KEYCLOAK_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: keycloak-server-url
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: keycloak-realm
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: keycloak-client-id
+            - name: KEYCLOAK_AUDIENCE
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: keycloak-audience
+            - name: KEYCLOAK_REQUIRED_SCOPES
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: keycloak-required-scopes
+            - name: DEFAULT_STT_PROVIDER
+              value: "deepgram"
+            - name: DEFAULT_TTS_PROVIDER
+              value: "deepgram"
+            - name: DEFAULT_LLM_PROVIDER
+              value: "openai"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-service-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: DEEPGRAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-service-secrets
+                  key: deepgram-api-key
+                  optional: true
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-service-secrets
+                  key: google-api-key
+                  optional: true
+            - name: GOOGLE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-service-config
+                  key: google-project-id
+                  optional: true
+            - name: GOOGLE_LOCATION
+              value: "global"
+            - name: GOOGLE_CREDENTIALS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: ai-service-secrets
+                  key: google-credentials-json
+                  optional: true
+            - name: OLLAMA_BASE_URL
+              value: "http://ollama.default.svc.cluster.local:11434/v1"
+            - name: KOKORO_BASE_URL
+              value: "http://kokoro-tts.default.svc.cluster.local:5006/synthesize"
+            - name: INDIC_TTS_BASE_URL
+              value: "http://indic-tts.default.svc.cluster.local:5005/synthesize"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+  labels:
+    app: ai-service
+spec:
+  selector:
+    app: ai-service
+  ports:
+    - name: http
+      port: 8601
+      targetPort: http

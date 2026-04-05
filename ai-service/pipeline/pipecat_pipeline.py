@@ -60,6 +60,93 @@ Return JSON only. No markdown. No explanation.
 """
 
 
+class ProviderSetupError(RuntimeError):
+    def __init__(self, provider_type: str, provider_name: str, reason: str):
+        self.provider_type = provider_type
+        self.provider_name = provider_name
+        self.reason = reason
+        super().__init__(f"{provider_type.upper()} provider '{provider_name}' setup failed: {reason}")
+
+
+def _require_value(value: str | None, provider_type: str, provider_name: str, field_name: str) -> None:
+    if value not in (None, ""):
+        return
+    raise ProviderSetupError(provider_type, provider_name, f"missing required credential/config '{field_name}'")
+
+
+def _has_any(*values: str | None) -> bool:
+    return any(value not in (None, "") for value in values)
+
+
+def _validate_provider_inputs(ctx: CallContext) -> None:
+    stt_provider = (ctx.providers.stt_provider or settings.default_stt_provider or "deepgram").lower()
+    llm_provider = (ctx.providers.llm_provider or settings.default_llm_provider or "openai").lower()
+    tts_provider = (ctx.providers.tts_provider or settings.default_tts_provider or "openai").lower()
+
+    if stt_provider == "deepgram":
+        _require_value(ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or settings.deepgram_api_key, "stt", stt_provider, "api_key")
+    elif stt_provider == "openai":
+        _require_value(ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or ctx.providers.llm_api_key or settings.openai_api_key, "stt", stt_provider, "api_key")
+    elif stt_provider == "google":
+        if not _has_any(
+            ctx.providers.stt_options.get("credentials_json"),
+            ctx.providers.stt_options.get("credentials_path"),
+            settings.google_credentials_json,
+            settings.google_credentials_path,
+        ):
+            raise ProviderSetupError("stt", stt_provider, "missing Google credentials_json or credentials_path")
+
+    if llm_provider == "openai":
+        _require_value(ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.openai_api_key, "llm", llm_provider, "api_key")
+    elif llm_provider == "google":
+        _require_value(ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key, "llm", llm_provider, "api_key")
+    elif llm_provider == "gemini_live":
+        _require_value(ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key, "llm", llm_provider, "api_key")
+    elif llm_provider == "vertex":
+        _require_value(ctx.providers.llm_options.get("project_id") or settings.google_project_id, "llm", llm_provider, "project_id")
+        if not _has_any(
+            ctx.providers.llm_options.get("credentials_json"),
+            ctx.providers.llm_options.get("credentials_path"),
+            settings.google_credentials_json,
+            settings.google_credentials_path,
+        ):
+            raise ProviderSetupError("llm", llm_provider, "missing Vertex credentials_json or credentials_path")
+    elif llm_provider == "ollama":
+        _require_value(ctx.providers.llm_options.get("base_url") or settings.ollama_base_url, "llm", llm_provider, "base_url")
+
+    if llm_provider != "gemini_live":
+        if tts_provider == "deepgram":
+            _require_value(ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or settings.deepgram_api_key, "tts", tts_provider, "api_key")
+        elif tts_provider == "openai":
+            _require_value(ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or ctx.providers.llm_api_key or settings.openai_api_key, "tts", tts_provider, "api_key")
+        elif tts_provider == "google":
+            if not _has_any(
+                ctx.providers.tts_options.get("credentials_json"),
+                ctx.providers.tts_options.get("credentials_path"),
+                settings.google_credentials_json,
+                settings.google_credentials_path,
+            ):
+                raise ProviderSetupError("tts", tts_provider, "missing Google credentials_json or credentials_path")
+        elif tts_provider == "kokoro":
+            _require_value(ctx.providers.tts_options.get("base_url") or settings.kokoro_base_url, "tts", tts_provider, "base_url")
+        elif tts_provider == "indic_tts":
+            _require_value(ctx.providers.tts_options.get("base_url") or settings.indic_tts_base_url, "tts", tts_provider, "base_url")
+
+
+def _provider_error_reason(exc: Exception) -> str:
+    text = str(exc).strip() or exc.__class__.__name__
+    lowered = text.lower()
+    if "429" in lowered or "rate limit" in lowered or "quota" in lowered:
+        return f"rate limited by upstream provider: {text}"
+    if "401" in lowered or "403" in lowered or "unauthorized" in lowered or "forbidden" in lowered or "invalid api key" in lowered:
+        return f"authentication/authorization failure from upstream provider: {text}"
+    if "timeout" in lowered:
+        return f"timeout while connecting to upstream provider: {text}"
+    if "dns" in lowered or "connection" in lowered or "network" in lowered or "temporarily unavailable" in lowered:
+        return f"network/connectivity failure to upstream provider: {text}"
+    return text
+
+
 def _google_credentials_kwargs(overrides: dict | None = None) -> dict:
     overrides = overrides or {}
     kwargs: dict = {
@@ -1258,6 +1345,7 @@ def build_system_prompt(ctx: CallContext) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineRunner]:
+    _validate_provider_inputs(ctx)
     openai_key = ctx.providers.llm_api_key or settings.openai_api_key
     deepgram_key = ctx.providers.stt_api_key or settings.deepgram_api_key
     aiohttp_session = None
@@ -1303,209 +1391,237 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
     logger.info("Initializing STT: call=%s provider=%s model=%s language=%s",
                 ctx.call_id, ctx.providers.stt_provider, ctx.providers.stt_model or settings.deepgram_stt_model,
                 stt_language)
-    if stt_provider_name == "google":
-        _, _, _, _, GoogleSTTService, _ = _load_google_services()
-        google_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or "latest_long"
-        google_stt_location = ctx.providers.stt_options.get("location") or settings.google_location or "global"
-        logger.info(
-            "Using Google STT: call=%s model=%s language=%s location=%s",
-            ctx.call_id,
-            google_stt_model,
-            stt_language,
-            google_stt_location,
-        )
-        stt = GoogleSTTService(
-            sample_rate=16000,
-            params=GoogleSTTService.InputParams(
-                languages=[_resolve_google_stt_language(ctx)],
-                model=google_stt_model,
-                enable_automatic_punctuation=True,
-                enable_interim_results=True,
-                enable_voice_activity_events=True,
-            ),
-            **_google_stt_credentials_kwargs(ctx.providers.stt_options),
-        )
-    elif stt_provider_name == "openai":
-        openai_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or settings.openai_stt_model
-        openai_stt_base_url = ctx.providers.stt_options.get("base_url")
-        logger.info(
-            "Using OpenAI Realtime STT: call=%s model=%s language=%s base_url=%s",
-            ctx.call_id,
-            openai_stt_model,
-            stt_language,
-            openai_stt_base_url or "default",
-        )
-        stt = OpenAIRealtimeSTTService(
-            api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or openai_key,
-            model=openai_stt_model,
-            base_url=openai_stt_base_url or "wss://api.openai.com/v1/realtime",
-            language=_resolve_openai_stt_language(ctx),
-            turn_detection=False,
-            should_interrupt=False,
-        )
-    else:
-        stt = DeepgramSTTService(
-            api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or deepgram_key,
-            live_options=LiveOptions(
-                model=ctx.providers.stt_model or settings.deepgram_stt_model,
-                language=stt_language,
-                interim_results=True,
-                smart_format=True,
-                vad_events=True,
+    try:
+        if stt_provider_name == "google":
+            _, _, _, _, GoogleSTTService, _ = _load_google_services()
+            google_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or "latest_long"
+            google_stt_location = ctx.providers.stt_options.get("location") or settings.google_location or "global"
+            logger.info(
+                "Using Google STT: call=%s model=%s language=%s location=%s",
+                ctx.call_id,
+                google_stt_model,
+                stt_language,
+                google_stt_location,
+            )
+            stt = GoogleSTTService(
                 sample_rate=16000,
-                encoding="linear16",
-                channels=1,
-            ),
-            sample_rate=16000,
-            should_interrupt=False,
+                params=GoogleSTTService.InputParams(
+                    languages=[_resolve_google_stt_language(ctx)],
+                    model=google_stt_model,
+                    enable_automatic_punctuation=True,
+                    enable_interim_results=True,
+                    enable_voice_activity_events=True,
+                ),
+                **_google_stt_credentials_kwargs(ctx.providers.stt_options),
+            )
+        elif stt_provider_name == "openai":
+            openai_stt_model = ctx.providers.stt_model or ctx.providers.stt_options.get("model") or settings.openai_stt_model
+            openai_stt_base_url = ctx.providers.stt_options.get("base_url")
+            logger.info(
+                "Using OpenAI Realtime STT: call=%s model=%s language=%s base_url=%s",
+                ctx.call_id,
+                openai_stt_model,
+                stt_language,
+                openai_stt_base_url or "default",
+            )
+            stt = OpenAIRealtimeSTTService(
+                api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or openai_key,
+                model=openai_stt_model,
+                base_url=openai_stt_base_url or "wss://api.openai.com/v1/realtime",
+                language=_resolve_openai_stt_language(ctx),
+                turn_detection=False,
+                should_interrupt=False,
+            )
+        else:
+            stt = DeepgramSTTService(
+                api_key=ctx.providers.stt_api_key or ctx.providers.stt_options.get("api_key") or deepgram_key,
+                live_options=LiveOptions(
+                    model=ctx.providers.stt_model or settings.deepgram_stt_model,
+                    language=stt_language,
+                    interim_results=True,
+                    smart_format=True,
+                    vad_events=True,
+                    sample_rate=16000,
+                    encoding="linear16",
+                    channels=1,
+                ),
+                sample_rate=16000,
+                should_interrupt=False,
+            )
+    except Exception as exc:
+        logger.exception(
+            "Provider initialization failed: call=%s provider_type=stt provider=%s tenant=%s bot_id=%s",
+            ctx.call_id,
+            stt_provider_name,
+            ctx.tenant_id,
+            ctx.bot.bot_id,
         )
+        raise ProviderSetupError("stt", stt_provider_name, _provider_error_reason(exc)) from exc
 
     # LLM
     logger.info("Initializing LLM: call=%s provider=%s model=%s", ctx.call_id, ctx.providers.llm_provider,
                 ctx.providers.llm_model or settings.openai_llm_model)
     llm_provider = (ctx.providers.llm_provider or settings.default_llm_provider or "openai").lower()
-    if llm_provider == "ollama":
-        llm_model = ctx.providers.llm_model or settings.ollama_llm_model
-        ollama_base_url = ctx.providers.llm_options.get("base_url", settings.ollama_base_url)
-        logger.info("Using Ollama LLM: call=%s model=%s base_url=%s", ctx.call_id, llm_model, ollama_base_url)
-        llm = OLLamaLLMService(model=llm_model, base_url=ollama_base_url)
-    elif llm_provider == "google":
-        GoogleLLMService, _, _, _, _, _ = _load_google_services()
-        llm_model = ctx.providers.llm_model or settings.google_llm_model
-        logger.info("Using Google LLM: call=%s model=%s", ctx.call_id, llm_model)
-        llm = GoogleLLMService(
-            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
-            model=llm_model,
-        )
-    elif llm_provider == "gemini_live":
-        _, _, _, _, _, GeminiLiveLLMService = _load_google_services()
-        llm_model = ctx.providers.llm_model or settings.google_gemini_live_llm_model
-        llm_voice = _resolve_native_audio_voice(ctx)
-        logger.info("Using Gemini Live LLM: call=%s model=%s voice=%s language=%s", ctx.call_id, llm_model, llm_voice, ctx.bot.language)
-        llm = GeminiLiveLLMService(
-            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
-            model=llm_model,
-            voice_id=llm_voice,
-            system_instruction=build_system_prompt(ctx),
-        )
-    elif llm_provider == "vertex":
-        _, _, GoogleVertexLLMService, _, _, _ = _load_google_services()
-        llm_model = ctx.providers.llm_model or settings.vertex_llm_model
-        logger.info(
-            "Using Vertex LLM: call=%s model=%s project=%s location=%s",
-            ctx.call_id,
-            llm_model,
-            ctx.providers.llm_options.get("project_id", settings.google_project_id),
-            ctx.providers.llm_options.get("location", settings.google_location),
-        )
-        llm = GoogleVertexLLMService(
-            model=llm_model,
-            **_google_credentials_kwargs(ctx.providers.llm_options),
-        )
-    else:
-        llm_model = ctx.providers.llm_model or settings.openai_llm_model
-        llm = OpenAILLMService(
-            api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or openai_key,
-            model=llm_model,
-        )
-
-    # TTS
-    if _is_native_audio_llm_provider(llm_provider):
-        active_tts_provider = "gemini_live"
-        tts = None
-    elif ctx.providers.tts_provider == "indic_tts":
-        aiohttp_session = aiohttp.ClientSession()
-        resolved_voice = _resolve_tts_voice(ctx, "indic_tts")
-        indic_base_url = ctx.providers.tts_options.get("base_url", settings.indic_tts_base_url)
-        logger.info(
-            "Initializing TTS: call=%s provider=indic_tts url=%s voice=%s gender=%s emotion=%s",
-            ctx.call_id,
-            indic_base_url,
-            resolved_voice,
-            ctx.bot.voice_gender or ctx.providers.tts_gender,
-            settings.indic_tts_emotion,
-        )
-        tts = IndicHttpTTSService(
-            base_url=indic_base_url,
-            aiohttp_session=aiohttp_session,
-            voice=resolved_voice,
-            language=ctx.bot.language,
-            emotion=settings.indic_tts_emotion,
-            sample_rate=tts_sample_rate,
-        )
-        active_tts_provider = "indic_tts"
-    elif tts_provider_name == "google":
-        _, GoogleTTSService, _, GeminiTTSService, _, _ = _load_google_services()
-        google_kwargs = _google_tts_credentials_kwargs(ctx.providers.tts_options)
-        google_voice = _resolve_tts_voice(ctx, "google")
-        google_mode = str(ctx.providers.tts_options.get("mode", settings.google_tts_mode)).lower()
-        logger.info(
-            "Initializing TTS: call=%s provider=google mode=%s voice=%s gender=%s language=%s endpoint=%s",
-            ctx.call_id,
-            google_mode,
-            google_voice,
-            ctx.bot.voice_gender or ctx.providers.tts_gender,
-            ctx.bot.language,
-            "default",
-        )
-        if google_mode == "gemini":
-            tts = GeminiTTSService(
-                model=ctx.providers.tts_options.get("model", settings.google_gemini_tts_model),
-                voice_id=google_voice,
-                sample_rate=tts_sample_rate,
-                params=GeminiTTSService.InputParams(language=ctx.bot.language),
-                **google_kwargs,
+    try:
+        if llm_provider == "ollama":
+            llm_model = ctx.providers.llm_model or settings.ollama_llm_model
+            ollama_base_url = ctx.providers.llm_options.get("base_url", settings.ollama_base_url)
+            logger.info("Using Ollama LLM: call=%s model=%s base_url=%s", ctx.call_id, llm_model, ollama_base_url)
+            llm = OLLamaLLMService(model=llm_model, base_url=ollama_base_url)
+        elif llm_provider == "google":
+            GoogleLLMService, _, _, _, _, _ = _load_google_services()
+            llm_model = ctx.providers.llm_model or settings.google_llm_model
+            logger.info("Using Google LLM: call=%s model=%s", ctx.call_id, llm_model)
+            llm = GoogleLLMService(
+                api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
+                model=llm_model,
+            )
+        elif llm_provider == "gemini_live":
+            _, _, _, _, _, GeminiLiveLLMService = _load_google_services()
+            llm_model = ctx.providers.llm_model or settings.google_gemini_live_llm_model
+            llm_voice = _resolve_native_audio_voice(ctx)
+            logger.info("Using Gemini Live LLM: call=%s model=%s voice=%s language=%s", ctx.call_id, llm_model, llm_voice, ctx.bot.language)
+            llm = GeminiLiveLLMService(
+                api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or settings.google_api_key,
+                model=llm_model,
+                voice_id=llm_voice,
+                system_instruction=build_system_prompt(ctx),
+            )
+        elif llm_provider == "vertex":
+            _, _, GoogleVertexLLMService, _, _, _ = _load_google_services()
+            llm_model = ctx.providers.llm_model or settings.vertex_llm_model
+            logger.info(
+                "Using Vertex LLM: call=%s model=%s project=%s location=%s",
+                ctx.call_id,
+                llm_model,
+                ctx.providers.llm_options.get("project_id", settings.google_project_id),
+                ctx.providers.llm_options.get("location", settings.google_location),
+            )
+            llm = GoogleVertexLLMService(
+                model=llm_model,
+                **_google_credentials_kwargs(ctx.providers.llm_options),
             )
         else:
-            tts = GoogleTTSService(
-                voice_id=google_voice,
-                sample_rate=tts_sample_rate,
-                params=GoogleTTSService.InputParams(language=ctx.bot.language),
-                **google_kwargs,
+            llm_model = ctx.providers.llm_model or settings.openai_llm_model
+            llm = OpenAILLMService(
+                api_key=ctx.providers.llm_api_key or ctx.providers.llm_options.get("api_key") or openai_key,
+                model=llm_model,
             )
-        active_tts_provider = "google"
-    elif tts_provider_name == "kokoro":
-        kokoro_voice = _resolve_tts_voice(ctx, "kokoro")
-        kokoro_base_url = ctx.providers.tts_options.get("base_url", settings.kokoro_base_url)
-        kokoro_speed = ctx.providers.tts_options.get("speed", ctx.bot.voice_speed or settings.kokoro_speed)
-        logger.info(
-            "Initializing TTS: call=%s provider=kokoro url=%s voice=%s gender=%s language=%s",
+    except Exception as exc:
+        logger.exception(
+            "Provider initialization failed: call=%s provider_type=llm provider=%s tenant=%s bot_id=%s",
             ctx.call_id,
-            kokoro_base_url,
-            kokoro_voice,
-            ctx.bot.voice_gender or ctx.providers.tts_gender,
-            ctx.bot.language,
+            llm_provider,
+            ctx.tenant_id,
+            ctx.bot.bot_id,
         )
-        tts = KokoroHttpTTSService(
-            base_url=kokoro_base_url,
-            voice=kokoro_voice,
-            language=ctx.bot.language,
-            speed=kokoro_speed,
-            timeout_seconds=settings.kokoro_timeout_seconds,
-            sample_rate=tts_sample_rate,
+        raise ProviderSetupError("llm", llm_provider, _provider_error_reason(exc)) from exc
+
+    # TTS
+    try:
+        if _is_native_audio_llm_provider(llm_provider):
+            active_tts_provider = "gemini_live"
+            tts = None
+        elif ctx.providers.tts_provider == "indic_tts":
+            aiohttp_session = aiohttp.ClientSession()
+            resolved_voice = _resolve_tts_voice(ctx, "indic_tts")
+            indic_base_url = ctx.providers.tts_options.get("base_url", settings.indic_tts_base_url)
+            logger.info(
+                "Initializing TTS: call=%s provider=indic_tts url=%s voice=%s gender=%s emotion=%s",
+                ctx.call_id,
+                indic_base_url,
+                resolved_voice,
+                ctx.bot.voice_gender or ctx.providers.tts_gender,
+                settings.indic_tts_emotion,
+            )
+            tts = IndicHttpTTSService(
+                base_url=indic_base_url,
+                aiohttp_session=aiohttp_session,
+                voice=resolved_voice,
+                language=ctx.bot.language,
+                emotion=settings.indic_tts_emotion,
+                sample_rate=tts_sample_rate,
+            )
+            active_tts_provider = "indic_tts"
+        elif tts_provider_name == "google":
+            _, GoogleTTSService, _, GeminiTTSService, _, _ = _load_google_services()
+            google_kwargs = _google_tts_credentials_kwargs(ctx.providers.tts_options)
+            google_voice = _resolve_tts_voice(ctx, "google")
+            google_mode = str(ctx.providers.tts_options.get("mode", settings.google_tts_mode)).lower()
+            logger.info(
+                "Initializing TTS: call=%s provider=google mode=%s voice=%s gender=%s language=%s endpoint=%s",
+                ctx.call_id,
+                google_mode,
+                google_voice,
+                ctx.bot.voice_gender or ctx.providers.tts_gender,
+                ctx.bot.language,
+                "default",
+            )
+            if google_mode == "gemini":
+                tts = GeminiTTSService(
+                    model=ctx.providers.tts_options.get("model", settings.google_gemini_tts_model),
+                    voice_id=google_voice,
+                    sample_rate=tts_sample_rate,
+                    params=GeminiTTSService.InputParams(language=ctx.bot.language),
+                    **google_kwargs,
+                )
+            else:
+                tts = GoogleTTSService(
+                    voice_id=google_voice,
+                    sample_rate=tts_sample_rate,
+                    params=GoogleTTSService.InputParams(language=ctx.bot.language),
+                    **google_kwargs,
+                )
+            active_tts_provider = "google"
+        elif tts_provider_name == "kokoro":
+            kokoro_voice = _resolve_tts_voice(ctx, "kokoro")
+            kokoro_base_url = ctx.providers.tts_options.get("base_url", settings.kokoro_base_url)
+            kokoro_speed = ctx.providers.tts_options.get("speed", ctx.bot.voice_speed or settings.kokoro_speed)
+            logger.info(
+                "Initializing TTS: call=%s provider=kokoro url=%s voice=%s gender=%s language=%s",
+                ctx.call_id,
+                kokoro_base_url,
+                kokoro_voice,
+                ctx.bot.voice_gender or ctx.providers.tts_gender,
+                ctx.bot.language,
+            )
+            tts = KokoroHttpTTSService(
+                base_url=kokoro_base_url,
+                voice=kokoro_voice,
+                language=ctx.bot.language,
+                speed=kokoro_speed,
+                timeout_seconds=settings.kokoro_timeout_seconds,
+                sample_rate=tts_sample_rate,
+            )
+            active_tts_provider = "kokoro"
+        elif ctx.providers.tts_provider == "deepgram" and deepgram_key:
+            logger.info("Initializing TTS: call=%s provider=deepgram voice=%s", ctx.call_id,
+                        ctx.providers.tts_voice or settings.deepgram_tts_model)
+            tts = DeepgramTTSService(
+                api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or deepgram_key,
+                voice=ctx.providers.tts_voice or settings.deepgram_tts_model,
+            )
+            active_tts_provider = "deepgram"
+        else:
+            logger.info("Initializing TTS: call=%s provider=openai model=%s voice=%s", ctx.call_id,
+                        ctx.providers.tts_model or settings.openai_tts_model,
+                        ctx.providers.tts_voice or settings.openai_tts_voice)
+            tts = OpenAITTSService(
+                api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or openai_key,
+                model=ctx.providers.tts_model or settings.openai_tts_model,
+                voice=ctx.providers.tts_voice or settings.openai_tts_voice,
+            )
+            tts._settings.language = ctx.bot.language or None
+            active_tts_provider = "openai"
+    except Exception as exc:
+        logger.exception(
+            "Provider initialization failed: call=%s provider_type=tts provider=%s tenant=%s bot_id=%s",
+            ctx.call_id,
+            tts_provider_name,
+            ctx.tenant_id,
+            ctx.bot.bot_id,
         )
-        active_tts_provider = "kokoro"
-    elif ctx.providers.tts_provider == "deepgram" and deepgram_key:
-        logger.info("Initializing TTS: call=%s provider=deepgram voice=%s", ctx.call_id,
-                    ctx.providers.tts_voice or settings.deepgram_tts_model)
-        tts = DeepgramTTSService(
-            api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or deepgram_key,
-            voice=ctx.providers.tts_voice or settings.deepgram_tts_model,
-        )
-        active_tts_provider = "deepgram"
-    else:
-        logger.info("Initializing TTS: call=%s provider=openai model=%s voice=%s", ctx.call_id,
-                    ctx.providers.tts_model or settings.openai_tts_model,
-                    ctx.providers.tts_voice or settings.openai_tts_voice)
-        tts = OpenAITTSService(
-            api_key=ctx.providers.tts_api_key or ctx.providers.tts_options.get("api_key") or openai_key,
-            model=ctx.providers.tts_model or settings.openai_tts_model,
-            voice=ctx.providers.tts_voice or settings.openai_tts_voice,
-        )
-        # Pipecat 0.0.104 leaves TTSSettings.language as NOT_GIVEN for OpenAI TTS.
-        # Set it explicitly to satisfy validate_complete() at service start.
-        tts._settings.language = ctx.bot.language or None
-        active_tts_provider = "openai"
+        raise ProviderSetupError("tts", tts_provider_name, _provider_error_reason(exc)) from exc
 
     # LLM context
     system_prompt = build_system_prompt(ctx)

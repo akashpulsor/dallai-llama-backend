@@ -7,11 +7,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.task import PipelineTask
 
-from pipeline.pipecat_pipeline import build_pipeline
+from pipeline.pipecat_pipeline import ProviderSetupError, build_pipeline
 from pipeline.callbacks import pbx_core_client
 from models.call_context import CallContext, ProviderConfig, BotConfig
 from config import settings
 from db.analytics_store import store_event as persist_analytics_event
+from db.bot_config_store import get_bot_config
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,24 @@ def _store_test_event(call_id: str, event: dict):
         pass
 
 
+def _provider_error_payload(exc: Exception) -> dict:
+    message = str(exc).strip() or exc.__class__.__name__
+    lowered = message.lower()
+    category = "provider_error"
+    retryable = False
+    if isinstance(exc, ProviderSetupError):
+        category = "provider_setup_error"
+    if "429" in lowered or "rate limit" in lowered or "quota" in lowered:
+        category = "provider_rate_limit"
+        retryable = True
+    elif "timeout" in lowered or "temporarily unavailable" in lowered or "connection" in lowered or "network" in lowered:
+        category = "provider_connectivity_error"
+        retryable = True
+    elif "401" in lowered or "403" in lowered or "unauthorized" in lowered or "forbidden" in lowered or "invalid api key" in lowered:
+        category = "provider_auth_error"
+    return {"category": category, "retryable": retryable, "message": message}
+
+
 def _clean_mapping(value: dict | None) -> dict:
     if not isinstance(value, dict):
         return {}
@@ -107,6 +126,61 @@ def _merge_mappings(*values: dict | None) -> dict:
         for key, item in value.items():
             if item not in (None, "", [], {}):
                 merged[key] = item
+    return merged
+
+
+def _merge_nested(base: dict | None, override: dict | None) -> dict:
+    merged = deepcopy(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_nested(merged[key], value)
+        elif value not in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+async def _apply_saved_bot_config(ai_config: dict) -> dict:
+    bot_config_id = ai_config.get("bot_config_id") or ai_config.get("botConfigId")
+    if not bot_config_id:
+        return ai_config
+
+    try:
+        saved = await get_bot_config(bot_config_id, include_secrets=True)
+    except RuntimeError:
+        logger.warning("Bot config database unavailable while resolving bot_config_id=%s", bot_config_id)
+        return ai_config
+
+    if not saved:
+        logger.warning("Bot config not found: bot_config_id=%s", bot_config_id)
+        return ai_config
+
+    merged = deepcopy(saved)
+    merged["bot_config_id"] = bot_config_id
+    merged["botConfigId"] = bot_config_id
+    merged["provider_configs"] = _merge_nested(saved.get("provider_configs"), ai_config.get("provider_configs"))
+    merged["provider_credentials"] = _merge_nested(saved.get("provider_credentials"), ai_config.get("provider_credentials"))
+    merged["tenant_provider_credentials"] = _merge_nested(
+        saved.get("provider_credentials"),
+        ai_config.get("tenant_provider_credentials"),
+    )
+    merged["ui_state"] = _merge_nested(saved.get("ui_state"), ai_config.get("ui_state"))
+    merged["metadata"] = _merge_nested(saved.get("metadata"), ai_config.get("metadata"))
+    merged["bot"] = _merge_nested(
+        {
+            "language": saved.get("language"),
+            "voice_provider": saved.get("tts_provider"),
+            "voice_id": saved.get("tts_voice"),
+            "voice_gender": saved.get("tts_gender"),
+        },
+        ai_config.get("bot"),
+    )
+
+    for key, value in ai_config.items():
+        if key in {"provider_configs", "provider_credentials", "tenant_provider_credentials", "ui_state", "metadata", "bot"}:
+            continue
+        if value not in (None, "", [], {}):
+            merged[key] = value
+
     return merged
 
 
@@ -285,6 +359,7 @@ async def handle_audio_websocket(
                         call_id, ai_config.get("ai_enabled"), ai_config.get("stt_enabled"),
                         ai_config.get("product_code"), bool(ai_config.get("bot")))
 
+        ai_config = await _apply_saved_bot_config(ai_config)
         ai_config = _apply_test_overrides(ai_config, test_overrides)
         ctx = _build_context(call_id, tenant_id, product_code, direction, ai_config)
         active_calls[call_id] = ctx
@@ -305,8 +380,82 @@ async def handle_audio_websocket(
 
     except WebSocketDisconnect:
         logger.info("Disconnected: call=%s", call_id)
+    except ProviderSetupError as exc:
+        error = _provider_error_payload(exc)
+        logger.error(
+            "Pipeline setup failed: call=%s tenant=%s provider_type=%s provider=%s category=%s retryable=%s reason=%s",
+            call_id,
+            tenant_id,
+            exc.provider_type,
+            exc.provider_name,
+            error["category"],
+            error["retryable"],
+            exc.reason,
+            exc_info=True,
+        )
+        _store_test_event(
+            call_id,
+            {
+                "type": "system_error",
+                "category": error["category"],
+                "retryable": error["retryable"],
+                "provider_type": exc.provider_type,
+                "provider": exc.provider_name,
+                "message": exc.reason,
+            },
+        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "category": error["category"],
+                    "retryable": error["retryable"],
+                    "provider_type": exc.provider_type,
+                    "provider": exc.provider_name,
+                    "message": exc.reason,
+                }
+            )
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=1011, reason=exc.reason[:120])
+        except Exception:
+            pass
     except Exception as e:
-        logger.error("Error: call=%s err=%s", call_id, e, exc_info=True)
+        error = _provider_error_payload(e)
+        logger.error(
+            "Unhandled websocket/pipeline error: call=%s tenant=%s category=%s retryable=%s err=%s",
+            call_id,
+            tenant_id,
+            error["category"],
+            error["retryable"],
+            e,
+            exc_info=True,
+        )
+        _store_test_event(
+            call_id,
+            {
+                "type": "system_error",
+                "category": error["category"],
+                "retryable": error["retryable"],
+                "message": error["message"],
+            },
+        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "category": error["category"],
+                    "retryable": error["retryable"],
+                    "message": error["message"],
+                }
+            )
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=1011, reason=error["message"][:120])
+        except Exception:
+            pass
     finally:
         active_calls.pop(call_id, None)
         active_sessions.pop(call_id, None)
