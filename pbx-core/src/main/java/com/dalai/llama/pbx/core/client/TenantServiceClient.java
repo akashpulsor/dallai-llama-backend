@@ -38,7 +38,7 @@ public class TenantServiceClient {
     private final WebClient client;
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
-    public TenantServiceClient(@Qualifier("tenantServiceClient") WebClient client) {
+    public TenantServiceClient( WebClient client) {
         this.client = client;
     }
 

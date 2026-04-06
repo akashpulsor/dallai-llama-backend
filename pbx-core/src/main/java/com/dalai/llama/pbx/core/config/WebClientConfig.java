@@ -16,18 +16,18 @@ public class WebClientConfig {
     @Value("${dalaillama.tenant-service.url:http://tenant-service}")
     private String tenantServiceBaseUrl;
 
-    @Value("${dalaillama.product-service.url:http://product-servi   ce}")
+    @Value("${dalaillama.product-service.url:http://product-service}")
     private String productServiceBaseUrl;
 
     @Bean
-    public WebClient tenantClient(WebClient.Builder webClientBuilder) {
+    public WebClient tenantServiceClient(WebClient.Builder webClientBuilder) {
         return webClientBuilder
                 .baseUrl(tenantServiceBaseUrl)
                 .build();
     }
 
     @Bean
-    public WebClient productClient(WebClient.Builder webClientBuilder) {
+    public WebClient productServiceClient(WebClient.Builder webClientBuilder) {
         return webClientBuilder
                 .baseUrl(productServiceBaseUrl)
                 .build();

@@ -45,7 +45,7 @@ public class ProductServiceClient {
     private final WebClient client;
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
-    public ProductServiceClient(@Qualifier("productServiceClient") WebClient client) {
+    public ProductServiceClient( WebClient client) {
         this.client = client;
     }
 
