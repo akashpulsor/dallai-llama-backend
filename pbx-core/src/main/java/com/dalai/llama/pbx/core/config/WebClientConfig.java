@@ -13,27 +13,21 @@ import org.springframework.web.reactive.function.client.WebClient;
 @Configuration
 public class WebClientConfig {
 
-    @Value("${services.tenant.base-url:http://tenant-service}")
+    @Value("${dalaillama.tenant-service.url:http://tenant-service}")
     private String tenantServiceBaseUrl;
 
-    @Value("${services.product.base-url:http://product-service}")
+    @Value("${dalaillama.product-service.url:http://product-servi   ce}")
     private String productServiceBaseUrl;
 
-    /**
-     * WebClient for the Tenant Service.
-     */
-    @Bean(name = "tenantWebClient")
-    public WebClient tenantWebClient(WebClient.Builder webClientBuilder) {
+    @Bean
+    public WebClient tenantClient(WebClient.Builder webClientBuilder) {
         return webClientBuilder
                 .baseUrl(tenantServiceBaseUrl)
                 .build();
     }
 
-    /**
-     * WebClient for the Product Service.
-     */
-    @Bean(name = "productWebClient")
-    public WebClient productWebClient(WebClient.Builder webClientBuilder) {
+    @Bean
+    public WebClient productClient(WebClient.Builder webClientBuilder) {
         return webClientBuilder
                 .baseUrl(productServiceBaseUrl)
                 .build();
