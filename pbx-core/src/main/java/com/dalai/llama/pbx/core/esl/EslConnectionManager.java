@@ -61,7 +61,7 @@ public class EslConnectionManager {
 
     @PostConstruct
     public void init() {
-        connect();
+        reconnectScheduler.schedule(this::connect, 0, TimeUnit.MILLISECONDS);
     }
 
     @PreDestroy

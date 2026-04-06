@@ -22,7 +22,7 @@ spring:
 
   # ═══ PostgreSQL — owns Kamailio tables + PBX-Core tables ═══
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pbx_core}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pbx_core}?sslmode=disable&options=-c timezone=UTC
     username: ${DB_USERNAME:pbxcore}
     password: ${DB_PASSWORD:changeme}
     hikari:
@@ -152,33 +152,4 @@ logging:
     com.dalai.llama.pbxcore.redis: DEBUG
     org.hibernate.SQL: DEBUG
     org.flywaydb: INFO
-
----
-# ═══ LOCAL DEV ═══
-spring:
-  config:
-    activate:
-      on-profile: local
-  datasource:
-    url: jdbc:postgresql://127.0.0.1:5432/pbx_core
-    username: postgres
-    password: postgres
-  data:
-    redis:
-      host: 127.0.0.1
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://auth.localhost:8081/realms/dalaillama
-
-dalaillama:
-  tenant-service:
-    url: http://127.0.0.1:8082
-  product-service:
-    url: http://127.0.0.1:8083
-
-logging:
-  level:
-    com.dalai.llama.pbxcore: TRACE
 

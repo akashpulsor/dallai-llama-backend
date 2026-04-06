@@ -39,7 +39,6 @@ import java.util.UUID;
  *   GET /api/v1/billing/tenants/{tenantId}/balance       → {"balance": 1234.50, "currency": "INR"}
  */
 @Slf4j
-@Component
 public class ProductServiceClient {
 
     private final WebClient client;

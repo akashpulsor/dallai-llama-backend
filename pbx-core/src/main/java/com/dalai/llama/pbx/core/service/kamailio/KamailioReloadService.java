@@ -34,7 +34,7 @@ public class KamailioReloadService {
     private final WebClient kamailioClient;
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
-    public KamailioReloadService(@Qualifier("kamailioJsonrpcClient") WebClient kamailioClient) {
+    public KamailioReloadService( WebClient kamailioClient) {
         this.kamailioClient = kamailioClient;
     }
 

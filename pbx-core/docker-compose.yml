@@ -1,20 +1,20 @@
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: pbx-mysql
-    restart: unless-stopped
-    command: --lower_case_table_names=1 --bind-address=0.0.0.0
+  postgres:
+    image: postgres:16-alpine
+    container_name: pbx-postgres
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: pbx_core
-      MYSQL_USER: pbx
-      MYSQL_PASSWORD: pbx123
+      POSTGRES_DB: pbx_core
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "3306:3306"
-
+      - "5433:5432"
     volumes:
-      - pbx_mysql_data:/var/lib/mysql
-
+      - pbx_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   redis:
     image: redis:7
     container_name: pbx-redis
@@ -32,39 +32,54 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@pbx-kafka:29093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://pbx-kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://pbx-kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
       - "9092:9092"
     volumes:
       - pbx_kafka_data:/var/lib/kafka
-
   pbx-core:
     build: .
     container_name: pbx-core
     restart: unless-stopped
     depends_on:
-      - mysql
+      - postgres
       - redis
       - kafka
     environment:
-      DB_HOST: mysql
+      SPRING_PROFILES_ACTIVE: local
+      DB_HOST: postgres
+      DB_PORT: "5432"
       DB_NAME: pbx_core
-      DB_USER: pbx
+      DB_USERNAME: pbx_user
       DB_PASSWORD: pbx123
-
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/pbx_core?sslmode=disable
+      SPRING_DATASOURCE_USERNAME: pbx_user
+      SPRING_DATASOURCE_PASSWORD: pbx123
       REDIS_HOST: redis
-
-      KAFKA_BROKERS: pbx-kafka:9092
-
-      PBX_CORE_URL: http://pbx-core:8080
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      SPRING_DATA_REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: pbx-kafka:9092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: pbx-kafka:9092
+      FREESWITCH_ESL_HOST: "127.0.0.1"
+      FREESWITCH_ESL_PORT: "8021"
+      FREESWITCH_ESL_PASSWORD: ClueCon
+      KEYCLOAK_ISSUER_URI: http://localhost:8081/realms/dalai-llama
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://localhost:8081/realms/dalai-llama
+      TENANT_SERVICE_URL: http://localhost:8082
+      PRODUCT_SERVICE_URL: http://localhost:8083
+      WEBSOCKET_BROKER: simple
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      JAVA_OPTS: "-Xmx512m -Xms256m -XX:+UseG1GC"
     ports:
       - "8080:8080"
 
 volumes:
-  pbx_mysql_data:
+  pbx_postgres_data:
   pbx_redis_data:
   pbx_kafka_data:

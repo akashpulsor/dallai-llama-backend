@@ -4,6 +4,8 @@ package com.dalai.llama.pbx.core.repository.kamailio;
 import com.dalai.llama.pbx.core.domain.entity.kamailio.UacReg;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -27,13 +29,15 @@ import java.util.UUID;
 @Repository
 public interface UacRegRepository extends JpaRepository<UacReg, Integer> {
 
-    Optional<UacReg> findByLUuid(String lUuid);
+    @Query("SELECT u FROM UacReg u WHERE u.lUuid = :lUuid")
+    Optional<UacReg> findByLUuid(@Param("lUuid") String lUuid);
 
     List<UacReg> findByTenantId(UUID tenantId);
 
     List<UacReg> findByTrunkId(UUID trunkId);
 
-    boolean existsByLUuid(String lUuid);
+    @Query("SELECT CASE WHEN COUNT(u) > 0 THEN true ELSE false END FROM UacReg u WHERE u.lUuid = :lUuid")
+    boolean existsByLUuid(@Param("lUuid") String lUuid);
 
     @Modifying
     void deleteByTrunkId(UUID trunkId);

@@ -1,6 +1,8 @@
 package com.dalai.llama.pbx.core.config;
 
 
+import com.dalai.llama.pbx.core.client.ProductServiceClient;
+import com.dalai.llama.pbx.core.client.TenantServiceClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,16 +22,21 @@ public class WebClientConfig {
     private String productServiceBaseUrl;
 
     @Bean
-    public WebClient tenantServiceClient(WebClient.Builder webClientBuilder) {
-        return webClientBuilder
+    public TenantServiceClient tenantClient(WebClient.Builder webClientBuilder) {
+        return new TenantServiceClient(webClientBuilder
                 .baseUrl(tenantServiceBaseUrl)
-                .build();
+                .build());
     }
 
     @Bean
-    public WebClient productServiceClient(WebClient.Builder webClientBuilder) {
-        return webClientBuilder
+    public ProductServiceClient productClient(WebClient.Builder webClientBuilder) {
+        return new ProductServiceClient(webClientBuilder
                 .baseUrl(productServiceBaseUrl)
-                .build();
+                .build());
+    }
+
+    @Bean
+    public WebClient webClient(WebClient.Builder builder) {
+        return builder.build();
     }
 }

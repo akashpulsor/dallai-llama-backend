@@ -81,7 +81,8 @@ public class CdrService {
 
     private final CallRecordRepository cdrRepository;
     private final TenantConfigCacheService configCache;
-    private final KafkaTemplate<String, Map<String, Object>> kafkaTemplate;
+
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final BlobStorageService blobStorage;
 
     private static final String BILLING_TOPIC = "call.billing";
