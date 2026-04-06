@@ -102,22 +102,21 @@
     </dependency>
     <!--  MySQL  -->
     <dependency>
-      <groupId>com.mysql</groupId>
-      <artifactId>mysql-connector-j</artifactId>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
       <scope>runtime</scope>
     </dependency>
+
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <!-- To this: -->
     <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
-      <version>10.18.2</version> <!-- Latest version with MySQL 8.0 support -->
     </dependency>
 
-    <!-- Add MySQL-specific Flyway driver -->
-    <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-mysql</artifactId>
-      <version>10.18.2</version>
-    </dependency>
     <!--  Lombok  -->
     <dependency>
       <groupId>org.projectlombok</groupId>
