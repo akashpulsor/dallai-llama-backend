@@ -11,7 +11,6 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import com.dalai.llama.pbx.core.domain.enums.ContactStatus;
 import com.dalai.llama.pbx.core.repository.campaign.CampaignContactRepository;
@@ -22,40 +21,6 @@ import java.time.temporal.ChronoUnit;
 import java.io.IOException;
 import java.util.*;
 
-/**
- * Subscribes to FreeSWITCH events and dispatches to:
- *   1. ActiveCallTracker (Redis) — real-time call state
- *   2. WebSocket (STOMP) — Agent/Supervisor UI notifications
- *   3. AgentRepository — agent status transitions
- *   4. ChannelCounterService — backup decrement on CHANNEL_HANGUP
- *
- * Runs in a dedicated thread (eslEventExecutor from AsyncConfig).
- * On disconnect, notifies EslConnectionManager for auto-reconnect.
- *
- * Events subscribed:
- *   CHANNEL_CREATE  → track new call
- *   CHANNEL_ANSWER  → update call status + agent status → ON_CALL
- *   CHANNEL_HANGUP  → remove call + agent status → WRAP_UP → ONLINE
- *   DTMF            → publish to WebSocket (IVR tracking)
- *   RECORD_START    → update call detail with recording path
- *   RECORD_STOP     → finalize recording URL
-
- * Subscribes to FreeSWITCH events and dispatches to:
- *   1. ActiveCallTracker (Redis) — real-time call state
- *   2. WebSocket (STOMP) — Agent/Supervisor UI notifications
- *   3. AgentRepository — agent status transitions
- *   4. ChannelCounterService — backup decrement on CHANNEL_HANGUP
- *   5. CampaignContactRepository — outbound campaign contact tracking
- *
- * Events subscribed:
- *   CHANNEL_CREATE  → track new call
- *   CHANNEL_ANSWER  → update call status + agent status → ON_CALL + campaign contact → CONNECTED
- *   CHANNEL_HANGUP  → remove call + agent status → WRAP_UP + campaign contact → COMPLETED/RETRY/FAILED
- *   CHANNEL_BRIDGE  → track bridged legs
- *   DTMF            → publish to WebSocket (IVR tracking)
- *   RECORD_START    → update call detail with recording path
- *   RECORD_STOP     → finalize recording URL
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -86,10 +51,11 @@ public class EslEventListener {
 
     @PostConstruct
     public void init() {
-        startEventLoop();
+        Thread eslThread = new Thread(this::startEventLoop, "esl-event-loop");
+        eslThread.setDaemon(true);
+        eslThread.start();
     }
 
-    @Async("eslEventExecutor")
     public void startEventLoop() {
         EslClient client = connectionManager.getClient();
 
@@ -128,6 +94,10 @@ public class EslEventListener {
         startEventLoop();
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // Everything below is UNCHANGED
+    // ═══════════════════════════════════════════════════════════
+
     private void processEvent(String rawEvent) {
         try {
             Map<String, String> headers = parseHeaders(rawEvent);
@@ -152,10 +122,6 @@ public class EslEventListener {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // CHANNEL_CREATE
-    // ═══════════════════════════════════════════════════════════
-
     private void handleChannelCreate(Map<String, String> h, String callId, String tenantId) {
         if (callId == null || tenantId == null) return;
 
@@ -175,16 +141,11 @@ public class EslEventListener {
         ));
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // CHANNEL_ANSWER
-    // ═══════════════════════════════════════════════════════════
-
     private void handleChannelAnswer(Map<String, String> h, String callId, String tenantId) {
         if (callId == null) return;
 
         callTracker.updateStatus(callId, "ANSWERED");
 
-        // Agent status → ON_CALL
         String agentUsername = h.get("variable_effective_caller_id_number");
         if (agentUsername != null && tenantId != null) {
             UUID tid = UUID.fromString(tenantId);
@@ -208,20 +169,14 @@ public class EslEventListener {
             ));
         }
 
-        // ── Campaign contact tracking ──
         handleCampaignAnswer(h);
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // CHANNEL_HANGUP
-    // ═══════════════════════════════════════════════════════════
 
     private void handleChannelHangup(Map<String, String> h, String callId, String tenantId) {
         if (callId == null) return;
 
         String hangupCause = h.getOrDefault("Hangup-Cause", "NORMAL_CLEARING");
 
-        // Remove from active call tracker
         if (tenantId != null) {
             UUID tid = UUID.fromString(tenantId);
             callTracker.removeCall(callId, tid);
@@ -234,7 +189,6 @@ public class EslEventListener {
             }
         }
 
-        // Agent status → WRAP_UP
         String agentUsername = h.get("variable_effective_caller_id_number");
         if (agentUsername != null && tenantId != null) {
             UUID tid = UUID.fromString(tenantId);
@@ -249,7 +203,6 @@ public class EslEventListener {
                     });
         }
 
-        // ── Campaign contact tracking ──
         handleCampaignHangup(h, hangupCause);
 
         if (tenantId != null) {
@@ -261,14 +214,6 @@ public class EslEventListener {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // CAMPAIGN CONTACT TRACKING
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * When an outbound campaign call is answered, update contact → CONNECTED.
-     * Channel variables campaign_id and contact_id were set by DialerEngine.originate().
-     */
     private void handleCampaignAnswer(Map<String, String> h) {
         String campaignId = h.get("variable_campaign_id");
         String contactId = h.get("variable_contact_id");
@@ -289,17 +234,6 @@ public class EslEventListener {
         }
     }
 
-    /**
-     * When an outbound campaign call hangs up, update contact status + retry logic.
-     *
-     * Hangup cause mapping:
-     *   NORMAL_CLEARING           → COMPLETED (bot finished or escalated successfully)
-     *   NO_ANSWER / USER_BUSY     → RETRY (if attempts < max) or FAILED
-     *   UNALLOCATED_NUMBER etc    → FAILED (permanent, don't retry)
-     *
-     * Retry: sets nextAttemptAt = now + retryDelayMinutes.
-     * DialerEngine.findNextDialable() picks up RETRY contacts after nextAttemptAt.
-     */
     private void handleCampaignHangup(Map<String, String> h, String hangupCause) {
         String campaignId = h.get("variable_campaign_id");
         String contactId = h.get("variable_contact_id");
@@ -348,7 +282,6 @@ public class EslEventListener {
                 log.info("Campaign call ended: campaign={} contact={} phone={} cause={} status={}",
                         campaignId, contactId, contact.getPhoneNumber(), hangupCause, contact.getStatus());
 
-                // Publish to STOMP for live campaign dashboard
                 String tenantId = h.get("variable_tenant_id");
                 if (tenantId != null) {
                     publishToTenant(tenantId, "campaigns/" + campaignId, Map.of(
@@ -360,7 +293,6 @@ public class EslEventListener {
                     ));
                 }
 
-                // Auto-push call result to CRM
                 if (contact.getCrmId() != null && contact.getCrmProvider() != null) {
                     String tid = h.get("variable_tenant_id");
                     if (tid != null) {
@@ -384,9 +316,6 @@ public class EslEventListener {
                     campaignId, contactId, e.getMessage());
         }
     }
-    // ═══════════════════════════════════════════════════════════
-    // OTHER EVENTS
-    // ═══════════════════════════════════════════════════════════
 
     private void handleChannelBridge(Map<String, String> h, String callId, String tenantId) {
         if (callId == null || tenantId == null) return;
@@ -421,10 +350,6 @@ public class EslEventListener {
         callTracker.updateField(callId, "recording_url", recordPath);
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // WebSocket publish
-    // ═══════════════════════════════════════════════════════════
-
     private void publishToTenant(String tenantId, String channel, Map<String, Object> payload) {
         try {
             messagingTemplate.convertAndSend(
@@ -435,10 +360,6 @@ public class EslEventListener {
             log.warn("Failed to publish WebSocket event: {}", e.getMessage());
         }
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // ESL header parser
-    // ═══════════════════════════════════════════════════════════
 
     private Map<String, String> parseHeaders(String rawEvent) {
         Map<String, String> headers = new HashMap<>();
