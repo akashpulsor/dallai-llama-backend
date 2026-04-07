@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     debug: bool = Field(False, alias="DEBUG")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 
-    service_public_url: str = Field(
+    ai_service_url: str = Field(
         "http://ai-service.apps.svc.cluster.local:8601",
-        alias="SERVICE_PUBLIC_URL",
+        alias="AI_SERVICE_URL",
     )
     pbx_core_url: str = Field(
         "http://pbx-core.apps.svc.cluster.local:8080",
@@ -101,26 +101,6 @@ class Settings(BaseSettings):
     deepgram_api_key: Optional[str] = Field(None, alias="DEEPGRAM_API_KEY")
     deepgram_stt_model: str = Field("nova-2", alias="DEEPGRAM_STT_MODEL")
     deepgram_tts_model: str = Field("aura-asteria-en", alias="DEEPGRAM_TTS_MODEL")
-
-    indic_tts_base_url: str = Field(
-        "http://indic-tts.apps.svc.cluster.local:5005/synthesize",
-        alias="INDIC_TTS_BASE_URL",
-    )
-    indic_tts_sample_rate: int = Field(16000, alias="INDIC_TTS_SAMPLE_RATE")
-    indic_tts_voice: str = Field("female", alias="INDIC_TTS_VOICE")
-    indic_tts_voice_male: str = Field("male", alias="INDIC_TTS_VOICE_MALE")
-    indic_tts_voice_female: str = Field("female", alias="INDIC_TTS_VOICE_FEMALE")
-    indic_tts_emotion: str = Field("neutral", alias="INDIC_TTS_EMOTION")
-
-    kokoro_base_url: str = Field(
-        "http://kokoro-tts.apps.svc.cluster.local:5006/synthesize",
-        alias="KOKORO_BASE_URL",
-    )
-    kokoro_timeout_seconds: float = Field(45.0, alias="KOKORO_TIMEOUT_SECONDS")
-    kokoro_sample_rate: int = Field(16000, alias="KOKORO_SAMPLE_RATE")
-    kokoro_voice_male: str = Field("hm_omega", alias="KOKORO_VOICE_MALE")
-    kokoro_voice_female: str = Field("hf_alpha", alias="KOKORO_VOICE_FEMALE")
-    kokoro_speed: float = Field(1.0, alias="KOKORO_SPEED")
 
     rvc_enabled: bool = Field(False, alias="RVC_ENABLED")
     rvc_server_url: str = Field(

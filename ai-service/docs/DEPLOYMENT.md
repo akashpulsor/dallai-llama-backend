@@ -53,25 +53,7 @@ All service settings use the `VB_` prefix.
 | `VB_OLLAMA_BASE_URL` | If using Ollama | Base URL of the Ollama OpenAI-compatible endpoint. |
 | `VB_OLLAMA_LLM_MODEL` | If using Ollama | Default local model name, for example `gemma2:2b`. |
 
-### Optional local Indic TTS
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `VB_INDIC_TTS_BASE_URL` | Only if using `indic_tts` | Base URL for local TTS service. |
-| `VB_INDIC_TTS_SAMPLE_RATE` | No | Output sample rate. |
-| `VB_INDIC_TTS_VOICE` | No | Voice preset. |
-| `VB_INDIC_TTS_EMOTION` | No | Emotion preset. |
-
-### Optional Kokoro HTTP TTS
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `VB_KOKORO_BASE_URL` | Only if using `kokoro` | Base URL for the Kokoro TTS HTTP service. |
-| `VB_KOKORO_TIMEOUT_SECONDS` | No | Request timeout for Kokoro synthesis. |
-| `VB_KOKORO_SAMPLE_RATE` | No | Output sample rate expected from Kokoro service. |
-| `VB_KOKORO_VOICE_MALE` | No | Default male voice mapping for `bot.voice_gender=male`. |
-| `VB_KOKORO_VOICE_FEMALE` | No | Default female voice mapping for `bot.voice_gender=female`. |
-| `VB_KOKORO_SPEED` | No | Default speaking speed. |
 
 ### Optional RVC
 
@@ -101,13 +83,12 @@ Recommended baseline:
 - TTS: provider with Indian voices, not Deepgram Aura English voices
 - LLM: `openai` or a low-latency hosted model
 
-Current code supports `openai`, `deepgram`, `ollama`, `google`, `vertex`, local `indic_tts`, and URL-backed `kokoro`.
+Current code supports `openai`, `deepgram`, `ollama`, `google`, `vertex`.
 
 Recommended production shape:
 
 - `ai-service` as the telephony orchestration API
 - separate LLM service endpoint
-- separate Kokoro TTS endpoint
 - provider URLs configured through environment variables, not hardcoded in bot logic
 
 ## Docker

@@ -44,8 +44,6 @@ from pipeline.processors.sentiment.analyzer import SentimentAnalyzer
 from pipeline.processors.audio.input_noise_reducer import InputNoiseReducer
 from pipeline.processors.audio.rvc_processor import RvcProcessor
 from pipeline.processors.audio.post_processor import AudioPostProcessor
-from pipeline.services.indic_tts import IndicHttpTTSService
-from pipeline.services.kokoro_tts import KokoroHttpTTSService
 from pipeline.serializers.raw_pcm import RawPCMSerializer
 from models.call_context import CallContext
 from config import settings
@@ -127,10 +125,6 @@ def _validate_provider_inputs(ctx: CallContext) -> None:
                 settings.google_credentials_path,
             ):
                 raise ProviderSetupError("tts", tts_provider, "missing Google credentials_json or credentials_path")
-        elif tts_provider == "kokoro":
-            _require_value(ctx.providers.tts_options.get("base_url") or settings.kokoro_base_url, "tts", tts_provider, "base_url")
-        elif tts_provider == "indic_tts":
-            _require_value(ctx.providers.tts_options.get("base_url") or settings.indic_tts_base_url, "tts", tts_provider, "base_url")
 
 
 def _provider_error_reason(exc: Exception) -> str:
@@ -233,18 +227,6 @@ def _resolve_tts_voice(ctx: CallContext, provider_name: str) -> str:
         if gender == "female":
             return settings.google_tts_voice_female
         return settings.google_tts_voice
-    if provider_name == "indic_tts":
-        if gender == "male":
-            return settings.indic_tts_voice_male
-        if gender == "female":
-            return settings.indic_tts_voice_female
-        return settings.indic_tts_voice
-    if provider_name == "kokoro":
-        if gender == "male":
-            return settings.kokoro_voice_male
-        if gender == "female":
-            return settings.kokoro_voice_female
-        return settings.kokoro_voice_female
     return ctx.providers.tts_voice or settings.openai_tts_voice
 
 
@@ -1522,27 +1504,6 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
         if _is_native_audio_llm_provider(llm_provider):
             active_tts_provider = "gemini_live"
             tts = None
-        elif ctx.providers.tts_provider == "indic_tts":
-            aiohttp_session = aiohttp.ClientSession()
-            resolved_voice = _resolve_tts_voice(ctx, "indic_tts")
-            indic_base_url = ctx.providers.tts_options.get("base_url", settings.indic_tts_base_url)
-            logger.info(
-                "Initializing TTS: call=%s provider=indic_tts url=%s voice=%s gender=%s emotion=%s",
-                ctx.call_id,
-                indic_base_url,
-                resolved_voice,
-                ctx.bot.voice_gender or ctx.providers.tts_gender,
-                settings.indic_tts_emotion,
-            )
-            tts = IndicHttpTTSService(
-                base_url=indic_base_url,
-                aiohttp_session=aiohttp_session,
-                voice=resolved_voice,
-                language=ctx.bot.language,
-                emotion=settings.indic_tts_emotion,
-                sample_rate=tts_sample_rate,
-            )
-            active_tts_provider = "indic_tts"
         elif tts_provider_name == "google":
             _, GoogleTTSService, _, GeminiTTSService, _, _ = _load_google_services()
             google_kwargs = _google_tts_credentials_kwargs(ctx.providers.tts_options)
@@ -1573,27 +1534,6 @@ def build_pipeline(ctx: CallContext, websocket) -> tuple[PipelineTask, PipelineR
                     **google_kwargs,
                 )
             active_tts_provider = "google"
-        elif tts_provider_name == "kokoro":
-            kokoro_voice = _resolve_tts_voice(ctx, "kokoro")
-            kokoro_base_url = ctx.providers.tts_options.get("base_url", settings.kokoro_base_url)
-            kokoro_speed = ctx.providers.tts_options.get("speed", ctx.bot.voice_speed or settings.kokoro_speed)
-            logger.info(
-                "Initializing TTS: call=%s provider=kokoro url=%s voice=%s gender=%s language=%s",
-                ctx.call_id,
-                kokoro_base_url,
-                kokoro_voice,
-                ctx.bot.voice_gender or ctx.providers.tts_gender,
-                ctx.bot.language,
-            )
-            tts = KokoroHttpTTSService(
-                base_url=kokoro_base_url,
-                voice=kokoro_voice,
-                language=ctx.bot.language,
-                speed=kokoro_speed,
-                timeout_seconds=settings.kokoro_timeout_seconds,
-                sample_rate=tts_sample_rate,
-            )
-            active_tts_provider = "kokoro"
         elif ctx.providers.tts_provider == "deepgram" and deepgram_key:
             logger.info("Initializing TTS: call=%s provider=deepgram voice=%s", ctx.call_id,
                         ctx.providers.tts_voice or settings.deepgram_tts_model)

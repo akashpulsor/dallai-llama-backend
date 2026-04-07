@@ -73,10 +73,6 @@ def _default_llm_model(provider: str) -> str:
 
 def _default_tts_config(provider: str) -> tuple[str | None, str | None]:
     provider_name = (provider or settings.default_tts_provider).lower()
-    if provider_name == "indic_tts":
-        return None, settings.indic_tts_voice
-    if provider_name == "kokoro":
-        return None, settings.kokoro_voice_female
     if provider_name == "gemini_live":
         return None, settings.google_gemini_live_voice
     if provider_name == "google":

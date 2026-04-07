@@ -98,8 +98,7 @@ def _startup_warnings() -> list[str]:
         warnings.append("default_stt_provider is openai but VB_OPENAI_API_KEY is not set")
     if settings.default_tts_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         warnings.append("default_tts_provider is deepgram but VB_DEEPGRAM_API_KEY is not set")
-    if settings.default_tts_provider.lower() == "kokoro" and not settings.kokoro_base_url:
-        warnings.append("default_tts_provider is kokoro but VB_KOKORO_BASE_URL is not set")
+
     if settings.default_tts_provider.lower() == "google":
         if not settings.google_project_id:
             warnings.append("default_tts_provider is google but VB_GOOGLE_PROJECT_ID is not set")
@@ -181,7 +180,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         "voice-brain starting: port=%d public_url=%s pbx=%s db=%s stt=%s tts=%s llm=%s rvc=%s",
         settings.port,
-        settings.service_public_url,
+        settings.ai_service_url,
         settings.pbx_core_url,
         bool(settings.database_url),
         settings.default_stt_provider,
@@ -240,7 +239,7 @@ async def health():
     return {
         "status": "healthy",
         "service_name": settings.service_name,
-        "public_url": settings.service_public_url,
+        "public_url": settings.ai_service_url,
         "database_configured": bool(settings.database_url),
         "startup_warnings": _startup_warnings(),
         "active_calls": len(active_calls),
@@ -295,9 +294,7 @@ async def ready():
     if settings.default_tts_provider.lower() == "deepgram" and not settings.deepgram_api_key:
         checks["tts"] = False
         details["tts"] = "VB_DEEPGRAM_API_KEY is not set"
-    elif settings.default_tts_provider.lower() == "kokoro" and not settings.kokoro_base_url:
-        checks["tts"] = False
-        details["tts"] = "VB_KOKORO_BASE_URL is not set"
+
     elif settings.default_tts_provider.lower() == "openai" and not settings.openai_api_key:
         checks["tts"] = False
         details["tts"] = "VB_OPENAI_API_KEY is not set"

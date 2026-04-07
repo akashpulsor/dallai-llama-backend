@@ -3,9 +3,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
-
+import socket
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from urllib.parse import quote_plus
 
 from config import settings
 
@@ -18,17 +19,52 @@ def _split_sql_statements(sql: str) -> list[str]:
     parts = sql.split(";")
     return [part.strip() for part in parts if part.strip()]
 
+def build_database_url() -> str:
+    username = quote_plus(settings.db_username)
+    password = quote_plus(settings.db_password)
+    host = settings.db_host
+    port = settings.db_port
+    database = settings.db_name
+
+    return (
+        f"postgresql+asyncpg://"
+        f"{username}:{password}@{host}:{port}/{database}"
+    )
+
+def check_host_port(host: str, port: int, timeout: float = 3.0) -> None:
+    """Raise RuntimeError if host:port is unreachable."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except socket.gaierror as e:
+        raise RuntimeError(
+            f"Database host resolution failed: {host}:{port} ({e})"
+        ) from e
+    except TimeoutError as e:
+        raise RuntimeError(
+            f"Database host timeout: {host}:{port}"
+        ) from e
+    except OSError as e:
+        raise RuntimeError(
+            f"Database port unreachable: {host}:{port} ({e})"
+        ) from e
+
 
 def init_database() -> None:
     """Initialize the async SQLAlchemy engine if a database URL is configured."""
     global engine, SessionLocal
 
-    print(settings.database_url)
-    if engine is not None or not settings.database_url:
+
+
+    if engine is not None:
         return
 
+    # 🔍 check host and port first
+    check_host_port(settings.db_host, settings.db_port)
+    
+    database_url = build_database_url()
     engine = create_async_engine(
-        settings.database_url,
+        database_url,
         echo=settings.db_echo,
         pool_pre_ping=True,
         pool_size=settings.db_pool_size,
