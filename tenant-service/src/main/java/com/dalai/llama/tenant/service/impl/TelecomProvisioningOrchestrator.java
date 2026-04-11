@@ -127,7 +127,7 @@ public class TelecomProvisioningOrchestrator {
             tenantAppRepository.save(app);
             // Reconciler reads tenant_apps, computes desired hosts, patches Gateway+VS+ConfigMap
             // No-op if already in sync
-            traefikHostReconciler.reconcile();
+            //traefikHostReconciler.reconcile();
             istioHostReconciler.reconcile();
             // Phase 9: Keycloak Clients
             log.info("▶ Phase 9: Keycloak Client Configuration");

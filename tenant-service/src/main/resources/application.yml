@@ -103,7 +103,7 @@ keycloak:
 # KUBERNETES CLIENT
 # ================================================================
 kubernetes:
-  master-url: ${KUBERNETES_MASTER_URL:https://127.0.0.1:6443}
+  master-url: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT:443}
   namespace: ${KUBERNETES_NAMESPACE:apps}
   trust-certs: ${KUBERNETES_TRUST_CERTS:true}
 
@@ -194,7 +194,10 @@ spring:
       on-profile: production
 
 dalaillama:
-  domain: dalaillama-dev.local:8443
+
+  domain: dalaillama.in
+  shared-namespace: apps
+  gateway-name: central-gateway
   voicebrain:
     url: ws://127.0.0.1:8600 # get from cluster ENV variable WebSocket URL for VoiceBrain communication
   ingress:

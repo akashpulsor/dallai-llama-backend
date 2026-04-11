@@ -22,7 +22,7 @@ public enum TenantStatus {
     READY_TO_PROVISION,
     PROVISIONING_RESTART,
     KYC_REJECTED,
-    PROVISIONING_KEYCLOAK,
+    //PROVISIONING_KEYCLOAK,
     // Phase 2: Technical Provisioning
     PROVISIONING,
 

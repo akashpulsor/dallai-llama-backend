@@ -26,7 +26,7 @@ public class KubernetesConfigDiscoveryService {
     @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
-    @Value("${dalaillama.shared.namespace:dalaillama}")
+    @Value("${dalaillama.shared-namespace:apps}")
     private String sharedNamespace;
 
     // Shared Infrastructure

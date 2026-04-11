@@ -92,7 +92,7 @@ public class AgentProvisionService {
             // Check existing by email
             List<UserRepresentation> existing = users.searchByEmail(email, true);
             if (!existing.isEmpty()) {
-                String existingId = existing.getFirst().getId();
+                String existingId = existing.get(0).getId();
                 ensureRole(realm, existingId, mapRole(role));
                 log.info("Keycloak user exists: {} ({})", email, existingId);
                 return approved(existingId, sipPassword);

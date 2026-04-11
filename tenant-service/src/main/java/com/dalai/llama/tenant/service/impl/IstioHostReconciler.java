@@ -49,8 +49,12 @@ public class IstioHostReconciler {
     @Value("${dalaillama.shared-namespace:telecom}")
     private String sharedNamespace;
 
-    private static final String GATEWAY_NAME = "tenant-ui-gateway";
-    private static final String GATEWAY_SERVER_NAME = "https-tenant-ui";
+    @Value("${dalaillama.gateway-name:central-gateway}")
+    private   String GATEWAY_NAME ;
+
+    @Value("${dalaillama.gateway-server-name:api.dalaillama.in}")
+    private static final String GATEWAY_SERVER_NAME = "api.dalaillama.in";
+
     private static final String TENANT_MAP_CM = "tenant-map";
 
     // VS name → K8s service name (shared deployments in telecom namespace)
@@ -165,7 +169,7 @@ public class IstioHostReconciler {
         Set<String> desiredHosts = buildDesiredHosts(slugToSubdomains);
 
         return gw.getSpec().getServers().stream()
-                .filter(s -> GATEWAY_SERVER_NAME.equals(s.getPort().getName()))
+                //.filter(s -> GATEWAY_SERVER_NAME.equals(s.getPort().getName()))
                 .findFirst()
                 .map(server -> {
                     Set<String> currentHosts = new TreeSet<>(server.getHosts());

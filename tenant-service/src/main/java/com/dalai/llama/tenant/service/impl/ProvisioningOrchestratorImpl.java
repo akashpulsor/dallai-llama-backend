@@ -97,6 +97,7 @@ public class ProvisioningOrchestratorImpl  {
 
 
 
+
     //@Async("taskExecutor")
     public void startProvisioning(UUID tenantId) {
         String lockKey = LOCK_PREFIX + tenantId;
@@ -224,10 +225,6 @@ public class ProvisioningOrchestratorImpl  {
 
         Map<String, Object> result = switch (step) {
             case CREATE_KEYCLOAK_REALM -> executeKeycloakRealmStep(tenant);
-//            case CREATE_KEYCLOAK_ROLES -> executeKeycloakRolesStep(tenant);
-//            case CREATE_KEYCLOAK_CLIENT -> executeKeycloakClientStep(tenant);
-//            case CREATE_KEYCLOAK_ADMIN -> executeKeycloakAdminStep(tenant);
-
 
 
             case FINALIZE -> executeFinalizeStep(tenant);
@@ -366,11 +363,7 @@ public class ProvisioningOrchestratorImpl  {
 
     private TenantStatus mapStepToSubstatus(ProvisioningStep step) {
         return switch (step) {
-            case CREATE_KEYCLOAK_REALM
-                 //CREATE_KEYCLOAK_ROLES,
-                 //CREATE_KEYCLOAK_CLIENT,
-                 //CREATE_KEYCLOAK_ADMIN
-                    -> TenantStatus.PROVISIONING_KEYCLOAK;
+            case CREATE_KEYCLOAK_REALM -> TenantStatus.IDENTITY_CREATED;
 
             default -> TenantStatus.PROVISIONING_INFRA; // or whatever fits
         };
