@@ -61,7 +61,7 @@ public class TelecomProvisioningOrchestrator {
     private final KeycloakClientConfigService keycloakClientService;
     private final TenantAppRepository tenantAppRepository;
     private final IstioHostReconciler istioHostReconciler;
-    private final  TraefikHostReconciler traefikHostReconciler;
+   // private final  TraefikHostReconciler traefikHostReconciler;
     private final ObjectMapper objectMapper;
     /**
      * Main entry point - provision complete telecom stack
@@ -228,7 +228,7 @@ public class TelecomProvisioningOrchestrator {
         // Remove Istio VirtualServices
        // istioGatewayService.deleteVirtualServicesForTenant(app.getNamespace(),
        //         isDedicated ? app.getNamespace() : "dalaillama");
-        traefikHostReconciler.deleteForTenant(app.getTenant().getSlug());
+        //traefikHostReconciler.deleteForTenant(app.getTenant().getSlug());
         // Remove Keycloak clients
         keycloakClientService.deleteClientsForTenant(app.getNamespace());
 

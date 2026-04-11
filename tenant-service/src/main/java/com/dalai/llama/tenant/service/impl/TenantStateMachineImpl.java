@@ -31,15 +31,15 @@ public class TenantStateMachineImpl implements TenantStateMachine {
     private static final Map<TenantStatus, Set<TenantStatus>> TRANSITIONS = Map.ofEntries(
             // Phase 1: Business Setup & Compliance
             Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.IDENTITY_CREATED)),
-            Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED)),
-            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.WALLET_DELETED,TenantStatus.ACTIVE)),
-            Map.entry(TenantStatus.WALLET_DELETED, Set.of(TenantStatus.IDENTITY_DELETED)),
-            Map.entry(TenantStatus.IDENTITY_DELETED, Set.of(TenantStatus.INACTIVE)),
-            Map.entry(TenantStatus.DELETED, Set.of(TenantStatus.ACTIVE)),
+            Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.WALLET_DELETED,TenantStatus.ACTIVE,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.WALLET_DELETED, Set.of(TenantStatus.IDENTITY_DELETED,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.IDENTITY_DELETED, Set.of(TenantStatus.INACTIVE,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.DELETED, Set.of(TenantStatus.ACTIVE,TenantStatus.ERROR)),
             // Operational Lifecycle & Error Recovery
-            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED, TenantStatus.KYC_REQUIRED)),
-            Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED)),
-            Map.entry(TenantStatus.ERROR, Set.of(TenantStatus.PROVISIONING_RESTART, TenantStatus.PROVISIONING, TenantStatus.DELETED))
+            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED, TenantStatus.KYC_REQUIRED,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED,TenantStatus.ERROR)),
+            Map.entry(TenantStatus.ERROR, Set.of(TenantStatus.PROVISIONING_RESTART, TenantStatus.PROVISIONING, TenantStatus.DELETED,TenantStatus.ERROR))
     );
 
     @Override

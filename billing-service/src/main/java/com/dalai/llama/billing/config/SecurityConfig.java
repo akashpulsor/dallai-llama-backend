@@ -24,7 +24,7 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
-                        .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
+                        .requestMatchers("/api/v1/internal/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));

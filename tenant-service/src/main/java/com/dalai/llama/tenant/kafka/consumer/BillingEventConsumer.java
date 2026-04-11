@@ -38,6 +38,7 @@ public class BillingEventConsumer {
                         ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
                         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
                         org.springframework.kafka.support.serializer.JsonDeserializer.class,
+                        "spring.json.trusted.packages", "*",
                         ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
                 ));
 

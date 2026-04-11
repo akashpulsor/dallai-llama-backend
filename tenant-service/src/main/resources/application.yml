@@ -94,11 +94,10 @@ telecom:
 keycloak:
   admin:
     url: ${KEYCLOAK_ADMIN_URL:http://auth.localhost:8081}
-    realm: master
+    realm: ${KEYCLOAK_ADMIN_REALM:master}
     orchestrator:
-      client-id: platform-orchestrator
-      client-secret: ${KEYCLOAK_CLIENT_SECRET:PYJhT5PhZVZzVo81I2E5bNaKtDXC8hPA}
-
+      client-id: ${KEYCLOAK_CLIENT_ID:platform-api}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:}
 # ================================================================
 # KUBERNETES CLIENT
 # ================================================================

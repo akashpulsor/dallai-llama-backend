@@ -74,20 +74,7 @@ public class AiServiceConfigService {
                 // Usage limits
                 .tokensPerMonth(e.aiTokensPerMonth())
                 .ratePerMinute(e.aiRatePerMinute())
-                // Resolved AGI endpoints (tenant-service knows namespace topology)
-                .aiAgiUrl(configDiscovery.getAiAgiUrl(dedicated, app.getNamespace()))
-                .aiHttpUrl(configDiscovery.getAiServiceUrl(dedicated, app.getNamespace()))
-                .agiGreeting(agiBase + "/greeting")
-                .agiConversation(agiBase + "/conversation")
-                .agiIntent(agiBase + "/intent")
-                .agiSelfservice(agiBase + "/selfservice")
-                .agiFaq(agiBase + "/faq")
-                .agiReceptionist(agiBase + "/receptionist")
-                .agiAppointment(agiBase + "/appointment")
-                .agiMessage(agiBase + "/message")
-                .agiTranscribe(agiBase + "/transcribe")
-                .agiAmdResult(agiBase + "/amd-result")
-                .agiDialerResult(agiBase + "/dialer-result")
+
                 .build();
 
         pbxCoreClient.configureAi(request);
