@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/tenants/{tenantId}/wallet")
+@RequestMapping("/api/v1/billing/{tenantId}/wallet")
 @RequiredArgsConstructor
 @Tag(name = "Wallet", description = "Wallet management APIs")
 public class WalletController {

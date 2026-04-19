@@ -12,7 +12,9 @@ import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.CallAuthorizationService;
+import com.dalai.llama.billing.service.PaymentService;
 import com.dalai.llama.billing.service.WalletService;
+import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -59,6 +61,7 @@ public class InternalBillingController {
     private final UsageRecordRepository usageRecordRepository;
     private final RecurringChargeRepository recurringChargeRepository;
 
+    private final PaymentService paymentService;
     // ==================== WALLET MANAGEMENT ====================
 
     /**
@@ -333,6 +336,75 @@ public class InternalBillingController {
         return ResponseEntity.ok().build();
     }
 
+    // ==================== SUBSCRIPTION PAYMENT ====================
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/subscription-payment
+     *
+     * Creates single Razorpay order for:
+     * 1. Plan subscription amount
+     * 2. Initial wallet preload
+     *
+     * Called by product-service during subscribe()
+     */
+    @PostMapping("/subscription-payment")
+    @Operation(summary = "Create subscription payment")
+    public ResponseEntity<SubscriptionPaymentResponse> createSubscriptionPayment(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody SubscriptionPaymentRequest request) {
+
+        PaymentServiceImpl.SubscriptionPaymentResult result =
+                paymentService.createSubscriptionPayment(
+                        tenantId,
+                        request.getPlanCode(),
+                        request.getPlanAmount(),
+                        request.getWalletCredit(),
+                        request.getSubscriptionId()
+                );
+
+        SubscriptionPaymentResponse response =
+                SubscriptionPaymentResponse.builder()
+                        .paymentId(result.paymentId())
+                        .gatewayOrderId(result.gatewayOrderId())
+                        .totalAmount(result.totalAmount())
+                        .planAmount(result.planAmount())
+                        .walletCredit(result.walletCredit())
+                        .currency(result.currency())
+                        .build();
+
+        return ResponseEntity.ok(response);
+    }
+
+
+// ==================== REQUEST / RESPONSE ====================
+
+    @Getter
+    public static class SubscriptionPaymentRequest {
+
+        @NotBlank
+        private String planCode;
+
+        @NotNull
+        @DecimalMin("0.01")
+        private BigDecimal planAmount;
+
+        @NotNull
+        @DecimalMin("0.00")
+        private BigDecimal walletCredit;
+
+        @NotNull
+        private UUID subscriptionId;
+    }
+
+    @Builder
+    public record SubscriptionPaymentResponse(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal totalAmount,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            String currency
+    ) {}
     // ==================== REQUEST/RESPONSE CLASSES ====================
 
     // Wallet

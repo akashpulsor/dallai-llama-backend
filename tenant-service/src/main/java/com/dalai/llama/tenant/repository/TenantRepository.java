@@ -17,7 +17,7 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
 
     boolean existsBySlug(String slug);
 
-
+    Optional<Tenant> findFirstByAdminUserEmailAndStatusIn(String adminUserEmail, List<TenantStatus> statuses);
     /* ========= Used by HealthCheckScheduler ========= */
     @Query("""
         select t
@@ -33,8 +33,8 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
         return findByStatus(TenantStatus.ACTIVE);
     }
 
-    default List<Tenant> findTenantsInErrorState() {
-        return findByStatus(TenantStatus.ERROR);
+    default List<Tenant> findTenantsInProvisioningFailed() {
+        return findByStatus(TenantStatus.PROVISIONING_FAILED);
     }
 
     List<Tenant> findByExpiresAtBefore(OffsetDateTime now);

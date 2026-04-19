@@ -1,21 +1,29 @@
 package com.dalai.llama.pbx.core.controller.internal;
 
 import com.dalai.llama.pbx.core.domain.entity.campaign.Bot;
+import com.dalai.llama.pbx.core.domain.entity.campaign.Campaign;
+import com.dalai.llama.pbx.core.domain.entity.campaign.CampaignContact;
 import com.dalai.llama.pbx.core.domain.enums.BotStatus;
+import com.dalai.llama.pbx.core.domain.enums.ContactStatus;
 import com.dalai.llama.pbx.core.redis.AiConfigRedisService;
 import com.dalai.llama.pbx.core.redis.ActiveCallTracker;
+import com.dalai.llama.pbx.core.redis.RtpEngineConfigRedisService;
 import com.dalai.llama.pbx.core.repository.campaign.BotRepository;
+import com.dalai.llama.pbx.core.repository.campaign.CampaignContactRepository;
+import com.dalai.llama.pbx.core.repository.campaign.CampaignRepository;
 import com.dalai.llama.pbx.core.service.cache.TenantConfigCacheService;
 import com.dalai.llama.pbx.core.service.call.CallControlService;
 import com.dalai.llama.pbx.core.service.cdr.CdrService;
+import com.dalai.llama.pbx.core.service.storage.BlobStorageService;
 import com.dalai.llama.pbx.core.websocket.WebSocketEventPublisher;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AI Service controller — voice-brain (Pipecat) integration.
@@ -46,10 +54,23 @@ public class AiConfigController {
     private final TenantConfigCacheService configCache;
     private final AiConfigRedisService aiConfigRedis;
     private final BotRepository botRepository;
+    private final CampaignRepository campaignRepository;
+    private final CampaignContactRepository campaignContactRepository;
     private final CdrService cdrService;
     private final ActiveCallTracker callTracker;
     private final CallControlService callControlService;
     private final WebSocketEventPublisher wsPublisher;
+    private final BlobStorageService blobStorage;
+    private final ObjectMapper objectMapper;
+    private final RtpEngineConfigRedisService rtpEngineRedis;
+
+    /**
+     * In-memory buffer for live transcript utterances per call.
+     * Accumulated during /transcript/live calls, assembled + flushed on /transcript/final.
+     * Not persisted — if PBX-Core restarts mid-call, partial buffer is lost (acceptable:
+     * ai-service still sends the full transcript on /transcript/final).
+     */
+    private final Map<String, List<Map<String, Object>>> transcriptBuffer = new ConcurrentHashMap<>();
 
     // ═══════════════════════════════════════════════════════════
     // 1. CONFIG — voice-brain fetches at call start (EXISTING)
@@ -59,7 +80,9 @@ public class AiConfigController {
     public ResponseEntity<Map<String, Object>> getAiConfig(
             @PathVariable UUID tenantId,
             @RequestParam(required = false) String botId,
-            @RequestParam(required = false) String callId) {
+            @RequestParam(required = false) String callId,
+            @RequestParam(required = false) String campaignId,
+            @RequestParam(required = false) String contactId) {
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("tenant_id", tenantId.toString());
@@ -111,11 +134,42 @@ public class AiConfigController {
             });
         }
 
+        // Layer 5: Campaign + Contact context (outbound dialer personalization)
+        if (campaignId != null && !campaignId.isBlank()) {
+            campaignRepository.findById(UUID.fromString(campaignId)).ifPresent(campaign -> {
+                Map<String, Object> campaignData = new LinkedHashMap<>();
+                campaignData.put("campaign_id", campaign.getId().toString());
+                campaignData.put("campaign_name", campaign.getName());
+                campaignData.put("campaign_type", campaign.getCampaignType() != null ? campaign.getCampaignType().name() : "OUTBOUND");
+                campaignData.put("description", campaign.getDescription());
+                result.put("campaign", campaignData);
+
+                // Override product_code for outbound dialer campaigns
+                result.put("product_code", "OUTBOUND_DIALER");
+                result.put("ai_enabled", true);
+                result.put("stt_enabled", true);
+            });
+        }
+        if (contactId != null && !contactId.isBlank()) {
+            campaignContactRepository.findById(UUID.fromString(contactId)).ifPresent(contact -> {
+                Map<String, Object> contactData = new LinkedHashMap<>();
+                contactData.put("contact_id", contact.getId().toString());
+                contactData.put("name", contact.getName());
+                contactData.put("company", contact.getCompany());
+                contactData.put("phone_number", contact.getPhoneNumber());
+                contactData.put("email", contact.getEmail());
+                contactData.put("custom_data", contact.getCustomData());
+                contactData.put("attempt_count", contact.getAttemptCount());
+                contactData.put("disposition", contact.getDisposition());
+                result.put("contact", contactData);
+            });
+        }
+
         return ResponseEntity.ok(result);
     }
 
     // ═══════════════════════════════════════════════════════════
-    // 2. LIVE TRANSCRIPT — voice-brain streams partial STT (NEW)
+    // 2. LIVE TRANSCRIPT — voice-brain sends during call (EXISTING)
     // ═══════════════════════════════════════════════════════════
 
     /**
@@ -142,6 +196,16 @@ public class AiConfigController {
         event.put("language", body.getOrDefault("language", "en"));
         event.put("timestamp_ms", body.getOrDefault("timestamp_ms", 0));
 
+        // Buffer final utterances for assembly on /transcript/final
+        if (Boolean.TRUE.equals(body.getOrDefault("is_final", false))) {
+            transcriptBuffer.computeIfAbsent(callId, k -> Collections.synchronizedList(new ArrayList<>()))
+                    .add(Map.of(
+                            "speaker", body.getOrDefault("speaker", "CALLER"),
+                            "text", body.getOrDefault("text", ""),
+                            "timestamp_ms", body.getOrDefault("timestamp_ms", 0)
+                    ));
+        }
+
         wsPublisher.publishRaw(tenantId, "transcript", event);
         return ResponseEntity.ok().build();
     }
@@ -156,8 +220,36 @@ public class AiConfigController {
     @PostMapping("/transcript/final")
     public ResponseEntity<Void> finalTranscript(@RequestBody Map<String, Object> body) {
         String callId = (String) body.get("call_id");
+        String tenantIdStr = (String) body.get("tenant_id");
         if (callId == null) return ResponseEntity.badRequest().build();
 
+        // Use ai-service-provided transcript if present, else fall back to in-memory buffer
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fullTranscript = (List<Map<String, Object>>) body.get("full_transcript");
+        if (fullTranscript == null) {
+            fullTranscript = transcriptBuffer.getOrDefault(callId, Collections.emptyList());
+        }
+
+        // Upload diarized transcript JSON to MinIO (per-tenant bucket)
+        if (!fullTranscript.isEmpty() && tenantIdStr != null) {
+            try {
+                byte[] jsonBytes = objectMapper.writeValueAsBytes(Map.of(
+                        "call_id", callId,
+                        "tenant_id", tenantIdStr,
+                        "utterances", fullTranscript
+                ));
+                String tenantSlug = resolveTenantSlug(tenantIdStr);
+                String transcriptUrl = blobStorage.uploadTranscript(tenantSlug, callId, jsonBytes);
+                if (transcriptUrl != null) {
+                    cdrService.uploadTranscript(callId, null, null, new String(jsonBytes));
+                    log.info("Transcript uploaded to MinIO: callId={} url={}", callId, transcriptUrl);
+                }
+            } catch (Exception e) {
+                log.error("Failed to upload transcript for callId={}: {}", callId, e.getMessage());
+            }
+        }
+
+        // Save summary text to CDR (for quick search without downloading JSON)
         String summary = (String) body.get("transcript_summary");
         if (summary != null) {
             cdrService.setTranscript(callId, summary, null);
@@ -168,8 +260,11 @@ public class AiConfigController {
             cdrService.setAiMinutes(callId, BigDecimal.valueOf(n.doubleValue()));
         }
 
-        log.info("Final transcript: callId={} summary={}chars aiMin={}",
-                callId, summary != null ? summary.length() : 0, aiMin);
+        // Clear in-memory buffer for this call
+        transcriptBuffer.remove(callId);
+
+        log.info("Final transcript: callId={} utterances={} summary={}chars aiMin={}",
+                callId, fullTranscript.size(), summary != null ? summary.length() : 0, aiMin);
         return ResponseEntity.ok().build();
     }
 
@@ -191,6 +286,8 @@ public class AiConfigController {
         Object score = body.get("score");
         if (score instanceof Number n) {
             callTracker.updateField(callId, "sentiment_score", n.toString());
+            // Persist sentiment score to CDR DB for reporting
+            cdrService.setTranscript(callId, null, BigDecimal.valueOf(n.doubleValue()));
         }
         callTracker.updateField(callId, "sentiment_label",
                 (String) body.getOrDefault("label", "NEUTRAL"));
@@ -240,6 +337,10 @@ public class AiConfigController {
         callTracker.updateField(callId, "escalation_type", escalationType);
         callTracker.updateField(callId, "escalation_reason", reason != null ? reason : "");
 
+        // Write bot intent/disposition back to campaign contact (if this is a campaign call)
+        String intent = (String) body.get("intent");
+        writeCampaignDisposition(callId, intent, reason);
+
         // Execute ESL command
         String result;
         try {
@@ -256,15 +357,87 @@ public class AiConfigController {
             return ResponseEntity.status(500).body(Map.of("error", "escalation_failed", "message", e.getMessage()));
         }
 
+        // Mark call for AI fork activation on subsequent CHANNEL_BRIDGE
+        boolean forkPending = false;
+        if (tenantId != null && !"HANGUP".equalsIgnoreCase(escalationType)) {
+            if (rtpEngineRedis.isAiForkEnabled(tenantId)) {
+                callTracker.updateField(callId, "ai_fork_pending", "true");
+                forkPending = true;
+                log.info("AI fork pending for escalated call: callId={} tenant={}", callId, tenantId);
+            }
+        }
+
         if (tenantId != null) {
             callTracker.updateStatus(callId, "TRANSFERRED");
             wsPublisher.callTransferred(tenantId, callId, target);
         }
 
-        return ResponseEntity.ok(Map.of(
-                "call_id", callId, "escalation_type", escalationType,
-                "target", target != null ? target : "", "result", result, "status", "executed"
-        ));
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("call_id", callId);
+        response.put("escalation_type", escalationType);
+        response.put("target", target != null ? target : "");
+        response.put("result", result);
+        response.put("status", "executed");
+        response.put("ai_fork_pending", forkPending);
+        return ResponseEntity.ok(response);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // INTERNAL HELPERS
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Write bot disposition back to campaign contact.
+     * Called during AI escalation to persist the bot's detected intent
+     * (e.g., "interested" → QUALIFIED, "not_interested" → NOT_QUALIFIED).
+     * Looks up contactId from the call tracker (set by DialerEngine during origination).
+     */
+    private void writeCampaignDisposition(String callId, String intent, String reason) {
+        if (intent == null || intent.isBlank()) return;
+        try {
+            Optional<Map<Object, Object>> detail = callTracker.getCallDetail(callId);
+            if (detail.isEmpty()) return;
+
+            Object contactIdObj = detail.get().get("contact_id");
+            if (contactIdObj == null) return;
+
+            UUID contactId = UUID.fromString(contactIdObj.toString());
+            campaignContactRepository.findById(contactId).ifPresent(contact -> {
+                contact.setDisposition(intent);
+
+                String i = intent.toLowerCase();
+                if (i.contains("interested") && !i.contains("not_interested")) {
+                    contact.setStatus(ContactStatus.QUALIFIED);
+                } else if (i.contains("not_interested") || i.contains("not interested")) {
+                    contact.setStatus(ContactStatus.NOT_QUALIFIED);
+                }
+
+                campaignContactRepository.save(contact);
+                log.info("Campaign disposition updated: contact={} intent={} status={}",
+                        contactId, intent, contact.getStatus());
+            });
+        } catch (Exception e) {
+            log.warn("Failed to write campaign disposition for callId={}: {}", callId, e.getMessage());
+        }
+    }
+
+    /**
+     * Resolve tenant slug (namespace) from config cache.
+     * Used for per-tenant MinIO bucket naming: {prefix}-{slug}-{suffix}
+     */
+    private String resolveTenantSlug(String tenantIdStr) {
+        try {
+            UUID tenantId = UUID.fromString(tenantIdStr);
+            return configCache.getConfig(tenantId)
+                    .map(cfg -> {
+                        Object ns = cfg.get("namespace");
+                        return ns != null ? ns.toString() : tenantIdStr;
+                    })
+                    .orElse(tenantIdStr);
+        } catch (Exception e) {
+            log.warn("Failed to resolve tenant slug for {}: {}", tenantIdStr, e.getMessage());
+            return tenantIdStr;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════

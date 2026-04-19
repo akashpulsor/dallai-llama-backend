@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     deepgram_stt_model: str = Field("nova-2", alias="DEEPGRAM_STT_MODEL")
     deepgram_tts_model: str = Field("aura-asteria-en", alias="DEEPGRAM_TTS_MODEL")
 
+    voicebrain_rtp_port: int = Field(5555, alias="VOICEBRAIN_RTP_PORT")
+
     rvc_enabled: bool = Field(False, alias="RVC_ENABLED")
     rvc_server_url: str = Field(
         "http://rvc.apps.svc.cluster.local:8700",

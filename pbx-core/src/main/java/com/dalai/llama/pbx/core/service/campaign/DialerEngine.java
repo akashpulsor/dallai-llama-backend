@@ -213,17 +213,30 @@ public class DialerEngine {
         CampaignContact contact = contactRepository.findById(contactId).orElse(null);
         if (contact == null) return;
 
-        contact.setStatus(finalStatus);
         contact.setDisposition(disposition);
         contact.setDurationSeconds(durationSeconds);
         contact.setCallId(callId);
 
-        if (finalStatus == ContactStatus.COMPLETED) {
+        // Auto-qualify based on disposition from bot intent detection
+        // ai-service sets disposition to "interested" / "not_interested" via escalation callback
+        ContactStatus resolvedStatus = finalStatus;
+        if (disposition != null) {
+            String d = disposition.toLowerCase();
+            if (d.contains("interested") && !d.contains("not_interested")) {
+                resolvedStatus = ContactStatus.QUALIFIED;
+            } else if (d.contains("not_interested")) {
+                resolvedStatus = ContactStatus.NOT_QUALIFIED;
+            }
+        }
+        contact.setStatus(resolvedStatus);
+
+        if (resolvedStatus == ContactStatus.COMPLETED || resolvedStatus == ContactStatus.QUALIFIED
+                || resolvedStatus == ContactStatus.NOT_QUALIFIED) {
             contact.setCompletedAt(Instant.now());
             campaignRepository.incrementContactsCompleted(contact.getCampaign().getId());
-        } else if (finalStatus == ContactStatus.CONNECTED) {
+        } else if (resolvedStatus == ContactStatus.CONNECTED) {
             campaignRepository.incrementContactsConnected(contact.getCampaign().getId());
-        } else if (finalStatus == ContactStatus.NO_ANSWER || finalStatus == ContactStatus.BUSY) {
+        } else if (resolvedStatus == ContactStatus.NO_ANSWER || resolvedStatus == ContactStatus.BUSY) {
             // Schedule retry
             Campaign campaign = contact.getCampaign();
             Instant nextAttempt = Instant.now().plus(

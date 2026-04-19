@@ -198,6 +198,7 @@ public class TenantServiceClient {
     public record SubscriptionActiveResponse(
             UUID tenantId,
             UUID subscriptionId,
+            UUID tenantAppId,
             String status,
             List<AppInfo> apps,
             AdminCredentials adminCredentials,

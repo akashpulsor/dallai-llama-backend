@@ -132,4 +132,180 @@ public class SupervisorService {
         stats.put("availableMembers", queueMemberRepository.findAvailableMembersByQueueId(queueId).size());
         return stats;
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // AI INSIGHTS — useGetAIInsightsQuery
+    // ═══════════════════════════════════════════════════════════
+
+    public Map<String, Object> getAiInsights(UUID tenantId, int days) {
+        Instant now = Instant.now();
+        Instant from = now.minus(days, ChronoUnit.DAYS);
+
+        Map<String, Object> insights = new LinkedHashMap<>();
+
+        // AI minutes consumed
+        java.math.BigDecimal aiMinutes = callRecordRepository.sumAiMinutesByPeriodDecimal(tenantId, from, now);
+        insights.put("ai_minutes_consumed", aiMinutes);
+
+        // Sentiment analytics
+        double avgSentiment = callRecordRepository.avgSentimentByTenantIdAndPeriod(tenantId, from, now);
+        long sentimentCallCount = callRecordRepository
+                .countByTenantIdAndSentimentScoreIsNotNullAndCreatedAtBetween(tenantId, from, now);
+        insights.put("avg_sentiment_score", avgSentiment);
+        insights.put("calls_with_sentiment", sentimentCallCount);
+
+        // Flagged calls count (sentiment < -0.3)
+        java.math.BigDecimal threshold = java.math.BigDecimal.valueOf(-0.3);
+        int flaggedCount = callRecordRepository.findFlaggedCalls(tenantId, threshold, from, now).size();
+        insights.put("flagged_calls_count", flaggedCount);
+
+        // Call volume
+        long totalCalls = callRecordRepository.countByTenantIdAndCreatedAtBetween(tenantId, from, now);
+        insights.put("total_calls", totalCalls);
+
+        // Average duration
+        double avgDuration = callRecordRepository.avgDurationByTenantIdAndPeriod(tenantId, from, now);
+        insights.put("avg_duration_seconds", avgDuration);
+
+        // AI utilization rate (calls with AI / total calls)
+        if (totalCalls > 0) {
+            insights.put("ai_utilization_rate",
+                    java.math.BigDecimal.valueOf(sentimentCallCount)
+                            .divide(java.math.BigDecimal.valueOf(totalCalls), 4, java.math.RoundingMode.HALF_UP));
+        } else {
+            insights.put("ai_utilization_rate", java.math.BigDecimal.ZERO);
+        }
+
+        insights.put("period_days", days);
+        return insights;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // AGENT LEADERBOARD — useGetAgentLeaderboardQuery
+    // ═══════════════════════════════════════════════════════════
+
+    public List<Map<String, Object>> getAgentLeaderboard(UUID tenantId, int days) {
+        Instant now = Instant.now();
+        Instant from = now.minus(days, ChronoUnit.DAYS);
+
+        List<Object[]> rows = callRecordRepository.agentLeaderboard(tenantId, from, now);
+        List<Map<String, Object>> leaderboard = new ArrayList<>();
+
+        int rank = 1;
+        for (Object[] row : rows) {
+            UUID agentId = (UUID) row[0];
+            long callCount = (Long) row[1];
+            long totalDuration = (Long) row[2];
+            double avgDuration = (Double) row[3];
+
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("rank", rank++);
+            entry.put("agent_id", agentId);
+            entry.put("call_count", callCount);
+            entry.put("total_duration_seconds", totalDuration);
+            entry.put("avg_duration_seconds", avgDuration);
+
+            // Enrich with agent name/extension
+            agentRepository.findById(agentId).ifPresent(agent -> {
+                entry.put("agent_name", agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername());
+                entry.put("extension", agent.getExtension());
+                entry.put("status", agent.getStatus() != null ? agent.getStatus().name() : "UNKNOWN");
+            });
+
+            leaderboard.add(entry);
+        }
+
+        return leaderboard;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TEAM METRICS — useGetTeamMetricsQuery
+    // ═══════════════════════════════════════════════════════════
+
+    public Map<String, Object> getTeamMetrics(UUID tenantId) {
+        Instant todayStart = Instant.now().truncatedTo(ChronoUnit.DAYS);
+        Instant now = Instant.now();
+        Instant weekStart = now.minus(7, ChronoUnit.DAYS);
+
+        Map<String, Object> metrics = new LinkedHashMap<>();
+
+        // ── Agent status distribution ──
+        Map<String, Long> statusDist = new LinkedHashMap<>();
+        for (AgentStatus status : AgentStatus.values()) {
+            statusDist.put(status.name(), agentRepository.countByTenantIdAndStatus(tenantId, status));
+        }
+        metrics.put("agent_status_distribution", statusDist);
+        metrics.put("total_agents", agentRepository.countByTenantIdAndIsActiveTrue(tenantId));
+
+        // ── Today's metrics ──
+        long callsToday = callRecordRepository.countByTenantIdAndCreatedAtBetween(tenantId, todayStart, now);
+        long talkSecondsToday = callRecordRepository.sumDurationByTenantIdAndPeriod(tenantId, todayStart, now);
+        double avgDurationToday = callRecordRepository.avgDurationByTenantIdAndPeriod(tenantId, todayStart, now);
+        metrics.put("calls_today", callsToday);
+        metrics.put("talk_seconds_today", talkSecondsToday);
+        metrics.put("avg_duration_today", avgDurationToday);
+
+        // ── This week's metrics ──
+        long callsThisWeek = callRecordRepository.countByTenantIdAndCreatedAtBetween(tenantId, weekStart, now);
+        long talkSecondsWeek = callRecordRepository.sumDurationByTenantIdAndPeriod(tenantId, weekStart, now);
+        double avgDurationWeek = callRecordRepository.avgDurationByTenantIdAndPeriod(tenantId, weekStart, now);
+        metrics.put("calls_this_week", callsThisWeek);
+        metrics.put("talk_seconds_this_week", talkSecondsWeek);
+        metrics.put("avg_duration_this_week", avgDurationWeek);
+
+        // ── Direction breakdown (today) ──
+        long inboundToday = callRecordRepository.countByTenantIdAndDirectionAndCreatedAtBetween(
+                tenantId, com.dalai.llama.pbx.core.domain.enums.CallDirection.INBOUND, todayStart, now);
+        long outboundToday = callRecordRepository.countByTenantIdAndDirectionAndCreatedAtBetween(
+                tenantId, com.dalai.llama.pbx.core.domain.enums.CallDirection.OUTBOUND, todayStart, now);
+        metrics.put("inbound_calls_today", inboundToday);
+        metrics.put("outbound_calls_today", outboundToday);
+
+        // ── Live channels ──
+        metrics.put("active_calls", callTracker.getActiveCallCount(tenantId));
+        metrics.put("channels_inbound", channelCounter.getInbound(tenantId));
+        metrics.put("channels_outbound", channelCounter.getOutbound(tenantId));
+
+        return metrics;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FLAGGED CALLS — useGetFlaggedCallsQuery
+    // ═══════════════════════════════════════════════════════════
+
+    public List<Map<String, Object>> getFlaggedCalls(UUID tenantId, int days, double sentimentThreshold) {
+        Instant now = Instant.now();
+        Instant from = now.minus(days, ChronoUnit.DAYS);
+        java.math.BigDecimal threshold = java.math.BigDecimal.valueOf(sentimentThreshold);
+
+        var flagged = callRecordRepository.findFlaggedCalls(tenantId, threshold, from, now);
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (var cr : flagged) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("call_id", cr.getCallId());
+            entry.put("id", cr.getId());
+            entry.put("direction", cr.getDirection() != null ? cr.getDirection().name() : null);
+            entry.put("caller_number", cr.getCallerNumber());
+            entry.put("callee_number", cr.getCalleeNumber());
+            entry.put("agent_id", cr.getAgentId());
+            entry.put("sentiment_score", cr.getSentimentScore());
+            entry.put("transcript_summary", cr.getTranscriptSummary());
+            entry.put("duration_seconds", cr.getDurationSeconds());
+            entry.put("hangup_cause", cr.getHangupCause());
+            entry.put("recording_url", cr.getRecordingUrl());
+            entry.put("created_at", cr.getCreatedAt());
+
+            // Enrich with agent name
+            if (cr.getAgentId() != null) {
+                agentRepository.findById(cr.getAgentId()).ifPresent(agent -> {
+                    entry.put("agent_name", agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername());
+                });
+            }
+
+            result.add(entry);
+        }
+
+        return result;
+    }
 }

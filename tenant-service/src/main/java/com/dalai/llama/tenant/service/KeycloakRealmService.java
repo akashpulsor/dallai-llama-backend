@@ -1,21 +1,18 @@
 package com.dalai.llama.tenant.service;
 
-
 import com.dalai.llama.tenant.domain.entity.Tenant;
-
-import java.util.UUID;
 
 public interface KeycloakRealmService {
 
-    void createRealm(String realm, String displayName);
+    void createRealm(String realmName, String displayName);
 
-    void createRoles(String realm);
+    void createRoles(String realmName);
 
-    void createClient(String realm, String clientId);
+    void createClient(String realmName, String clientId);
 
-    void deleteTenant(String slug);
     void createAdminUser(Tenant tenant, String realmName, String email, String tempPassword);
 
+    String createAdminUser(String realmName, String email, String displayName, String temporaryPassword);
 
-    void linkUserToUUID(String realmName,String keycloakUserId, UUID tenantId);
+    void deleteTenant(String slug);
 }

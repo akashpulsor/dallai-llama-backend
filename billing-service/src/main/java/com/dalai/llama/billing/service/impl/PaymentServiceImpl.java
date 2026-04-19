@@ -1,10 +1,13 @@
 package com.dalai.llama.billing.service.impl;
 
 import com.dalai.llama.billing.domain.entity.Payment;
+import com.dalai.llama.billing.domain.entity.PaymentEvent;
 import com.dalai.llama.billing.domain.entity.Wallet;
+import com.dalai.llama.billing.domain.entity.enums.PaymentStatus;
 import com.dalai.llama.billing.domain.exception.PaymentFailedException;
 import com.dalai.llama.billing.domain.exception.WalletNotFoundException;
 import com.dalai.llama.billing.kafka.producer.BillingEventProducer;
+import com.dalai.llama.billing.repository.PaymentEventRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
 import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.PaymentService;
@@ -22,6 +25,7 @@ import java.util.UUID;
 public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentRepository paymentRepository;
+    private final PaymentEventRepository paymentEventRepository;
     private final WalletRepository walletRepository;
     private final PaymentGateway paymentGateway;
     private final WalletService walletService;
@@ -35,30 +39,30 @@ public class PaymentServiceImpl implements PaymentService {
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
-        // 2. Create gateway order (currency-aware)
+        // 2. Create gateway order
         final String gatewayOrderId;
         try {
             gatewayOrderId = paymentGateway.createOrder(
-                    amount,
-                    wallet.getCurrency(),
-                    "rcpt_" + tenantId
-            );
+                    amount, wallet.getCurrency(), "rcpt_" + tenantId);
         } catch (Exception e) {
             throw new PaymentFailedException("Failed to create payment order", e);
         }
 
-        // 3. Create payment domain entity
+        // 3. Create payment entity
         Payment payment = Payment.create(
-                tenantId,
-                wallet.getId(),
-                amount,
-                wallet.getCurrency(),
-                "RAZORPAY",
-                gatewayOrderId,
-                description
+                tenantId, wallet.getId(), amount,
+                wallet.getCurrency(), "RAZORPAY",
+                gatewayOrderId, description
         );
 
         paymentRepository.save(payment);
+
+        // 4. Record creation event in payment journey
+        paymentEventRepository.save(PaymentEvent.record(
+                payment, null, PaymentStatus.PENDING,
+                description, "SYSTEM"
+        ));
+
         return payment.getId();
     }
 
@@ -68,12 +72,15 @@ public class PaymentServiceImpl implements PaymentService {
 
         Payment payment = paymentRepository.findByGatewayOrderId(gatewayOrderId)
                 .orElseThrow(() ->
-                        new PaymentFailedException("Payment not found for order " + gatewayOrderId)
-                );
+                        new PaymentFailedException("Payment not found for order " + gatewayOrderId));
 
-        // 1. Update payment state
-        payment.markSuccess(paymentId, signature);
+        // 1. State transition + event
+        PaymentStatus previous = payment.markSuccess(paymentId, signature);
         paymentRepository.save(payment);
+        paymentEventRepository.save(PaymentEvent.record(
+                payment, previous, PaymentStatus.SUCCESS,
+                "Verified via client callback", "USER"
+        ));
 
         // 2. Credit wallet
         walletService.credit(
@@ -84,5 +91,39 @@ public class PaymentServiceImpl implements PaymentService {
 
         // 3. Publish event
         eventProducer.publishPaymentReceived(payment.toEvent());
+    }
+
+    @Override
+    public SubscriptionPaymentResult createSubscriptionPayment(
+            UUID tenantId,
+            String planCode,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            UUID subscriptionId
+    ) {
+        BigDecimal totalAmount = planAmount.add(walletCredit);
+
+        String description =
+                "SUBSCRIPTION:" + planCode +
+                        "|SUBSCRIPTION_ID:" + subscriptionId +
+                        "|PLAN_AMOUNT:" + planAmount +
+                        "|WALLET_CREDIT:" + walletCredit;
+
+        UUID paymentId = createPayment(tenantId, totalAmount, description);
+
+        // Link subscription to payment for direct lookup
+        Payment payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+        payment.linkSubscription(subscriptionId);
+        paymentRepository.save(payment);
+
+        return new SubscriptionPaymentResult(
+                payment.getId(),
+                payment.getGatewayOrderId(),
+                totalAmount,
+                planAmount,
+                walletCredit,
+                payment.getCurrency()
+        );
     }
 }

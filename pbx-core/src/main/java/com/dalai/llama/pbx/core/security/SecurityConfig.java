@@ -55,13 +55,14 @@ public class SecurityConfig {
     }
 
     /**
-     * Chain 2: Write APIs — NO JWT (Istio mTLS).
+     * Chain 2: Write + Provisioning APIs — NO JWT (Istio mTLS).
+     * tenant-service calls /api/v1/provisioning/** during tenant setup.
      */
     @Bean
     @Order(2)
     public SecurityFilterChain writeChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/api/v1/write/**")
+                .securityMatcher("/api/v1/write/**", "/api/v1/provisioning/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));

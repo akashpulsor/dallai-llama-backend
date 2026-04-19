@@ -49,139 +49,265 @@ public class SubscriptionService {
     private final TenantServiceClient tenantClient;
 
 
+
     @Transactional
     public SubscriptionResponse subscribe(SubscriptionRequest request) {
         UUID tenantId = request.getTenantId();
-        log.info("Processing subscription for tenant {} - product: {}, plan: {}, did: {}",
-                tenantId, request.getProductCode(), request.getPlanCode(), request.getDid().getNumber());
 
-        // 1. Get Product & Plan
+        log.info("Initiating subscription checkout for tenant {} - product: {}, plan: {}, did: {}",
+                tenantId,
+                request.getProductCode(),
+                request.getPlanCode(),
+                request.getDid().getNumber());
+
+        // 1. Validate product
         Product product = productRepository.findByCode(request.getProductCode())
-                .orElseThrow(() -> new ProductNotFoundException(request.getProductCode()));
+                .orElseThrow(() ->
+                        new ProductNotFoundException(request.getProductCode()));
 
+        // 2. Validate plan
         Plan plan = planRepository.findByCode(request.getPlanCode())
-                .orElseThrow(() -> new PlanNotFoundException(request.getPlanCode()));
+                .orElseThrow(() ->
+                        new PlanNotFoundException(request.getPlanCode()));
 
         if (!plan.getProduct().getId().equals(product.getId())) {
-            throw new IllegalArgumentException("Plan " + request.getPlanCode() + " does not belong to product " + request.getProductCode());
+            throw new IllegalArgumentException(
+                    "Plan " + request.getPlanCode()
+                            + " does not belong to product "
+                            + request.getProductCode()
+            );
         }
 
-        // 2. Check if this DID is already subscribed
+        // 3. Check DID already active
         String didNumber = request.getDid().getNumber();
+
         didRepository.findByNumber(didNumber).ifPresent(existingDid -> {
-            subscriptionRepository.findByDidId(existingDid.getId()).ifPresent(existingSub -> {
-                if (existingSub.getStatus() == SubscriptionStatus.ACTIVE) {
-                    throw new IllegalStateException("DID " + didNumber + " is already in use by another subscription");
-                }
-            });
+            subscriptionRepository.findByDidId(existingDid.getId())
+                    .ifPresent(existingSub -> {
+                        if (existingSub.getStatus() == SubscriptionStatus.ACTIVE) {
+                            throw new IllegalStateException(
+                                    "DID " + didNumber + " is already in use"
+                            );
+                        }
+                    });
         });
 
-        // 3. Get entitlements
-        PlanEntitlement entitlement = planEntitlementRepository.findByPlan_Id(plan.getId())
-                .orElseThrow(() -> new RuntimeException("Plan entitlements not found"));
-
-        // 4. Create new Subscription
+        // 4. Create pending subscription first
         Subscription subscription = Subscription.builder()
                 .tenantId(tenantId)
                 .product(product)
                 .plan(plan)
                 .status(SubscriptionStatus.PENDING_PAYMENT)
-                .agentSeats(request.getAgentCount() != null ? request.getAgentCount() : plan.getIncludedAgents())
-                .includedMinutes(plan.getIncludedMinutes() != null ? plan.getIncludedMinutes() : 0)
+                .agentSeats(
+                        request.getAgentCount() != null
+                                ? request.getAgentCount()
+                                : plan.getIncludedAgents()
+                )
+                .includedMinutes(
+                        plan.getIncludedMinutes() != null
+                                ? plan.getIncludedMinutes()
+                                : 0
+                )
+                .requestedDidNumber(request.getDid().getNumber())
+                .requestedDidCountry(request.getDid().getCountry())
+                .requestedDidRegion(request.getDid().getRegion())
+                .requestedDidCity(request.getDid().getCity())
                 .build();
 
         subscription = subscriptionRepository.save(subscription);
 
-        // 5. Calculate total amount
-        BigDecimal totalAmount = calculateTotal(plan, request);
-        log.debug("Total subscription amount: ₹{}", totalAmount);
+        // 5. Calculate amounts
+        BigDecimal subscriptionAmount = calculateTotal(plan, request);
 
-        // 6. Validate tenant has sufficient balance
-        if (!billingClient.hasSufficientBalance(tenantId, totalAmount)) {
-            log.info("Insufficient balance for tenant {}. Required: ₹{}", tenantId, totalAmount);
-            return SubscriptionResponse.builder()
-                    .subscriptionId(subscription.getId())
-                    .status(SubscriptionStatus.PENDING_PAYMENT.name())
-                    .provisioningStatus("AWAITING_PAYMENT")
-                    .plan(mapPlan(plan, null))
-                    .build();
+        BigDecimal walletTopUp =
+                plan.getMinimumWalletBalance() != null
+                        ? plan.getMinimumWalletBalance()
+                        : BigDecimal.valueOf(500);
+
+        BigDecimal totalAmount =
+                subscriptionAmount.add(walletTopUp);
+
+        // 6. Create payment order in billing service
+        BillingServiceClient.SubscriptionPaymentResponse payment =
+                billingClient.createSubscriptionPayment(
+                        tenantId,
+                        plan.getCode(),
+                        subscriptionAmount,
+                        walletTopUp,
+                        subscription.getId()
+                );
+
+        log.info("Payment order created for subscription {} order {}",
+                subscription.getId(),
+                payment.gatewayOrderId());
+
+        // 7. Return checkout response to customer
+        return SubscriptionResponse.builder()
+                .subscriptionId(subscription.getId())
+                .status(SubscriptionStatus.PENDING_PAYMENT.name())
+                .provisioningStatus("PAYMENT_PENDING")
+                .requiredAmount(payment.totalAmount())
+                .paymentId(payment.paymentId())
+                .gatewayOrderId(payment.gatewayOrderId())
+                .currency(payment.currency())
+                .did(mapDid(request.getDid()))
+                .plan(mapPlan(plan, null))
+                .build();
+    }
+
+    @Transactional
+    public SubscriptionResponse postSubscription(UUID subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new RuntimeException("Subscription not found"));
+
+        if (subscription.getStatus() != SubscriptionStatus.PENDING_PAYMENT
+                && subscription.getStatus() != SubscriptionStatus.PENDING_PROVISION) {
+            throw new IllegalStateException(
+                    "Subscription is not eligible for post-payment provisioning"
+            );
         }
 
-        // 7. Charge wallet FIRST (before provisioning)
-        billingClient.chargeSubscription(tenantId, subscription.getId(), totalAmount, plan.getCode(), didNumber);
+        UUID tenantId = subscription.getTenantId();
+        Product product = subscription.getProduct();
+        Plan plan = subscription.getPlan();
 
-        // 8. Move to PENDING_PROVISION
+        PlanEntitlement entitlement = planEntitlementRepository
+                .findByPlan_Id(plan.getId())
+                .orElseThrow(() ->
+                        new RuntimeException("Plan entitlements not found"));
+
+        // Move to pending provision
         subscription.markPendingProvision();
         subscriptionRepository.save(subscription);
 
-        // 9. Provision resources
         Did did = null;
         SipEndpoint sipEndpoint = null;
         PstnChannelBundle channels = null;
         TenantSipTrunk tenantSipTrunk = null;
 
         try {
-            // 9a. Provision DID
-            did = provisionDid(tenantId, request.getDid());
+            // 1. Provision DID
+            did = provisionDid(
+                    tenantId,
+                    SubscriptionRequest.DidInfo.builder()
+                            .number(subscription.getRequestedDidNumber())
+                            .country(subscription.getRequestedDidCountry())
+                            .region(subscription.getRequestedDidRegion())
+                            .city(subscription.getRequestedDidCity())
+                            .build()
+            );
+
             subscription.markDidProvisioned(did.getId());
             subscriptionRepository.save(subscription);
 
-            // 9b. Create SIP Endpoint (for DID inbound registration)
+            // 2. SIP endpoint
             sipEndpoint = sipEndpointService.createEndpoint(did);
             subscription.markSipEndpointCreated(sipEndpoint.getId());
             subscriptionRepository.save(subscription);
 
-            // 9c. Create Channel Bundle (direction based on product)
-            channels = createChannelBundle(tenantId, subscription.getId(), product.getCode(), plan, entitlement, request.getChannelConfig());
+            // 3. Channels
+            channels = createChannelBundle(
+                    tenantId,
+                    subscription.getId(),
+                    product.getCode(),
+                    plan,
+                    entitlement,
+                    null
+            );
+
             subscription.markChannelsAllocated(channels.getId());
             subscriptionRepository.save(subscription);
 
-            // 9d. Create Tenant SIP Trunk (customer's credentials to YOUR platform)
-            TenantServiceClient.TenantInfo tenant = tenantClient.getTenant(tenantId);
-            tenantSipTrunk = tenantSipTrunkService.createForSubscription(tenantId, subscription.getId(), tenant.slug());
-            subscription.setTenantSipTrunkId(tenantSipTrunk.getId());
+            // 4. Tenant SIP trunk
+            TenantServiceClient.TenantInfo tenant =
+                    tenantClient.getTenant(tenantId);
+
+            tenantSipTrunk =
+                    tenantSipTrunkService.createForSubscription(
+                            tenantId,
+                            subscription.getId(),
+                            tenant.slug()
+                    );
+
+            subscription.setTenantSipTrunkId(
+                    tenantSipTrunk.getId()
+            );
+
             subscriptionRepository.save(subscription);
 
         } catch (Exception e) {
-            log.error("Provisioning failed for subscription {}: {}", subscription.getId(), e.getMessage(), e);
+            log.error("Provisioning failed for subscription {}: {}",
+                    subscriptionId,
+                    e.getMessage(),
+                    e);
+
             return SubscriptionResponse.builder()
                     .subscriptionId(subscription.getId())
-                    .status(SubscriptionStatus.PENDING_PROVISION.name())
+                    .status(subscription.getStatus().name())
                     .provisioningStatus("PARTIAL_FAILURE")
                     .did(did != null ? mapDid(did) : null)
                     .plan(mapPlan(plan, null))
                     .build();
         }
 
-        // 10. Assign plan (for entitlement lookups)
-        PlanAssignment assignment = assignPlan(tenantId, subscription.getId(), plan, request.getAgentCount());
+        // 5. Assign plan
+        PlanAssignment assignment =
+                assignPlan(
+                        tenantId,
+                        subscription.getId(),
+                        plan,
+                        subscription.getAgentSeats()
+                );
+
         subscription.setPlanAssignmentId(assignment.getId());
 
-        // 11. Activate subscription
+        // 6. Activate
         subscription.activate();
         subscriptionRepository.save(subscription);
 
-        // 12. Create recurring charges for next month
-        createRecurringCharges(tenantId, subscription.getId(), plan, did, request.getAgentCount());
-
-        // 13. Get platform SIP trunk
-        SipTrunk platformTrunk = sipTrunkRepository.findPlatformTrunk().orElse(null);
-
-        // 14. Notify Tenant Service with COMPLETE subscription data
-        TenantServiceClient.SubscriptionActiveResponse tenantResponse = tenantClient.notifySubscriptionActive(
-                buildSubscriptionData(subscription, product, plan, entitlement, did, sipEndpoint, channels, tenantSipTrunk, platformTrunk)
+        // 7. Create recurring charges
+        createRecurringCharges(
+                tenantId,
+                subscription.getId(),
+                plan,
+                did,
+                subscription.getAgentSeats()
         );
 
-        // 15. Invalidate entitlement cache
+        // 8. Notify tenant service
+        SipTrunk platformTrunk =
+                sipTrunkRepository.findPlatformTrunk().orElse(null);
+
+        TenantServiceClient.SubscriptionActiveResponse tenantResponse =
+                tenantClient.notifySubscriptionActive(
+                        buildSubscriptionData(
+                                subscription,
+                                product,
+                                plan,
+                                entitlement,
+                                did,
+                                sipEndpoint,
+                                channels,
+                                tenantSipTrunk,
+                                platformTrunk
+                        )
+                );
+
+        subscription.setTenantAppId(tenantResponse.tenantAppId());
+
+        subscriptionRepository.save(subscription);
+        // 9. Clear entitlement cache
         entitlementService.invalidateCache(tenantId);
 
-        log.info("Subscription {} activated for tenant {} - product: {}, plan: {}, did: {}",
-                subscription.getId(), tenantId, product.getCode(), plan.getCode(), didNumber);
-
-        // 16. Build response
-        return buildResponse(subscription, did, tenantSipTrunk, channels, plan, tenantResponse);
+        return buildResponse(
+                subscription,
+                did,
+                tenantSipTrunk,
+                channels,
+                plan,
+                tenantResponse
+        );
     }
-
     /**
      * Build COMPLETE subscription data for tenant-service.
      * Used to configure FreePBX, Kamailio, etc.
@@ -525,6 +651,7 @@ public class SubscriptionService {
                                                TenantServiceClient.SubscriptionActiveResponse tenantResponse) {
         SubscriptionResponse.SubscriptionResponseBuilder builder = SubscriptionResponse.builder()
                 .subscriptionId(sub.getId())
+                .tenantAppId(sub.getTenantAppId())
                 .status(sub.getStatus().name())
                 .provisioningStatus(sub.isFullyProvisioned() ? "COMPLETED" : "IN_PROGRESS")
                 .did(mapDid(did))
@@ -541,17 +668,35 @@ public class SubscriptionService {
                             .icon(app.icon())
                             .build())
                     .toList());
-
+/*
             builder.adminCredentials(AdminCredentials.builder()
                     .email(tenantResponse.adminCredentials().email())
                     .temporaryPassword(tenantResponse.adminCredentials().temporaryPassword())
                     .loginUrl(tenantResponse.adminCredentials().loginUrl())
-                    .build());
+                    .build());*/
         }
 
         return builder.build();
     }
 
+    private DidDetails mapDid(SubscriptionRequest.DidInfo didInfo) {
+        if (didInfo == null) return null;
+
+        return DidDetails.builder()
+                .number(didInfo.getNumber())
+                .displayNumber(
+                        formatDisplayNumber(didInfo.getNumber())
+                )
+                .country(
+                        didInfo.getCountry() != null
+                                ? didInfo.getCountry()
+                                : "IN"
+                )
+                .region(didInfo.getRegion())
+                .city(didInfo.getCity())
+                .status("PENDING_PROVISION")
+                .build();
+    }
     private DidDetails mapDid(Did did) {
         if (did == null) return null;
         return DidDetails.builder()

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/tenants/{tenantId}")
+@RequestMapping("/api/v1/billing/{tenantId}")
 @RequiredArgsConstructor
 @Tag(name = "Billing", description = "Billing state management APIs")
 public class BillingController {

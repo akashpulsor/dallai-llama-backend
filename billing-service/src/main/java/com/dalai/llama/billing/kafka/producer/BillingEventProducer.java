@@ -29,4 +29,10 @@ public class BillingEventProducer {
     public void publishCdrRated(CdrRatedEvent event) {
         kafkaTemplate.send("billing.cdr.rated", event.getTenantId().toString(), event);
     }
+
+    /** Published after successful subscription activation for UI websocket */
+    public void publishSubscriptionActivated(SubscriptionActivatedEvent event) {
+        kafkaTemplate.send("billing.subscription.activated",
+                event.getTenantId().toString(), event);
+    }
 }

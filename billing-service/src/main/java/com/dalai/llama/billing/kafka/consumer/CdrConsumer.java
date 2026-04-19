@@ -11,9 +11,8 @@ public class CdrConsumer {
 
     private final CdrService cdrService;
 
-    @KafkaListener(topics = "cdr.completed", groupId = "billing-service")
+    @KafkaListener(topics = "call.billing", groupId = "billing-service")
     public void consume(Object event) {
-        // event is deserialized CdrCompletedEvent (kept generic here)
         cdrService.processCompletedCdr(event);
     }
 }

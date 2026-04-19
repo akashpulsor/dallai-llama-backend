@@ -21,4 +21,9 @@ public class KafkaConfig {
     public NewTopic cdrRatedTopic() {
         return new NewTopic("billing.cdr.rated", 3, (short) 1);
     }
+
+    @Bean
+    public NewTopic subscriptionActivatedTopic() {
+        return new NewTopic("billing.subscription.activated", 3, (short) 1);
+    }
 }

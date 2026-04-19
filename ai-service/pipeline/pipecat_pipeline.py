@@ -1242,7 +1242,8 @@ class CallEndProcessor(FrameProcessor):
             m = (datetime.now(timezone.utc) - self.ctx.started_at).total_seconds() / 60.0
             asyncio.create_task(pbx_core_client.send_final_transcript(
                 call_id=self.ctx.call_id, transcript_summary=s,
-                ai_minutes=round(m, 2), total_turns=self.ctx.turn_count))
+                ai_minutes=round(m, 2), total_turns=self.ctx.turn_count,
+                tenant_id=self.ctx.tenant_id))
         await self.push_frame(frame, direction)
 
 

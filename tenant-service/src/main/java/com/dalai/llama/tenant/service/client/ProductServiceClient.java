@@ -148,6 +148,29 @@ public class ProductServiceClient {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+// ADD THIS METHOD TO ProductServiceClient.java
+// ══════════════════════════════════════════════════════════════
+
+    /**
+     * Fetch full plan entitlements by planId.
+     * Called during provisioning to resolve all feature flags.
+     */
+    public PlanEntitlementResponse getPlanEntitlements(UUID planId) {
+        log.info("Fetching plan entitlements for plan {}", planId);
+        try {
+            return client().get()
+                    .uri("/api/v1/internal/plans/{planId}/entitlements", planId)
+                    .retrieve()
+                    .bodyToMono(PlanEntitlementResponse.class)
+                    .timeout(Duration.ofSeconds(10))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to fetch entitlements for plan {}: {}", planId, e.getMessage());
+            throw new RuntimeException("Failed to fetch plan entitlements: " + e.getMessage(), e);
+        }
+    }
+
     /**
      * Get entitlements for a plan (when subscription ID not available).
      */

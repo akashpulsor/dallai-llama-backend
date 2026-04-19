@@ -7,6 +7,7 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -24,10 +25,6 @@ import java.util.UUID;
 @Builder
 public class Payment {
 
-    /* =========================
-       IDENTIFIERS
-       ========================= */
-
     @Id
     @Column(nullable = false, updatable = false)
     private UUID id;
@@ -36,28 +33,20 @@ public class Payment {
     private UUID tenantId;
 
     private UUID walletId;
-    private UUID paymentMethodId;
 
-    /* =========================
-       AMOUNT & CURRENCY
-       ========================= */
+    @Column(name = "subscription_id")
+    private UUID subscriptionId;
+
+    private UUID paymentMethodId;
 
     @Column(nullable = false, precision = 15, scale = 4)
     private BigDecimal amount;
 
-    /**
-     * ISO-4217 currency code (e.g. INR, USD, EUR)
-     * Must come from Wallet at creation time
-     */
     @Column(nullable = false, length = 3)
     private String currency;
 
-    /* =========================
-       GATEWAY DETAILS
-       ========================= */
-
     @Column(nullable = false, length = 50)
-    private String gateway; // RAZORPAY, STRIPE, etc.
+    private String gateway;
 
     @Column(nullable = false, unique = true, length = 100)
     private String gatewayOrderId;
@@ -65,23 +54,16 @@ public class Payment {
     private String gatewayPaymentId;
     private String gatewaySignature;
 
-    /* =========================
-       STATUS
-       ========================= */
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PaymentStatus status;
 
     private String failureReason;
 
-    /* =========================
-       METADATA
-       ========================= */
-
     @Column(length = 500)
     private String description;
 
+    private Instant expiredAt;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -117,6 +99,7 @@ public class Payment {
                 .gatewayOrderId(gatewayOrderId)
                 .status(PaymentStatus.PENDING)
                 .description(description)
+                .expiredAt(now.plus(15, ChronoUnit.MINUTES))
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -124,24 +107,59 @@ public class Payment {
 
     /* =========================
        DOMAIN STATE TRANSITIONS
+       Returns previous status for event recording
        ========================= */
 
-    public void markSuccess(String paymentId, String signature) {
+    public PaymentStatus markSuccess(String paymentId, String signature) {
+        PaymentStatus previous = this.status;
+        if (this.status != PaymentStatus.PENDING && this.status != PaymentStatus.PROCESSING) {
+            throw new IllegalStateException("Cannot mark SUCCESS from " + this.status);
+        }
         this.gatewayPaymentId = paymentId;
         this.gatewaySignature = signature;
         this.status = PaymentStatus.SUCCESS;
         this.updatedAt = Instant.now();
+        return previous;
     }
 
-    public void markFailed(String reason) {
+    public PaymentStatus markFailed(String reason) {
+        PaymentStatus previous = this.status;
+        if (this.status == PaymentStatus.SUCCESS || this.status == PaymentStatus.REFUNDED) {
+            throw new IllegalStateException("Cannot mark FAILED from " + this.status);
+        }
         this.status = PaymentStatus.FAILED;
         this.failureReason = reason;
         this.updatedAt = Instant.now();
+        return previous;
     }
 
-    public void markRefunded(String reason) {
+    public PaymentStatus markRefunded(String reason) {
+        PaymentStatus previous = this.status;
+        if (this.status != PaymentStatus.SUCCESS) {
+            throw new IllegalStateException("Cannot REFUND from " + this.status);
+        }
         this.status = PaymentStatus.REFUNDED;
         this.failureReason = reason;
+        this.updatedAt = Instant.now();
+        return previous;
+    }
+
+    /* =========================
+       HELPERS
+       ========================= */
+
+    public boolean isSubscriptionPayment() {
+        return this.description != null && this.description.startsWith("SUBSCRIPTION:");
+    }
+
+    @Setter
+    private UUID subscriptionIdSetter; // not needed, use builder pattern below
+
+    /**
+     * Link payment to subscription after creation
+     */
+    public void linkSubscription(UUID subscriptionId) {
+        this.subscriptionId = subscriptionId;
         this.updatedAt = Instant.now();
     }
 

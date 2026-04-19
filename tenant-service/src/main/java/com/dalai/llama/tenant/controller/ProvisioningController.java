@@ -1,73 +1,119 @@
 package com.dalai.llama.tenant.controller;
 
+import com.dalai.llama.tenant.domain.entity.ProvisioningLog;
+import com.dalai.llama.tenant.domain.entity.ProvisioningTask;
+import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.dto.response.ProvisioningStatusResponse;
-import com.dalai.llama.tenant.dto.response.ReadinessCheckResponse;
-import com.dalai.llama.tenant.service.TenantService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
+import com.dalai.llama.tenant.repository.ProvisioningLogRepository;
+import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
+import com.dalai.llama.tenant.service.TenantAppService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/tenants/{tenantId}")
-@Tag(name = "Provisioning", description = "Tenant provisioning and lifecycle orchestration")
+@RequestMapping("/api/v1/tenants/apps")
 public class ProvisioningController {
 
-    private final TenantService tenantService;
+    private final TenantAppService tenantAppService;
+    private final ProvisioningTaskRepository taskRepository;
+    private final ProvisioningLogRepository logRepository;
 
-    @PostMapping("/provision")
-    @Operation(summary = "Trigger initial technical provisioning")
-    public void provision(@PathVariable UUID tenantId) {
-        tenantService.triggerProvisioning(tenantId);
+    // ════════════════════════════════════════════════════════════
+    // POST /api/v1/tenants/apps/{tenantAppId}/provision
+    //
+    // Kicks off async provisioning. Returns 202 immediately.
+    // UI subscribes to WS topic /topic/tenant/{tenantId}/provisioning
+    // for real-time step progress.
+    // ════════════════════════════════════════════════════════════
+
+    @PostMapping("/{tenantAppId}/provision")
+    public ResponseEntity<Map<String, Object>> provision(@PathVariable UUID tenantAppId) {
+        log.info("Provision requested for TenantApp={}", tenantAppId);
+
+        tenantAppService.provisionApp(tenantAppId);
+
+        return ResponseEntity.accepted().body(Map.of(
+                "tenantAppId", tenantAppId,
+                "status", "PROVISIONING",
+                "message", "Provisioning started. Subscribe to WebSocket for progress."
+        ));
     }
 
-    @PostMapping("/retry-provisioning")
-    @Operation(summary = "Retry failed provisioning from the last failed state")
-    public void retry(@PathVariable UUID tenantId) {
-        // PM Logic: This moves state from ERROR back to the previous failed state
-        tenantService.retryProvisioning(tenantId);
+    // ════════════════════════════════════════════════════════════
+    // GET /api/v1/tenants/apps/{tenantAppId}/provision/status
+    //
+    // Current provisioning task status (step, retries, error).
+    // ════════════════════════════════════════════════════════════
+
+    @GetMapping("/{tenantAppId}/provision/status")
+    public ResponseEntity<ProvisioningStatusResponse> getStatus(@PathVariable UUID tenantAppId) {
+        return taskRepository.findFirstByTenantAppIdOrderByStartedAtDesc(tenantAppId)
+                .map(this::toStatusResponse)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    @PostMapping("/restart")
-    @Operation(summary = "Clean up and restart the entire provisioning stack from zero")
-    public void restart(@PathVariable UUID tenantId,
-                        @RequestParam(required = false) String reason) {
-        // PM Logic: Moves state to PROVISIONING_RESTART to trigger a fresh build
-        tenantService.restartProvisioning(tenantId, reason != null ? reason : "Manual restart triggered");
+    // ════════════════════════════════════════════════════════════
+    // GET /api/v1/tenants/apps/{tenantAppId}/provision/logs
+    //
+    // Full audit trail of every provisioning step attempt.
+    // ════════════════════════════════════════════════════════════
+
+    @GetMapping("/{tenantAppId}/provision/logs")
+    public ResponseEntity<List<ProvisioningLogResponse>> getLogs(@PathVariable UUID tenantAppId) {
+        List<ProvisioningLog> logs = logRepository.findByTenantAppIdOrderByStartedAtAsc(tenantAppId);
+        List<ProvisioningLogResponse> response = logs.stream()
+                .map(this::toLogResponse)
+                .toList();
+        return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/kyc/reject")
-    @Operation(summary = "Reject KYC documents and stop progress")
-    public void rejectKyc(@PathVariable UUID tenantId,
-                          @RequestParam String reason) {
-        tenantService.rejectKyc(tenantId, reason);
+    // ════════════════════════════════════════════════════════════
+    // INTERNAL DTOs & MAPPERS
+    // ════════════════════════════════════════════════════════════
+
+    private ProvisioningStatusResponse toStatusResponse(ProvisioningTask task) {
+        return new ProvisioningStatusResponse(
+                task.getStatus(),
+                task.getCurrentStep(),
+                task.getCurrentStepStatus(),
+                task.getStartedAt(),
+                task.getCompletedAt(),
+                task.getLastError()
+        );
     }
 
-    @PostMapping("/kyc/approve")
-    @Operation(summary = "Approve KYC documents to allow billing/provisioning")
-    public void approveKyc(@PathVariable UUID tenantId) {
-        tenantService.approveKyc(tenantId);
-    }
+    public record ProvisioningLogResponse(
+            UUID id,
+            String step,
+            String status,
+            int attemptNumber,
+            String message,
+            String errorDetail,
+            long durationMs,
+            String startedAt,
+            String completedAt
+    ) {}
 
-    @DeleteMapping
-    @Operation(summary = "Delete tenant and stop any active provisioning")
-    public void delete(@PathVariable UUID tenantId,
-                       @RequestParam(required = false) String reason) {
-        tenantService.deleteTenant(tenantId, reason != null ? reason : "Tenant deletion requested");
-    }
-
-    @GetMapping("/provisioning-status")
-    @Operation(summary = "Get current state and progress")
-    public ProvisioningStatusResponse status(@PathVariable UUID tenantId) {
-        return tenantService.getProvisioningStatus(tenantId);
-    }
-
-    @GetMapping("/readiness")
-    @Operation(summary = "Check if DID, SIP, and KYC are ready for provisioning")
-    public ReadinessCheckResponse readiness(@PathVariable UUID tenantId) {
-        return tenantService.checkReadiness(tenantId);
+    private ProvisioningLogResponse toLogResponse(ProvisioningLog log) {
+        return new ProvisioningLogResponse(
+                log.getId(),
+                log.getStep().name(),
+                log.getStatus().name(),
+                log.getAttemptNumber(),
+                log.getMessage(),
+                log.getErrorDetail(),
+                log.getDurationMs(),
+                log.getStartedAt() != null ? log.getStartedAt().toString() : null,
+                log.getCompletedAt() != null ? log.getCompletedAt().toString() : null
+        );
     }
 }

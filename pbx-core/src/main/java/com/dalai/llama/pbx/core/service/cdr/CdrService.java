@@ -185,11 +185,11 @@ public class CdrService {
     @Transactional
     public void uploadRecording(String callId, byte[] audioData) {
         cdrRepository.findByCallId(callId).ifPresent(cdr -> {
-            String path = buildRecordingPath(cdr);
-            String url = blobStorage.upload(blobStorage.getRecordingsBucket(),path, audioData, "audio/wav");
+            String slug = resolveTenantSlug(cdr.getTenantId());
+            String url = blobStorage.uploadRecording(slug, cdr.getCallId(), audioData);
             cdr.setRecordingUrl(url);
             cdrRepository.save(cdr);
-            log.debug("Recording uploaded: callId={} path={}", callId, path);
+            log.debug("Recording uploaded: callId={} tenant={}", callId, slug);
         });
     }
 
@@ -227,10 +227,10 @@ public class CdrService {
 
             // Full diarized transcript to MinIO (for detailed view / export)
             if (diarizedJson != null && !diarizedJson.isBlank()) {
-                String path = buildTranscriptPath(cdr);
-                String url = blobStorage.upload(blobStorage.getRecordingsBucket(),path, diarizedJson.getBytes(), "application/json");
+                String slug = resolveTenantSlug(cdr.getTenantId());
+                String url = blobStorage.uploadTranscript(slug, cdr.getCallId(), diarizedJson.getBytes());
                 cdr.setTranscriptUrl(url);
-                log.debug("Transcript uploaded: callId={} path={}", callId, path);
+                log.debug("Transcript uploaded: callId={} tenant={}", callId, slug);
             }
 
             cdrRepository.save(cdr);
@@ -369,18 +369,19 @@ public class CdrService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // STORAGE PATHS
+    // TENANT SLUG RESOLUTION
     // ═══════════════════════════════════════════════════════════
 
-    private String buildRecordingPath(CallRecord cdr) {
-        java.time.YearMonth ym = java.time.YearMonth.now();
-        return "%s/recordings/%d/%02d/%s.wav".formatted(
-                cdr.getTenantId(), ym.getYear(), ym.getMonthValue(), cdr.getCallId());
-    }
-
-    private String buildTranscriptPath(CallRecord cdr) {
-        java.time.YearMonth ym = java.time.YearMonth.now();
-        return "%s/transcripts/%d/%02d/%s.json".formatted(
-                cdr.getTenantId(), ym.getYear(), ym.getMonthValue(), cdr.getCallId());
+    /**
+     * Resolve tenant slug (namespace) from config cache.
+     * Used for per-tenant MinIO bucket naming: {prefix}-{slug}-{suffix}
+     */
+    private String resolveTenantSlug(UUID tenantId) {
+        return configCache.getConfig(tenantId)
+                .map(cfg -> {
+                    Object ns = cfg.get("namespace");
+                    return ns != null ? ns.toString() : tenantId.toString();
+                })
+                .orElse(tenantId.toString());
     }
 }

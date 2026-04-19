@@ -9,6 +9,7 @@ import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.PlanAssignmentService;
 import com.dalai.llama.product.service.didww.DidwwApiService;
 import com.dalai.llama.product.service.didww.DidwwProvisioningService;
+import com.dalai.llama.product.service.impl.SubscriptionService;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -47,7 +48,21 @@ public class InternalProductController {
     private final TenantSipTrunkRepository tenantSipTrunkRepository;
     private  final PlanAssignmentRepository planAssignmentRepository;
     private final ProductAppRepository productAppRepository;
+    private final SubscriptionService subscriptionService;
     // ==================== SUBSCRIPTION ENDPOINTS ====================
+
+    @PostMapping("/subscriptions/{subscriptionId}/activate")
+    @Operation(summary = "Activate subscription after payment success")
+    public ResponseEntity<SubscriptionResponse> activateSubscription(
+            @PathVariable UUID subscriptionId
+    ) {
+        log.info("Activating subscription {}", subscriptionId);
+
+        SubscriptionResponse response =
+                subscriptionService.postSubscription(subscriptionId);
+
+        return ResponseEntity.ok(response);
+    }
 
     /**
      * Called by Tenant Service during provisioning to assign default plan
@@ -328,7 +343,14 @@ public class InternalProductController {
 
         log.debug("Internal API: Getting entitlements for plan {}", planCode);
 
-        PlanEntitlementResponse entitlements = entitlementService.getEntitlementsForPlan(planCode);
+        // Support both planCode (string) and planId (UUID) in the same path variable
+        PlanEntitlementResponse entitlements;
+        try {
+            UUID planId = UUID.fromString(planCode);
+            entitlements = entitlementService.getEntitlementsForPlanId(planId);
+        } catch (IllegalArgumentException e) {
+            entitlements = entitlementService.getEntitlementsForPlan(planCode);
+        }
 
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.maxAge(5, TimeUnit.MINUTES))

@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,5 +54,32 @@ public class SupervisorController {
         Optional<String> callId = supervisorService.findAgentActiveCall(tenant_id, agentId);
         return callId.map(id -> ResponseEntity.ok(Map.of("call_id", id)))
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/supervisor/ai-insights")
+    public ResponseEntity<Map<String, Object>> aiInsights(
+            @RequestParam UUID tenant_id,
+            @RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.ok(supervisorService.getAiInsights(tenant_id, days));
+    }
+
+    @GetMapping("/supervisor/leaderboard")
+    public ResponseEntity<List<Map<String, Object>>> agentLeaderboard(
+            @RequestParam UUID tenant_id,
+            @RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.ok(supervisorService.getAgentLeaderboard(tenant_id, days));
+    }
+
+    @GetMapping("/supervisor/team-metrics")
+    public ResponseEntity<Map<String, Object>> teamMetrics(@RequestParam UUID tenant_id) {
+        return ResponseEntity.ok(supervisorService.getTeamMetrics(tenant_id));
+    }
+
+    @GetMapping("/supervisor/flagged-calls")
+    public ResponseEntity<List<Map<String, Object>>> flaggedCalls(
+            @RequestParam UUID tenant_id,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "-0.3") double threshold) {
+        return ResponseEntity.ok(supervisorService.getFlaggedCalls(tenant_id, days, threshold));
     }
 }

@@ -40,7 +40,7 @@ public class FreeSwitchConfigService {
     @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
-    @Value("${dalaillama.voicebrain.url:ws://127.0.0.1:8600}")
+    @Value("${dalaillama.ai-service.ws-url:ws://127.0.0.1:8601}")
     private String voiceBrainUrl;
 
     public String configureForSubscription(TenantApp app, PlanEntitlementResponse e) {

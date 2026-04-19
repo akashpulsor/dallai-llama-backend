@@ -51,7 +51,7 @@ public class TenantServiceClient {
     public Optional<Map<String, Object>> getTenantAppByDid(String didNumber) {
         try {
             Map<String, Object> result = client.get()
-                    .uri("/api/v1/tenant-apps/by-did/{did}", didNumber)
+                    .uri("/api/v1/internal/tenants/apps/did/{did}", didNumber)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .timeout(TIMEOUT)
@@ -75,7 +75,7 @@ public class TenantServiceClient {
     public Optional<Map<String, Object>> getTenantAppByTenantId(UUID tenantId) {
         try {
             Map<String, Object> result = client.get()
-                    .uri("/api/v1/tenant-apps/by-tenant/{tenantId}", tenantId)
+                    .uri("/api/v1/internal/tenants/apps/tenant/{tenantId}", tenantId)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .timeout(TIMEOUT)

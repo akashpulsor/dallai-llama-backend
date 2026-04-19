@@ -12,7 +12,7 @@ target/
 .classpath
 .settings/
 .vscode/
-
+*.md
 # OS
 .DS_Store
 

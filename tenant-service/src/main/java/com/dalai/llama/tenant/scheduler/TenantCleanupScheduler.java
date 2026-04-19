@@ -4,7 +4,6 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
-import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.TenantStateMachine;
 import com.dalai.llama.tenant.service.client.BillingServiceClient;
 import lombok.RequiredArgsConstructor;
@@ -85,40 +84,21 @@ public class TenantCleanupScheduler {
     }
 
     private void deleteWallet(Tenant tenant) {
-        log.info("Deleting expired tenant: {} ({})", tenant.getSlug(), tenant.getId());
-
-        // 1. Delete wallet
         try {
             billingServiceClient.deleteWallet(tenant.getId());
-            stateMachine.transition(tenant, TenantStatus.WALLET_DELETED, "ADMIN", "Tenant expired and deleted by scheduler");
-
+            log.info("Wallet deleted for tenant {}", tenant.getSlug());
         } catch (Exception e) {
             log.warn("Could not delete wallet for tenant {}: {}", tenant.getId(), e.getMessage());
         }
-
-        // 2. Delete tenant record
-        tenantRepository.delete(tenant);
-
-        log.info("Deleted expired tenant: {}", tenant.getSlug());
     }
 
     private void deleteIdentity(Tenant tenant) {
-        log.info("Deleting expired tenant: {} ({})", tenant.getSlug(), tenant.getId());
-
-        // 1. Delete wallet
         try {
-
             keycloakRealmService.deleteTenant(tenant.getKeycloakRealmName());
-            stateMachine.transition(tenant, TenantStatus.IDENTITY_DELETED, "ADMIN", "Tenant expired and Identity deleted by scheduler");
-
+            log.info("Keycloak realm deleted for tenant {}", tenant.getSlug());
         } catch (Exception e) {
-            log.warn("Could not delete wallet for tenant {}: {}", tenant.getId(), e.getMessage());
+            log.warn("Could not delete Keycloak realm for tenant {}: {}", tenant.getId(), e.getMessage());
         }
-
-        // 2. Delete tenant record
-        tenantRepository.delete(tenant);
-
-        log.info("Deleted expired tenant: {}", tenant.getSlug());
     }
 
     private void extendExpiry(Tenant tenant) {

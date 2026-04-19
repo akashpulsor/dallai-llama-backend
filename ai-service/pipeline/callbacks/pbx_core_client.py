@@ -68,12 +68,18 @@ async def send_live_transcript(
 
 async def send_final_transcript(
     call_id: str, transcript_summary: str, ai_minutes: float = 0, total_turns: int = 0,
+    tenant_id: str = None, full_transcript: list[dict] = None,
 ):
     try:
-        await _get_client().post("/internal/ai/transcript/final", json={
+        payload = {
             "call_id": call_id, "transcript_summary": transcript_summary,
             "ai_minutes": ai_minutes, "total_turns": total_turns,
-        })
+        }
+        if tenant_id:
+            payload["tenant_id"] = tenant_id
+        if full_transcript:
+            payload["full_transcript"] = full_transcript
+        await _get_client().post("/internal/ai/transcript/final", json=payload)
     except Exception as e:
         logger.warning("Final transcript failed: %s", e)
 

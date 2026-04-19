@@ -21,6 +21,8 @@ public interface EntitlementService {
 
     PlanEntitlementResponse getEntitlementsForPlan(String planCode);
 
+    PlanEntitlementResponse getEntitlementsForPlanId(UUID planId);
+
     PlanEntitlementResponse getEntitlementsForSubscription(UUID subscriptionId);
 
     ProductConfigResponse getSubscriptionConfig(UUID subscriptionId);

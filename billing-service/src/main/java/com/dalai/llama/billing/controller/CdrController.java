@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/tenants/{tenantId}/cdrs")
+@RequestMapping("/api/v1/billing/{tenantId}/cdrs")
 @RequiredArgsConstructor
 @Tag(name = "CDRs", description = "Call Detail Record APIs")
 public class CdrController {

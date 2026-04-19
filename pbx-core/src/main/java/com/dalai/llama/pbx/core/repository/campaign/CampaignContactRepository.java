@@ -54,7 +54,7 @@ public interface CampaignContactRepository extends JpaRepository<CampaignContact
      * or Pageable.ofSize(N) for batch origination in PREDICTIVE mode.
      */
     @Query("SELECT c FROM CampaignContact c WHERE c.campaign.id = :campaignId " +
-            "AND c.status IN ('PENDING', 'NO_ANSWER', 'BUSY') " +
+            "AND c.status IN ('PENDING', 'NO_ANSWER', 'BUSY', 'RETRY') " +
             "AND (c.nextAttemptAt IS NULL OR c.nextAttemptAt <= :now) " +
             "ORDER BY c.priority DESC, c.createdAt ASC")
     Page<CampaignContact> findNextDialable(UUID campaignId, Instant now, Pageable pageable);
@@ -76,7 +76,7 @@ public interface CampaignContactRepository extends JpaRepository<CampaignContact
      * decide if the campaign should be marked COMPLETED.
      */
     @Query("SELECT COUNT(c) FROM CampaignContact c WHERE c.campaign.id = :campaignId " +
-            "AND c.status IN ('PENDING', 'NO_ANSWER', 'BUSY')")
+            "AND c.status IN ('PENDING', 'NO_ANSWER', 'BUSY', 'RETRY')")
     long countDialableContacts(UUID campaignId);
 
     // ── Bulk operations ──
@@ -101,4 +101,10 @@ public interface CampaignContactRepository extends JpaRepository<CampaignContact
     int updateDialResult(UUID contactId, ContactStatus status, Instant attemptedAt, Instant nextAttempt);
 
     boolean existsByCampaignAndPhoneNumber(Campaign campaign, String phoneNumber);
+
+    // ── Cross-campaign queries (qualified leads) ──
+
+    Page<CampaignContact> findByTenantIdAndStatus(UUID tenantId, ContactStatus status, Pageable pageable);
+
+    Page<CampaignContact> findByTenantIdAndStatusOrderByUpdatedAtDesc(UUID tenantId, ContactStatus status, Pageable pageable);
 }

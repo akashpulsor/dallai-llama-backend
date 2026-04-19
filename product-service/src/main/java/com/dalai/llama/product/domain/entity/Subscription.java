@@ -58,6 +58,9 @@ public class Subscription {
     @Column(name = "tenant_sip_trunk_id")
     private UUID tenantSipTrunkId;
 
+    @Column(name = "tenant_app_id")
+    private UUID tenantAppId;
+
     // Provisioning flags
     @Column(name = "did_provisioned")
     @Builder.Default
@@ -70,6 +73,19 @@ public class Subscription {
     @Column(name = "channels_allocated")
     @Builder.Default
     private boolean channelsAllocated = false;
+
+    // Requested DID info (snapshot from subscribe request, used during provisioning)
+    @Column(name = "requested_did_number")
+    private String requestedDidNumber;
+
+    @Column(name = "requested_did_country")
+    private String requestedDidCountry;
+
+    @Column(name = "requested_did_region")
+    private String requestedDidRegion;
+
+    @Column(name = "requested_did_city")
+    private String requestedDidCity;
 
     // Config
     @Column(name = "agent_seats", nullable = false)

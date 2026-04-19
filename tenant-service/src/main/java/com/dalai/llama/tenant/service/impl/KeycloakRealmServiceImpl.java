@@ -205,6 +205,78 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════
+// ADD THIS METHOD TO KeycloakRealmServiceImpl.java
+// ══════════════════════════════════════════════════════════════
+
+    @Override
+    public String createAdminUser(String realmName, String email, String displayName, String temporaryPassword) {
+        log.info("Creating admin user {} in realm {}", email, realmName);
+
+        RealmResource realm = keycloakAdminClient.realm(realmName);
+        UsersResource users = realm.users();
+
+        // Idempotency: check if user already exists
+        List<UserRepresentation> existing = users.searchByEmail(email, true);
+        if (!existing.isEmpty()) {
+            String existingId = existing.get(0).getId();
+            log.info("Admin user {} already exists in realm {} with id {}", email, realmName, existingId);
+            // Ensure TENANT_ADMIN role is assigned
+            assignAdminRole(realm, existingId);
+            return existingId;
+        }
+
+        // Create user
+        UserRepresentation user = new UserRepresentation();
+        user.setEnabled(true);
+        user.setEmail(email);
+        user.setUsername(email);
+        user.setEmailVerified(true);
+
+        // Split display name
+        if (displayName != null && displayName.contains(" ")) {
+            String[] parts = displayName.split(" ", 2);
+            user.setFirstName(parts[0]);
+            user.setLastName(parts[1]);
+        } else {
+            user.setFirstName(displayName != null ? displayName : "Admin");
+        }
+
+        Response response = users.create(user);
+        if (response.getStatus() != 201) {
+            throw new KeycloakException("Failed to create admin user: HTTP " + response.getStatus());
+        }
+
+        // Extract user ID from Location header
+        String locationHeader = response.getHeaderString("Location");
+        String userId = locationHeader.substring(locationHeader.lastIndexOf('/') + 1);
+        response.close();
+
+        // Set temporary password
+        CredentialRepresentation cred = new CredentialRepresentation();
+        cred.setType(CredentialRepresentation.PASSWORD);
+        cred.setValue(temporaryPassword);
+        cred.setTemporary(true);
+        users.get(userId).resetPassword(cred);
+
+        // Assign TENANT_ADMIN role
+        assignAdminRole(realm, userId);
+
+        log.info("Created admin user {} in realm {} with id {}", email, realmName, userId);
+        return userId;
+    }
+
+    private void assignAdminRole(RealmResource realm, String userId) {
+        RolesResource rolesResource = realm.roles();
+        try {
+            RoleRepresentation adminRole = rolesResource.get("TENANT_ADMIN").toRepresentation();
+            realm.users().get(userId).roles().realmLevel()
+                    .add(Collections.singletonList(adminRole));
+        } catch (Exception e) {
+            log.warn("Could not assign TENANT_ADMIN role: {}", e.getMessage());
+        }
+    }
+
     @Override
     public void createAdminUser(Tenant tenant, String realmName, String email, String tempPassword) {
         log.info("Creating admin user {} for realm: {}", email, realmName);

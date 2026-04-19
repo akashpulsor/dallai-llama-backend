@@ -35,7 +35,8 @@ public class SecurityConfig {
                                 "/api-docs/**",
                                 "/actuator/**","/swagger-resources/**", "/webjars/**",
                                 "/api/v1/webhooks/**").permitAll()
-                        .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
+                        .requestMatchers("/api/v1/internal/**").permitAll()
+                        .requestMatchers("/api/v1/did/**").permitAll()
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().authenticated()
                 )

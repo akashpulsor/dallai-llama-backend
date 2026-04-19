@@ -108,6 +108,36 @@ public interface CallRecordRepository extends JpaRepository<CallRecord, UUID> {
             "WHERE cr.tenantId = :tenantId AND cr.createdAt BETWEEN :from AND :to")
     double sumAiMinutesByTenantIdAndPeriod(UUID tenantId, Instant from, Instant to);
 
+    // ── Agent leaderboard (call count + total talk time per agent) ──
+
+    @Query("SELECT cr.agentId, COUNT(cr), COALESCE(SUM(cr.durationSeconds), 0), " +
+            "COALESCE(AVG(cr.durationSeconds), 0) FROM CallRecord cr " +
+            "WHERE cr.tenantId = :tenantId AND cr.agentId IS NOT NULL " +
+            "AND cr.createdAt BETWEEN :from AND :to " +
+            "GROUP BY cr.agentId ORDER BY COUNT(cr) DESC")
+    java.util.List<Object[]> agentLeaderboard(UUID tenantId, Instant from, Instant to);
+
+    // ── Flagged calls (low sentiment score) ──
+
+    @Query("SELECT cr FROM CallRecord cr WHERE cr.tenantId = :tenantId " +
+            "AND cr.sentimentScore IS NOT NULL AND cr.sentimentScore < :threshold " +
+            "AND cr.createdAt BETWEEN :from AND :to " +
+            "ORDER BY cr.sentimentScore ASC")
+    java.util.List<CallRecord> findFlaggedCalls(UUID tenantId, java.math.BigDecimal threshold, Instant from, Instant to);
+
+    // ── AI insights ──
+
+    @Query("SELECT COALESCE(SUM(cr.aiMinutes), 0) FROM CallRecord cr " +
+            "WHERE cr.tenantId = :tenantId AND cr.createdAt BETWEEN :from AND :to")
+    java.math.BigDecimal sumAiMinutesByPeriodDecimal(UUID tenantId, Instant from, Instant to);
+
+    @Query("SELECT COALESCE(AVG(cr.sentimentScore), 0) FROM CallRecord cr " +
+            "WHERE cr.tenantId = :tenantId AND cr.sentimentScore IS NOT NULL " +
+            "AND cr.createdAt BETWEEN :from AND :to")
+    double avgSentimentByTenantIdAndPeriod(UUID tenantId, Instant from, Instant to);
+
+    long countByTenantIdAndSentimentScoreIsNotNullAndCreatedAtBetween(UUID tenantId, Instant from, Instant to);
+
     // ── Stale CDR cleanup ──
 
     /**

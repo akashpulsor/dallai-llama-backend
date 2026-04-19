@@ -74,4 +74,12 @@ public class Plan {
     // Relationship to AI config
     @OneToOne(mappedBy = "plan", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private PlanAiConfig aiConfig;
+
+    @Column(name = "minimum_wallet_balance", precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal minimumWalletBalance = BigDecimal.valueOf(500);
+
+    @Column(name = "included_channels")
+    @Builder.Default
+    private Integer includedChannels = 1;
 }

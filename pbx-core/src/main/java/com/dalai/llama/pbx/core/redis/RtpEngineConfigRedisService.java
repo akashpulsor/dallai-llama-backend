@@ -54,6 +54,24 @@ public class RtpEngineConfigRedisService {
         return entries.isEmpty() ? Optional.empty() : Optional.of(entries);
     }
 
+    /**
+     * Check if AI fork is enabled for a tenant — used by EslEventListener
+     * on CHANNEL_BRIDGE to decide whether to register SSRC with ai-service.
+     */
+    public boolean isAiForkEnabled(UUID tenantId) {
+        Object val = redis.opsForHash().get(PREFIX + tenantId, "ai_fork_enabled");
+        return "true".equals(String.valueOf(val));
+    }
+
+    /**
+     * Get the AI fork target (e.g. "udp:ai-service.{ns}.svc:5555") — used
+     * by RtpEngineController to build fork-media flags for Kamailio.
+     */
+    public Optional<String> getAiForkTarget(UUID tenantId) {
+        Object val = redis.opsForHash().get(PREFIX + tenantId, "ai_fork_target");
+        return (val != null && !val.toString().isBlank()) ? Optional.of(val.toString()) : Optional.empty();
+    }
+
     public void remove(UUID tenantId) {
         redis.delete(PREFIX + tenantId);
         log.debug("Removed RTPEngine config for tenant {}", tenantId);

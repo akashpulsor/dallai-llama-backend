@@ -13,7 +13,10 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "provisioning_tasks")
+@Table(name = "provisioning_tasks", indexes = {
+        @Index(name = "idx_prov_task_tenant", columnList = "tenant_id"),
+        @Index(name = "idx_prov_task_app", columnList = "tenant_app_id")
+})
 @Getter
 @Setter
 public class ProvisioningTask {
@@ -25,6 +28,9 @@ public class ProvisioningTask {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id", nullable = false)
     private Tenant tenant;
+
+    @Column(name = "tenant_app_id", nullable = false)
+    private UUID tenantAppId;
 
     @Enumerated(EnumType.STRING)
     private ProvisioningTaskStatus status;

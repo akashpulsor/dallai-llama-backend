@@ -4,7 +4,6 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantStateAudit;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.domain.event.TenantActivatedEvent;
-import com.dalai.llama.tenant.domain.event.TenantSuspendedEvent;
 import com.dalai.llama.tenant.domain.exception.InvalidStateTransitionException;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
 import com.dalai.llama.tenant.repository.TenantRepository;
@@ -29,17 +28,18 @@ public class TenantStateMachineImpl implements TenantStateMachine {
     private final TenantEventProducer eventProducer;
 
     private static final Map<TenantStatus, Set<TenantStatus>> TRANSITIONS = Map.ofEntries(
-            // Phase 1: Business Setup & Compliance
-            Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.IDENTITY_CREATED)),
-            Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.WALLET_DELETED,TenantStatus.ACTIVE,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.WALLET_DELETED, Set.of(TenantStatus.IDENTITY_DELETED,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.IDENTITY_DELETED, Set.of(TenantStatus.INACTIVE,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.DELETED, Set.of(TenantStatus.ACTIVE,TenantStatus.ERROR)),
-            // Operational Lifecycle & Error Recovery
-            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED, TenantStatus.KYC_REQUIRED,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED,TenantStatus.ERROR)),
-            Map.entry(TenantStatus.ERROR, Set.of(TenantStatus.PROVISIONING_RESTART, TenantStatus.PROVISIONING, TenantStatus.DELETED,TenantStatus.ERROR))
+            // Phase 1: Business Setup
+            Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED, TenantStatus.CREATED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.PROVISIONING, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
+
+            // Phase 2: Infrastructure Provisioning
+            Map.entry(TenantStatus.PROVISIONING, Set.of(TenantStatus.ACTIVE, TenantStatus.PROVISIONING_FAILED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.PROVISIONING_FAILED, Set.of(TenantStatus.PROVISIONING, TenantStatus.DELETED)),
+
+            // Operational
+            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED))
     );
 
     @Override
@@ -50,11 +50,13 @@ public class TenantStateMachineImpl implements TenantStateMachine {
         Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
         if (!allowed.contains(target)) {
             log.warn("Invalid transition: {} -> {} for tenant {}", current, target, tenant.getId());
-            throw new InvalidStateTransitionException(String.format("Cannot transition from %s to %s", current, target));
+            throw new InvalidStateTransitionException(
+                    String.format("Cannot transition from %s to %s", current, target));
         }
 
         log.info("Tenant {} transitioning: {} -> {} (trigger: {})", tenant.getId(), current, target, triggerSource);
 
+        // Audit
         TenantStateAudit audit = new TenantStateAudit();
         audit.setTenant(tenant);
         audit.setOldStatus(current.name());
@@ -63,6 +65,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
         audit.setMessage(message);
         auditRepository.save(audit);
 
+        // Update tenant
         tenant.setStatus(target);
         tenant.setStatusMessage(message);
         tenant.setStatusChangedAt(OffsetDateTime.now());
@@ -72,11 +75,11 @@ public class TenantStateMachineImpl implements TenantStateMachine {
                 tenant.setActivatedAt(OffsetDateTime.now());
                 tenant.setSuspendedAt(null);
                 tenantRepository.save(tenant);
-                eventProducer.publish("tenant.activated", tenant.getId().toString(), new TenantActivatedEvent(tenant.getId()));
+                eventProducer.publish("tenant.activated", tenant.getId().toString(),
+                        new TenantActivatedEvent(tenant.getId()));
             }
-            case PROVISIONING_RESTART -> {
-                // Keep pre-requisite data (DID/SIP) but flag for re-deployment
-                tenant.setStatusMessage("Restarting provisioning: " + message);
+            case SUSPENDED -> {
+                tenant.setSuspendedAt(OffsetDateTime.now());
                 tenantRepository.save(tenant);
             }
             case DELETED -> {
@@ -87,6 +90,9 @@ public class TenantStateMachineImpl implements TenantStateMachine {
         }
 
         eventProducer.publish("tenant.state.changed", tenant.getId().toString(),
-                Map.of("tenantId", tenant.getId(), "oldState", current.name(), "newState", target.name(), "message", message != null ? message : ""));
+                Map.of("tenantId", tenant.getId(),
+                        "oldState", current.name(),
+                        "newState", target.name(),
+                        "message", message != null ? message : ""));
     }
 }

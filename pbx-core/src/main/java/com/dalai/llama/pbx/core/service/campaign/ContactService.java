@@ -1,6 +1,5 @@
 package com.dalai.llama.pbx.core.service.campaign;
 
-
 import com.dalai.llama.pbx.core.domain.entity.campaign.Campaign;
 import com.dalai.llama.pbx.core.domain.entity.campaign.CampaignContact;
 import com.dalai.llama.pbx.core.domain.entity.campaign.DncEntry;
@@ -11,11 +10,19 @@ import com.dalai.llama.pbx.core.repository.campaign.CampaignRepository;
 import com.dalai.llama.pbx.core.repository.campaign.DncEntryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVPrinter;
+import org.apache.commons.csv.CSVRecord;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 
@@ -177,6 +184,132 @@ public class ContactService {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // CSV / EXCEL IMPORT
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Parse CSV file and import contacts.
+     * Expected header row: phone_number, name, email, company, priority, ... (custom fields)
+     */
+    @Transactional
+    public Map<String, Object> importFromCsv(UUID campaignId, UUID tenantId, InputStream inputStream) throws IOException {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setHeader().setSkipHeaderRecord(true).setIgnoreHeaderCase(true).setTrim(true)
+                .build().parse(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            for (CSVRecord record : parser) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                record.toMap().forEach(row::put);
+                rows.add(row);
+            }
+        }
+        int imported = importContacts(campaignId, tenantId, rows);
+        return Map.of("imported", imported, "total_submitted", rows.size(), "source", "CSV");
+    }
+
+    /**
+     * Parse Excel (.xlsx / .xls) file and import contacts.
+     * First row is header: phone_number, name, email, company, priority, ... (custom fields)
+     */
+    @Transactional
+    public Map<String, Object> importFromExcel(UUID campaignId, UUID tenantId, InputStream inputStream) throws IOException {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (Workbook workbook = new XSSFWorkbook(inputStream)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            Row headerRow = sheet.getRow(0);
+            if (headerRow == null) return Map.of("imported", 0, "error", "No header row");
+
+            List<String> headers = new ArrayList<>();
+            for (Cell cell : headerRow) {
+                headers.add(cell.getStringCellValue().trim().toLowerCase());
+            }
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+                Map<String, Object> rowMap = new LinkedHashMap<>();
+                for (int j = 0; j < headers.size(); j++) {
+                    Cell cell = row.getCell(j);
+                    rowMap.put(headers.get(j), cellToString(cell));
+                }
+                if (rowMap.get("phone_number") != null) {
+                    rows.add(rowMap);
+                }
+            }
+        }
+        int imported = importContacts(campaignId, tenantId, rows);
+        return Map.of("imported", imported, "total_submitted", rows.size(), "source", "EXCEL");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // CSV EXPORT
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Export contacts as CSV bytes.
+     * If status is provided, exports only contacts with that status.
+     */
+    public byte[] exportToCsv(UUID campaignId, ContactStatus status) {
+        List<CampaignContact> contacts;
+        if (status != null) {
+            contacts = contactRepository.findByCampaignIdAndStatus(campaignId, status, Pageable.unpaged()).getContent();
+        } else {
+            contacts = contactRepository.findByCampaignId(campaignId, Pageable.unpaged()).getContent();
+        }
+
+        try (StringWriter sw = new StringWriter();
+             CSVPrinter printer = new CSVPrinter(sw, CSVFormat.DEFAULT.builder()
+                     .setHeader("phone_number", "name", "email", "company", "status", "disposition",
+                             "attempt_count", "duration_seconds", "call_id", "notes", "priority",
+                             "assigned_agent_id", "source", "crm_id", "crm_provider", "created_at")
+                     .build())) {
+            for (CampaignContact c : contacts) {
+                printer.printRecord(
+                        c.getPhoneNumber(), c.getName(), c.getEmail(), c.getCompany(),
+                        c.getStatus(), c.getDisposition(), c.getAttemptCount(),
+                        c.getDurationSeconds(), c.getCallId(), c.getNotes(),
+                        c.getPriority(), c.getAssignedAgentId(),
+                        c.getSource(), c.getCrmId(), c.getCrmProvider(), c.getCreatedAt()
+                );
+            }
+            printer.flush();
+            return sw.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new RuntimeException("CSV export failed", e);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // LEAD QUALIFICATION
+    // ═══════════════════════════════════════════════════════════
+
+    @Transactional
+    public void qualifyContact(UUID contactId, boolean qualified, String notes) {
+        contactRepository.findById(contactId).ifPresent(c -> {
+            c.setStatus(qualified ? ContactStatus.QUALIFIED : ContactStatus.NOT_QUALIFIED);
+            if (notes != null) c.setNotes(notes);
+            contactRepository.save(c);
+            log.info("Contact {} marked as {}", contactId, c.getStatus());
+        });
+    }
+
+    @Transactional
+    public void assignToAgent(UUID contactId, UUID agentId) {
+        contactRepository.findById(contactId).ifPresent(c -> {
+            c.setAssignedAgentId(agentId);
+            contactRepository.save(c);
+            log.info("Contact {} assigned to agent {}", contactId, agentId);
+        });
+    }
+
+    /**
+     * Cross-campaign qualified leads for a tenant.
+     */
+    public Page<CampaignContact> getQualifiedLeads(UUID tenantId, Pageable pageable) {
+        return contactRepository.findByTenantIdAndStatus(tenantId, ContactStatus.QUALIFIED, pageable);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // INTERNAL
     // ═══════════════════════════════════════════════════════════
 
@@ -188,5 +321,18 @@ public class ContactService {
     private int safeInt(Map<String, Object> map, String key, int def) {
         Object v = map.get(key);
         return v instanceof Number n ? n.intValue() : def;
+    }
+
+    private String cellToString(Cell cell) {
+        if (cell == null) return null;
+        return switch (cell.getCellType()) {
+            case STRING -> cell.getStringCellValue().trim();
+            case NUMERIC -> {
+                double d = cell.getNumericCellValue();
+                yield (d == Math.floor(d)) ? String.valueOf((long) d) : String.valueOf(d);
+            }
+            case BOOLEAN -> String.valueOf(cell.getBooleanCellValue());
+            default -> null;
+        };
     }
 }

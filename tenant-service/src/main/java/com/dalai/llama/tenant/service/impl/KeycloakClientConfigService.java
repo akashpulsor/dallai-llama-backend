@@ -229,7 +229,7 @@ public class KeycloakClientConfigService {
     /**
      * Get frontend configuration for app
      */
-    public FrontendConfig getFrontendConfig(String tenantSlug, String appType) {
+    public FrontendConfig getFrontendConfig(String tenantSlug, String keycloakRealmName, String appType) {
         String clientId = "dalaillama-" + tenantSlug;
         if (!"CONTACT_CENTER".equals(appType) && !"IVR_BUILDER".equals(appType)) {
             clientId = "dalaillama-" + tenantSlug + "-" + appType.toLowerCase();
@@ -237,9 +237,9 @@ public class KeycloakClientConfigService {
 
         return new FrontendConfig(
                 "https://auth." + baseDomain,
-                tenantSlug,
+                keycloakRealmName,
                 clientId,
-                "https://auth." + baseDomain + "/realms/" + tenantSlug
+                "https://auth." + baseDomain + "/realms/" + keycloakRealmName
         );
     }
 

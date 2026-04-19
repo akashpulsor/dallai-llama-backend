@@ -38,31 +38,5 @@ public class DatabaseConfig {
                 .build();
     }
 
-    @Bean
-    @Primary
-    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new JdbcTemplate(dataSource);
-    }
 
-    // ================================================================
-    // KAMAILIO DATASOURCE
-    // ================================================================
-
-    @Bean
-    @ConfigurationProperties("spring.kamailio-datasource")
-    public DataSourceProperties kamailioDataSourceProperties() {
-        return new DataSourceProperties();
-    }
-
-    @Bean
-    public DataSource kamailioDataSource() {
-        return kamailioDataSourceProperties()
-                .initializeDataSourceBuilder()
-                .build();
-    }
-
-    @Bean
-    public JdbcTemplate kamailioJdbcTemplate(@Qualifier("kamailioDataSource") DataSource dataSource) {
-        return new JdbcTemplate(dataSource);
-    }
 }

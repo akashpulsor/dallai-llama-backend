@@ -1,5 +1,7 @@
 package com.dalai.llama.billing.client;
 
+
+import com.dalai.llama.billing.dto.response.SubscriptionResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +28,42 @@ public class ProductServiceClient {
         return webClientBuilder.baseUrl(productServiceUrl).build();
     }
 
+
+
+    /**
+     * Activate subscription after successful payment webhook
+     */
+
+
+    public SubscriptionResponse postSubscription(UUID subscriptionId) {
+        try {
+            SubscriptionResponse response = client().post()
+                    .uri(
+                            "/api/v1/internal/products/subscriptions/{subscriptionId}/activate",
+                            subscriptionId
+                    )
+                    .retrieve()
+                    .bodyToMono(SubscriptionResponse.class)
+                    .block();
+            log.info(
+                    "Post-subscription activation successful for {} tenantAppId={}",
+                    subscriptionId,
+                    response != null ? response.getTenantAppId() : null
+            );
+            return response;
+        } catch (Exception e) {
+            log.error(
+                    "Failed to activate subscription {}: {}",
+                    subscriptionId,
+                    e.getMessage(),
+                    e
+            );
+            throw new RuntimeException(
+                    "Failed to activate subscription " + subscriptionId,
+                    e
+            );
+        }
+    }
     /**
      * Get all active DIDs for a tenant (for monthly rental billing)
      */

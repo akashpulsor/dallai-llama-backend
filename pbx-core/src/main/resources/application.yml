@@ -98,6 +98,10 @@ dalaillama:
     url: ${TENANT_SERVICE_URL:http://tenant-service.platform.svc.cluster.local:8080}
   product-service:
     url: ${PRODUCT_SERVICE_URL:http://product-service.platform.svc.cluster.local:8080}
+  service:
+    ai-service:
+      url: ${AI_SERVICE_URL:http://ai-service.telecom.svc.cluster.local:8600}
+  minio-bucket-prefix: ${MINIO_BUCKET_PREFIX:dl}
 
   storage:
     endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}

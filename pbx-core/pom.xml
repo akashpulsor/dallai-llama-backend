@@ -77,6 +77,18 @@
       <artifactId>s3</artifactId>
       <version>2.25.0</version>
     </dependency>
+    <!-- CSV parsing for campaign contact import -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-csv</artifactId>
+      <version>1.11.0</version>
+    </dependency>
+    <!-- Excel parsing for campaign contact import -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.2.5</version>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>

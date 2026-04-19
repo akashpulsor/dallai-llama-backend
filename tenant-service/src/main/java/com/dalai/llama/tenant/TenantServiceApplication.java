@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
+//TODO subscription activ event for UI websocket updates, and billing state changes
 @SpringBootApplication
 @EnableKafka
 @EnableScheduling

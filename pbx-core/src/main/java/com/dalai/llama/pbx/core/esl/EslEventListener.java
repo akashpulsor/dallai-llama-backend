@@ -1,9 +1,10 @@
 package com.dalai.llama.pbx.core.esl;
 
-
+import com.dalai.llama.pbx.core.client.AiServiceClient;
 import com.dalai.llama.pbx.core.domain.enums.AgentStatus;
 import com.dalai.llama.pbx.core.redis.ActiveCallTracker;
 import com.dalai.llama.pbx.core.redis.ChannelCounterService;
+import com.dalai.llama.pbx.core.redis.RtpEngineConfigRedisService;
 import com.dalai.llama.pbx.core.repository.core.AgentRepository;
 import com.dalai.llama.pbx.core.repository.integration.CrmIntegrationRepository;
 import com.dalai.llama.pbx.core.service.integration.CrmService;
@@ -35,6 +36,10 @@ public class EslEventListener {
     private final CampaignRepository campaignRepository;
     private final CrmIntegrationRepository crmIntegrationRepository;
     private final CrmService crmService;
+    private final AiServiceClient aiServiceClient;
+    private final RtpEngineConfigRedisService rtpEngineRedis;
+    private final EslCommandExecutor eslCommandExecutor;
+
     private static final String SUBSCRIBED_EVENTS =
             "CHANNEL_CREATE CHANNEL_ANSWER CHANNEL_HANGUP CHANNEL_BRIDGE " +
                     "DTMF RECORD_START RECORD_STOP CUSTOM";
@@ -126,12 +131,19 @@ public class EslEventListener {
         if (callId == null || tenantId == null) return;
 
         UUID tid = UUID.fromString(tenantId);
-        callTracker.trackCall(callId, tid, Map.of(
-                "direction", h.getOrDefault("Call-Direction", "inbound"),
-                "caller_number", h.getOrDefault("Caller-Caller-ID-Number", ""),
-                "callee_number", h.getOrDefault("Caller-Destination-Number", ""),
-                "status", "RINGING"
-        ));
+        Map<String, String> trackData = new LinkedHashMap<>();
+        trackData.put("direction", h.getOrDefault("Call-Direction", "inbound"));
+        trackData.put("caller_number", h.getOrDefault("Caller-Caller-ID-Number", ""));
+        trackData.put("callee_number", h.getOrDefault("Caller-Destination-Number", ""));
+        trackData.put("status", "RINGING");
+
+        // Store campaign/contact IDs for disposition writeback on AI escalation
+        String campaignId = h.get("variable_campaign_id");
+        String contactId = h.get("variable_contact_id");
+        if (campaignId != null) trackData.put("campaign_id", campaignId);
+        if (contactId != null) trackData.put("contact_id", contactId);
+
+        callTracker.trackCall(callId, tid, trackData);
 
         publishToTenant(tenantId, "calls", Map.of(
                 "event", "CALL_RINGING",
@@ -177,16 +189,14 @@ public class EslEventListener {
 
         String hangupCause = h.getOrDefault("Hangup-Cause", "NORMAL_CLEARING");
 
+        // Deregister SSRC from ai-service before removing call from tracker
+        deregisterSsrcIfActive(callId);
+
         if (tenantId != null) {
             UUID tid = UUID.fromString(tenantId);
             callTracker.removeCall(callId, tid);
-
-            String direction = h.getOrDefault("Call-Direction", "inbound");
-            if ("inbound".equalsIgnoreCase(direction)) {
-                channelCounter.decrementInbound(tid);
-            } else {
-                channelCounter.decrementOutbound(tid);
-            }
+            // Channel counter decrement is handled by KamailioController.callEnd()
+            // — doing it here too would cause double-decrement and counter drift.
         }
 
         String agentUsername = h.get("variable_effective_caller_id_number");
@@ -242,7 +252,8 @@ public class EslEventListener {
         try {
             campaignContactRepository.findById(UUID.fromString(contactId)).ifPresent(contact -> {
                 contact.setHangupCause(hangupCause);
-                contact.setCompletedAt(Instant.now());
+                contact.setAttemptCount((contact.getAttemptCount() != null ? contact.getAttemptCount() : 0) + 1);
+                contact.setLastAttemptAt(Instant.now());
 
                 String billsec = h.get("variable_billsec");
                 if (billsec != null) {
@@ -251,8 +262,14 @@ public class EslEventListener {
                     } catch (NumberFormatException ignored) {}
                 }
 
-                if ("NORMAL_CLEARING".equals(hangupCause)) {
+                // Don't overwrite qualification status set by AI bot escalation callback
+                if (contact.getStatus() == ContactStatus.QUALIFIED
+                        || contact.getStatus() == ContactStatus.NOT_QUALIFIED) {
+                    contact.setCompletedAt(Instant.now());
+                    campaignRepository.incrementContactsCompleted(UUID.fromString(campaignId));
+                } else if ("NORMAL_CLEARING".equals(hangupCause)) {
                     contact.setStatus(ContactStatus.COMPLETED);
+                    contact.setCompletedAt(Instant.now());
                     campaignRepository.incrementContactsCompleted(UUID.fromString(campaignId));
                 } else if (PERMANENT_FAIL_CAUSES.contains(hangupCause)) {
                     contact.setStatus(ContactStatus.FAILED);
@@ -327,6 +344,83 @@ public class EslEventListener {
                 "call_id", callId,
                 "other_leg", otherUuid != null ? otherUuid : ""
         ));
+
+        // AI fork: register SSRC with ai-service on agent bridge
+        registerSsrcIfForkEnabled(callId, tenantId, otherUuid);
+    }
+
+    /**
+     * Register SSRC pair with ai-service so it can correlate forked RTP packets.
+     *
+     * SSRC (Synchronization Source) is a 32-bit identifier in every RTP packet header.
+     * RTPEngine forks media to ai-service, but ai-service needs to know which
+     * tenant/call each RTP stream belongs to. This mapping provides that.
+     *
+     * Runs async (fire-and-forget) to avoid blocking the ESL event loop.
+     */
+    private void registerSsrcIfForkEnabled(String callId, String tenantId, String otherUuid) {
+        try {
+            UUID tid = UUID.fromString(tenantId);
+
+            // Check if this call should have AI fork active
+            boolean forkEnabled = rtpEngineRedis.isAiForkEnabled(tid);
+            if (!forkEnabled) return;
+
+            // For escalated calls, also check the pending flag
+            Optional<Map<Object, Object>> callDetail = callTracker.getCallDetail(callId);
+            boolean isEscalation = callDetail
+                    .map(d -> "true".equals(d.get("ai_fork_pending")))
+                    .orElse(false);
+
+            // Extract SSRC from FreeSWITCH channel variables via ESL
+            String ssrcCaller = eslCommandExecutor.getVariable(callId, "rtp_remote_ssrc");
+            String ssrcAgent = otherUuid != null
+                    ? eslCommandExecutor.getVariable(otherUuid, "rtp_local_ssrc")
+                    : h(callId, "rtp_local_ssrc");
+
+            // Register with ai-service (fire-and-forget, fail-open)
+            aiServiceClient.registerRtpSession(callId, tid, ssrcCaller, ssrcAgent);
+
+            // Track that we registered this call for cleanup on hangup
+            callTracker.updateField(callId, "ai_fork_active", "true");
+            if (isEscalation) {
+                callTracker.updateField(callId, "ai_fork_pending", "false");
+            }
+
+            log.info("SSRC registered: callId={} tenant={} caller_ssrc={} agent_ssrc={} escalation={}",
+                    callId, tenantId, ssrcCaller, ssrcAgent, isEscalation);
+        } catch (Exception e) {
+            // FAIL-OPEN: SSRC registration failure must NOT block the call
+            log.warn("SSRC registration failed for callId={}: {}", callId, e.getMessage());
+        }
+    }
+
+    private String h(String callId, String varName) {
+        try {
+            return eslCommandExecutor.getVariable(callId, varName);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Deregister SSRC from ai-service on call hangup.
+     * Only fires if ai_fork_active was set during CHANNEL_BRIDGE.
+     * Fail-open: deregistration failure is logged but does not affect hangup.
+     */
+    private void deregisterSsrcIfActive(String callId) {
+        try {
+            Optional<Map<Object, Object>> callDetail = callTracker.getCallDetail(callId);
+            boolean forkActive = callDetail
+                    .map(d -> "true".equals(d.get("ai_fork_active")))
+                    .orElse(false);
+            if (!forkActive) return;
+
+            aiServiceClient.deregisterRtpSession(callId);
+            log.info("SSRC deregistered on hangup: callId={}", callId);
+        } catch (Exception e) {
+            log.warn("SSRC deregistration failed for callId={}: {}", callId, e.getMessage());
+        }
     }
 
     private void handleDtmf(Map<String, String> h, String callId, String tenantId) {

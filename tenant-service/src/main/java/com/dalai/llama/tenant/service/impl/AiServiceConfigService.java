@@ -14,17 +14,13 @@ import org.springframework.stereotype.Service;
 public class AiServiceConfigService {
 
     private final PbxCoreClient pbxCoreClient;
-    private final KubernetesConfigDiscoveryService configDiscovery;
+
 
     public void configureForSubscription(TenantApp app, PlanEntitlementResponse e) {
         log.info("Configuring AI Service for {} - product: {}",
                 app.getSubscriptionId(), app.getProductCode());
 
         boolean dedicated = Boolean.TRUE.equals(app.getDedicatedInfrastructure());
-        String aiHost = dedicated
-                ? "ai-service." + app.getNamespace() + ".svc.cluster.local"
-                : "ai-service.telecom.svc.cluster.local";
-        String agiBase = "agi://" + aiHost + ":4573";
 
         // ── Resolve product-specific AI mode (business logic stays here) ──
         AiModeConfig modeConfig = resolveAiMode(app.getProductCode(), e);

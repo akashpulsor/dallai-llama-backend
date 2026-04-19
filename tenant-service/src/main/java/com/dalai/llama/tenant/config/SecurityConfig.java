@@ -27,11 +27,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
+                        .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**",                                 "/v3/api-docs/**",
                                 "/api-docs/**",
                                 "/actuator/**","/swagger-resources/**", "/webjars/**",
                                 "/api/v1/webhooks/**").permitAll()
-                        .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
+                        .requestMatchers("/api/v1/internal/**").permitAll()
+                        .requestMatchers("/api/v1/public/**").permitAll()
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().authenticated()
                 )

@@ -20,12 +20,14 @@ import java.time.Duration;
 /**
  * S3-compatible blob storage for recordings, transcripts, voicemail, exports.
  *
- * Storage layout per bucket:
- *   call-recordings:   {tenant_id}/{yyyy}/{MM}/{callId}.wav
- *   cdr-archives:      {tenant_id}/{yyyy}/{MM}/{callId}.json
- *   voicemail:          {tenant_id}/{yyyy}/{MM}/{callId}.wav
- *   campaign-exports:   {tenant_id}/campaigns/{campaignId}/export.csv
- *   bot-knowledge:      {tenant_id}/bots/{botId}/{docId}.txt
+ * Per-tenant bucket naming (matches tenant-service MinioBucketService):
+ *   Bucket: {prefix}-{tenantSlug}-{suffix}  e.g. dl-acme-call-recordings
+ *   Key layout:
+ *     call-recordings:   {yyyy}/{MM}/{callId}.wav
+ *     cdr-archives:      {yyyy}/{MM}/{callId}.json
+ *     voicemail:          {yyyy}/{MM}/{callId}.wav
+ *     campaign-exports:   campaigns/{campaignId}/export.csv
+ *     bot-knowledge:      bots/{botId}/{docId}.txt
  */
 @Slf4j
 @Service
@@ -46,13 +48,15 @@ public class BlobStorageService {
     @Value("${dalaillama.storage.public-url:}")
     private String publicUrl;
 
-    // ── Bucket names from config ──
+    @Value("${dalaillama.minio-bucket-prefix:dl}")
+    private String bucketPrefix;
+
+    // ── Bucket suffixes (must match tenant-service MinioBucketService BUCKET_SUFFIXES) ──
     @Value("${dalaillama.storage.buckets.recordings:call-recordings}")
     private String recordingsBucket;
 
     @Value("${dalaillama.storage.buckets.voicemail:voicemail}")
     private String voicemailBucket;
-
     @Value("${dalaillama.storage.buckets.exports:campaign-exports}")
     private String exportsBucket;
 
@@ -94,49 +98,57 @@ public class BlobStorageService {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // CONVENIENCE METHODS — use configured bucket names
+    // CONVENIENCE METHODS — per-tenant bucket resolution
     // ═══════════════════════════════════════════════════════════
 
     /**
      * Upload call recording.
-     * Path: {tenantId}/{yyyy}/{MM}/{callId}.wav
+     * Bucket: {prefix}-{tenantSlug}-call-recordings  Key: {yyyy}/{MM}/{callId}.wav
      */
-    public String uploadRecording(String tenantId, String callId, byte[] audioData) {
-        String path = buildDatePath(tenantId, callId, "wav");
-        return upload(recordingsBucket, path, audioData, "audio/wav");
+    public String uploadRecording(String tenantSlug, String callId, byte[] audioData) {
+        String bucket = resolveBucket(tenantSlug, recordingsBucket);
+        String path = buildDatePath(callId, "wav");
+        return upload(bucket, path, audioData, "audio/wav");
     }
 
     /**
      * Upload call transcript (final JSON).
-     * Path: {tenantId}/{yyyy}/{MM}/{callId}.json
+     * Bucket: {prefix}-{tenantSlug}-cdr-archives  Key: {yyyy}/{MM}/{callId}.json
      */
-    public String uploadTranscript(String tenantId, String callId, byte[] jsonData) {
-        String path = buildDatePath(tenantId, callId, "json");
-        return upload(cdrBucket, path, jsonData, "application/json");
+    public String uploadTranscript(String tenantSlug, String callId, byte[] jsonData) {
+        String bucket = resolveBucket(tenantSlug, cdrBucket);
+        String path = buildDatePath(callId, "json");
+        return upload(bucket, path, jsonData, "application/json");
     }
 
     /**
      * Upload voicemail recording.
+     * Bucket: {prefix}-{tenantSlug}-voicemail  Key: {yyyy}/{MM}/{callId}.wav
      */
-    public String uploadVoicemail(String tenantId, String callId, byte[] audioData) {
-        String path = buildDatePath(tenantId, callId, "wav");
-        return upload(voicemailBucket, path, audioData, "audio/wav");
+    public String uploadVoicemail(String tenantSlug, String callId, byte[] audioData) {
+        String bucket = resolveBucket(tenantSlug, voicemailBucket);
+        String path = buildDatePath(callId, "wav");
+        return upload(bucket, path, audioData, "audio/wav");
     }
 
     /**
      * Upload campaign export CSV.
+     * Bucket: {prefix}-{tenantSlug}-campaign-exports  Key: campaigns/{campaignId}/export.csv
      */
-    public String uploadCampaignExport(String tenantId, String campaignId, byte[] csvData) {
-        String path = tenantId + "/campaigns/" + campaignId + "/export.csv";
-        return upload(exportsBucket, path, csvData, "text/csv");
+    public String uploadCampaignExport(String tenantSlug, String campaignId, byte[] csvData) {
+        String bucket = resolveBucket(tenantSlug, exportsBucket);
+        String path = "campaigns/" + campaignId + "/export.csv";
+        return upload(bucket, path, csvData, "text/csv");
     }
 
     /**
      * Upload bot knowledge document.
+     * Bucket: {prefix}-{tenantSlug}-bot-knowledge  Key: bots/{botId}/{docId}.txt
      */
-    public String uploadKnowledgeDoc(String tenantId, String botId, String docId, byte[] content) {
-        String path = tenantId + "/bots/" + botId + "/" + docId + ".txt";
-        return upload(knowledgeBucket, path, content, "text/plain");
+    public String uploadKnowledgeDoc(String tenantSlug, String botId, String docId, byte[] content) {
+        String bucket = resolveBucket(tenantSlug, knowledgeBucket);
+        String path = "bots/" + botId + "/" + docId + ".txt";
+        return upload(bucket, path, content, "text/plain");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -183,9 +195,10 @@ public class BlobStorageService {
     /**
      * Get presigned URL for recording playback (default 1 hour).
      */
-    public String getRecordingUrl(String tenantId, String callId) {
-        String path = buildDatePath(tenantId, callId, "wav");
-        return getPresignedUrl(recordingsBucket, path, 3600);
+    public String getRecordingUrl(String tenantSlug, String callId) {
+        String bucket = resolveBucket(tenantSlug, recordingsBucket);
+        String path = buildDatePath(callId, "wav");
+        return getPresignedUrl(bucket, path, 3600);
     }
 
     /**
@@ -217,11 +230,20 @@ public class BlobStorageService {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Build date-partitioned path: {tenantId}/{yyyy}/{MM}/{fileName}.{ext}
+     * Resolve per-tenant bucket name: {prefix}-{tenantSlug}-{suffix}
+     * Must match tenant-service MinioBucketService naming convention.
      */
-    private String buildDatePath(String tenantId, String fileName, String ext) {
+    public String resolveBucket(String tenantSlug, String suffix) {
+        return bucketPrefix + "-" + tenantSlug + "-" + suffix;
+    }
+
+    /**
+     * Build date-partitioned key: {yyyy}/{MM}/{fileName}.{ext}
+     * No tenantId prefix — bucket itself is tenant-scoped.
+     */
+    private String buildDatePath(String fileName, String ext) {
         var now = java.time.LocalDate.now();
-        return "%s/%04d/%02d/%s.%s".formatted(tenantId, now.getYear(), now.getMonthValue(), fileName, ext);
+        return "%04d/%02d/%s.%s".formatted(now.getYear(), now.getMonthValue(), fileName, ext);
     }
 
     private String buildUrl(String bucket, String path) {
@@ -231,10 +253,11 @@ public class BlobStorageService {
         return endpoint + "/" + bucket + "/" + path;
     }
 
-    // ── Getters for bucket names (other services may need them) ──
-    public String getRecordingsBucket() { return recordingsBucket; }
-    public String getVoicemailBucket() { return voicemailBucket; }
-    public String getExportsBucket() { return exportsBucket; }
-    public String getKnowledgeBucket() { return knowledgeBucket; }
-    public String getCdrBucket() { return cdrBucket; }
+    // ── Getters for bucket suffixes (callers combine with resolveBucket) ──
+    public String getRecordingsBucketSuffix() { return recordingsBucket; }
+    public String getVoicemailBucketSuffix() { return voicemailBucket; }
+    public String getExportsBucketSuffix() { return exportsBucket; }
+    public String getKnowledgeBucketSuffix() { return knowledgeBucket; }
+    public String getCdrBucketSuffix() { return cdrBucket; }
+    public String getBucketPrefix() { return bucketPrefix; }
 }

@@ -52,6 +52,48 @@ public class BillingServiceClient {
         return balance.compareTo(required) >= 0;
     }
 
+    // ==================== SUBSCRIPTION PAYMENT ====================
+
+    public SubscriptionPaymentResponse createSubscriptionPayment(
+            UUID tenantId,
+            String planCode,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            UUID subscriptionId
+    ) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("planCode", planCode);
+            body.put("planAmount", planAmount);
+            body.put("walletCredit", walletCredit);
+            body.put("subscriptionId", subscriptionId);
+
+            SubscriptionPaymentResponse response = client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/subscription-payment", tenantId)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(SubscriptionPaymentResponse.class)
+                    .block();
+
+            if (response == null) {
+                throw new RuntimeException("Null response from billing service");
+            }
+
+            log.info("Created subscription payment for tenant {} subscription {} amount ₹{}",
+                    tenantId, subscriptionId, response.totalAmount());
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            log.error("Failed to create subscription payment: {} - {}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to create subscription payment", e);
+        } catch (Exception e) {
+            log.error("Unexpected error creating subscription payment: {}", e.getMessage());
+            throw new RuntimeException("Failed to create subscription payment", e);
+        }
+    }
+
     public void chargeSubscription(UUID tenantId, UUID subscriptionId, BigDecimal amount, String planCode, String didNumber) {
         try {
             Map<String, Object> body = new HashMap<>();
@@ -159,6 +201,15 @@ public class BillingServiceClient {
             throw new RuntimeException("Failed to record DID rental", e);
         }
     }
+
+    public record SubscriptionPaymentResponse(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal totalAmount,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            String currency
+    ) {}
 
     // ==================== RESPONSE DTOs ====================
 

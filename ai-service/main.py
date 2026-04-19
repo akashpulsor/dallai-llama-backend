@@ -28,6 +28,9 @@ from api.bot_config import router as bot_config_router
 from api.provider_catalog import router as provider_catalog_router
 from api.websocket_handler import handle_audio_websocket, active_calls, active_sessions
 from api.test_console import router as test_router
+from api.rtp_sessions import router as rtp_sessions_router
+from rtp.session_registry import registry as rtp_registry
+from rtp.udp_server import start_rtp_server
 from db.analytics_store import fetch_summary, fetch_timeline, store_event as persist_analytics_event
 from db.database import close_database, init_database, ping_database, run_migrations
 from db.provider_catalog_store import seed_provider_catalog
@@ -177,9 +180,12 @@ async def lifespan(app: FastAPI):
     applied_migrations = await run_migrations()
     await seed_provider_catalog()
     warnings = _startup_warnings()
+    # Start UDP RTP receiver for agent-call transcription
+    rtp_transport = await start_rtp_server(settings.voicebrain_rtp_port)
     logger.info(
-        "voice-brain starting: port=%d public_url=%s pbx=%s db=%s stt=%s tts=%s llm=%s rvc=%s",
+        "voice-brain starting: port=%d rtp_port=%d public_url=%s pbx=%s db=%s stt=%s tts=%s llm=%s rvc=%s",
         settings.port,
+        settings.voicebrain_rtp_port,
         settings.ai_service_url,
         settings.pbx_core_url,
         bool(settings.database_url),
@@ -193,6 +199,7 @@ async def lifespan(app: FastAPI):
     if applied_migrations:
         logger.info("database migrations applied: %s", ", ".join(applied_migrations))
     yield
+    rtp_transport.close()
     await pbx_core_client.close()
     await close_database()
     logger.info("voice-brain stopped")
@@ -223,6 +230,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(provider_catalog_router)
 app.include_router(bot_config_router)
 app.include_router(test_router)
+app.include_router(rtp_sessions_router)
 
 
 @app.websocket("/audio/{call_id}")
@@ -243,6 +251,8 @@ async def health():
         "database_configured": bool(settings.database_url),
         "startup_warnings": _startup_warnings(),
         "active_calls": len(active_calls),
+        "rtp_sessions": rtp_registry.active_count,
+        "rtp_port": settings.voicebrain_rtp_port,
         "providers": {
             "stt": settings.default_stt_provider,
             "tts": settings.default_tts_provider,

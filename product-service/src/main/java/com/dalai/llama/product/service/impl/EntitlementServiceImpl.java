@@ -139,6 +139,22 @@ public class EntitlementServiceImpl implements EntitlementService {
     }
 
     /**
+     * Get entitlements for a plan by UUID.
+     * Called by tenant-service during provisioning (stepFetchEntitlements).
+     */
+    @Override
+    @Cacheable(value = "plan-entitlements-by-id", key = "#planId")
+    @Transactional(readOnly = true)
+    public PlanEntitlementResponse getEntitlementsForPlanId(UUID planId) {
+        log.debug("Fetching entitlements for planId: {}", planId);
+
+        PlanEntitlement entitlement = entitlementRepository.findByPlan_Id(planId)
+                .orElseThrow(() -> new RuntimeException("Entitlements not found for planId: " + planId));
+
+        return mapEntitlement(entitlement);
+    }
+
+    /**
      * Get apps for a product.
      */
     @Override

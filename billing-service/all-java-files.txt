@@ -55,6 +55,41 @@ public class ProductServiceClient {
         return webClientBuilder.baseUrl(productServiceUrl).build();
     }
 
+
+
+    /**
+     * Activate subscription after successful payment webhook
+     */
+    public void postSubscription(UUID subscriptionId) {
+        try {
+            client().post()
+                    .uri(
+                            "/api/v1/internal/products/subscriptions/{subscriptionId}/activate",
+                            subscriptionId
+                    )
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+
+            log.info(
+                    "Post-subscription activation successful for {}",
+                    subscriptionId
+            );
+
+        } catch (Exception e) {
+            log.error(
+                    "Failed to activate subscription {}: {}",
+                    subscriptionId,
+                    e.getMessage(),
+                    e
+            );
+
+            throw new RuntimeException(
+                    "Failed to activate subscription " + subscriptionId,
+                    e
+            );
+        }
+    }
     /**
      * Get all active DIDs for a tenant (for monthly rental billing)
      */
@@ -351,7 +386,7 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
-                        .requestMatchers("/api/v1/internal/**").hasRole("INTERNAL")
+                        .requestMatchers("/api/v1/internal/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
@@ -721,31 +756,54 @@ FILE: ./src/main/java/com/dalai/llama/billing/controller/InternalBillingControll
 package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.domain.entity.BillingState;
+import com.dalai.llama.billing.domain.entity.RecurringCharge;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.enums.BillingStateType;
 import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
-import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import com.dalai.llama.billing.dto.response.CallAuthorizationResponse;
 import com.dalai.llama.billing.repository.BillingStateRepository;
+import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.CallAuthorizationService;
+import com.dalai.llama.billing.service.PaymentService;
 import com.dalai.llama.billing.service.WalletService;
+import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.Builder;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Internal APIs for service-to-service communication.
+ *
+ * Called by:
+ * - product-service: subscription, DID provisioning
+ * - tenant-service: wallet creation
+ * - pbx-core: call authorization, usage recording
+ *
+ * Path: /api/v1/internal/tenants/{tenantId}/...
+ * No JWT auth - relies on service mesh / internal network.
+ */
+@Slf4j
 @RestController
-@RequestMapping("/api/v1/internal/billing/{tenantId}")
+@RequestMapping("/api/v1/internal/tenants/{tenantId}")
 @RequiredArgsConstructor
 @Tag(name = "Internal Billing", description = "Internal APIs for service-to-service communication")
 @Hidden
@@ -756,27 +814,133 @@ public class InternalBillingController {
     private final BillingStateRepository billingStateRepository;
     private final BillingStateService billingStateService;
     private final UsageRecordRepository usageRecordRepository;
+    private final RecurringChargeRepository recurringChargeRepository;
 
+    private final PaymentService paymentService;
     // ==================== WALLET MANAGEMENT ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/wallet
+     * Create wallet for tenant (called by tenant-service on org setup)
+     */
     @PostMapping("/wallet")
-    @Operation(summary = "Create wallet", description = "Create wallet for new tenant (called by Tenant Service)")
-    public ResponseEntity<Void> createWallet(@PathVariable UUID tenantId) {
+    @Operation(summary = "Create wallet")
+    public ResponseEntity<WalletResponse> createWallet(@PathVariable UUID tenantId) {
         walletService.createWallet(tenantId);
-        return ResponseEntity.ok().build();
+        BigDecimal balance = walletService.getBalance(tenantId);
+        log.info("Created wallet for tenant {} with balance {}", tenantId, balance);
+        return ResponseEntity.ok(new WalletResponse(tenantId, balance, "INR", "ACTIVE"));
     }
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/wallet/balance
+     * Get wallet balance (called by product-service, tenant-service)
+     */
+    @GetMapping("/wallet/balance")
+    @Operation(summary = "Get wallet balance")
+    public ResponseEntity<WalletBalanceResponse> getWalletBalance(@PathVariable UUID tenantId) {
+        BigDecimal balance = walletService.getBalance(tenantId);
+        return ResponseEntity.ok(new WalletBalanceResponse(balance, "INR"));
+    }
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/wallet/charge
+     * Charge wallet for subscription (called by product-service on subscribe)
+     *
+     * Deducts: platform fee + agent fees + DID fees
+     */
+    @PostMapping("/wallet/charge")
+    @Operation(summary = "Charge wallet for subscription")
+    public ResponseEntity<ChargeResponse> chargeWallet(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody ChargeRequest request) {
+
+        log.info("Charging tenant {} - amount: ₹{}, type: {}", tenantId, request.amount, request.type);
+
+        // Validate balance
+        BigDecimal currentBalance = walletService.getBalance(tenantId);
+        if (currentBalance.compareTo(request.amount) < 0) {
+            return ResponseEntity.badRequest()
+                    .body(new ChargeResponse(false, currentBalance, "Insufficient balance"));
+        }
+
+        // Debit wallet
+        String description = request.description != null ? request.description : request.type;
+        walletService.debit(tenantId, request.amount, request.type + ":" + description, request.subscriptionId);
+
+        // Re-evaluate billing state
+        billingStateService.evaluateState(tenantId);
+
+        BigDecimal newBalance = walletService.getBalance(tenantId);
+        log.info("Charged tenant {} - ₹{}, new balance: ₹{}", tenantId, request.amount, newBalance);
+
+        return ResponseEntity.ok(new ChargeResponse(true, newBalance, "Charged successfully"));
+    }
+
+    /**
+     * DELETE /api/v1/internal/tenants/{tenantId}/wallet
+     * Delete wallet (rollback/compensation)
+     */
     @DeleteMapping("/wallet")
-    @Operation(summary = "Delete wallet", description = "Delete wallet for tenant (compensation)")
+    @Operation(summary = "Delete wallet")
     public ResponseEntity<Void> deleteWallet(@PathVariable UUID tenantId) {
         walletService.deleteWallet(tenantId);
+        log.info("Deleted wallet for tenant {}", tenantId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ==================== RECURRING CHARGES ====================
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/recurring-charges
+     * Create recurring charge for auto-billing (called by product-service on subscribe)
+     *
+     * Types: PLATFORM_FEE, DID_RENTAL, AGENT_FEE
+     */
+    @PostMapping("/recurring-charges")
+    @Operation(summary = "Create recurring charge")
+    public ResponseEntity<RecurringChargeResponse> createRecurringCharge(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody RecurringChargeRequest request) {
+
+        log.info("Creating recurring charge for tenant {} - type: {}, amount: ₹{}",
+                tenantId, request.type, request.amount);
+
+        RecurringCharge charge = RecurringCharge.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .type(request.type)
+                .amount(request.amount)
+                .frequency(request.frequency != null ? request.frequency : "MONTHLY")
+                .nextChargeDate(LocalDate.now().plusMonths(1))
+                .status("ACTIVE")
+                .sourceType(request.sourceType)
+                .subscriptionId(request.subscriptionId)
+                .sourceId(request.sourceId)
+                .description(request.description)
+                .createdAt(Instant.now())
+                .build();
+
+        recurringChargeRepository.save(charge);
+
+        log.info("Created recurring charge {} for tenant {}", charge.getId(), tenantId);
+
+        return ResponseEntity.ok(new RecurringChargeResponse(
+                charge.getId(),
+                charge.getType(),
+                charge.getAmount(),
+                charge.getNextChargeDate()
+        ));
     }
 
     // ==================== CALL AUTHORIZATION ====================
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/authorize-call
+     * Authorize call (called by pbx-core before each call)
+     */
     @GetMapping("/authorize-call")
-    @Operation(summary = "Authorize outbound call", description = "Check if tenant can make outbound calls (called by PBX Core)")
+    @Operation(summary = "Authorize call")
     public ResponseEntity<CallAuthorizationResponse> authorizeCall(@PathVariable UUID tenantId) {
         boolean authorized = callAuthorizationService.authorizeCall(tenantId);
 
@@ -802,16 +966,20 @@ public class InternalBillingController {
 
     // ==================== BILLING STATE ====================
 
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/billing-state
+     * Get billing state (called by product-service, pbx-core)
+     */
     @GetMapping("/billing-state")
-    @Operation(summary = "Get billing state", description = "Get current billing state (called by PBX Core)")
-    public ResponseEntity<InternalBillingStateResponse> getBillingState(@PathVariable UUID tenantId) {
+    @Operation(summary = "Get billing state")
+    public ResponseEntity<BillingStateResponse> getBillingState(@PathVariable UUID tenantId) {
         BillingState state = billingStateRepository.findByTenantId(tenantId)
                 .orElseGet(() -> BillingState.createDefault(tenantId));
 
         boolean canMakeCalls = state.getState() == BillingStateType.ACTIVE ||
                 state.getState() == BillingStateType.GRACE;
 
-        return ResponseEntity.ok(InternalBillingStateResponse.builder()
+        return ResponseEntity.ok(BillingStateResponse.builder()
                 .tenantId(tenantId)
                 .state(state.getState().name())
                 .canMakeCalls(canMakeCalls)
@@ -822,12 +990,16 @@ public class InternalBillingController {
 
     // ==================== DID RENTAL ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/did-rental
+     * Record DID rental charge (called by product-service monthly billing job)
+     */
     @PostMapping("/did-rental")
-    @Operation(summary = "Record DID rental", description = "Record DID rental charge (called by Product Service)")
+    @Operation(summary = "Record DID rental")
     public ResponseEntity<Void> recordDidRental(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody DidRentalRequest request
-    ) {
+            @Valid @RequestBody DidRentalRequest request) {
+
         // Create usage record
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
@@ -835,11 +1007,11 @@ public class InternalBillingController {
                 .metric(UsageMetric.DID_RENTAL)
                 .quantity(BigDecimal.ONE)
                 .unit(BillingUnit.MONTH)
-                .unitCost(request.getAmount())
-                .totalCost(request.getAmount())
+                .unitCost(request.amount)
+                .totalCost(request.amount)
                 .sourceType("DID")
-                .sourceId(request.getDidId())
-                .description("DID rental: " + request.getDidNumber())
+                .sourceId(request.didId)
+                .description("DID rental: " + request.didNumber)
                 .recordedAt(Instant.now())
                 .createdAt(Instant.now())
                 .build();
@@ -847,37 +1019,39 @@ public class InternalBillingController {
         usageRecordRepository.save(record);
 
         // Debit wallet
-        walletService.debit(
-                tenantId,
-                request.getAmount(),
-                "DID_RENTAL:" + request.getDidNumber()
-        );
+        walletService.debit(tenantId, request.amount, "DID_RENTAL:" + request.didNumber,request.subscriptionId);
 
         // Evaluate billing state
         billingStateService.evaluateState(tenantId);
+
+        log.info("Recorded DID rental for tenant {}: {} @ ₹{}", tenantId, request.didNumber, request.amount);
 
         return ResponseEntity.ok().build();
     }
 
     // ==================== USAGE RECORDING ====================
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/usage
+     * Record usage (AI, storage, calls) - called by pbx-core, ai-service
+     */
     @PostMapping("/usage")
-    @Operation(summary = "Record usage", description = "Record AI/storage usage (called by PBX Core)")
+    @Operation(summary = "Record usage")
     public ResponseEntity<Void> recordUsage(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody RecordUsageRequest request
-    ) {
+            @Valid @RequestBody RecordUsageRequest request) {
+
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .metric(request.getMetric())
-                .quantity(request.getQuantity())
-                .unit(request.getUnit())
-                .unitCost(request.getUnitCost())
-                .totalCost(request.getTotalCost())
-                .sourceType(request.getSourceType())
-                .sourceId(request.getSourceId())
-                .description(request.getDescription())
+                .metric(request.metric)
+                .quantity(request.quantity)
+                .unit(request.unit)
+                .unitCost(request.unitCost)
+                .totalCost(request.totalCost)
+                .sourceType(request.sourceType)
+                .sourceId(request.sourceId)
+                .description(request.description)
                 .recordedAt(Instant.now())
                 .createdAt(Instant.now())
                 .build();
@@ -885,13 +1059,8 @@ public class InternalBillingController {
         usageRecordRepository.save(record);
 
         // Debit wallet if there's a cost
-        if (request.getTotalCost() != null && request.getTotalCost().signum() > 0) {
-            walletService.debit(
-                    tenantId,
-                    request.getTotalCost(),
-                    "USAGE:" + request.getMetric().name()
-            );
-
+        if (request.totalCost != null && request.totalCost.signum() > 0) {
+            walletService.debit(tenantId, request.totalCost, "USAGE:" + request.metric.name(),request.subscriptionId);
             billingStateService.evaluateState(tenantId);
         }
 
@@ -901,71 +1070,177 @@ public class InternalBillingController {
     // ==================== MANUAL ADJUSTMENTS ====================
 
     @PostMapping("/adjust/credit")
-    @Operation(summary = "Manual credit", description = "Apply manual credit adjustment (admin only)")
+    @Operation(summary = "Manual credit")
     public ResponseEntity<Void> manualCredit(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody AdjustmentRequest request
-    ) {
-        walletService.credit(tenantId, request.getAmount(), "ADJUSTMENT:" + request.getReason());
+            @Valid @RequestBody AdjustmentRequest request) {
+        walletService.credit(tenantId, request.amount, "ADJUSTMENT:" + request.reason);
         billingStateService.evaluateState(tenantId);
+        log.info("Manual credit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/adjust/debit")
-    @Operation(summary = "Manual debit", description = "Apply manual debit adjustment (admin only)")
+    @Operation(summary = "Manual debit")
     public ResponseEntity<Void> manualDebit(
             @PathVariable UUID tenantId,
-            @Valid @RequestBody AdjustmentRequest request
-    ) {
-        walletService.debit(tenantId, request.getAmount(), "ADJUSTMENT:" + request.getReason());
+            @Valid @RequestBody AdjustmentRequest request) {
+        walletService.debit(tenantId, request.amount, "ADJUSTMENT:" + request.reason,request.subscriptionId);
         billingStateService.evaluateState(tenantId);
+        log.info("Manual debit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();
     }
 
-    @GetMapping("/wallet/balance")
-    @Operation(summary = "Get balance", description = "Get wallet balance (called by Product Service)")
-    public ResponseEntity<BigDecimal> getBalance(@PathVariable UUID tenantId) {
-        return ResponseEntity.ok(walletService.getBalance(tenantId));
+    // ==================== SUBSCRIPTION PAYMENT ====================
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/subscription-payment
+     *
+     * Creates single Razorpay order for:
+     * 1. Plan subscription amount
+     * 2. Initial wallet preload
+     *
+     * Called by product-service during subscribe()
+     */
+    @PostMapping("/subscription-payment")
+    @Operation(summary = "Create subscription payment")
+    public ResponseEntity<SubscriptionPaymentResponse> createSubscriptionPayment(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody SubscriptionPaymentRequest request) {
+
+        PaymentServiceImpl.SubscriptionPaymentResult result =
+                paymentService.createSubscriptionPayment(
+                        tenantId,
+                        request.getPlanCode(),
+                        request.getPlanAmount(),
+                        request.getWalletCredit(),
+                        request.getSubscriptionId()
+                );
+
+        SubscriptionPaymentResponse response =
+                SubscriptionPaymentResponse.builder()
+                        .paymentId(result.paymentId())
+                        .gatewayOrderId(result.gatewayOrderId())
+                        .totalAmount(result.totalAmount())
+                        .planAmount(result.planAmount())
+                        .walletCredit(result.walletCredit())
+                        .currency(result.currency())
+                        .build();
+
+        return ResponseEntity.ok(response);
     }
+
+
+// ==================== REQUEST / RESPONSE ====================
+
+    @Getter
+    public static class SubscriptionPaymentRequest {
+
+        @NotBlank
+        private String planCode;
+
+        @NotNull
+        @DecimalMin("0.01")
+        private BigDecimal planAmount;
+
+        @NotNull
+        @DecimalMin("0.00")
+        private BigDecimal walletCredit;
+
+        @NotNull
+        private UUID subscriptionId;
+    }
+
+    @Builder
+    public record SubscriptionPaymentResponse(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal totalAmount,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            String currency
+    ) {}
     // ==================== REQUEST/RESPONSE CLASSES ====================
 
-    @lombok.Getter
-    public static class DidRentalRequest {
-        @jakarta.validation.constraints.NotNull
-        private UUID didId;
-        @jakarta.validation.constraints.NotBlank
-        private String didNumber;
-        @jakarta.validation.constraints.NotNull
+    // Wallet
+    public record WalletResponse(UUID tenantId, BigDecimal balance, String currency, String status) {}
+    public record WalletBalanceResponse(BigDecimal balance, String currency) {}
+
+    // Charge
+    @Getter
+    public static class ChargeRequest {
+        @NotNull @DecimalMin("0.01")
         private BigDecimal amount;
+        @NotBlank
+        private String type; // SUBSCRIPTION, USAGE, etc.
+        private String description;
+        private UUID subscriptionId;
+        private Map<String, Object> metadata;
+    }
+    public record ChargeResponse(boolean success, BigDecimal newBalance, String message) {}
+
+    // Recurring Charge
+    @Getter
+    public static class RecurringChargeRequest {
+        @NotBlank
+        private String type; // PLATFORM_FEE, DID_RENTAL, AGENT_FEE
+        @NotNull @DecimalMin("0.01")
+        private BigDecimal amount;
+        private String frequency; // MONTHLY (default), WEEKLY
+        private String sourceType; // DID, PLAN
+        private UUID sourceId;
+        private String description;
+        private UUID subscriptionId; // Optional, for better charge tracking
+    }
+    public record RecurringChargeResponse(UUID id, String type, BigDecimal amount, LocalDate nextChargeDate) {}
+
+    // DID Rental
+    @Getter
+    public static class DidRentalRequest {
+        @NotNull
+        private UUID didId;
+        @NotBlank
+        private String didNumber;
+        @NotNull
+        private BigDecimal amount;
+
+        @NotNull
+        private UUID subscriptionId; // Optional, for better charge tracking
     }
 
-    @lombok.Getter
+    // Usage
+    @Getter
     public static class RecordUsageRequest {
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private UsageMetric metric;
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private BigDecimal quantity;
-        @jakarta.validation.constraints.NotNull
+        @NotNull
         private BillingUnit unit;
         private BigDecimal unitCost;
         private BigDecimal totalCost;
         private String sourceType;
         private UUID sourceId;
         private String description;
+        private UUID subscriptionId; // Optional, for better charge tracking
+
+
     }
 
-    @lombok.Getter
+    // Adjustment
+    @Getter
     public static class AdjustmentRequest {
-        @jakarta.validation.constraints.NotNull
-        @jakarta.validation.constraints.DecimalMin("0.01")
+        @NotNull @DecimalMin("0.01")
         private BigDecimal amount;
-        @jakarta.validation.constraints.NotBlank
+        @NotBlank
         private String reason;
+
+        private UUID subscriptionId; // Optional, for better charge tracking
     }
 
-    @lombok.Builder
-    @lombok.Getter
-    public static class InternalBillingStateResponse {
+    // Billing State
+    @Builder @Getter
+    public static class BillingStateResponse {
         private UUID tenantId;
         private String state;
         private boolean canMakeCalls;
@@ -973,7 +1248,6 @@ public class InternalBillingController {
         private String blockReason;
     }
 }
-
 
 
 ==================================================
@@ -1230,273 +1504,20 @@ public class PaymentController {
 
 
 ==================================================
-FILE: ./src/main/java/com/dalai/llama/billing/controller/RatePlanController.java
-==================================================
-
-package com.dalai.llama.billing.controller;
-
-import com.dalai.llama.billing.domain.entity.RateCard;
-import com.dalai.llama.billing.domain.entity.RatePlan;
-import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
-import com.dalai.llama.billing.domain.entity.enums.DestinationType;
-import com.dalai.llama.billing.domain.exception.RatePlanNotFoundException;
-import com.dalai.llama.billing.dto.request.CreateRatePlanRequest;
-import com.dalai.llama.billing.dto.response.RateCardResponse;
-import com.dalai.llama.billing.dto.response.RatePlanResponse;
-import com.dalai.llama.billing.repository.RateCardRepository;
-import com.dalai.llama.billing.repository.RatePlanRepository;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
-
-@RestController
-@RequestMapping("/api/v1/rate-plans")
-@RequiredArgsConstructor
-@Tag(name = "Rate Plans", description = "Rate plan and rate card management APIs (Platform Admin)")
-public class RatePlanController {
-
-    private final RatePlanRepository ratePlanRepository;
-    private final RateCardRepository rateCardRepository;
-
-    @GetMapping
-    @Operation(summary = "List rate plans", description = "Get all available rate plans")
-    public ResponseEntity<List<RatePlanResponse>> listRatePlans() {
-        List<RatePlan> plans = ratePlanRepository.findAll();
-
-        List<RatePlanResponse> responses = plans.stream()
-                .map(this::toRatePlanResponse)
-                .toList();
-
-        return ResponseEntity.ok(responses);
-    }
-
-    @GetMapping("/{code}")
-    @Operation(summary = "Get rate plan", description = "Get rate plan details with all rate cards")
-    public ResponseEntity<RatePlanDetailResponse> getRatePlan(@PathVariable String code) {
-        RatePlan plan = ratePlanRepository.findByCode(code)
-                .orElseThrow(() -> new RatePlanNotFoundException("Rate plan not found: " + code));
-
-        List<RateCard> cards = rateCardRepository.findAll().stream()
-                .filter(c -> c.getRatePlanId().equals(plan.getId()))
-                .toList();
-
-        List<RateCardResponse> cardResponses = cards.stream()
-                .map(this::toRateCardResponse)
-                .toList();
-
-        return ResponseEntity.ok(RatePlanDetailResponse.builder()
-                .id(plan.getId())
-                .code(plan.getCode())
-                .name(plan.getName())
-                .description(plan.getDescription())
-                .isDefault(plan.isDefault())
-                .active(plan.isActive())
-                .rateCards(cardResponses)
-                .build());
-    }
-
-    @PostMapping
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
-    @Operation(summary = "Create rate plan", description = "Create a new rate plan")
-    public ResponseEntity<RatePlanResponse> createRatePlan(@Valid @RequestBody CreateRatePlanRequest request) {
-        Instant now = Instant.now();
-
-        RatePlan plan = RatePlan.builder()
-                .id(UUID.randomUUID())
-                .code(request.getCode())
-                .name(request.getName())
-                .description(request.getDescription())
-                .isDefault(false)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build();
-
-        ratePlanRepository.save(plan);
-
-        return ResponseEntity.ok(toRatePlanResponse(plan));
-    }
-
-    @PutMapping("/{id}")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
-    @Operation(summary = "Update rate plan", description = "Update an existing rate plan")
-    public ResponseEntity<RatePlanResponse> updateRatePlan(
-            @PathVariable UUID id,
-            @Valid @RequestBody UpdateRatePlanRequest request
-    ) {
-        RatePlan plan = ratePlanRepository.findById(id)
-                .orElseThrow(() -> new RatePlanNotFoundException("Rate plan not found"));
-
-        if (request.getName() != null) {
-            plan.setName(request.getName());
-        }
-        if (request.getDescription() != null) {
-            plan.setDescription(request.getDescription());
-        }
-        if (request.getActive() != null) {
-            plan.setActive(request.getActive());
-        }
-        plan.setUpdatedAt(Instant.now());
-
-        ratePlanRepository.save(plan);
-
-        return ResponseEntity.ok(toRatePlanResponse(plan));
-    }
-
-    @PostMapping("/{id}/rate-cards")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
-    @Operation(summary = "Add rate card", description = "Add a new rate card to a rate plan")
-    public ResponseEntity<RateCardResponse> addRateCard(
-            @PathVariable UUID id,
-            @Valid @RequestBody CreateRateCardRequest request
-    ) {
-        RatePlan plan = ratePlanRepository.findById(id)
-                .orElseThrow(() -> new RatePlanNotFoundException("Rate plan not found"));
-
-        Instant now = Instant.now();
-
-        RateCard card = RateCard.builder()
-                .id(UUID.randomUUID())
-                .ratePlanId(plan.getId())
-                .metric(request.getMetric())
-                .destinationPrefix(request.getDestinationPrefix())
-                .destinationType(request.getDestinationType())
-                .ratePerUnit(request.getRatePerUnit())
-                .unit(request.getUnit())
-                .billingIncrement(request.getBillingIncrement() != null ? request.getBillingIncrement() : 60)
-                .minimumCharge(request.getMinimumCharge() != null ? request.getMinimumCharge() : 0)
-                .effectiveFrom(request.getEffectiveFrom() != null ? request.getEffectiveFrom() : now)
-                .effectiveTo(request.getEffectiveTo())
-                .priority(request.getPriority() != null ? request.getPriority() : 0)
-                .createdAt(now)
-                .updatedAt(now)
-                .build();
-
-        rateCardRepository.save(card);
-
-        return ResponseEntity.ok(toRateCardResponse(card));
-    }
-
-    @DeleteMapping("/{planId}/rate-cards/{cardId}")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
-    @Operation(summary = "Delete rate card", description = "Remove a rate card from a rate plan")
-    public ResponseEntity<Void> deleteRateCard(
-            @PathVariable UUID planId,
-            @PathVariable UUID cardId
-    ) {
-        RateCard card = rateCardRepository.findById(cardId)
-                .filter(c -> c.getRatePlanId().equals(planId))
-                .orElseThrow(() -> new IllegalArgumentException("Rate card not found"));
-
-        rateCardRepository.delete(card);
-
-        return ResponseEntity.noContent().build();
-    }
-
-    private RatePlanResponse toRatePlanResponse(RatePlan plan) {
-        return RatePlanResponse.builder()
-                .id(plan.getId())
-                .code(plan.getCode())
-                .name(plan.getName())
-                .description(plan.getDescription())
-                .isDefault(plan.isDefault())
-                .active(plan.isActive())
-                .build();
-    }
-
-    private RateCardResponse toRateCardResponse(RateCard card) {
-        return RateCardResponse.builder()
-                .id(card.getId())
-                .metric(card.getMetric())
-                .destinationPrefix(card.getDestinationPrefix())
-                .destinationType(card.getDestinationType() != null ? card.getDestinationType().name() : null)
-                .ratePerUnit(card.getRatePerUnit())
-                .unit(card.getUnit().name())
-                .billingIncrement(card.getBillingIncrement())
-                .minimumCharge(card.getMinimumCharge())
-                .effectiveFrom(card.getEffectiveFrom())
-                .effectiveTo(card.getEffectiveTo())
-                .priority(card.getPriority())
-                .build();
-    }
-
-    // ==================== REQUEST/RESPONSE CLASSES ====================
-
-    @lombok.Getter
-    public static class UpdateRatePlanRequest {
-        private String name;
-        private String description;
-        private Boolean active;
-    }
-
-    @lombok.Getter
-    public static class CreateRateCardRequest {
-        @jakarta.validation.constraints.NotBlank
-        private String metric;
-        private String destinationPrefix;
-        private DestinationType destinationType;
-        @jakarta.validation.constraints.NotNull
-        private BigDecimal ratePerUnit;
-        @jakarta.validation.constraints.NotNull
-        private BillingUnit unit;
-        private Integer billingIncrement;
-        private Integer minimumCharge;
-        private Instant effectiveFrom;
-        private Instant effectiveTo;
-        private Integer priority;
-    }
-
-    @lombok.Builder
-    @lombok.Getter
-    public static class RatePlanDetailResponse {
-        private UUID id;
-        private String code;
-        private String name;
-        private String description;
-        private boolean isDefault;
-        private boolean active;
-        private List<RateCardResponse> rateCards;
-    }
-}
-
-
-
-==================================================
 FILE: ./src/main/java/com/dalai/llama/billing/controller/RazorpayWebhookController.java
 ==================================================
 
 package com.dalai.llama.billing.controller;
 
-import com.dalai.llama.billing.domain.entity.Payment;
-import com.dalai.llama.billing.domain.entity.enums.TransactionType;
-import com.dalai.llama.billing.repository.PaymentRepository;
-import com.dalai.llama.billing.service.BillingStateService;
-import com.dalai.llama.billing.service.PaymentService;
-import com.dalai.llama.billing.service.WalletService;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.dalai.llama.billing.service.payment.RazorpayService;
+import com.dalai.llama.billing.service.payment.RazorpayWebhookOrchestrationService;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.util.HexFormat;
 
 @RestController
 @RequestMapping("/api/v1/webhooks/razorpay")
@@ -1506,14 +1527,8 @@ import java.util.HexFormat;
 @Hidden
 public class RazorpayWebhookController {
 
-    private final PaymentService paymentService;
-    private final PaymentRepository paymentRepository;
-    private final WalletService walletService;
-    private final BillingStateService billingStateService;
-    private final ObjectMapper objectMapper;
-
-    @Value("${razorpay.webhook-secret}")
-    private String webhookSecret;
+    private final RazorpayService razorpayService;
+    private final RazorpayWebhookOrchestrationService webhookService;
 
     @PostMapping
     @Operation(summary = "Razorpay webhook", description = "Handle Razorpay payment events")
@@ -1523,149 +1538,26 @@ public class RazorpayWebhookController {
     ) {
         log.info("Received Razorpay webhook");
 
-        // 1. Verify signature
-        if (!verifySignature(payload, signature)) {
-            log.warn("Invalid webhook signature");
-            return ResponseEntity.badRequest().body("Invalid signature");
-        }
-
         try {
-            JsonNode event = objectMapper.readTree(payload);
-            String eventType = event.path("event").asText();
+            String eventType = razorpayService.extractEventType(payload);
 
             log.info("Processing Razorpay event: {}", eventType);
 
-            switch (eventType) {
-                case "payment.captured" -> handlePaymentCaptured(event);
-                case "payment.failed" -> handlePaymentFailed(event);
-                case "refund.created" -> handleRefundCreated(event);
-                case "order.paid" -> handleOrderPaid(event);
-                default -> log.info("Unhandled event type: {}", eventType);
-            }
+            webhookService.processWebhook(
+                    eventType,
+                    payload,
+                    signature
+            );
 
             return ResponseEntity.ok("OK");
 
         } catch (Exception e) {
             log.error("Error processing webhook", e);
-            return ResponseEntity.internalServerError().body("Error processing webhook");
-        }
-    }
-
-    private void handlePaymentCaptured(JsonNode event) {
-        JsonNode paymentEntity = event.path("payload").path("payment").path("entity");
-
-        String orderId = paymentEntity.path("order_id").asText();
-        String paymentId = paymentEntity.path("id").asText();
-
-        log.info("Payment captured - Order: {}, Payment: {}", orderId, paymentId);
-
-        // The signature verification for the payment itself happens during client callback
-        // Here we just update the payment status
-        paymentRepository.findByGatewayOrderId(orderId).ifPresent(payment -> {
-            if (payment.getGatewayPaymentId() == null) {
-                // Payment not yet verified via client callback, mark as captured
-                payment.markSuccess(paymentId, "webhook-verified");
-                paymentRepository.save(payment);
-
-                // Credit wallet
-                walletService.credit(
-                        payment.getTenantId(),
-                        payment.getAmount(),
-                        "PAYMENT:" + paymentId
-                );
-
-                // Evaluate billing state
-                billingStateService.evaluateState(payment.getTenantId());
-
-                log.info("Wallet credited via webhook for order: {}", orderId);
-            }
-        });
-    }
-
-    private void handlePaymentFailed(JsonNode event) {
-        JsonNode paymentEntity = event.path("payload").path("payment").path("entity");
-
-        String orderId = paymentEntity.path("order_id").asText();
-        String errorCode = paymentEntity.path("error_code").asText();
-        String errorDescription = paymentEntity.path("error_description").asText();
-
-        log.info("Payment failed - Order: {}, Error: {} - {}", orderId, errorCode, errorDescription);
-
-        paymentRepository.findByGatewayOrderId(orderId).ifPresent(payment -> {
-            payment.markFailed(errorCode + ": " + errorDescription);
-            paymentRepository.save(payment);
-        });
-    }
-
-    private void handleRefundCreated(JsonNode event) {
-        JsonNode refundEntity = event.path("payload").path("refund").path("entity");
-
-        String paymentId = refundEntity.path("payment_id").asText();
-        int amountPaise = refundEntity.path("amount").asInt();
-        java.math.BigDecimal amount = java.math.BigDecimal.valueOf(amountPaise)
-                .divide(java.math.BigDecimal.valueOf(100));
-
-        log.info("Refund created - Payment: {}, Amount: {}", paymentId, amount);
-
-        // Find payment by gateway payment ID
-        paymentRepository.findAll().stream()
-                .filter(p -> paymentId.equals(p.getGatewayPaymentId()))
-                .findFirst()
-                .ifPresent(payment -> {
-                    // Debit wallet for refund
-                    walletService.debit(
-                            payment.getTenantId(),
-                            amount,
-                            "REFUND:" + refundEntity.path("id").asText()
-                    );
-
-                    // Update payment status
-                    payment.markRefunded("Refund processed");
-                    paymentRepository.save(payment);
-
-                    // Evaluate billing state
-                    billingStateService.evaluateState(payment.getTenantId());
-
-                    log.info("Refund processed for payment: {}", paymentId);
-                });
-    }
-
-    private void handleOrderPaid(JsonNode event) {
-        // Alternative to payment.captured
-        JsonNode orderEntity = event.path("payload").path("order").path("entity");
-        String orderId = orderEntity.path("id").asText();
-
-        log.info("Order paid - Order: {}", orderId);
-
-        // Usually already handled by payment.captured
-        paymentRepository.findByGatewayOrderId(orderId).ifPresent(payment -> {
-            if (payment.getGatewayPaymentId() == null) {
-                log.info("Order {} marked as paid but no payment ID yet", orderId);
-            }
-        });
-    }
-
-    private boolean verifySignature(String payload, String signature) {
-        try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            SecretKeySpec secretKeySpec = new SecretKeySpec(
-                    webhookSecret.getBytes(StandardCharsets.UTF_8),
-                    "HmacSHA256"
-            );
-            mac.init(secretKeySpec);
-
-            byte[] hmacBytes = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
-            String expectedSignature = HexFormat.of().formatHex(hmacBytes);
-
-            return expectedSignature.equals(signature);
-
-        } catch (Exception e) {
-            log.error("Error verifying webhook signature", e);
-            return false;
+            return ResponseEntity.internalServerError()
+                    .body("Error processing webhook");
         }
     }
 }
-
 
 
 ==================================================
@@ -2241,6 +2133,7 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -2316,6 +2209,8 @@ public class Payment {
     @Column(length = 500)
     private String description;
 
+    private Instant expiredAt;
+
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -2351,6 +2246,7 @@ public class Payment {
                 .gatewayOrderId(gatewayOrderId)
                 .status(PaymentStatus.PENDING)
                 .description(description)
+                .expiredAt(now.plus(15, ChronoUnit.MINUTES))
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -2543,6 +2439,126 @@ public class RatePlan {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/billing/domain/entity/RecurringCharge.java
+==================================================
+
+package com.dalai.llama.billing.domain.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+/**
+ * Recurring charge for auto-billing.
+ * Created on subscription, charged monthly by scheduler.
+ *
+ * Types:
+ * - PLATFORM_FEE: Monthly plan fee
+ * - DID_RENTAL: Monthly DID rental
+ * - AGENT_FEE: Per-agent monthly fee
+ */
+@Entity
+@Table(name = "recurring_charges", indexes = {
+        @Index(name = "idx_recurring_tenant", columnList = "tenant_id"),
+        @Index(name = "idx_recurring_next_date", columnList = "next_charge_date"),
+        @Index(name = "idx_recurring_status", columnList = "status")
+})
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+public class RecurringCharge {
+
+    @Id
+    private UUID id;
+
+    @Column(name = "tenant_id", nullable = false)
+    private UUID tenantId;
+
+    @Column(nullable = false, length = 30)
+    private String type; // PLATFORM_FEE, DID_RENTAL, AGENT_FEE
+
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal amount;
+
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private String frequency = "MONTHLY"; // MONTHLY, WEEKLY, YEARLY
+
+    @Column(name = "next_charge_date", nullable = false)
+    private LocalDate nextChargeDate;
+
+    @Column(name = "last_charged_at")
+    private Instant lastChargedAt;
+
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private String status = "ACTIVE"; // ACTIVE, PAUSED, CANCELLED
+
+    @Column(name = "source_type", length = 30)
+    private String sourceType; // DID, PLAN, AGENT
+
+    @Column(name = "source_id")
+    private UUID sourceId;
+
+    private String description;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    private UUID subscriptionId; // Optional link to subscription (for platform fees)
+    @Version
+    private long version;
+
+    @PrePersist
+    void prePersist() {
+        if (id == null) id = UUID.randomUUID();
+        if (createdAt == null) createdAt = Instant.now();
+        if (nextChargeDate == null) nextChargeDate = LocalDate.now().plusMonths(1);
+        updatedAt = Instant.now();
+    }
+
+    @PreUpdate
+    void preUpdate() {
+        updatedAt = Instant.now();
+    }
+
+    public void markCharged() {
+        this.lastChargedAt = Instant.now();
+        this.nextChargeDate = calculateNextChargeDate();
+    }
+
+    public void cancel() {
+        this.status = "CANCELLED";
+    }
+
+    public void pause() {
+        this.status = "PAUSED";
+    }
+
+    public void resume() {
+        this.status = "ACTIVE";
+    }
+
+    private LocalDate calculateNextChargeDate() {
+        return switch (frequency) {
+            case "WEEKLY" -> nextChargeDate.plusWeeks(1);
+            case "YEARLY" -> nextChargeDate.plusYears(1);
+            default -> nextChargeDate.plusMonths(1); // MONTHLY
+        };
+    }
+}
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/billing/domain/entity/Transaction.java
 ==================================================
 
@@ -2557,8 +2573,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "transactions")
-@Getter @Setter
+@Table(name = "transactions", indexes = {
+        @Index(name = "idx_txn_tenant", columnList = "tenant_id"),
+        @Index(name = "idx_txn_subscription", columnList = "subscription_id"),
+        @Index(name = "idx_txn_reference", columnList = "reference")
+})
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -2567,21 +2588,39 @@ public class Transaction {
     @Id
     private UUID id;
 
+    @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
+
+    @Column(name = "wallet_id", nullable = false)
     private UUID walletId;
 
+    @Column(name = "subscription_id")
+    private UUID subscriptionId;
+
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private TransactionType type;
 
+    @Column(nullable = false, precision = 15, scale = 4)
     private BigDecimal amount;
+
+    @Column(name = "balance_before", nullable = false, precision = 15, scale = 4)
     private BigDecimal balanceBefore;
+
+    @Column(name = "balance_after", nullable = false, precision = 15, scale = 4)
     private BigDecimal balanceAfter;
 
     private String reference;
+
     private String description;
 
+    @Column(name = "idempotency_key", unique = true, length = 100)
+    private String idempotencyKey;
+
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }
+
 
 
 
@@ -3868,13 +3907,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+// PaymentRepository
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByGatewayOrderId(String gatewayOrderId);
 
+    Optional<Payment> findByGatewayPaymentId(String gatewayPaymentId);
+
     List<Payment> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 }
-
 
 
 ==================================================
@@ -3923,20 +3964,76 @@ public interface RatePlanRepository extends JpaRepository<RatePlan, UUID> {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/billing/repository/RecurringChargeRepository.java
+==================================================
+
+package com.dalai.llama.billing.repository;
+
+import com.dalai.llama.billing.domain.entity.RecurringCharge;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+// RecurringChargeRepository
+public interface RecurringChargeRepository extends JpaRepository<RecurringCharge, UUID> {
+
+    List<RecurringCharge> findByTenantId(UUID tenantId);
+
+    List<RecurringCharge> findBySubscriptionId(UUID subscriptionId);
+
+    List<RecurringCharge> findByTenantIdAndStatus(UUID tenantId, String status);
+
+    @Query("SELECT rc FROM RecurringCharge rc WHERE rc.nextChargeDate <= :date AND rc.status = 'ACTIVE'")
+    List<RecurringCharge> findDueCharges(@Param("date") LocalDate date);
+
+    List<RecurringCharge> findByTenantIdAndSourceTypeAndSourceId(UUID tenantId, String sourceType, UUID sourceId);
+
+    @Modifying
+    @Query("UPDATE RecurringCharge rc SET rc.status = 'CANCELLED', rc.updatedAt = CURRENT_TIMESTAMP " +
+            "WHERE rc.tenantId = :tenantId AND rc.sourceType = :sourceType AND rc.sourceId = :sourceId")
+    void cancelBySource(@Param("tenantId") UUID tenantId,
+                        @Param("sourceType") String sourceType,
+                        @Param("sourceId") UUID sourceId);
+
+    @Modifying
+    @Query("UPDATE RecurringCharge rc SET rc.status = 'CANCELLED', rc.updatedAt = CURRENT_TIMESTAMP " +
+            "WHERE rc.subscriptionId = :subscriptionId")
+    void cancelBySubscriptionId(@Param("subscriptionId") UUID subscriptionId);
+}
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/billing/repository/TransactionRepository.java
 ==================================================
 
 package com.dalai.llama.billing.repository;
 
 import com.dalai.llama.billing.domain.entity.Transaction;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
 
     List<Transaction> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+
+    List<Transaction> findBySubscriptionId(UUID subscriptionId);
+
+    Optional<Transaction> findByReference(String reference);
+
+    Optional<Transaction> findByIdempotencyKey(String idempotencyKey);
+
+    boolean existsByIdempotencyKey(String idempotencyKey);
+
+    List<Transaction> findByTenantIdAndType(UUID tenantId, TransactionType type);
 }
 
 
@@ -4037,6 +4134,138 @@ public class MonthlyDidRentalJob {
 
 
 ==================================================
+FILE: ./src/main/java/com/dalai/llama/billing/scheduler/PaymentFailureChecker.java
+==================================================
+
+package com.dalai.llama.billing.scheduler;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+@Component
+@RequiredArgsConstructor
+public class PaymentFailureChecker {
+}
+
+
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/billing/scheduler/RecurringChargeScheduler.java
+==================================================
+
+package com.dalai.llama.billing.scheduler;
+
+import com.dalai.llama.billing.domain.entity.RecurringCharge;
+import com.dalai.llama.billing.repository.RecurringChargeRepository;
+import com.dalai.llama.billing.service.BillingStateService;
+import com.dalai.llama.billing.service.WalletService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.List;
+
+/**
+ * Scheduled job to process recurring charges.
+ * Runs daily at 2 AM.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RecurringChargeScheduler {
+
+    private final RecurringChargeRepository chargeRepository;
+    private final WalletService walletService;
+    private final BillingStateService billingStateService;
+
+    /**
+     * Process all due recurring charges
+     */
+    @Scheduled(cron = "0 0 2 * * ?") // 2 AM daily
+    @Transactional
+    public void processRecurringCharges() {
+        LocalDate today = LocalDate.now();
+        log.info("Starting recurring charge processing for {}", today);
+
+        List<RecurringCharge> dueCharges = chargeRepository.findDueCharges(today);
+        log.info("Found {} due recurring charges", dueCharges.size());
+
+        int success = 0, failed = 0, skipped = 0;
+
+        for (RecurringCharge charge : dueCharges) {
+            try {
+                boolean processed = processCharge(charge);
+                if (processed) {
+                    success++;
+                } else {
+                    skipped++;
+                }
+            } catch (Exception e) {
+                log.error("Failed to process charge {} for tenant {}: {}",
+                        charge.getId(), charge.getTenantId(), e.getMessage());
+                failed++;
+            }
+        }
+
+        log.info("Recurring charge processing completed. Success: {}, Skipped: {}, Failed: {}",
+                success, skipped, failed);
+    }
+
+    /**
+     * Process a single charge
+     * @return true if charged, false if skipped
+     */
+    private boolean processCharge(RecurringCharge charge) {
+        // Check if tenant has sufficient balance
+        var balance = walletService.getBalance(charge.getTenantId());
+
+        if (balance.compareTo(charge.getAmount()) < 0) {
+            log.warn("Insufficient balance for recurring charge {} - tenant: {}, required: {}, available: {}",
+                    charge.getType(), charge.getTenantId(), charge.getAmount(), balance);
+            // Don't skip - still debit to trigger GRACE state
+        }
+
+        // Debit wallet
+        String reference = String.format("%s:%s", charge.getType(),
+                charge.getDescription() != null ? charge.getDescription() : charge.getId());
+
+        walletService.debit(charge.getTenantId(), charge.getAmount(), reference,charge.getSubscriptionId());
+
+        // Update charge
+        charge.markCharged();
+        chargeRepository.save(charge);
+
+        // Evaluate billing state (may trigger GRACE or SUSPENDED)
+        billingStateService.evaluateState(charge.getTenantId());
+
+        log.info("Processed recurring charge {} for tenant {}: ₹{}",
+                charge.getType(), charge.getTenantId(), charge.getAmount());
+
+        return true;
+    }
+
+    /**
+     * Manual trigger for a specific tenant (for testing/support)
+     */
+    @Transactional
+    public void processChargesForTenant(java.util.UUID tenantId) {
+        log.info("Manual recurring charge processing for tenant {}", tenantId);
+
+        List<RecurringCharge> charges = chargeRepository.findByTenantIdAndStatus(tenantId, "ACTIVE");
+
+        for (RecurringCharge charge : charges) {
+            if (!charge.getNextChargeDate().isAfter(LocalDate.now())) {
+                processCharge(charge);
+            }
+        }
+    }
+}
+
+
+==================================================
 FILE: ./src/main/java/com/dalai/llama/billing/service/BillingStateService.java
 ==================================================
 
@@ -4089,6 +4318,8 @@ FILE: ./src/main/java/com/dalai/llama/billing/service/PaymentService.java
 
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 
@@ -4097,6 +4328,23 @@ public interface PaymentService {
     UUID createPayment(UUID tenantId, BigDecimal amount, String description);
 
     void handlePaymentSuccess(String gatewayOrderId, String paymentId, String signature);
+
+    PaymentServiceImpl.SubscriptionPaymentResult createSubscriptionPayment(
+            UUID tenantId,
+            String planCode,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            UUID subscriptionId
+    );
+
+    record SubscriptionPaymentResult(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal totalAmount,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            String currency
+    ) {}
 }
 
 
@@ -4122,20 +4370,27 @@ FILE: ./src/main/java/com/dalai/llama/billing/service/TransactionService.java
 
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.domain.entity.Transaction;
 import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface TransactionService {
 
-    void recordTransaction(
-            UUID tenantId,
-            UUID walletId,
-            BigDecimal amount,
-            TransactionType type,
-            String reference
-    );
+    void recordTransaction(UUID tenantId, UUID walletId, BigDecimal amount,
+                           TransactionType type, String reference, UUID subscriptionId);
+
+    void recordTransaction(UUID tenantId, UUID walletId, BigDecimal amount,
+                           TransactionType type, String reference, UUID subscriptionId,
+                           String idempotencyKey);
+
+    boolean existsByIdempotencyKey(String idempotencyKey);
+
+    Optional<Transaction> findByIdempotencyKey(String idempotencyKey);
+
+    Optional<Transaction> findByReference(String reference);
 }
 
 
@@ -4178,9 +4433,17 @@ public interface WalletService {
 
     void credit(UUID tenantId, BigDecimal amount, String reference);
 
-    void debit(UUID tenantId, BigDecimal amount, String reference);
+    void debit(UUID tenantId, BigDecimal amount, String reference, UUID subscriptionId);
 
     BigDecimal getBalance(UUID tenantId);
+
+    void credit(UUID tenantId, BigDecimal amount, String reference,
+                UUID subscriptionId, String idempotencyKey);
+
+    void debit(UUID tenantId, BigDecimal amount, String reference,
+               UUID subscriptionId, String idempotencyKey);
+
+    void debit(UUID tenantId, BigDecimal amount, String reference);
 }
 
 
@@ -4433,6 +4696,42 @@ public class PaymentServiceImpl implements PaymentService {
         // 3. Publish event
         eventProducer.publishPaymentReceived(payment.toEvent());
     }
+
+    public SubscriptionPaymentResult createSubscriptionPayment(
+            UUID tenantId,
+            String planCode,
+            BigDecimal planAmount,
+            BigDecimal walletCredit,
+            UUID subscriptionId
+    ) {
+        BigDecimal totalAmount = planAmount.add(walletCredit);
+
+        String description =
+                "SUBSCRIPTION:" + planCode +
+                        "|SUBSCRIPTION_ID:" + subscriptionId +
+                        "|PLAN_AMOUNT:" + planAmount +
+                        "|WALLET_CREDIT:" + walletCredit;
+
+        UUID paymentId = createPayment(
+                tenantId,
+                totalAmount,
+                description
+        );
+
+        Payment payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+
+        return new SubscriptionPaymentResult(
+                payment.getId(),
+                payment.getGatewayOrderId(),
+                totalAmount,
+                planAmount,
+                walletCredit,
+                payment.getCurrency()
+        );
+    }
+
+
 }
 
 
@@ -4482,6 +4781,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -4498,13 +4798,31 @@ public class TransactionServiceImpl implements TransactionService {
             UUID walletId,
             BigDecimal amount,
             TransactionType type,
-            String reference
+            String reference,
+            UUID subscriptionId
     ) {
-        // Get wallet to record balance before/after
+        recordTransaction(tenantId, walletId, amount, type, reference, subscriptionId, null);
+    }
+
+    @Override
+    @Transactional
+    public void recordTransaction(
+            UUID tenantId,
+            UUID walletId,
+            BigDecimal amount,
+            TransactionType type,
+            String reference,
+            UUID subscriptionId,
+            String idempotencyKey
+    ) {
+        // Idempotency check
+        if (idempotencyKey != null && transactionRepository.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findById(walletId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
-        // Calculate balance before (current balance is already updated by wallet service)
         BigDecimal balanceAfter = wallet.getBalance();
         BigDecimal balanceBefore = balanceAfter.subtract(amount);
 
@@ -4512,16 +4830,33 @@ public class TransactionServiceImpl implements TransactionService {
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
                 .walletId(walletId)
+                .subscriptionId(subscriptionId)
                 .amount(amount)
                 .balanceBefore(balanceBefore)
                 .balanceAfter(balanceAfter)
                 .type(type)
                 .reference(reference)
+                .idempotencyKey(idempotencyKey)
                 .description(generateDescription(type, reference))
                 .createdAt(Instant.now())
                 .build();
 
         transactionRepository.save(tx);
+    }
+
+    @Override
+    public boolean existsByIdempotencyKey(String idempotencyKey) {
+        return transactionRepository.existsByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
+    public Optional<Transaction> findByIdempotencyKey(String idempotencyKey) {
+        return transactionRepository.findByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
+    public Optional<Transaction> findByReference(String reference) {
+        return transactionRepository.findByReference(reference);
     }
 
     private String generateDescription(TransactionType type, String reference) {
@@ -4536,7 +4871,6 @@ public class TransactionServiceImpl implements TransactionService {
         };
     }
 }
-
 
 
 ==================================================
@@ -4626,7 +4960,6 @@ public class WalletServiceImpl implements WalletService {
                 .walletId(wallet.getId())
                 .occurredAt(Instant.now())
                 .build());
-
     }
 
     @Override
@@ -4637,6 +4970,18 @@ public class WalletServiceImpl implements WalletService {
     @Override
     @Transactional
     public void credit(UUID tenantId, BigDecimal amount, String reference) {
+        credit(tenantId, amount, reference, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void credit(UUID tenantId, BigDecimal amount, String reference,
+                       UUID subscriptionId, String idempotencyKey) {
+        // Check idempotency
+        if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
@@ -4644,13 +4989,32 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount, TransactionType.RECHARGE, reference
+                tenantId, wallet.getId(), amount, TransactionType.RECHARGE,
+                reference, subscriptionId, idempotencyKey
         );
     }
 
     @Override
     @Transactional
     public void debit(UUID tenantId, BigDecimal amount, String reference) {
+        debit(tenantId, amount, reference, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void debit(UUID tenantId, BigDecimal amount, String reference, UUID subscriptionId) {
+        debit(tenantId, amount, reference, subscriptionId, null);
+    }
+
+    @Override
+    @Transactional
+    public void debit(UUID tenantId, BigDecimal amount, String reference,
+                      UUID subscriptionId, String idempotencyKey) {
+        // Check idempotency
+        if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            return; // Already processed
+        }
+
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
@@ -4662,7 +5026,8 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION, reference
+                tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION,
+                reference, subscriptionId, idempotencyKey
         );
     }
 
@@ -4673,7 +5038,6 @@ public class WalletServiceImpl implements WalletService {
                 .getBalance();
     }
 }
-
 
 
 ==================================================
@@ -4713,11 +5077,14 @@ FILE: ./src/main/java/com/dalai/llama/billing/service/payment/RazorpayService.ja
 package com.dalai.llama.billing.service.payment;
 
 import com.dalai.llama.billing.domain.exception.PaymentFailedException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import com.razorpay.Utils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -4726,9 +5093,11 @@ import java.math.BigDecimal;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RazorpayService implements PaymentGateway {
 
     private final RazorpayClient razorpayClient;
+    private final ObjectMapper objectMapper;
 
     @Value("${razorpay.key-secret}")
     private String razorpayKeySecret;
@@ -4740,7 +5109,7 @@ public class RazorpayService implements PaymentGateway {
     public String createOrder(BigDecimal amount, String currency, String receipt) {
         try {
             JSONObject request = new JSONObject();
-            request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue()); // major → minor
+            request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue());
             request.put("currency", currency);
             request.put("receipt", receipt);
 
@@ -4770,8 +5139,352 @@ public class RazorpayService implements PaymentGateway {
         }
     }
 
+    /**
+     * Create refund for captured payment
+     */
+    public String initiateRefund(String paymentId, BigDecimal amount) {
+        try {
+            JSONObject request = new JSONObject();
+            request.put("amount",
+                    amount.multiply(BigDecimal.valueOf(100)).intValue());
+
+            var refund = razorpayClient.payments
+                    .refund(paymentId, request);
+
+            String refundId = refund.get("id");
+
+            log.info("Refund initiated for payment {} refund {}",
+                    paymentId,
+                    refundId);
+
+            return refundId;
+
+        } catch (Exception e) {
+            throw new PaymentFailedException(
+                    "Failed to initiate Razorpay refund",
+                    e
+            );
+        }
+    }
+
+    /**
+     * Extract event type from webhook payload
+     */
+    public String extractEventType(String payload) {
+        try {
+            JsonNode event = objectMapper.readTree(payload);
+            return event.path("event").asText();
+        } catch (Exception e) {
+            throw new PaymentFailedException(
+                    "Invalid webhook payload",
+                    e
+            );
+        }
+    }
+
+    /**
+     * Extract payment entity from webhook payload
+     */
+    public JsonNode extractPaymentEntity(String payload) {
+        try {
+            JsonNode event = objectMapper.readTree(payload);
+
+            return event.path("payload")
+                    .path("payment")
+                    .path("entity");
+
+        } catch (Exception e) {
+            throw new PaymentFailedException(
+                    "Invalid payment webhook payload",
+                    e
+            );
+        }
+    }
+
+    /**
+     * Extract refund entity from webhook payload
+     */
+    public JsonNode extractRefundEntity(String payload) {
+        try {
+            JsonNode event = objectMapper.readTree(payload);
+
+            return event.path("payload")
+                    .path("refund")
+                    .path("entity");
+
+        } catch (Exception e) {
+            throw new PaymentFailedException(
+                    "Invalid refund webhook payload",
+                    e
+            );
+        }
+    }
 }
 
+
+==================================================
+FILE: ./src/main/java/com/dalai/llama/billing/service/payment/RazorpayWebhookOrchestrationService.java
+==================================================
+
+package com.dalai.llama.billing.service.payment;
+
+
+
+import com.dalai.llama.billing.client.ProductServiceClient;
+import com.dalai.llama.billing.domain.entity.Payment;
+import com.dalai.llama.billing.domain.entity.Transaction;
+import com.dalai.llama.billing.repository.PaymentRepository;
+import com.dalai.llama.billing.repository.RecurringChargeRepository;
+import com.dalai.llama.billing.service.BillingStateService;
+import com.dalai.llama.billing.service.TransactionService;
+import com.dalai.llama.billing.service.WalletService;
+import com.dalai.llama.billing.service.payment.RazorpayService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class RazorpayWebhookOrchestrationService {
+
+    private final PaymentRepository paymentRepository;
+    private final RecurringChargeRepository recurringChargeRepository;
+    private final WalletService walletService;
+    private final TransactionService transactionService;
+    private final BillingStateService billingStateService;
+    private final RazorpayService razorpayService;
+    private final ProductServiceClient productServiceClient;
+
+    public void processWebhook(
+            String eventType,
+            String payload,
+            String signature
+    ) {
+        switch (eventType) {
+            case "payment.captured" ->
+                    handlePaymentCaptured(payload);
+
+            case "payment.failed" ->
+                    handlePaymentFailed(payload);
+
+            case "refund.created" ->
+                    handleRefundCreated(payload);
+
+            case "order.paid" ->
+                    handleOrderPaid(payload);
+
+            default ->
+                    log.info("Unhandled webhook event: {}", eventType);
+        }
+    }
+
+    private void handlePaymentCaptured(String payload) {
+        var paymentEntity =
+                razorpayService.extractPaymentEntity(payload);
+
+        String orderId = paymentEntity.path("order_id").asText();
+        String gatewayPaymentId = paymentEntity.path("id").asText();
+
+        log.info("Payment captured: {}", gatewayPaymentId);
+
+        String idempotencyKey =
+                "CREDIT:PAYMENT:" + gatewayPaymentId;
+
+        if (transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            log.info("Already processed payment {}", gatewayPaymentId);
+            return;
+        }
+
+        paymentRepository.findByGatewayOrderId(orderId)
+                .ifPresent(payment -> {
+                    UUID tenantId = payment.getTenantId();
+
+                    payment.markSuccess(
+                            gatewayPaymentId,
+                            "webhook-verified"
+                    );
+                    paymentRepository.save(payment);
+
+                    UUID subscriptionId =
+                            extractSubscriptionId(payment);
+
+                    walletService.credit(
+                            tenantId,
+                            payment.getAmount(),
+                            "PAYMENT:" + gatewayPaymentId,
+                            subscriptionId,
+                            idempotencyKey
+                    );
+
+                    billingStateService.evaluateState(tenantId);
+
+                    if (subscriptionId != null) {
+                        processSubscriptionActivation(
+                                payment,
+                                subscriptionId
+                        );
+                    }
+                });
+    }
+
+    private void processSubscriptionActivation(
+            Payment payment,
+            UUID subscriptionId
+    ) {
+        int maxRetries = 3;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                productServiceClient.postSubscription(subscriptionId);
+
+                log.info(
+                        "Subscription activated successfully: {}",
+                        subscriptionId
+                );
+
+                return;
+
+            } catch (Exception e) {
+                log.error(
+                        "Activation failed attempt {} for {}",
+                        attempt,
+                        subscriptionId,
+                        e
+                );
+
+                if (attempt == maxRetries) {
+                    log.error(
+                            "Permanent failure, initiating refund for {}",
+                            subscriptionId
+                    );
+
+                    razorpayService.initiateRefund(
+                            payment.getGatewayPaymentId(),
+                            payment.getAmount()
+                    );
+                }
+
+                try {
+                    Thread.sleep(2000L * attempt);
+                } catch (InterruptedException ignored) {
+                }
+            }
+        }
+    }
+
+    private void handlePaymentFailed(String payload) {
+        var paymentEntity =
+                razorpayService.extractPaymentEntity(payload);
+
+        String orderId = paymentEntity.path("order_id").asText();
+        String errorCode = paymentEntity.path("error_code").asText();
+        String errorDescription =
+                paymentEntity.path("error_description").asText();
+
+        paymentRepository.findByGatewayOrderId(orderId)
+                .ifPresent(payment -> {
+                    payment.markFailed(
+                            errorCode + ": " + errorDescription
+                    );
+                    paymentRepository.save(payment);
+                });
+    }
+
+    private void handleRefundCreated(String payload) {
+        var refundEntity =
+                razorpayService.extractRefundEntity(payload);
+
+        String paymentId =
+                refundEntity.path("payment_id").asText();
+
+        String refundId =
+                refundEntity.path("id").asText();
+
+        BigDecimal amount = BigDecimal.valueOf(
+                refundEntity.path("amount").asInt()
+        ).divide(BigDecimal.valueOf(100));
+
+        String idempotencyKey =
+                "DEBIT:REFUND:" + refundId;
+
+        if (transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            return;
+        }
+
+        Payment payment = paymentRepository
+                .findByGatewayPaymentId(paymentId)
+                .orElse(null);
+
+        if (payment == null) return;
+
+        UUID tenantId = payment.getTenantId();
+
+        String originalKey =
+                "CREDIT:PAYMENT:" + paymentId;
+
+        UUID subscriptionId = transactionService
+                .findByIdempotencyKey(originalKey)
+                .map(Transaction::getSubscriptionId)
+                .orElse(null);
+
+        walletService.debit(
+                tenantId,
+                amount,
+                "REFUND:" + refundId,
+                subscriptionId,
+                idempotencyKey
+        );
+
+        payment.markRefunded("Refund: " + refundId);
+        paymentRepository.save(payment);
+
+        if (subscriptionId != null) {
+            recurringChargeRepository
+                    .findBySubscriptionId(subscriptionId)
+                    .forEach(charge -> {
+                        charge.cancel();
+                        recurringChargeRepository.save(charge);
+                    });
+        }
+
+        billingStateService.evaluateState(tenantId);
+    }
+
+    private void handleOrderPaid(String payload) {
+        log.info("Order paid webhook received");
+    }
+
+    private UUID extractSubscriptionId(Payment payment) {
+        try {
+            String description = payment.getDescription();
+
+            if (description == null) return null;
+
+            String marker = "SUBSCRIPTION_ID:";
+            int start = description.indexOf(marker);
+
+            if (start == -1) return null;
+
+            start += marker.length();
+
+            int end = description.indexOf("|", start);
+
+            String id = end == -1
+                    ? description.substring(start)
+                    : description.substring(start, end);
+
+            return UUID.fromString(id);
+
+        } catch (Exception e) {
+            log.warn("Unable to extract subscription id");
+            return null;
+        }
+    }
+}
 
 
 ==================================================

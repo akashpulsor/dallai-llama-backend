@@ -21,7 +21,7 @@ public class PbxCoreClient {
 
     private final WebClient.Builder webClientBuilder;
 
-    @Value("${dalaillama.pbx-core.url:http://pbx-core.telecom.svc.cluster.local:8080}")
+    @Value("${dalaillama.pbx-core.url:http://pbx-core.apps.svc.cluster.local:8080}")
     private String pbxCoreUrl;
 
     private static final Duration TIMEOUT = Duration.ofSeconds(30);

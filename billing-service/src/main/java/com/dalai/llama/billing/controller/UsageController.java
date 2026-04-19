@@ -20,7 +20,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/v1/tenants/{tenantId}/usage")
+@RequestMapping("/api/v1/billing/{tenantId}/usage")
 @RequiredArgsConstructor
 @Tag(name = "Usage", description = "Usage tracking and reporting APIs")
 public class UsageController {

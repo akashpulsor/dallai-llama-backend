@@ -1,6 +1,7 @@
 package com.dalai.llama.pbx.core.config;
 
 
+import com.dalai.llama.pbx.core.client.AiServiceClient;
 import com.dalai.llama.pbx.core.client.ProductServiceClient;
 import com.dalai.llama.pbx.core.client.TenantServiceClient;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,9 @@ public class WebClientConfig {
     @Value("${dalaillama.product-service.url:http://product-service}")
     private String productServiceBaseUrl;
 
+    @Value("${dalaillama.service.ai-service.url:http://ai-service:8600}")
+    private String aiServiceBaseUrl;
+
     @Bean
     public TenantServiceClient tenantClient(WebClient.Builder webClientBuilder) {
         return new TenantServiceClient(webClientBuilder
@@ -32,6 +36,13 @@ public class WebClientConfig {
     public ProductServiceClient productClient(WebClient.Builder webClientBuilder) {
         return new ProductServiceClient(webClientBuilder
                 .baseUrl(productServiceBaseUrl)
+                .build());
+    }
+
+    @Bean
+    public AiServiceClient aiServiceClient(WebClient.Builder webClientBuilder) {
+        return new AiServiceClient(webClientBuilder
+                .baseUrl(aiServiceBaseUrl)
                 .build());
     }
 

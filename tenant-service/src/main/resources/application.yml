@@ -58,38 +58,53 @@ spring:
         jwt:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://auth.localhost:8081/realms/dalaillama}
 
-  # ================================================================
-  # KAMAILIO DATABASE (Separate datasource)
-  # ================================================================
-  kamailio-datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${KAMAILIO_DB_NAME:kamailio_db}?sslmode=disable
-    username: ${DB_USERNAME:kamailio}
-    password: ${DB_PASSWORD:kamailio}
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      maximum-pool-size: 5
-      minimum-idle: 2
+
+# ════════════════════════════════════════════════════════════
+# ADD THESE SECTIONS TO YOUR application.yaml
+# ════════════════════════════════════════════════════════════
+
+# ================================================================
+# DALAI LLAMA PLATFORM CONFIG
+# ================================================================
+dalaillama:
+  domain: ${BASE_DOMAIN:dalaillama.in}
+  shared-namespace: ${SHARED_NAMESPACE:apps}
+
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket-prefix: ${MINIO_BUCKET_PREFIX:dl}
+
+  ai-service:
+    url: ${AI_SERVICE_URL:http://ai-service.apps.svc.cluster.local:8601}
+    ws-url: ${AI_SERVICE_WS_URL:ws://ai-service.apps.svc.cluster.local:8601}
+    rtp-host: ${AI_SERVICE_RTP_HOST:ai-service.apps.svc.cluster.local}
+    rtp-port: ${AI_SERVICE_RTP_PORT:5555}
+
+  pbx-core:
+    url: ${PBX_CORE_URL:http://pbx-core.apps.svc.cluster.local:8080}
+
+  istio:
+    gateway-name: ${ISTIO_GATEWAY_NAME:central-gateway}
+    gateway-namespace: ${ISTIO_GATEWAY_NAMESPACE:istio-system}
+    vs-name: ${ISTIO_VS_NAME:tenant-routes}
+    reconcile-interval-ms: ${ISTIO_RECONCILE_INTERVAL:300000}
+
 
 
 # ================================================================
-# TELECOM STACK IMAGES
+# KUBERNETES (for Istio reconciler)
 # ================================================================
-telecom:
-  images:
-    agent-ui: ${IMAGE_AGENT_UI:dalaillama/agent-ui:latest}
-    admin-ui: ${IMAGE_ADMIN_UI:dalaillama/admin-ui:latest}
-    supervisor-ui: ${IMAGE_SUPERVISOR_UI:dalaillama/supervisor-ui:latest}
-    ivr-builder: ${IMAGE_IVR_BUILDER:dalaillama/ivr-builder:latest}
-    pbx-core: ${IMAGE_PBX_CORE:dalaillama/pbx-core:latest}
-    agent-service: ${IMAGE_AGENT_SERVICE:dalaillama/agent-service:latest}
-    ai-service: ${IMAGE_AI_SERVICE:dalaillama/ai-service:latest}
-    kamailio: ${IMAGE_KAMAILIO:dalaillama/kamailio:5.7}
-    freeswitch: ${IMAGE_FREESWITCH:dalaillama/freeswitch:1.10}
-    rtpengine: ${IMAGE_RTPENGINE:dalaillama/rtpengine:latest}
-    coturn: ${IMAGE_COTURN:coturn/coturn:latest}
+kubernetes:
+  master-url: ${K8S_MASTER_URL:}
+  namespace: ${K8S_NAMESPACE:apps}
+  trust-certs: ${K8S_TRUST_CERTS:true}
 
+# Under existing 'spring.datasource:' — no change needed.
+# MinIO uses S3 SDK, not spring datasource.
 # ================================================================
-# KEYCLOAK CONFIGURATION
+# KEYCLOAK ADMIN (for realm management)
 # ================================================================
 keycloak:
   admin:
@@ -98,60 +113,18 @@ keycloak:
     orchestrator:
       client-id: ${KEYCLOAK_CLIENT_ID:platform-api}
       client-secret: ${KEYCLOAK_CLIENT_SECRET:}
-# ================================================================
-# KUBERNETES CLIENT
-# ================================================================
-kubernetes:
-  master-url: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT:443}
-  namespace: ${KUBERNETES_NAMESPACE:apps}
-  trust-certs: ${KUBERNETES_TRUST_CERTS:true}
 
 # ================================================================
 # INTERNAL SERVICE URLs
 # ================================================================
 services:
-  product:
-    url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
   billing:
     url: ${BILLING_SERVICE_URL:http://localhost:8083}
-  didww:
-    url: ${DIDWW_SERVICE_URL:http://didww-service:8080}
 
+  product:
+    url: ${PRODUCT_SERVICE_URL:http://product-service:8080}
 # ================================================================
-# GATEWAY CONFIGURATION
-# ================================================================
-gateway:
-  ref: ${GATEWAY_REF:istio-system/central-gateway}
-
-# ================================================================
-# CLUSTER CONFIGURATION
-# ================================================================
-cluster:
-  issuer: ${CLUSTER_ISSUER:letsencrypt-prod}
-
-ingress:
-  class: ${INGRESS_CLASS:nginx}
-
-# ================================================================
-# PROVISIONING CONFIGURATION
-# ================================================================
-provisioning:
-  max-retries: ${PROVISIONING_MAX_RETRIES:3}
-  retry-delay-seconds: ${PROVISIONING_RETRY_DELAY_SECONDS:10}
-  ip-wait-timeout-minutes: ${PROVISIONING_IP_WAIT_TIMEOUT_MINUTES:10}
-  ip-poll-interval-seconds: ${PROVISIONING_IP_POLL_INTERVAL_SECONDS:10}
-  min-wallet-balance: ${PROVISIONING_MIN_WALLET_BALANCE:1000}
-
-# ================================================================
-# HEALTH CHECK SCHEDULER
-# ================================================================
-health-check:
-  enabled: true
-  interval-seconds: 60
-  failure-threshold: 3
-
-# ================================================================
-# SERVER CONFIGURATION
+# SERVER
 # ================================================================
 server:
   port: ${SERVER_PORT:8091}
@@ -179,40 +152,4 @@ management:
 logging:
   level:
     com.dalai.llama.tenant: DEBUG
-    com.dalai.llama.tenant.service.provisioning: DEBUG
     org.springframework.security: DEBUG
-    io.fabric8.kubernetes: DEBUG
-
----
-# ================================================================
-# PRODUCTION PROFILE
-# ================================================================
-spring:
-  config:
-    activate:
-      on-profile: production
-
-dalaillama:
-
-  domain: dalaillama.in
-  shared-namespace: apps
-  gateway-name: central-gateway
-  voicebrain:
-    url: ws://127.0.0.1:8600 # get from cluster ENV variable WebSocket URL for VoiceBrain communication
-  ingress:
-    type: ${INGRESS_TYPE:traefik}      # "traefik" or "istio"
-  tls:
-    cert-resolver: ${TLS_CERT_RESOLVER:letsencrypt}
-  shared:
-    postgres:
-      host: postgres-primary.dalaillama.svc.cluster.local
-    redis:
-      host: redis-master.dalaillama.svc.cluster.local
-    kafka:
-      bootstrap: kafka-0.kafka-headless.dalaillama.svc.cluster.local:9092,kafka-1.kafka-headless.dalaillama.svc.cluster.local:9092
-
-logging:
-  level:
-    com.dalai.llama.tenant: INFO
-    org.springframework.security: WARN
-    io.fabric8.kubernetes: WARN

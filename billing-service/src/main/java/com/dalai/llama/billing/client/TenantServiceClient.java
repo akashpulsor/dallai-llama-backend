@@ -25,21 +25,6 @@ public class TenantServiceClient {
         return webClientBuilder.baseUrl(tenantServiceUrl).build();
     }
 
-    /**
-     * Notify tenant service of billing state change
-     */
-    public void notifyBillingStateChanged(UUID tenantId, String state) {
-        try {
-            client().put()
-                    .uri("/api/v1/internal/tenants/{tenantId}/billing-state?state={state}", tenantId, state)
-                    .retrieve()
-                    .toBodilessEntity()
-                    .block();
-            log.info("Notified tenant service of billing state change: {} -> {}", tenantId, state);
-        } catch (Exception e) {
-            log.error("Failed to notify tenant service of billing state change: {}", e.getMessage());
-        }
-    }
 
     /**
      * Get tenant info
