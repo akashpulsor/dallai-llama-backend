@@ -13,6 +13,7 @@ import com.dalai.llama.tenant.dto.response.*;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
+import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.TenantService;
 import com.dalai.llama.tenant.service.TenantStateMachine;
 import com.dalai.llama.tenant.service.client.BillingServiceClient;
@@ -53,7 +54,7 @@ public class TenantServiceImpl implements TenantService {
     private final BillingServiceClient billingServiceClient;
     private final ProductServiceClient productServiceClient;
     private final TenantEventProducer eventProducer;
-    private final com.dalai.llama.tenant.service.ProvisioningOrchestrator provisioningOrchestrator;
+    private final ProvisioningOrchestrator provisioningOrchestrator;
 
     private final TenantWebSocketPublisher webSocketPublisher;
 

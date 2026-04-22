@@ -152,9 +152,6 @@ public class Payment {
         return this.description != null && this.description.startsWith("SUBSCRIPTION:");
     }
 
-    @Setter
-    private UUID subscriptionIdSetter; // not needed, use builder pattern below
-
     /**
      * Link payment to subscription after creation
      */

@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/billing/{tenantId}/wallet")
 @RequiredArgsConstructor
@@ -37,6 +39,8 @@ public class WalletController {
     @GetMapping
     @Operation(summary = "Get wallet details", description = "Retrieve wallet balance and details for a tenant")
     public ResponseEntity<WalletResponse> getWallet(@PathVariable UUID tenantId) {
+
+        log.info("Fetching wallet for tenant {}", tenantId);
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 

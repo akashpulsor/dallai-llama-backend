@@ -10,6 +10,7 @@ import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +18,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class WalletServiceImpl implements WalletService {
@@ -26,7 +28,13 @@ public class WalletServiceImpl implements WalletService {
     private final BillingEventProducer eventProducer;
 
     @Override
+    @Transactional
     public void createWallet(UUID tenantId) {
+        if (walletRepository.existsByTenantId(tenantId)) {
+            log.info("Wallet already exists for tenantId={}, skipping create", tenantId);
+            return;
+        }
+
         Wallet wallet = walletRepository.save(Wallet.createDefault(tenantId));
 
         eventProducer.publishWalletCreated(WalletCreatedEvent.builder()
@@ -34,11 +42,19 @@ public class WalletServiceImpl implements WalletService {
                 .walletId(wallet.getId())
                 .occurredAt(Instant.now())
                 .build());
+
+        log.info("Created wallet id={} for tenantId={}", wallet.getId(), tenantId);
     }
 
     @Override
+    @Transactional
     public void deleteWallet(UUID tenantId) {
+        if (!walletRepository.existsByTenantId(tenantId)) {
+            log.info("No wallet found for tenantId={}, skipping delete", tenantId);
+            return;
+        }
         walletRepository.deleteByTenantId(tenantId);
+        log.info("Deleted wallet for tenantId={}", tenantId);
     }
 
     @Override

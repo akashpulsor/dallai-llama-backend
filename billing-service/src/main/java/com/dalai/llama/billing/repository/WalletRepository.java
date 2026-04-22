@@ -11,4 +11,6 @@ public interface WalletRepository extends JpaRepository<Wallet, UUID> {
     Optional<Wallet> findByTenantId(UUID tenantId);
 
     void deleteByTenantId(UUID tenantId);
+
+    boolean existsByTenantId(UUID tenantId);
 }

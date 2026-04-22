@@ -14,8 +14,8 @@ import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
 import com.dalai.llama.tenant.repository.ProvisioningLogRepository;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
+import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
-import com.dalai.llama.tenant.service.impl.*;
 import com.dalai.llama.tenant.util.DistributedLock;
 import com.dalai.llama.tenant.util.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -43,7 +42,7 @@ import java.util.*;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ProvisioningOrchestrator implements com.dalai.llama.tenant.service.ProvisioningOrchestrator {
+public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
     private final ProvisioningTaskRepository taskRepository;
     private final ProvisioningLogRepository logRepository;

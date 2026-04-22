@@ -13,6 +13,9 @@ target/
 .settings/
 .vscode/
 *.md
+UI_INTEGRATION_GUIDE.md
+!README.md
+INTEGRATION_AND_TESTING_GUIDE.md
 # OS
 .DS_Store
 

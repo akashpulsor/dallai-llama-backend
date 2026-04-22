@@ -5,7 +5,7 @@ import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.TenantAppService;
-import com.dalai.llama.tenant.service.impl.ProvisioningOrchestrator;
+import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

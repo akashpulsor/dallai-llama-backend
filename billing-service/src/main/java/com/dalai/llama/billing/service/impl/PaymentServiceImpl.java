@@ -14,12 +14,14 @@ import com.dalai.llama.billing.service.PaymentService;
 import com.dalai.llama.billing.service.WalletService;
 import com.dalai.llama.billing.service.payment.PaymentGateway;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
@@ -35,6 +37,8 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public UUID createPayment(UUID tenantId, BigDecimal amount, String description) {
 
+        log.info("Creating payment for tenant={} amount={} description={}",
+                tenantId, amount, description);
         // 1. Load wallet (currency source of truth)
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));

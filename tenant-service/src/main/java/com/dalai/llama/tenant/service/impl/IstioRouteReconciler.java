@@ -20,14 +20,27 @@ import java.util.stream.Collectors;
  * Istio Route Reconciler
  *
  * Manages VirtualService entries so that tenant subdomain hosts
- * (e.g., admin-acme.dalaillama.in, app-acme.dalaillama.in)
+ * (e.g., admin-acme.dalaillama.in, agent-acme.dalaillama.in)
  * route to the correct frontend service in the shared namespace.
  *
+ * DNS setup (prerequisite):
+ *   - Wildcard A record:  *.dalaillama.in  →  server IP
+ *   - This single record covers ALL tenant subdomains automatically.
+ *   - No per-tenant DNS changes needed.
+ *
  * Architecture:
- *   - One Gateway "tenant-gateway" in the apps namespace with wildcard cert
- *   - One VirtualService "tenant-routes" with all tenant host entries
+ *   - One Gateway "central-gateway" in istio-system with wildcard cert (*.dalaillama.in)
+ *   - One VirtualService PER UI service (e.g. tenant-routes-admin-ui, tenant-routes-agent-ui)
+ *   - Each VS lists all tenant hosts that route to that service
+ *   - Istio matches incoming Host header against VS hosts to select the right VS
  *   - Reconciler is idempotent: reads all active TenantApps, builds desired state,
- *     patches the VirtualService to match.
+ *     applies VirtualServices to match, cleans up orphans.
+ *
+ * Example (tenant slug "acme", product AI_CC):
+ *   VirtualService "tenant-routes-admin-ui"       hosts: [admin-acme.dalaillama.in]
+ *   VirtualService "tenant-routes-dashboard-ui"    hosts: [app-acme.dalaillama.in]
+ *   VirtualService "tenant-routes-agent-ui"        hosts: [agent-acme.dalaillama.in]
+ *   VirtualService "tenant-routes-supervisor-ui"   hosts: [supervisor-acme.dalaillama.in]
  *
  * Called:
  *   1. Per-app during provisioning (reconcileForApp)
@@ -184,61 +197,98 @@ public class IstioRouteReconciler {
     }
 
     private void applyVirtualService(Map<String, RouteTarget> routes) {
-        // Build HTTP route list
-        List<HTTPRoute> httpRoutes = new ArrayList<>();
+        // Group hosts by their destination service (many hosts → same service)
+        // e.g. admin-acme, admin-beta → both go to admin-ui
+        Map<String, List<String>> serviceToHosts = new LinkedHashMap<>();
+        Map<String, RouteTarget> serviceToTarget = new LinkedHashMap<>();
 
-        // Group by host for cleaner VS
         for (Map.Entry<String, RouteTarget> entry : routes.entrySet()) {
             String host = entry.getKey();
             RouteTarget target = entry.getValue();
+            String key = target.serviceName + "/" + target.namespace + "/" + target.port;
+            serviceToHosts.computeIfAbsent(key, k -> new ArrayList<>()).add(host);
+            serviceToTarget.putIfAbsent(key, target);
+        }
 
-            HTTPRouteBuilder routeBuilder = new HTTPRouteBuilder();
+        // Create one VirtualService per service group.
+        // Each VS has its own hosts list — Istio routes by Host header match.
+        // This avoids the single-VS problem where host matching doesn't work
+        // because all routes share the same hosts list.
+        for (Map.Entry<String, List<String>> entry : serviceToHosts.entrySet()) {
+            String serviceKey = entry.getKey();
+            List<String> hosts = entry.getValue();
+            RouteTarget target = serviceToTarget.get(serviceKey);
 
-            // Match on host
-            HTTPMatchRequestBuilder matchBuilder = new HTTPMatchRequestBuilder();
-            StringMatchBuilder hostMatch = new StringMatchBuilder();
-            hostMatch.withNewStringMatchExactType(host);
+            String vsName = virtualServiceName + "-" + target.serviceName;
 
-            // Note: host matching is done via the VirtualService hosts field, not match headers
-            // Each route just needs destination
-
-            HTTPRouteDestinationBuilder destBuilder = new HTTPRouteDestinationBuilder();
-            destBuilder.withNewDestination()
+            HTTPRouteDestination dest = new HTTPRouteDestinationBuilder()
+                    .withNewDestination()
                     .withHost(target.serviceName + "." + target.namespace + ".svc.cluster.local")
                     .withNewPort()
                     .withNumber(target.port)
                     .endPort()
-                    .endDestination();
+                    .endDestination()
+                    .build();
 
-            routeBuilder.withRoute(destBuilder.build());
-            httpRoutes.add(routeBuilder.build());
+            HTTPRoute httpRoute = new HTTPRouteBuilder()
+                    .withRoute(dest)
+                    .build();
+
+            VirtualService vs = new VirtualServiceBuilder()
+                    .withNewMetadata()
+                    .withName(vsName)
+                    .withNamespace(sharedNamespace)
+                    .withLabels(Map.of(
+                            "app.kubernetes.io/managed-by", "tenant-service",
+                            "app.kubernetes.io/part-of", "dalaillama"))
+                    .endMetadata()
+                    .withNewSpec()
+                    .withHosts(hosts)
+                    .withGateways(gatewayNamespace + "/" + gatewayName)
+                    .withHttp(httpRoute)
+                    .endSpec()
+                    .build();
+
+            istioClient.v1beta1().virtualServices()
+                    .inNamespace(sharedNamespace)
+                    .resource(vs)
+                    .serverSideApply();
+
+            log.info("Applied VirtualService '{}' hosts={} → {}.{}:{}",
+                    vsName, hosts, target.serviceName, target.namespace, target.port);
         }
 
-        // Build VirtualService
-        VirtualServiceBuilder vsBuilder = new VirtualServiceBuilder()
-                .withNewMetadata()
-                .withName(virtualServiceName)
-                .withNamespace(sharedNamespace)
-                .withLabels(Map.of(
-                        "app.kubernetes.io/managed-by", "tenant-service",
-                        "app.kubernetes.io/part-of", "dalaillama"))
-                .endMetadata()
-                .withNewSpec()
-                .withHosts(new ArrayList<>(routes.keySet()))
-                .withGateways(gatewayNamespace + "/" + gatewayName)
-                .withHttp(httpRoutes)
-                .endSpec();
+        // Cleanup: remove VS for services that no longer have any hosts
+        Set<String> activeServiceNames = serviceToTarget.values().stream()
+                .map(RouteTarget::serviceName)
+                .collect(Collectors.toSet());
+        cleanupOrphanedVirtualServices(activeServiceNames);
+    }
 
-        VirtualService vs = vsBuilder.build();
+    private void cleanupOrphanedVirtualServices(Set<String> activeServiceNames) {
+        try {
+            List<VirtualService> existing = istioClient.v1beta1().virtualServices()
+                    .inNamespace(sharedNamespace)
+                    .withLabel("app.kubernetes.io/managed-by", "tenant-service")
+                    .list().getItems();
 
-        // CreateOrReplace
-        istioClient.v1beta1().virtualServices()
-                .inNamespace(sharedNamespace)
-                .resource(vs)
-                .serverSideApply();
+            for (VirtualService vs : existing) {
+                String vsName = vs.getMetadata().getName();
+                // Check if this VS corresponds to an active service
+                boolean isActive = activeServiceNames.stream()
+                        .anyMatch(svc -> vsName.equals(virtualServiceName + "-" + svc));
 
-        log.info("Applied VirtualService '{}' with {} hosts in namespace '{}'",
-                virtualServiceName, routes.size(), sharedNamespace);
+                if (!isActive) {
+                    istioClient.v1beta1().virtualServices()
+                            .inNamespace(sharedNamespace)
+                            .withName(vsName)
+                            .delete();
+                    log.info("Deleted orphaned VirtualService '{}'", vsName);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to cleanup orphaned VirtualServices: {}", e.getMessage());
+        }
     }
 
     // ════════════════════════════════════════════════════════════

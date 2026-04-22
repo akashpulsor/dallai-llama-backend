@@ -38,8 +38,20 @@ public class PublicTenantConfigController {
     @org.springframework.beans.factory.annotation.Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
+    // Slug must be lowercase alphanumeric + hyphens, 2-50 chars, no leading/trailing hyphen
+    private static final java.util.regex.Pattern SLUG_PATTERN =
+            java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$");
+
     @GetMapping("/tenant-config/{slug}")
     public ResponseEntity<Map<String, Object>> getTenantConfig(@PathVariable String slug) {
+        // Reject malformed slugs before hitting DB
+        if (slug == null || slug.length() < 2 || slug.length() > 50 || !SLUG_PATTERN.matcher(slug).matches()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "invalid_slug",
+                    "message", "Slug must be 2-50 lowercase alphanumeric characters or hyphens"
+            ));
+        }
+
         Optional<Tenant> tenantOpt = tenantRepository.findBySlug(slug);
         if (tenantOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
@@ -75,23 +87,19 @@ public class PublicTenantConfigController {
         config.put("keycloak_issuer", keycloakUrl + "/realms/" + realmName);
         config.put("domain", tenant.getSlug() + "." + baseDomain);
 
-        // ── Per-app configs ──
+        // ── Per-app configs (PUBLIC — only what UI needs for bootstrap) ──
+        // Sensitive fields (capacity, plan_tier, SIP raw IPs) are in the
+        // authenticated GET /api/v1/tenants/{id}/apps endpoint instead.
         List<Map<String, Object>> appConfigs = new ArrayList<>();
         for (TenantApp app : apps) {
             Map<String, Object> appCfg = new LinkedHashMap<>();
-            appCfg.put("app_id", app.getId());
             appCfg.put("app_type", app.getAppType() != null ? app.getAppType().name() : null);
             appCfg.put("product_code", app.getProductCode());
-            appCfg.put("plan_tier", app.getPlanTier());
             appCfg.put("display_name", app.getDisplayName());
-            appCfg.put("subdomain", app.getSubdomain());
             appCfg.put("keycloak_client_id", app.getKeycloakClientId());
             appCfg.put("dashboard_url", app.getDashboardUrl());
 
-            // SIP/WebRTC endpoints
-            appCfg.put("sip_domain", app.getSipEndpointDomain());
-            appCfg.put("sip_udp_url", app.getSipUdpUrl());
-            appCfg.put("sip_tls_url", app.getSipTlsUrl());
+            // WebRTC endpoints (needed pre-login for softphone init)
             appCfg.put("websocket_url", app.getWebsocketUrl());
             appCfg.put("turn_url", app.getTurnUrl());
 
@@ -112,14 +120,6 @@ public class PublicTenantConfigController {
             features.put("conversational_ivr", Boolean.TRUE.equals(app.getConversationalIvrEnabled()));
             features.put("advanced_reporting", Boolean.TRUE.equals(app.getAdvancedReportingEnabled()));
             appCfg.put("features", features);
-
-            // Capacity
-            Map<String, Object> capacity = new LinkedHashMap<>();
-            capacity.put("max_agents", app.getMaxAgents());
-            capacity.put("max_channels", app.getMaxChannels());
-            capacity.put("max_queues", app.getMaxQueues());
-            capacity.put("max_dids", app.getMaxDids());
-            appCfg.put("capacity", capacity);
 
             appConfigs.add(appCfg);
         }
