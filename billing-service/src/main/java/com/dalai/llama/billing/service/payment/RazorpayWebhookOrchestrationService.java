@@ -6,6 +6,7 @@ import com.dalai.llama.billing.domain.entity.PaymentEvent;
 import com.dalai.llama.billing.domain.entity.Transaction;
 import com.dalai.llama.billing.domain.entity.enums.PaymentStatus;
 import com.dalai.llama.billing.domain.event.SubscriptionActivatedEvent;
+import com.dalai.llama.billing.domain.event.WalletCreditedEvent;
 import com.dalai.llama.billing.kafka.producer.BillingEventProducer;
 import com.dalai.llama.billing.repository.PaymentEventRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
@@ -80,45 +81,32 @@ public class RazorpayWebhookOrchestrationService {
         recordEvent(payment, previous, PaymentStatus.SUCCESS, "Captured via webhook", "WEBHOOK");
 
         // 2. Extract subscription context
-        UUID subscriptionId = extractSubscriptionId(payment);
+        UUID subscriptionId =  payment.getSubscriptionId();//  extractSubscriptionId(payment);
 
-        // 3. Branch: subscription payment vs regular recharge
-        if (payment.isSubscriptionPayment() && subscriptionId != null) {
-            handleSubscriptionPaymentCapture(payment, subscriptionId, idempotencyKey);
-        } else {
-            // Regular wallet recharge — credit full amount
-            walletService.credit(tenantId, payment.getAmount(),
-                    "PAYMENT:" + gatewayPaymentId, subscriptionId, idempotencyKey);
-            billingStateService.evaluateState(tenantId);
-            eventProducer.publishPaymentReceived(payment.toEvent());
-        }
+        walletService.credit(tenantId, payment.getAmount(),
+                "PAYMENT:" + gatewayPaymentId, subscriptionId, idempotencyKey);
+        billingStateService.evaluateState(tenantId);
+        BigDecimal balance = walletService.getBalance(tenantId);
+        WalletCreditedEvent walletEvent = WalletCreditedEvent.builder()
+                .tenantId(tenantId)
+                .walletId(payment.getWalletId())
+                .paymentId(payment.getId())
+                .amount(payment.getAmount())
+                .gateway("PAYMENT:" + gatewayPaymentId)
+                .subscriptionId(subscriptionId)
+                .totalBalance(balance)
+                .currency(payment.getCurrency())
+                .amount(payment.getAmount())
+                .occurredAt(Instant.now())
+                .build();
+        eventProducer.publishWalletFunded(walletEvent);
+
     }
 
     /**
      * Subscription payment: credit only wallet portion, activate subscription,
      * publish Kafka event for UI websocket.
      */
-    private void handleSubscriptionPaymentCapture(
-            Payment payment, UUID subscriptionId, String idempotencyKey) {
-
-        UUID tenantId = payment.getTenantId();
-        BigDecimal walletCredit = extractAmount(payment, "WALLET_CREDIT:");
-
-        // Credit only the wallet portion (plan amount is revenue, not wallet balance)
-        if (walletCredit != null && walletCredit.signum() > 0) {
-            walletService.credit(tenantId, walletCredit,
-                    "PAYMENT:" + payment.getGatewayPaymentId(),
-                    subscriptionId, idempotencyKey);
-        }
-
-        billingStateService.evaluateState(tenantId);
-
-        // Publish payment received (all successful payments should notify)
-        eventProducer.publishPaymentReceived(payment.toEvent());
-
-        // Activate subscription in product-service + publish subscription Kafka
-        processSubscriptionActivation(payment, subscriptionId);
-    }
 
     /* ================================================================
        payment.failed

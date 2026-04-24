@@ -56,7 +56,7 @@ public class PaymentServiceImpl implements PaymentService {
         Payment payment = Payment.create(
                 tenantId, wallet.getId(), amount,
                 wallet.getCurrency(), "RAZORPAY",
-                gatewayOrderId, description
+                gatewayOrderId, null,description
         );
 
         paymentRepository.save(payment);
@@ -68,6 +68,42 @@ public class PaymentServiceImpl implements PaymentService {
         ));
 
         return payment.getId();
+    }
+
+    @Override
+    public UUID createPayment(UUID tenantId, String currency, BigDecimal amount, String description, UUID subscriptionId) {
+        log.info("Creating payment for tenant={} amount={}  currency={} description={}, subscriptionId={}",
+                tenantId, amount, currency,description, subscriptionId);
+        // 1. Load wallet (currency source of truth)
+        Wallet wallet = walletRepository.findByTenantId(tenantId)
+                .orElseThrow(() -> new WalletNotFoundException(tenantId));
+
+        // 2. Create gateway order
+        final String gatewayOrderId;
+        try {
+            gatewayOrderId = paymentGateway.createOrder(
+                    amount, wallet.getCurrency(), "rcpt_" + tenantId);
+        } catch (Exception e) {
+            throw new PaymentFailedException("Failed to create payment order", e);
+        }
+
+        // 3. Create payment entity
+        Payment payment = Payment.create(
+                tenantId, wallet.getId(), amount,
+                wallet.getCurrency(), "RAZORPAY",
+                gatewayOrderId, subscriptionId,description
+        );
+
+        paymentRepository.save(payment);
+
+        // 4. Record creation event in payment journey
+        paymentEventRepository.save(PaymentEvent.record(
+                payment, null, PaymentStatus.PENDING,
+                description, "SYSTEM"
+        ));
+
+        return payment.getId();
+
     }
 
     @Override

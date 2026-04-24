@@ -7,11 +7,14 @@ import com.dalai.llama.product.domain.entity.*;
 import com.dalai.llama.product.domain.entity.enums.ChannelDirection;
 import com.dalai.llama.product.domain.entity.enums.DidStatus;
 import com.dalai.llama.product.domain.entity.enums.SubscriptionStatus;
+import com.dalai.llama.product.domain.event.SubscriptionActivatedEvent;
+import com.dalai.llama.product.domain.event.SubscriptionActivationFailedEvent;
 import com.dalai.llama.product.domain.exception.PlanNotFoundException;
 import com.dalai.llama.product.domain.exception.ProductNotFoundException;
 import com.dalai.llama.product.dto.request.SubscriptionRequest;
 import com.dalai.llama.product.dto.response.SubscriptionResponse;
 import com.dalai.llama.product.dto.response.SubscriptionResponse.*;
+import com.dalai.llama.product.kafka.producer.ProductEventProducer;
 import com.dalai.llama.product.repository.*;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.SipEndpointService;
@@ -47,7 +50,7 @@ public class SubscriptionService {
     private final EntitlementService entitlementService;
     private final BillingServiceClient billingClient;
     private final TenantServiceClient tenantClient;
-
+    private final ProductEventProducer productEventProducer;
 
 
     @Transactional
@@ -157,6 +160,7 @@ public class SubscriptionService {
 
     @Transactional
     public SubscriptionResponse postSubscription(UUID subscriptionId) {
+
         Subscription subscription = subscriptionRepository.findById(subscriptionId)
                 .orElseThrow(() -> new RuntimeException("Subscription not found"));
 
@@ -189,6 +193,7 @@ public class SubscriptionService {
             // 1. Provision DID
             did = provisionDid(
                     tenantId,
+                    product.getCode(),
                     SubscriptionRequest.DidInfo.builder()
                             .number(subscription.getRequestedDidNumber())
                             .country(subscription.getRequestedDidCountry())
@@ -234,17 +239,34 @@ public class SubscriptionService {
             );
 
             subscriptionRepository.save(subscription);
+            // Replace with Kafka / Outbox
+
 
         } catch (Exception e) {
+
             log.error("Provisioning failed for subscription {}: {}",
                     subscriptionId,
                     e.getMessage(),
                     e);
 
+            // 🔥 IMPORTANT: mark FAILED
+            subscription.setStatus(SubscriptionStatus.FAILED);
+            subscriptionRepository.save(subscription);
+
+            // 🔥 SAGA EVENT: trigger compensation (refund + cleanup)
+            try {
+                publishActivationFailedEvent(subscription, e);
+            } catch (Exception ex) {
+                log.error("Failed to publish failure event for subscription {}", subscriptionId, ex);
+            }
+
+            // 🔥 OPTIONAL immediate cleanup (defensive)
+            safeCleanup(subscription, did, sipEndpoint, channels, tenantSipTrunk);
+
             return SubscriptionResponse.builder()
                     .subscriptionId(subscription.getId())
                     .status(subscription.getStatus().name())
-                    .provisioningStatus("PARTIAL_FAILURE")
+                    .provisioningStatus("FAILED")
                     .did(did != null ? mapDid(did) : null)
                     .plan(mapPlan(plan, null))
                     .build();
@@ -294,11 +316,12 @@ public class SubscriptionService {
                 );
 
         subscription.setTenantAppId(tenantResponse.tenantAppId());
-
         subscriptionRepository.save(subscription);
+
         // 9. Clear entitlement cache
         entitlementService.invalidateCache(tenantId);
 
+        publishActivationSuccessEvent(subscription);
         return buildResponse(
                 subscription,
                 did,
@@ -307,6 +330,69 @@ public class SubscriptionService {
                 plan,
                 tenantResponse
         );
+    }
+
+    private void publishActivationSuccessEvent(Subscription subscription) {
+
+        // Replace with Kafka / Outbox
+        log.info("Publishing SubscriptionActivationFailedEvent for {}",
+                subscription.getId());
+
+        productEventProducer.publishSubscriptionActivated(
+                new SubscriptionActivatedEvent(
+                         subscription.getId(),
+                         subscription.getTenantId(),
+                        "ACTIVE"
+                     ));
+
+
+    }
+
+    private void publishActivationFailedEvent(Subscription subscription, Exception e) {
+
+        // Replace with Kafka / Outbox
+        log.info("Publishing SubscriptionActivationFailedEvent for {}",
+                subscription.getId());
+
+        productEventProducer.publishSubscriptionFailed(
+                    new SubscriptionActivationFailedEvent(
+                         subscription.getId(),
+                         subscription.getTenantId(),
+                         e.getMessage()
+                     ));
+
+
+    }
+
+    private void safeCleanup(Subscription sub,
+                             Did did,
+                             SipEndpoint sipEndpoint,
+                             PstnChannelBundle channels,
+                             TenantSipTrunk trunk) {
+
+        try {
+            if (trunk != null) {
+                tenantSipTrunkRepository.deleteById(trunk.getId());
+            }
+        } catch (Exception ignored) {}
+
+        try {
+            if (channels != null) {
+                channelBundleRepository.deleteById(channels.getId());
+            }
+        } catch (Exception ignored) {}
+
+        try {
+            if (sipEndpoint != null) {
+                sipEndpointService.delete(sipEndpoint.getId());
+            }
+        } catch (Exception ignored) {}
+
+        try {
+            if (did != null) {
+                didRepository.deleteById(did.getId());
+            }
+        } catch (Exception ignored) {}
     }
     /**
      * Build COMPLETE subscription data for tenant-service.
@@ -526,10 +612,17 @@ public class SubscriptionService {
         return platformFee.add(agentFee).add(didSetup).add(didMonthly);
     }
 
-    private Did provisionDid(UUID tenantId, SubscriptionRequest.DidInfo didInfo) {
+    private Did provisionDid(UUID tenantId, String productCode,SubscriptionRequest.DidInfo didInfo) {
         SipTrunk trunk = sipTrunkRepository.findPlatformTrunk()
                 .orElseThrow(() -> new RuntimeException("Platform trunk not configured"));
 
+        if (productRequiresOutboundTrunk(productCode)) {
+            trunk = sipTrunkRepository.findPlatformTrunk()
+                    .orElseThrow(() -> new RuntimeException(
+                            "Platform trunk not configured — required for outbound product " + productCode));
+        } else {
+            log.info("Skipping outbound trunk lookup for inbound-only product {}", productCode);
+        }
         Did did = Did.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
@@ -609,6 +702,16 @@ public class SubscriptionService {
         };
     }
 
+    private boolean productRequiresOutboundTrunk(String productCode) {
+        return switch (productCode) {
+            case "CONV_IVR", "VIRTUAL_RECEPTIONIST" -> false;
+            case "AI_CC", "BASIC_PBX", "OUTBOUND_DIALER" -> true;
+            default -> {
+                log.warn("Unknown product code '{}', defaulting to require outbound trunk", productCode);
+                yield true;
+            }
+        };
+    }
     private PlanAssignment assignPlan(UUID tenantId, UUID subscriptionId, Plan plan, Integer agentCount) {
         // Don't deactivate existing - multiple subscriptions allowed
         PlanAssignment assignment = PlanAssignment.builder()

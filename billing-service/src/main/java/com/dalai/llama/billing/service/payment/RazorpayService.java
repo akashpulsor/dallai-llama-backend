@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -26,11 +27,18 @@ public class RazorpayService implements PaymentGateway {
     @Value("${razorpay.key-secret}")
     private String razorpayKeySecret;
 
-    /**
-     * Create Razorpay order
-     */
+    @Value("${razorpay.mock-enabled:false}")
+    private boolean mockEnabled;
+
     @Override
     public String createOrder(BigDecimal amount, String currency, String receipt) {
+        if (mockEnabled) {
+            String mockOrderId = "order_MOCK" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+            log.info("[MOCK] Razorpay order created: id={} amount={} currency={} receipt={}",
+                    mockOrderId, amount, currency, receipt);
+            return mockOrderId;
+        }
+
         try {
             JSONObject request = new JSONObject();
             request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue());
@@ -45,11 +53,13 @@ public class RazorpayService implements PaymentGateway {
         }
     }
 
-    /**
-     * Verify Razorpay payment signature
-     */
     @Override
     public void verify(String orderId, String paymentId, String signature) {
+        if (mockEnabled) {
+            log.info("[MOCK] Skipping signature verification for order={} payment={}", orderId, paymentId);
+            return;
+        }
+
         try {
             JSONObject attributes = new JSONObject();
             attributes.put("razorpay_order_id", orderId);
@@ -63,84 +73,51 @@ public class RazorpayService implements PaymentGateway {
         }
     }
 
-    /**
-     * Create refund for captured payment
-     */
     public String initiateRefund(String paymentId, BigDecimal amount) {
+        if (mockEnabled) {
+            String mockRefundId = "rfnd_MOCK" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
+            log.info("[MOCK] Razorpay refund initiated: refund={} payment={} amount={}",
+                    mockRefundId, paymentId, amount);
+            return mockRefundId;
+        }
+
         try {
             JSONObject request = new JSONObject();
-            request.put("amount",
-                    amount.multiply(BigDecimal.valueOf(100)).intValue());
+            request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue());
 
-            var refund = razorpayClient.payments
-                    .refund(paymentId, request);
-
+            var refund = razorpayClient.payments.refund(paymentId, request);
             String refundId = refund.get("id");
 
-            log.info("Refund initiated for payment {} refund {}",
-                    paymentId,
-                    refundId);
-
+            log.info("Refund initiated for payment {} refund {}", paymentId, refundId);
             return refundId;
 
         } catch (Exception e) {
-            throw new PaymentFailedException(
-                    "Failed to initiate Razorpay refund",
-                    e
-            );
+            throw new PaymentFailedException("Failed to initiate Razorpay refund", e);
         }
     }
 
-    /**
-     * Extract event type from webhook payload
-     */
+    // extractEventType, extractPaymentEntity, extractRefundEntity — unchanged
     public String extractEventType(String payload) {
         try {
-            JsonNode event = objectMapper.readTree(payload);
-            return event.path("event").asText();
+            return objectMapper.readTree(payload).path("event").asText();
         } catch (Exception e) {
-            throw new PaymentFailedException(
-                    "Invalid webhook payload",
-                    e
-            );
+            throw new PaymentFailedException("Invalid webhook payload", e);
         }
     }
 
-    /**
-     * Extract payment entity from webhook payload
-     */
     public JsonNode extractPaymentEntity(String payload) {
         try {
-            JsonNode event = objectMapper.readTree(payload);
-
-            return event.path("payload")
-                    .path("payment")
-                    .path("entity");
-
+            return objectMapper.readTree(payload).path("payload").path("payment").path("entity");
         } catch (Exception e) {
-            throw new PaymentFailedException(
-                    "Invalid payment webhook payload",
-                    e
-            );
+            throw new PaymentFailedException("Invalid payment webhook payload", e);
         }
     }
 
-    /**
-     * Extract refund entity from webhook payload
-     */
     public JsonNode extractRefundEntity(String payload) {
         try {
-            JsonNode event = objectMapper.readTree(payload);
-
-            return event.path("payload")
-                    .path("refund")
-                    .path("entity");
-
+            return objectMapper.readTree(payload).path("payload").path("refund").path("entity");
         } catch (Exception e) {
-            throw new PaymentFailedException(
-                    "Invalid refund webhook payload",
-                    e
-            );
+            throw new PaymentFailedException("Invalid refund webhook payload", e);
         }
     }
 }

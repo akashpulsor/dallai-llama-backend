@@ -67,8 +67,10 @@ public class WalletController {
     ) {
         UUID paymentId = paymentService.createPayment(
                 tenantId,
+                request.getCurrency(),
                 request.getAmount(),
-                "Wallet Recharge"
+                "Wallet Recharge",
+                request.getSubscriptionId()
         );
 
         return ResponseEntity.ok(RechargeResponse.builder()

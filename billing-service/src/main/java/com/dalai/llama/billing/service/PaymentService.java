@@ -9,6 +9,8 @@ public interface PaymentService {
 
     UUID createPayment(UUID tenantId, BigDecimal amount, String description);
 
+    UUID createPayment(UUID tenantId, String currency,BigDecimal amount, String description, UUID subscriptionId);
+
     void handlePaymentSuccess(String gatewayOrderId, String paymentId, String signature);
 
     PaymentServiceImpl.SubscriptionPaymentResult createSubscriptionPayment(

@@ -33,28 +33,7 @@ public class PaymentController {
 
     // ==================== PAYMENTS ====================
 
-    @PostMapping("/payments")
-    @Operation(summary = "Create payment order", description = "Create a new payment order for wallet recharge")
-    public ResponseEntity<CreatePaymentResponse> createPayment(
-            @PathVariable UUID tenantId,
-            @Valid @RequestBody CreatePaymentRequest request
-    ) {
-        UUID paymentId = paymentService.createPayment(
-                tenantId,
-                request.getAmount(),
-                request.getDescription()
-        );
 
-        Payment payment = paymentRepository.findById(paymentId).orElseThrow();
-
-        return ResponseEntity.ok(CreatePaymentResponse.builder()
-                .paymentId(paymentId)
-                .gatewayOrderId(payment.getGatewayOrderId())
-                .amount(request.getAmount())
-                .currency(payment.getCurrency())
-                .status(payment.getStatus().name())
-                .build());
-    }
 
     @GetMapping("/payments")
     @Operation(summary = "List payments", description = "Get list of payments for a tenant")

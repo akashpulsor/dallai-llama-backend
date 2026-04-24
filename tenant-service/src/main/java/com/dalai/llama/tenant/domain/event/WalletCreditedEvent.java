@@ -1,6 +1,9 @@
-package com.dalai.llama.billing.domain.event;
+package com.dalai.llama.tenant.domain.event;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -10,12 +13,13 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class PaymentReceivedEvent {
-
+public class WalletCreditedEvent {
     private UUID tenantId;
+    private UUID walletId;
     private UUID paymentId;
     private UUID subscriptionId;
     private BigDecimal amount;
+    private BigDecimal totalBalance;
     private String currency;
     private Instant occurredAt;
     private String gateway;

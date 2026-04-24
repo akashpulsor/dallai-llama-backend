@@ -31,6 +31,9 @@ public class SipTrunk {
     @Enumerated(EnumType.STRING)
     private SipProvider provider;
 
+    @Column(name = "tech_prefix")
+    private String techPrefix;
+
     private String server;
     private int port;
 

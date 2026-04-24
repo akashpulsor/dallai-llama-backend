@@ -34,6 +34,7 @@ public enum SubscriptionStatus {
     CANCELLED,
 
 
+    FAILED,
     /**
      * Billing period expired, not renewed (terminal state)
      */

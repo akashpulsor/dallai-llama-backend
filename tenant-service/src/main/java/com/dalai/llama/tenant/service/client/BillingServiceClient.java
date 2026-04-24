@@ -55,7 +55,7 @@ public class BillingServiceClient {
     public BigDecimal getBalance(UUID tenantId) {
         try {
             return client().get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/balance", tenantId)
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
                     .retrieve()
                     .bodyToMono(BigDecimal.class)
                     .block();

@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.service;
 
+import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
 import com.dalai.llama.tenant.dto.request.UpdateTenantRequest;
@@ -25,7 +26,7 @@ public interface TenantService {
     void deleteTenant(UUID tenantId, String reason);
 
     void onWalletCreated(UUID tenantId, UUID walletId);
-    void onWalletFunded(UUID tenantId);
+    void onWalletFunded(WalletCreditedEvent walletCreditedEvent);
     void onBillingStateChanged(UUID tenantId, String state);
 
     SubscriptionActiveResponse activateSubscription(SubscriptionActiveRequest request);

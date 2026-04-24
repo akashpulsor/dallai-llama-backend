@@ -62,7 +62,7 @@ razorpay:
   key-id: ${RAZORPAY_KEY_ID:rzp_test_xxxxx}
   key-secret: ${RAZORPAY_KEY_SECRET:xxxxx}
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:xxxxx}
-
+  mock-enabled: ${RAZORPAY_MOCK_ENABLED:true}
 # Billing Configuration
 billing:
   grace-period-days: ${GRACE_PERIOD_DAYS:7}

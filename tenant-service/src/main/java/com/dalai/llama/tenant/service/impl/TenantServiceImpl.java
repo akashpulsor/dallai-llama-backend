@@ -4,6 +4,8 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.domain.event.TenantCreatedEvent;
 import com.dalai.llama.tenant.domain.event.TenantDeletedEvent;
+import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
+import com.dalai.llama.tenant.domain.event.WalletExternalEvent;
 import com.dalai.llama.tenant.domain.exception.TenantAlreadyExistsException;
 import com.dalai.llama.tenant.domain.exception.TenantNotFoundException;
 import com.dalai.llama.tenant.dto.mapper.TenantMapper;
@@ -231,22 +233,38 @@ public class TenantServiceImpl implements TenantService {
 
         webSocketPublisher.publish(
                 tenantId,
-                "billing",
-                Map.of(
-                        "event", "WALLET_CREATED",
-                        "tenant_id", tenantId,
-                        "wallet_id", walletId
+                "wallet",
+                WalletExternalEvent.builder().
+                        EventType("WALLET_CREATED").
+                        data(
+                        Map.of(
+                                "event", "WALLET_CREATED",
+                                "tenant_id", tenantId,
+                                "wallet_id", walletId
+                        )
                 )
+
         );
 
         log.info("Wallet linked for tenant {}: {}", tenantId, walletId);
     }
     @Override
-    public void onWalletFunded(UUID tenantId) {
-        Tenant tenant = findTenantOrThrow(tenantId);
+    public void onWalletFunded(WalletCreditedEvent walletCreditedEvent) {
+        Tenant tenant = findTenantOrThrow(walletCreditedEvent.getTenantId());
         tenant.setBillingReadyAt(OffsetDateTime.now());
         tenantRepository.save(tenant);
-        log.info("Wallet funded for tenant: {}", tenantId);
+        log.info("Wallet funded for tenant: {}", walletCreditedEvent.getTenantId());
+
+        webSocketPublisher.publish(
+                walletCreditedEvent.getTenantId(),
+                "wallet",
+                WalletExternalEvent.builder().
+                        EventType("WALLET_FUNDED").
+                        data(
+                                walletCreditedEvent
+                        )
+
+        );
     }
 
     @Override

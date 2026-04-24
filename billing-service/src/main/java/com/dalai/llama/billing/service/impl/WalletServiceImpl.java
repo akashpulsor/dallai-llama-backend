@@ -82,6 +82,7 @@ public class WalletServiceImpl implements WalletService {
                 tenantId, wallet.getId(), amount, TransactionType.RECHARGE,
                 reference, subscriptionId, idempotencyKey
         );
+
     }
 
     @Override

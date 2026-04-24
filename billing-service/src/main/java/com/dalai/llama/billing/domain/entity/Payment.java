@@ -81,6 +81,7 @@ public class Payment {
             String currency,
             String gateway,
             String gatewayOrderId,
+            UUID subscriptionId, // Optional, for linking to subscription
             String description
     ) {
         if (currency == null || currency.length() != 3) {
@@ -97,6 +98,7 @@ public class Payment {
                 .currency(currency)
                 .gateway(gateway)
                 .gatewayOrderId(gatewayOrderId)
+                .subscriptionId(subscriptionId)
                 .status(PaymentStatus.PENDING)
                 .description(description)
                 .expiredAt(now.plus(15, ChronoUnit.MINUTES))
@@ -171,6 +173,7 @@ public class Payment {
                 .amount(this.amount)
                 .currency(this.currency)
                 .gateway(this.gateway)
+                .subscriptionId(this.subscriptionId)
                 .occurredAt(Instant.now())
                 .build();
     }

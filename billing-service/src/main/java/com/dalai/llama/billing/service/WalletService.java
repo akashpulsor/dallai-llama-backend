@@ -1,5 +1,7 @@
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.domain.entity.Wallet;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 

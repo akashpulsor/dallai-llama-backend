@@ -13,4 +13,6 @@ public interface SipEndpointService {
     SipEndpoint getByDidId(UUID didId);
 
     SipEndpoint getById(UUID id);
+
+    void delete(UUID id);
 }
