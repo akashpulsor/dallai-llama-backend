@@ -98,4 +98,9 @@ public class Wallet {
             throw new IllegalArgumentException("Amount must be positive");
         }
     }
+
+    public boolean hasSufficientBalance(BigDecimal amount) {
+        validateAmount(amount);
+        return this.balance.compareTo(amount) >= 0;
+    }
 }

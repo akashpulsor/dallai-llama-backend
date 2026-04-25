@@ -47,6 +47,20 @@ public class BillingServiceClient {
         }
     }
 
+    public WalletBalanceResponse getCurrentBalance(UUID tenantId) {
+        try {
+            WalletBalanceResponse resp = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
+                    .retrieve()
+                    .bodyToMono(WalletBalanceResponse.class)
+                    .block();
+            return resp != null ? resp : new WalletBalanceResponse( BigDecimal.ZERO, "INR");
+        } catch (Exception e) {
+            log.error("Failed to get wallet balance for tenant {}: {}", tenantId, e.getMessage());
+            return new WalletBalanceResponse(BigDecimal.ZERO, "INR");
+        }
+    }
+
     public boolean hasSufficientBalance(UUID tenantId, BigDecimal required) {
         BigDecimal balance = getWalletBalance(tenantId);
         return balance.compareTo(required) >= 0;

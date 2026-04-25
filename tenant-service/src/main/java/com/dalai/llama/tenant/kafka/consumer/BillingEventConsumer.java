@@ -17,9 +17,9 @@ import org.springframework.stereotype.Component;
 public class BillingEventConsumer {
 
     private final TenantService tenantService;
-    private final TenantWebSocketPublisher webSocketPublisher;
 
-    @KafkaListener(topics = "billing.wallet.created", groupId = "tenant-service",
+
+    @KafkaListener(topics = "billing.wallet.created", groupId = "billing-service",
             containerFactory = "walletCreatedListenerFactory")
     public void onWalletCreated(WalletCreatedEvent event) {
         log.info("Received billing.wallet.created: tenantId={} walletId={}",
@@ -28,7 +28,7 @@ public class BillingEventConsumer {
     }
 
 
-    @KafkaListener(topics = "billing.wallet.funded", groupId = "tenant-service",
+    @KafkaListener(topics = "billing.wallet.funded", groupId = "billing-service",
             containerFactory = "walletCreditedListenerFactory")
     public void onWalletCredited(WalletCreditedEvent event) {
         log.info("Received billing.wallet.credited: tenantId={} amount={} balanceAfter={} subscriptionId={}",
@@ -39,7 +39,7 @@ public class BillingEventConsumer {
 
     }
 
-    @KafkaListener(topics = "billing.state.changed", groupId = "tenant-service",
+    @KafkaListener(topics = "billing.state.changed", groupId = "billing-service",
             containerFactory = "billingStateChangedListenerFactory")
     public void onBillingStateChanged(BillingStateChangedEvent event) {
         log.info("Received billing.state.changed: tenantId={} state={}",

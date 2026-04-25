@@ -26,6 +26,8 @@ public class SubscriptionResponse {
     private String gatewayOrderId;
     private String currency;
 
+    private BigDecimal currentWalletBalance;
+    private BigDecimal shortFallAmount;
     // preview / provisioned resources
     private PlanDetails plan;
     private DidDetails did;

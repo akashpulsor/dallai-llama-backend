@@ -19,6 +19,10 @@ public class BillingEventProducer {
         kafkaTemplate.send("billing.wallet.funded", event.getTenantId().toString(), event);
     }
 
+    public void publishWalletDebited(WalletDeductedForSubscriptionEvent event) {
+        kafkaTemplate.send("billing.wallet.debited", event.getTenantId().toString(), event);
+    }
+
     public void publishBillingStateChanged(BillingStateChangedEvent event) {
         kafkaTemplate.send("billing.state.changed", event.getTenantId().toString(), event);
     }

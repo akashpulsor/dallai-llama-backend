@@ -51,18 +51,6 @@ public class InternalProductController {
     private final SubscriptionService subscriptionService;
     // ==================== SUBSCRIPTION ENDPOINTS ====================
 
-    @PostMapping("/subscriptions/{subscriptionId}/activate")
-    @Operation(summary = "Activate subscription after payment success")
-    public ResponseEntity<SubscriptionResponse> activateSubscription(
-            @PathVariable UUID subscriptionId
-    ) {
-        log.info("Activating subscription {}", subscriptionId);
-
-        SubscriptionResponse response =
-                subscriptionService.postSubscription(subscriptionId);
-
-        return ResponseEntity.ok(response);
-    }
 
     /**
      * Called by Tenant Service during provisioning to assign default plan

@@ -24,6 +24,7 @@ public class TenantServiceClient {
 
     private WebClient client() {
         return webClientBuilder.baseUrl(tenantServiceUrl).build();
+
     }
 
     /**
@@ -58,6 +59,7 @@ public class TenantServiceClient {
         try {
             return client().get()
                     .uri("/api/v1/internal/tenants/{tenantId}", tenantId)
+                    .headers(h -> log.info(">>> OUTGOING HEADERS to tenant-service: {}", h))
                     .retrieve()
                     .bodyToMono(TenantInfo.class)
                     .block();

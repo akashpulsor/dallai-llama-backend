@@ -1,6 +1,8 @@
-package com.dalai.llama.tenant.config;
+package com.dalai.llama.product.config;
 
-import com.dalai.llama.tenant.domain.event.*;
+
+import com.dalai.llama.product.domain.event.SubscriptionActivationFailedEvent;
+import com.dalai.llama.product.domain.event.WalletDeductedForSubscriptionEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -63,46 +65,16 @@ public class KafkaConsumerConfig {
         return handler;
     }
 
-    @Bean(name = "walletCreatedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, WalletCreatedEvent>
-    walletCreatedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(WalletCreatedEvent.class, kafkaErrorHandler);
-    }
 
-
-    @Bean(name = "walletCreditedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, WalletCreditedEvent>
-    walletCreditedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(WalletCreditedEvent.class, kafkaErrorHandler);
-    }
-
-    @Bean(name = "billingStateChangedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, BillingStateChangedEvent>
-    billingStateChangedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(BillingStateChangedEvent.class, kafkaErrorHandler);
-    }
-
-    @Bean(name = "subscriptionActivatedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, SubscriptionActivatedEvent>
-    subscriptionActivatedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(SubscriptionActivatedEvent.class, kafkaErrorHandler);
+    @Bean(name = "walletDeductedListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, WalletDeductedForSubscriptionEvent>
+    walletDeductedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(WalletDeductedForSubscriptionEvent.class, kafkaErrorHandler);
     }
 
     @Bean(name = "subscriptionActivationFailedListenerFactory")
     public ConcurrentKafkaListenerContainerFactory<String, SubscriptionActivationFailedEvent>
     subscriptionActivationFailedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
         return buildFactory(SubscriptionActivationFailedEvent.class, kafkaErrorHandler);
-    }
-
-    @Bean(name = "didPurchasedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, DidPurchasedEvent>
-    didPurchasedFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(DidPurchasedEvent.class, kafkaErrorHandler);
-    }
-
-    @Bean(name = "planAssignedListenerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, PlanAssignedEvent>
-    planAssignedFactory(DefaultErrorHandler kafkaErrorHandler) {
-        return buildFactory(PlanAssignedEvent.class, kafkaErrorHandler);
     }
 }

@@ -31,7 +31,7 @@ public class SubscriptionRequest {
     @Valid
     private DidInfo did;
 
-    @Min(value = 1, message = "Agent count must be at least 1")
+    @Min(value = 0, message = "Agent count must be at least 1")
     private Integer agentCount;
 
     private ChannelConfig channelConfig;
