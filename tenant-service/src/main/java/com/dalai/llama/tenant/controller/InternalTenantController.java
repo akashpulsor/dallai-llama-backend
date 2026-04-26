@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.controller;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
 import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse;
+import com.dalai.llama.tenant.dto.response.TenantResponse;
 import com.dalai.llama.tenant.service.TenantAppService;
 import com.dalai.llama.tenant.service.TenantService;
 import com.dalai.llama.tenant.service.impl.AgentProvisionService;
@@ -26,6 +27,11 @@ public class InternalTenantController {
     private final TenantService tenantService;
     private final AgentProvisionService agentProvisionService;
     private final TenantAppService tenantAppService;
+
+    @GetMapping("/{id}")
+    public TenantResponse get(@PathVariable UUID id) {
+        return tenantService.getTenant(id);
+    }
 
     @GetMapping("/apps/did/{did}")
     public ResponseEntity<Map<String, Object>> getTenantByDid(
