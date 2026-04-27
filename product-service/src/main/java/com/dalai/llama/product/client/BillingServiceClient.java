@@ -28,7 +28,7 @@ public class BillingServiceClient {
     private String billingServiceUrl;
 
     private WebClient client() {
-        return webClientBuilder.baseUrl(billingServiceUrl).build();
+        return WebClient.create(billingServiceUrl);
     }
 
     // ==================== WALLET ====================

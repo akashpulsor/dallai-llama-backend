@@ -56,6 +56,7 @@ public class SubscriptionService {
 
 
 
+
     public SubscriptionResponse subscribe(SubscriptionRequest request) {
         UUID tenantId = request.getTenantId();
 

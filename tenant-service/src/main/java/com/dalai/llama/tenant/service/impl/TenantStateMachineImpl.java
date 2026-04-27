@@ -4,6 +4,7 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantStateAudit;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.domain.event.TenantActivatedEvent;
+import com.dalai.llama.tenant.domain.event.TenantStateChangedEvent;
 import com.dalai.llama.tenant.domain.exception.InvalidStateTransitionException;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
 import com.dalai.llama.tenant.repository.TenantRepository;
@@ -75,7 +76,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
                 tenant.setActivatedAt(OffsetDateTime.now());
                 tenant.setSuspendedAt(null);
                 tenantRepository.save(tenant);
-                eventProducer.publish("tenant.activated", tenant.getId().toString(),
+                eventProducer.publishTenantActivated(tenant.getId().toString(),
                         new TenantActivatedEvent(tenant.getId()));
             }
             case SUSPENDED -> {
@@ -89,10 +90,12 @@ public class TenantStateMachineImpl implements TenantStateMachine {
             default -> tenantRepository.save(tenant);
         }
 
-        eventProducer.publish("tenant.state.changed", tenant.getId().toString(),
-                Map.of("tenantId", tenant.getId(),
-                        "oldState", current.name(),
-                        "newState", target.name(),
-                        "message", message != null ? message : ""));
+        eventProducer.publishTenantStateChanged(tenant.getId().toString(),
+                TenantStateChangedEvent.builder()
+                        .tenantId(tenant.getId())
+                        .oldState(current.name())
+                        .newState(target.name())
+                        .message(message != null ? message : "")
+                        .build());
     }
 }

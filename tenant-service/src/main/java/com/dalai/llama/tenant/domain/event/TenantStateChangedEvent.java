@@ -11,7 +11,9 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class TenantCreatedEvent {
+public class TenantStateChangedEvent {
     private UUID tenantId;
-    private String slug;
+    private String oldState;
+    private String newState;
+    private String message;
 }

@@ -156,8 +156,7 @@ public class TenantServiceImpl implements TenantService {
         }
 
         // Done
-        eventProducer.publish("tenant.created", tenant.getId().toString(),
-                new TenantCreatedEvent(tenant.getId(), tenant.getSlug()));
+        eventProducer.publishTenantCreated(new TenantCreatedEvent(tenant.getId(), tenant.getSlug()));
 
         log.info("Tenant provisioning complete: {} ({})", tenant.getName(), tenant.getSlug());
         return tenantMapper.toResponse(tenant);
@@ -217,8 +216,7 @@ public class TenantServiceImpl implements TenantService {
         Tenant tenant = findTenantOrThrow(tenantId);
         rollbackKeycloak(tenant);
         stateMachine.transition(tenant, TenantStatus.DELETED, "ADMIN", reason);
-        eventProducer.publish("tenant.deleted", tenantId.toString(),
-                new TenantDeletedEvent(tenantId));
+        eventProducer.publishTenantDeleted(new TenantDeletedEvent(tenantId));
     }
 
     // ================================================================

@@ -1,18 +1,21 @@
 package com.dalai.llama.product.config;
 
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
@@ -27,62 +30,68 @@ public class CacheConfig {
     @Value("${cache.entitlements.ttl-minutes:5}")
     private int entitlementsTtlMinutes;
 
+    /**
+     * ObjectMapper for Redis — NO default typing.
+     * Clean JSON in, clean JSON out. No Java class names embedded.
+     */
+    @Bean("redisObjectMapper")
+    public ObjectMapper redisObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        // NO activateDefaultTyping — no Java class names in JSON
+        return mapper;
+    }
+
     @Bean
-    public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {
-        // Configure ObjectMapper for Redis serialization
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        objectMapper.activateDefaultTyping(
-                LaissezFaireSubTypeValidator.instance,
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
+    @Primary
+    public CacheManager cacheManager(RedisConnectionFactory connectionFactory,
+                                     ObjectMapper redisObjectMapper) {
 
-        GenericJackson2JsonRedisSerializer jsonSerializer =
-                new GenericJackson2JsonRedisSerializer(objectMapper);
+        var jsonSerializer = new Jackson2JsonRedisSerializer<>(redisObjectMapper, Object.class);
 
-        // Default cache configuration
         RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofMinutes(10))
                 .serializeKeysWith(
-                        RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer())
-                )
+                        RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
                 .serializeValuesWith(
-                        RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer)
-                )
+                        RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer))
                 .disableCachingNullValues();
 
-        // Cache-specific configurations
         Map<String, RedisCacheConfiguration> cacheConfigs = new HashMap<>();
-
-        // Entitlements cache - 5 minute TTL (frequently accessed, invalidated on plan change)
-        cacheConfigs.put("entitlements", defaultConfig
-                .entryTtl(Duration.ofMinutes(entitlementsTtlMinutes)));
-
-        // Products cache - 1 hour TTL (rarely changes)
-        cacheConfigs.put("products", defaultConfig
-                .entryTtl(Duration.ofHours(1)));
-
-        // Plans cache - 30 minute TTL
-        cacheConfigs.put("plans", defaultConfig
-                .entryTtl(Duration.ofMinutes(30)));
-
-        cacheConfigs.put("subscription-config", defaultConfig
-                .entryTtl(Duration.ofMinutes(5)));
-
-        cacheConfigs.put("subscription-entitlements", defaultConfig
-                .entryTtl(Duration.ofMinutes(5)));
-
-        cacheConfigs.put("plan-entitlements", defaultConfig
-                .entryTtl(Duration.ofMinutes(10)));
-
-        cacheConfigs.put("product-apps", defaultConfig
-                .entryTtl(Duration.ofMinutes(10)));
+        cacheConfigs.put("entitlements", defaultConfig.entryTtl(Duration.ofMinutes(entitlementsTtlMinutes)));
+        cacheConfigs.put("products", defaultConfig.entryTtl(Duration.ofHours(1)));
+        cacheConfigs.put("plans", defaultConfig.entryTtl(Duration.ofMinutes(30)));
+        cacheConfigs.put("subscription-config", defaultConfig.entryTtl(Duration.ofMinutes(5)));
+        cacheConfigs.put("subscription-entitlements", defaultConfig.entryTtl(Duration.ofMinutes(5)));
+        cacheConfigs.put("plan-entitlements", defaultConfig.entryTtl(Duration.ofMinutes(10)));
+        cacheConfigs.put("product-apps", defaultConfig.entryTtl(Duration.ofMinutes(10)));
 
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(defaultConfig)
                 .withInitialCacheConfigurations(cacheConfigs)
                 .transactionAware()
                 .build();
+    }
+
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory,
+                                                       ObjectMapper redisObjectMapper) {
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(connectionFactory);
+
+        StringRedisSerializer keySerializer = new StringRedisSerializer();
+        var valueSerializer = new Jackson2JsonRedisSerializer<>(redisObjectMapper, Object.class);
+
+        template.setKeySerializer(keySerializer);
+        template.setHashKeySerializer(keySerializer);
+        template.setValueSerializer(valueSerializer);
+        template.setHashValueSerializer(valueSerializer);
+        template.afterPropertiesSet();
+
+        return template;
     }
 }

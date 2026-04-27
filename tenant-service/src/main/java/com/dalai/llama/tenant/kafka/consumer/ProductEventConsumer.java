@@ -46,12 +46,12 @@ public class ProductEventConsumer {
 
     }
 
-    @KafkaListener(topics = "product.subscription.activated", groupId = "product-service",
+    @KafkaListener(topics = "product.subscription.activated", groupId = "tenant-product-consumer",
             containerFactory = "subscriptionActivatedListenerFactory")
     public void onSubscriptionActivated(SubscriptionActivatedEvent event) {
-        log.info("Received subscription Activation event: tenantId={} subscription Id={}",
+        log.info("Received subscription activated: tenantId={} subscriptionId={}",
                 event.getTenantId(), event.getSubscriptionId());
-
+        tenantAppService.handleSubscriptionActivated(event);
     }
 
     @KafkaListener(topics = "product.subscription.failed", groupId = "product-service",
@@ -59,7 +59,7 @@ public class ProductEventConsumer {
     public void onSubscriptionActivationFailed(SubscriptionActivationFailedEvent event) {
         log.info("Received Subscription Failed: tenantId={} subscription Id={}",
                 event.getTenantId(), event.getSubscriptionId());
-
+        tenantAppService.handleSubscriptionActivationFailed(event);
     }
 
 }

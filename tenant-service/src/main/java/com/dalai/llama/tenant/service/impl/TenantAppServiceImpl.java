@@ -3,11 +3,9 @@ package com.dalai.llama.tenant.service.impl;
 import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
-import com.dalai.llama.tenant.domain.event.DidPurchasedEvent;
-import com.dalai.llama.tenant.domain.event.PlanAssignedEvent;
-import com.dalai.llama.tenant.domain.event.SubscriptionActivatedEvent;
-import com.dalai.llama.tenant.domain.event.SubscriptionActivationFailedEvent;
+import com.dalai.llama.tenant.domain.event.*;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
+import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.TenantAppService;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
@@ -30,7 +28,7 @@ public class TenantAppServiceImpl implements TenantAppService {
 
     private final TenantAppRepository tenantAppRepository;
     private final ProvisioningOrchestrator provisioningOrchestrator;
-
+    private final TenantEventProducer tenantEventProducer;
     @Override
     public Optional<TenantApp> getByDid(String did) {
         return tenantAppRepository.findByDidNumber(did);
@@ -59,6 +57,8 @@ public class TenantAppServiceImpl implements TenantAppService {
                 tenantAppId, app.getTenant().getId());
         provisioningOrchestrator.provision(tenantAppId);
     }
+
+
 
 
     // =========================
@@ -100,85 +100,67 @@ public class TenantAppServiceImpl implements TenantAppService {
                 });
     }
 
-    // =========================
-    // SUBSCRIPTION ACTIVATED
-    // =========================
     @Override
     public void handleSubscriptionActivated(SubscriptionActivatedEvent event) {
-
-        log.info("Subscription activated tenant={} subId={}",
+        log.info("Processing subscription activated: tenantId={} subscriptionId={}",
                 event.getTenantId(), event.getSubscriptionId());
-
-        Optional<TenantApp> existingOpt =
-                tenantAppRepository.findBySubscriptionId(event.getSubscriptionId());
-
+        Optional<TenantApp> existingOpt = tenantAppRepository.findBySubscriptionId(event.getSubscriptionId());
         if (existingOpt.isPresent()) {
-
             TenantApp existing = existingOpt.get();
-
-            // ✅ Already active → ignore
             if (existing.getDeploymentStatus() == ProvisioningTaskStatus.COMPLETED) {
-                log.warn("TenantApp already ACTIVE for subscription {}, skipping",
+                log.warn("TenantApp already COMPLETED for subscription {}, ignoring",
                         event.getSubscriptionId());
                 return;
             }
-
-            // ⚠️ Retry case (FAILED / PENDING)
-            log.warn("Retrying provisioning for subscription {} with status {}",
-                    event.getSubscriptionId(), existing.getDeploymentStatus());
-
-            // Optional: reset state before retry
-            existing.setDeploymentStatus(ProvisioningTaskStatus.PENDING);
-            tenantAppRepository.save(existing);
-
-            provisionApp(existing.getId());
+            log.warn("TenantApp exists with status {} for subscription {}, ignoring",
+                    existing.getDeploymentStatus(), event.getSubscriptionId());
             return;
         }
+        TenantApp app = buildTenantApp(event);
+        tenantAppRepository.save(app);
+        log.info("Created TenantApp {} with PENDING status for tenant {}",
+                app.getId(), event.getTenantId());
+        provisionApp(app.getId());
+        tenantEventProducer.publishProvisioningCompleted(ProvisioningCompletedEvent.builder()
+                .tenantId(app.getTenant().getId())
+                .tenantAppId(app.getId())
+                .subscriptionId(app.getSubscriptionId())
+                .productCode(app.getProductCode())
+                .status(ProvisioningTaskStatus.COMPLETED)
+                .completedAt(Instant.now())
+                .build());
+    }
 
-        // ==================== CREATE NEW ====================
+    private TenantApp buildTenantApp(SubscriptionActivatedEvent event) {
         TenantApp app = TenantApp.builder()
-
-                // CORE
                 .subscriptionId(event.getSubscriptionId())
                 .tenant(Tenant.builder().id(event.getTenantId()).build())
-
-                // PRODUCT
                 .productCode(event.getProductCode())
                 .planId(event.getPlanId())
                 .planCode(event.getPlanCode())
                 .planTier(event.getPlanTier())
-
-                // ENTITLEMENTS
                 .agentSeats(event.getAgentSeats())
                 .maxAgents(event.getMaxAgents())
                 .maxDids(event.getMaxDids())
                 .maxChannels(event.getMaxChannels())
                 .includedMinutes(event.getIncludedMinutes())
                 .aiRatePerMinute(event.getAiRatePerMin())
-
-                // DID
                 .didId(event.getDidId())
                 .didNumber(event.getDidNumber())
                 .didDisplayNumber(event.getDidDisplayNumber())
                 .didCountry(event.getDidCountry())
                 .didRegion(event.getDidRegion())
                 .didCity(event.getDidCity())
-
-                // SIP ENDPOINT
                 .sipEndpointId(event.getSipEndpointId())
                 .sipEndpointUsername(event.getSipEndpointUsername())
                 .sipEndpointPasswordHash(event.getSipEndpointPasswordHash())
                 .sipEndpointDomain(event.getSipEndpointDomain())
                 .sipEndpointRealm(event.getSipEndpointRealm())
-
-                // CHANNELS
                 .channelBundleId(event.getChannelBundleId())
                 .channelDirection(event.getChannelDirection())
                 .channelTotal(event.getTotalChannels())
                 .channelInbound(event.getInboundChannels())
                 .channelOutbound(event.getOutboundChannels())
-
-                // TENANT TRUNK
                 .tenantTrunkId(event.getTenantSipTrunkId())
                 .tenantTrunkUsername(event.getTenantSipTrunkUsername())
                 .tenantTrunkPasswordHash(event.getTenantSipTrunkPasswordHash())
@@ -187,32 +169,21 @@ public class TenantAppServiceImpl implements TenantAppService {
                 .tenantTrunkRealm(event.getTenantSipTrunkRealm())
                 .tenantTrunkTransport(event.getTenantSipTrunkTransport())
                 .tenantTrunkMaxCalls(event.getTenantSipTrunkMaxConcurrentCalls())
-
-                // PLATFORM TRUNK
                 .platformTrunkId(event.getPlatformTrunkId())
                 .platformTrunkProvider(event.getPlatformTrunkProvider())
                 .platformTrunkServer(event.getPlatformTrunkServer())
                 .platformTrunkPort(event.getPlatformTrunkPort())
                 .platformTrunkTransport(event.getPlatformTrunkTransport())
                 .platformTrunkCodecs(event.getPlatformTrunkCodecs())
-
-                // ✅ IMPORTANT: ALWAYS START AS PENDING
                 .deploymentStatus(ProvisioningTaskStatus.PENDING)
-
                 .build();
 
-        tenantAppRepository.save(app);
-
-        log.info("TenantApp created with PENDING state {}", app.getId());
-
-        // UI Panels
         if (event.getProductApps() != null && !event.getProductApps().isEmpty()) {
             app.setAppPanels(convertAppsToJson(event.getProductApps()));
-            tenantAppRepository.save(app);
         }
 
-        // Trigger provisioning
-        provisionApp(app.getId());
+
+        return app;
     }
     // =========================
     // SUBSCRIPTION FAILED

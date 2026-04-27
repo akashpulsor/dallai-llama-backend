@@ -23,8 +23,7 @@ public class TenantServiceClient {
     private String tenantServiceUrl;
 
     private WebClient client() {
-        return webClientBuilder.baseUrl(tenantServiceUrl).build();
-
+        return WebClient.create(tenantServiceUrl);
     }
 
     /**

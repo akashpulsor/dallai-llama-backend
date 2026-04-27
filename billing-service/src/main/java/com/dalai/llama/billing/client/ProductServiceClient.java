@@ -25,7 +25,7 @@ public class ProductServiceClient {
     private String productServiceUrl;
 
     private WebClient client() {
-        return webClientBuilder.baseUrl(productServiceUrl).build();
+        return WebClient.create(productServiceUrl);
     }
 
 
