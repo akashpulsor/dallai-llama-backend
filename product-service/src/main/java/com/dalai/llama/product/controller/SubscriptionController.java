@@ -66,9 +66,9 @@ public class SubscriptionController {
      */
     @GetMapping("/{subscriptionId}")
     @Operation(summary = "Get subscription", description = "Get subscription details")
-    public ResponseEntity<SubscriptionSummary> getSubscription(@PathVariable UUID subscriptionId) {
-        // TODO: Implement
-        return ResponseEntity.notFound().build();
+    public ResponseEntity<SubscriptionResponse> getSubscription(@PathVariable UUID subscriptionId) {
+        SubscriptionResponse response = subscriptionService.getSubscriptionDetails(subscriptionId);
+        return ResponseEntity.ok(response);
     }
 
     /**

@@ -40,5 +40,5 @@ public enum SubscriptionStatus {
      */
     EXPIRED,
 
-    PROVISION_FAILED
+    PROVISIONING_FAILED
 }

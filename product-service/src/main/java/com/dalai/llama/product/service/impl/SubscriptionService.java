@@ -147,6 +147,88 @@ public class SubscriptionService {
     }
 
     /**
+     * Called when tenant-service completes provisioning successfully.
+     */
+    @Transactional
+    public void markProvisioned(UUID subscriptionId, UUID tenantAppId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
+
+        subscription.setTenantAppId(tenantAppId);
+        subscription.setStatus(SubscriptionStatus.ACTIVE);
+
+        subscriptionRepository.save(subscription);
+
+        log.info("Subscription {} marked ACTIVE with tenantAppId={}", subscriptionId, tenantAppId);
+    }
+
+    /**
+     * Called when tenant-service provisioning fails.
+     */
+    @Transactional
+    public void markProvisioningFailed(UUID subscriptionId, String reason) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
+
+        subscription.setStatus(SubscriptionStatus.PROVISIONING_FAILED);
+
+        subscriptionRepository.save(subscription);
+
+        log.warn("Subscription {} marked PROVISIONING_FAILED: {}", subscriptionId, reason);
+    }
+
+    /**
+     * Get full subscription details by ID.
+     */
+    @Transactional(readOnly = true)
+    public SubscriptionResponse getSubscriptionDetails(UUID subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
+
+        Plan plan = subscription.getPlan();
+        Product product = subscription.getProduct();
+
+        Did did = subscription.getDidId() != null
+                ? didRepository.findById(subscription.getDidId()).orElse(null) : null;
+
+        TenantSipTrunk tenantSipTrunk = subscription.getTenantSipTrunkId() != null
+                ? tenantSipTrunkRepository.findById(subscription.getTenantSipTrunkId()).orElse(null) : null;
+
+        PstnChannelBundle channels = subscription.getChannelBundleId() != null
+                ? channelBundleRepository.findById(subscription.getChannelBundleId()).orElse(null) : null;
+
+        String provisioningStatus;
+        if (subscription.isFullyProvisioned()) {
+            provisioningStatus = "COMPLETED";
+        } else if (subscription.getStatus() == SubscriptionStatus.PROVISIONING_FAILED) {
+            provisioningStatus = "FAILED";
+        } else if (subscription.getStatus() == SubscriptionStatus.PENDING_PROVISION) {
+            provisioningStatus = "IN_PROGRESS";
+        } else {
+            provisioningStatus = subscription.getStatus().name();
+        }
+
+        SubscriptionResponse.SubscriptionResponseBuilder builder = SubscriptionResponse.builder()
+                .subscriptionId(subscription.getId())
+                .tenantAppId(subscription.getTenantAppId())
+                .status(subscription.getStatus().name())
+                .provisioningStatus(provisioningStatus)
+                .plan(mapPlan(plan, subscription.getExpiresAt()));
+
+        if (did != null) {
+            builder.did(mapDid(did));
+        }
+        if (tenantSipTrunk != null) {
+            builder.sipIntegration(mapSipIntegration(tenantSipTrunk));
+        }
+        if (channels != null) {
+            builder.channels(mapChannels(channels));
+        }
+
+        return builder.build();
+    }
+
+    /**
      * SAGA: Triggered by Kafka WalletDeductedForSubscriptionEvent.
      * Idempotent via event ID dedup + saga state checks.
      */

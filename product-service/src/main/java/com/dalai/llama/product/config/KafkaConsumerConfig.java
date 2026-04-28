@@ -3,6 +3,7 @@ package com.dalai.llama.product.config;
 
 import com.dalai.llama.product.domain.event.SubscriptionActivationFailedEvent;
 import com.dalai.llama.product.domain.event.WalletDeductedForSubscriptionEvent;
+import com.dalai.llama.tenant.domain.event.ProvisioningCompletedEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -76,5 +77,11 @@ public class KafkaConsumerConfig {
     public ConcurrentKafkaListenerContainerFactory<String, SubscriptionActivationFailedEvent>
     subscriptionActivationFailedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
         return buildFactory(SubscriptionActivationFailedEvent.class, kafkaErrorHandler);
+    }
+
+    @Bean(name = "provisioningCompletedListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, ProvisioningCompletedEvent>
+    provisioningCompletedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(ProvisioningCompletedEvent.class, kafkaErrorHandler);
     }
 }

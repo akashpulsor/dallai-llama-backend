@@ -2,6 +2,7 @@ package com.dalai.llama.tenant.service.impl;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
+import com.dalai.llama.tenant.domain.entity.enums.AppType;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.event.*;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
@@ -175,6 +176,7 @@ public class TenantAppServiceImpl implements TenantAppService {
                 .platformTrunkPort(event.getPlatformTrunkPort())
                 .platformTrunkTransport(event.getPlatformTrunkTransport())
                 .platformTrunkCodecs(event.getPlatformTrunkCodecs())
+                .appType(resolveAppType(event.getProductCode()))
                 .deploymentStatus(ProvisioningTaskStatus.PENDING)
                 .build();
 
@@ -215,5 +217,16 @@ public class TenantAppServiceImpl implements TenantAppService {
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize app panels", e);
         }
+    }
+
+    private AppType resolveAppType(String productCode) {
+        return switch (productCode) {
+            case "AI_CC" -> AppType.CONTACT_CENTER;
+            case "CONV_IVR" -> AppType.CONV_IVR;
+            case "BASIC_PBX" -> AppType.BASIC_PBX;
+            case "OUTBOUND_DIALER" -> AppType.OUTBOUND_DIALER;
+            case "VIRTUAL_RECEPTIONIST" -> AppType.VIRTUAL_RECEPTIONIST;
+            default -> AppType.CONV_IVR;
+        };
     }
 }

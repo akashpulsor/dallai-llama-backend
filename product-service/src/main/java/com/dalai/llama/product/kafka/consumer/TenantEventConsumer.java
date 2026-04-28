@@ -8,6 +8,8 @@ import com.dalai.llama.product.repository.PlanRepository;
 import com.dalai.llama.product.service.DidService;
 import com.dalai.llama.product.service.EntitlementService;
 import com.dalai.llama.product.service.PlanAssignmentService;
+import com.dalai.llama.product.service.impl.SubscriptionService;
+import com.dalai.llama.tenant.domain.event.ProvisioningCompletedEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ public class TenantEventConsumer {
     private final DidService didService;
     private final EntitlementService entitlementService;
     private final ObjectMapper objectMapper;
+    private final SubscriptionService subscriptionService;
 
     @KafkaListener(topics = "tenant.created", groupId = "product-service")
     public void onTenantCreated(String message) {
@@ -132,6 +135,19 @@ public class TenantEventConsumer {
 
         } catch (Exception e) {
             log.error("Failed to process tenant.activated event: {}", e.getMessage(), e);
+        }
+    }
+
+    @KafkaListener(topics = "tenant.provisioning.completed", groupId = "product-service",
+            containerFactory = "provisioningCompletedListenerFactory")
+    public void onProvisioningCompleted(ProvisioningCompletedEvent event) {
+        log.info("Received provisioning completed: subscriptionId={} status={}",
+                event.getSubscriptionId(), event.getStatus());
+
+        if ("COMPLETED".equals(event.getStatus())) {
+            subscriptionService.markProvisioned(event.getSubscriptionId(), event.getTenantAppId());
+        } else {
+            subscriptionService.markProvisioningFailed(event.getSubscriptionId(), event.getFailureReason());
         }
     }
 }

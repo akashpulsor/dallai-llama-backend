@@ -2,6 +2,10 @@ package com.dalai.llama.tenant.domain.entity.enums;
 
 public enum AppType {
     CONTACT_CENTER,
+    CONV_IVR,
+    VIRTUAL_RECEPTIONIST,
+    OUTBOUND_DIALER,
+    BASIC_PBX,
     IVR_BUILDER,
     ADMIN_PANEL,
     SUPERVISOR,

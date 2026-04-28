@@ -49,8 +49,8 @@ public class ProductEventConsumer {
     @KafkaListener(topics = "product.subscription.activated", groupId = "tenant-product-consumer",
             containerFactory = "subscriptionActivatedListenerFactory")
     public void onSubscriptionActivated(SubscriptionActivatedEvent event) {
-        log.info("Received subscription activated: tenantId={} subscriptionId={}",
-                event.getTenantId(), event.getSubscriptionId());
+        log.info("Received subscription activated: tenantId={} subscriptionId={} event={}",
+                event.getTenantId(), event.getSubscriptionId(),event);
         tenantAppService.handleSubscriptionActivated(event);
     }
 
