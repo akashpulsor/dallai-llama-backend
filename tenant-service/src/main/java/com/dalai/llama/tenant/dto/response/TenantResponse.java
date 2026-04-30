@@ -15,4 +15,5 @@ public record TenantResponse(
         String statusMessage,
         OffsetDateTime createdAt,
         OffsetDateTime activatedAt
+
 ) {}

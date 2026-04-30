@@ -382,6 +382,8 @@ public class SubscriptionService {
                                 .country(subscription.getRequestedDidCountry())
                                 .region(subscription.getRequestedDidRegion())
                                 .city(subscription.getRequestedDidCity())
+
+
                                 .build());
                 saga.setDidId(did.getId());
                 subscription.markDidProvisioned(did.getId());
@@ -427,7 +429,8 @@ public class SubscriptionService {
             if (tenantSipTrunk == null) {
                 TenantServiceClient.TenantInfo tenant = tenantClient.getTenant(saga.getTenantId());
                 tenantSipTrunk = tenantSipTrunkService.createForSubscription(
-                        saga.getTenantId(), subscription.getId(), tenant.slug());
+                        saga.getTenantId(), subscription.getId(), tenant.slug(),
+                        channels.getTotalChannels());
                 saga.setTenantSipTrunkId(tenantSipTrunk.getId());
                 subscription.setTenantSipTrunkId(tenantSipTrunk.getId());
                 subscriptionRepository.save(subscription);
@@ -546,6 +549,7 @@ public class SubscriptionService {
                 .id(did.getId())
                 .number(did.getNumber())
                 .displayNumber(did.getDisplayNumber())
+
                 .country(did.getCountry())
                 .region(did.getRegion())
                 .city(did.getCity())
@@ -716,7 +720,7 @@ public class SubscriptionService {
                 .region(didInfo.getRegion())
                 .city(didInfo.getCity())
                 .status(DidStatus.PENDING)
-                .monthlyRental(didInfo.getMonthlyFee())
+                .monthlyRental(didInfo.getMonthlyFee() != null ? didInfo.getMonthlyFee() : BigDecimal.valueOf(199))
                 .currency("INR")
                 .createdAt(Instant.now())
                 .updatedAt(Instant.now())
@@ -837,8 +841,14 @@ public class SubscriptionService {
     }
 
     private String formatDisplayNumber(String number) {
-        if (number != null && number.startsWith("+91") && number.length() == 13) {
+        if (number == null) return number;
+        // Handle +91XXXXXXXXXX
+        if (number.startsWith("+91") && number.length() == 13) {
             return number.substring(0, 3) + " " + number.substring(3, 8) + " " + number.substring(8);
+        }
+        // Handle 91XXXXXXXXXX (no plus)
+        if (number.startsWith("91") && number.length() == 12) {
+            return "+91 " + number.substring(2, 7) + " " + number.substring(7);
         }
         return number;
     }

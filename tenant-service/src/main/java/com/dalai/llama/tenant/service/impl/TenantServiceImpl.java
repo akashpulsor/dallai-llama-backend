@@ -23,6 +23,7 @@ import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.SlugGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
@@ -79,22 +80,48 @@ public class TenantServiceImpl implements TenantService {
     // ================================================================
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<Tenant> findByAdminUserId(String adminUserId) {
+        return tenantRepository.findFirstByAdminUserIdAndDeletedAtIsNull(adminUserId);
+    }
+
+    @Override
     @Transactional
     public TenantResponse createTenant(CreateTenantRequest request, Jwt jwt) {
-        String email = jwt.getClaimAsString("email");
+        String keycloakUserId = jwt.getSubject();
+        String jwtEmail = jwt.getClaimAsString("email");
 
-        // Check if this user has an incomplete tenant — resume it
-        Tenant existing = tenantRepository.findFirstByAdminUserEmailAndStatusIn(
-                email, List.of(TenantStatus.CREATED, TenantStatus.IDENTITY_CREATED, TenantStatus.WALLET_CREATED)
-                )
-                .orElse(null);
+        // ── Verify user exists in Keycloak (dalai-llama realm) ──
+        UserRepresentation kcUser = keycloakRealmService.getPlatformUser(keycloakUserId);
+
+        if (!Boolean.TRUE.equals(kcUser.isEnabled())) {
+            throw new IllegalStateException("User " + keycloakUserId + " is not enabled in Keycloak");
+        }
+
+        if (!keycloakUserId.equals(kcUser.getId())) {
+            log.error("JWT sub mismatch! jwt.sub={} kc.id={}", keycloakUserId, kcUser.getId());
+            throw new IllegalStateException("JWT subject does not match Keycloak user ID");
+        }
+
+        // Use Keycloak as source of truth for email/name
+        String email = kcUser.getEmail() != null ? kcUser.getEmail() : jwtEmail;
+        String firstName = kcUser.getFirstName();
+        String lastName = kcUser.getLastName();
+
+        log.info("Creating tenant for verified Keycloak user id={} email={}", keycloakUserId, email);
+
+        // ── Resume incomplete tenant if exists (lookup by ID, not email) ──
+        Tenant existing = tenantRepository.findFirstByAdminUserIdAndStatusIn(
+                keycloakUserId,
+                List.of(TenantStatus.CREATED, TenantStatus.IDENTITY_CREATED, TenantStatus.WALLET_CREATED)
+        ).orElse(null);
 
         if (existing != null) {
-            log.info("Resuming incomplete tenant {} for user {}", existing.getId(), email);
+            log.info("Resuming incomplete tenant {} for user {}", existing.getId(), keycloakUserId);
             return provisionTenant(existing);
         }
 
-        // Create new tenant
+        // ── Create new tenant ──
         String slug = SlugGenerator.generate(request.name());
         if (tenantRepository.existsBySlug(slug)) {
             slug = slug + "-" + UUID.randomUUID().toString().substring(0, 4);
@@ -103,22 +130,26 @@ public class TenantServiceImpl implements TenantService {
         Tenant tenant = tenantMapper.toEntity(request);
         tenant.setSlug(slug);
         tenant.setStatus(TenantStatus.CREATED);
+        tenant.setAdminUserId(keycloakUserId);
         tenant.setAdminUserEmail(email);
-        tenant.setAdminUserId(jwt.getSubject());
         tenant.setCountry(request.country() != null ? request.country() : "IN");
         tenant.setTimezone(request.timezone() != null ? request.timezone() : "Asia/Kolkata");
         tenant.setExpiresAt(OffsetDateTime.now().plusHours(TENANT_EXPIRY_HOURS));
+
+        // Populate primary contact from Keycloak if not provided
+        if (tenant.getPrimaryContactName() == null && firstName != null) {
+            String fullName = (firstName + " " + (lastName != null ? lastName : "")).trim();
+            tenant.setPrimaryContactName(fullName);
+        }
+        if (tenant.getPrimaryContactEmail() == null) {
+            tenant.setPrimaryContactEmail(email);
+        }
+
         tenant = tenantRepository.save(tenant);
         log.info("Created tenant record: {} ({})", tenant.getName(), slug);
 
         return provisionTenant(tenant);
     }
-
-    // ================================================================
-    // PROVISION — Step runner
-    //
-    // Skips completed steps. Rolls back to last good state on failure.
-    // ================================================================
 
     private TenantResponse provisionTenant(Tenant tenant) {
 
@@ -127,8 +158,16 @@ public class TenantServiceImpl implements TenantService {
             try {
                 String realmName = "tenant-" + tenant.getId();
                 keycloakRealmService.createRealm(realmName, tenant.getName());
+
+                // Fetch the created realm's internal UUID
+                String realmId = keycloakRealmService.getRealmId(realmName);
+
                 tenant.setKeycloakRealmName(realmName);
+                tenant.setKeycloakRealmId(realmId);
                 tenantRepository.save(tenant);
+
+                log.info("Keycloak realm created — name={} id={}", realmName, realmId);
+
                 stateMachine.transition(tenant, TenantStatus.IDENTITY_CREATED,
                         "SYSTEM", "Keycloak realm created");
             } catch (Exception e) {
@@ -155,13 +194,10 @@ public class TenantServiceImpl implements TenantService {
             }
         }
 
-        // Done
         eventProducer.publishTenantCreated(new TenantCreatedEvent(tenant.getId(), tenant.getSlug()));
-
         log.info("Tenant provisioning complete: {} ({})", tenant.getName(), tenant.getSlug());
         return tenantMapper.toResponse(tenant);
     }
-
     // ================================================================
     // CRUD
     // ================================================================
@@ -173,6 +209,13 @@ public class TenantServiceImpl implements TenantService {
                 .filter(t -> t.getDeletedAt() == null)
                 .map(tenantMapper::toResponse)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Tenant getTenantData(UUID tenantId) {
+        return tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new TenantNotFoundException(tenantId));
     }
 
     @Override

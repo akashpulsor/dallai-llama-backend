@@ -46,7 +46,7 @@ import java.util.*;
  */
 @Slf4j
 @RestController
-@RequestMapping("/internal/rtpengine")
+@RequestMapping("/rtpengine")
 @RequiredArgsConstructor
 public class RtpEngineController {
 

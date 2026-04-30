@@ -29,10 +29,10 @@ public class TenantSipTrunkService {
     private int sipPort;
 
     @Transactional
-    public TenantSipTrunk createForSubscription(UUID tenantId, UUID subscriptionId, String tenantSlug) {
+    public TenantSipTrunk createForSubscription(UUID tenantId, UUID subscriptionId, String tenantSlug, int maxChannels) {
         return repository.findByTenantId(tenantId)
                 .orElseGet(() -> {
-                    String username = "tenant_" + tenantSlug.replace("-", "_") + "_trunk";
+                    String username = "trunk_" + tenantSlug.replace("-", "_");
                     String password = generatePassword(12);
                     String ha1 = computeHA1(username, sipRealm, password);
 
@@ -45,12 +45,13 @@ public class TenantSipTrunkService {
                             .realm(sipRealm)
                             .domain(sipDomain)
                             .port(sipPort)
-                            .maxConcurrentCalls(10)
+                            .maxConcurrentCalls(maxChannels)
                             .active(true)
                             .build();
 
                     trunk = repository.save(trunk);
-                    log.info("Created SIP trunk for tenant {}: {}", tenantId, username);
+                    log.info("Created SIP trunk for tenant {}: {} maxCalls={}",
+                            tenantId, username, maxChannels);
                     return trunk;
                 });
     }

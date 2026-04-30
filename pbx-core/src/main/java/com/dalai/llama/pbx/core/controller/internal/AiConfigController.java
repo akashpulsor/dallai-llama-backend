@@ -47,7 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @RestController
-@RequestMapping("/internal/ai")
+@RequestMapping("/ai")
 @RequiredArgsConstructor
 public class AiConfigController {
 

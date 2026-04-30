@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.service;
 
+import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.domain.event.DidPurchasedEvent;
 import com.dalai.llama.tenant.domain.event.PlanAssignedEvent;
@@ -17,12 +18,12 @@ public interface TenantAppService {
 
     void provisionApp(UUID tenantAppId);
 
+    void handleSubscriptionActivated(SubscriptionActivatedEvent event, Tenant tenantData);
     // ✅ NEW METHODS
     void handlePlanAssigned(PlanAssignedEvent event);
 
     void handleDidPurchased(DidPurchasedEvent event);
 
-    void handleSubscriptionActivated(SubscriptionActivatedEvent event);
 
     void handleSubscriptionActivationFailed(SubscriptionActivationFailedEvent event);
 }

@@ -23,7 +23,7 @@ import java.util.Optional;
  */
 @Slf4j
 @RestController
-@RequestMapping("/internal/freeswitch")
+@RequestMapping("/freeswitch")
 @RequiredArgsConstructor
 public class FreeSwitchXmlController {
 

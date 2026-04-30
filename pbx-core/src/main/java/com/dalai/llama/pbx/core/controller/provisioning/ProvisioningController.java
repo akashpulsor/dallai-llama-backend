@@ -32,7 +32,7 @@ import java.util.UUID;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/provisioning")
+@RequestMapping("/api/v1/internal/provisioning")
 @RequiredArgsConstructor
 public class ProvisioningController {
 

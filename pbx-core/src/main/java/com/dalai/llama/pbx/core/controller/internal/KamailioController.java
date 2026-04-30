@@ -82,7 +82,7 @@ import java.util.*;
  */
 @Slf4j
 @RestController
-@RequestMapping("/internal/kamailio")
+@RequestMapping("/kamailio")
 @RequiredArgsConstructor
 public class KamailioController {
 

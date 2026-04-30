@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.kafka.consumer;
 
+import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.domain.event.*;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
@@ -51,7 +52,8 @@ public class ProductEventConsumer {
     public void onSubscriptionActivated(SubscriptionActivatedEvent event) {
         log.info("Received subscription activated: tenantId={} subscriptionId={} event={}",
                 event.getTenantId(), event.getSubscriptionId(),event);
-        tenantAppService.handleSubscriptionActivated(event);
+        Tenant tenantData = tenantService.getTenantData(event.getTenantId());
+        tenantAppService.handleSubscriptionActivated(event, tenantData);
     }
 
     @KafkaListener(topics = "product.subscription.failed", groupId = "product-service",
@@ -59,6 +61,7 @@ public class ProductEventConsumer {
     public void onSubscriptionActivationFailed(SubscriptionActivationFailedEvent event) {
         log.info("Received Subscription Failed: tenantId={} subscription Id={}",
                 event.getTenantId(), event.getSubscriptionId());
+
         tenantAppService.handleSubscriptionActivationFailed(event);
     }
 

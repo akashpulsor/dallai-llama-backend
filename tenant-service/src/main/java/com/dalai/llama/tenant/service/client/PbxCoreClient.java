@@ -43,7 +43,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: storing RTPEngine config for tenant {}", request.getTenantId());
         try {
             client().post()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/rtpengine", request.getTenantId())
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/rtpengine", request.getTenantId())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -61,7 +61,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: removing RTPEngine config for tenant {}", tenantId);
         try {
             client().delete()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/rtpengine", tenantId)
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/rtpengine", tenantId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)
@@ -82,7 +82,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: provisioning Kamailio for tenant {}", request.getTenantId());
         try {
             return client().post()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/kamailio", request.getTenantId())
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/kamailio", request.getTenantId())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -103,7 +103,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: deprovisioning Kamailio for subscription {}", subscriptionId);
         try {
             client().delete()
-                    .uri("/api/v1/provisioning/subscriptions/{subscriptionId}/kamailio", subscriptionId)
+                    .uri("/api/v1/internal/provisioning/subscriptions/{subscriptionId}/kamailio", subscriptionId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)
@@ -128,7 +128,7 @@ public class PbxCoreClient {
                 request.getTenantId(), request.getContext());
         try {
             client().post()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/freeswitch/dialplan", request.getTenantId())
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/freeswitch/dialplan", request.getTenantId())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -154,7 +154,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: configuring TURN for tenant {}", request.getTenantId());
         try {
             return client().post()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/turn", request.getTenantId())
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/turn", request.getTenantId())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -175,7 +175,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: removing TURN config for {}", tenantSlug);
         try {
             client().delete()
-                    .uri("/api/v1/provisioning/tenants/{slug}/turn", tenantSlug)
+                    .uri("/api/v1/internal/provisioning/tenants/{slug}/turn", tenantSlug)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)
@@ -197,7 +197,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: storing AI config for tenant {}", request.getTenantId());
         try {
             client().post()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/ai", request.getTenantId())
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/ai", request.getTenantId())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -218,7 +218,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: removing AI config for tenant {}", tenantId);
         try {
             client().delete()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/ai", tenantId)
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/ai", tenantId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)
@@ -240,7 +240,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: full deprovision for subscription {}", subscriptionId);
         try {
             client().delete()
-                    .uri("/api/v1/provisioning/subscriptions/{subscriptionId}", subscriptionId)
+                    .uri("/api/v1/internal/provisioning/subscriptions/{subscriptionId}", subscriptionId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(PROVISION_TIMEOUT)
@@ -260,7 +260,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: suspending tenant {}", tenantId);
         try {
             client().put()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/suspend", tenantId)
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/suspend", tenantId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)
@@ -278,7 +278,7 @@ public class PbxCoreClient {
         log.info("PBX-Core: resuming tenant {}", tenantId);
         try {
             client().put()
-                    .uri("/api/v1/provisioning/tenants/{tenantId}/resume", tenantId)
+                    .uri("/api/v1/internal/provisioning/tenants/{tenantId}/resume", tenantId)
                     .retrieve()
                     .bodyToMono(Void.class)
                     .timeout(TIMEOUT)

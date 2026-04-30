@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.service;
 
+import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
@@ -8,13 +9,16 @@ import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse;
 import com.dalai.llama.tenant.dto.response.TenantDetailResponse;
 import com.dalai.llama.tenant.dto.response.TenantResponse;
 import org.springframework.security.oauth2.jwt.Jwt;
-
+import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface TenantService {
 
     TenantResponse createTenant(CreateTenantRequest request, Jwt jwt);
+
+    Tenant getTenantData(UUID tenantId);
 
     List<TenantResponse> listTenants();
     TenantResponse getTenant(UUID tenantId);
@@ -30,4 +34,8 @@ public interface TenantService {
     void onBillingStateChanged(UUID tenantId, String state);
 
     SubscriptionActiveResponse activateSubscription(SubscriptionActiveRequest request);
+
+
+
+    Optional<Tenant> findByAdminUserId(String adminUserId);
 }

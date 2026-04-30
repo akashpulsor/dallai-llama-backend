@@ -2,6 +2,7 @@ package com.dalai.llama.tenant.controller;
 
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.UpdateTenantRequest;
+import com.dalai.llama.tenant.dto.response.MyTenantResponse;
 import com.dalai.llama.tenant.dto.response.TenantDetailResponse;
 import com.dalai.llama.tenant.dto.response.TenantResponse;
 import com.dalai.llama.tenant.service.TenantService;
@@ -31,6 +32,15 @@ public class TenantController {
             @Valid @RequestBody CreateTenantRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         return tenantService.createTenant(request, jwt);
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<MyTenantResponse> getMyTenant(@AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(t -> ResponseEntity.ok(MyTenantResponse.fromTenant(t)))
+                .orElseGet(() -> ResponseEntity.ok(MyTenantResponse.empty()));
     }
 
     @GetMapping
