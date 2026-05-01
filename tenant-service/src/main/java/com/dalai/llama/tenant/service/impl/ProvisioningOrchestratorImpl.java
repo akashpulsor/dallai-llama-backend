@@ -18,8 +18,11 @@ import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.DistributedLock;
 import com.dalai.llama.tenant.util.PasswordGenerator;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.validator.internal.util.stereotypes.Lazy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -62,6 +65,10 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private final DistributedLock distributedLock;
     private final TenantStateMachineImpl stateMachine;
 
+
+    private final ProvisioningTxRunner txRunner;
+
+
     @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
@@ -90,11 +97,15 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         }
 
         try {
-            doProvision(tenantAppId);
+            txRunner.run(tenantAppId, this::doProvision);
+        } catch (Exception e) {
+            log.error("Provisioning failed for tenantAppId={}", tenantAppId, e);
         } finally {
             distributedLock.release(lockKey, lockVal);
         }
     }
+
+
 
     // ════════════════════════════════════════════════════════════
     // CORE LOOP
@@ -544,7 +555,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
                         .entitlements(com.dalai.llama.tenant.dto.request.EntitlementDto.from(ctx.getEntitlements()))
                         .build();
 
-        // pbxCoreClient.syncTenant(syncReq);  // TODO: implement in PbxCoreClient
+        //pbxCoreClient.syncTenant(syncReq);  // TODO: implement in PbxCoreClient
         log.info("PBX-Core sync requested for tenant {}", app.getTenant().getSlug());
     }
 

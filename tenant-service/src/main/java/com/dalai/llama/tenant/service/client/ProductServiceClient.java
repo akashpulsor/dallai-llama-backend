@@ -105,7 +105,7 @@ public class ProductServiceClient {
     public List<AppInfo> geTenantProductApps(UUID tenantId) {
         try {
             return client().get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/product-apps", tenantId)
+                    .uri("/api/v1/internal/products/tenants/{tenantId}/product-apps", tenantId)
                     .retrieve()
                     .bodyToFlux(AppInfo.class)
                     .collectList()
@@ -135,7 +135,7 @@ public class ProductServiceClient {
         try {
             return client()
                     .get()
-                    .uri("/api/v1/internal/subscriptions/{id}/config", subscriptionId)
+                    .uri("/api/v1/internal/products/subscriptions/{id}/config", subscriptionId)
                     .retrieve()
                     .onStatus(status -> status.equals(HttpStatus.NOT_FOUND),
                             response -> Mono.error(new RuntimeException("Subscription not found: " + subscriptionId)))
@@ -160,7 +160,7 @@ public class ProductServiceClient {
         log.info("Fetching plan entitlements for plan {}", planId);
         try {
             return client().get()
-                    .uri("/api/v1/internal/plans/{planId}/entitlements", planId)
+                    .uri("/api/v1/internal/products/plans/{planId}/entitlements", planId)
                     .retrieve()
                     .bodyToMono(PlanEntitlementResponse.class)
                     .timeout(Duration.ofSeconds(10))
@@ -180,7 +180,7 @@ public class ProductServiceClient {
         try {
             return client()
                     .get()
-                    .uri("/api/v1/internal/plans/{code}/entitlements", planCode)
+                    .uri("/api/v1/internal/products/plans/{code}/entitlements", planCode)
                     .retrieve()
                     .bodyToMono(PlanEntitlementResponse.class)
                     .timeout(Duration.ofSeconds(5))

@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.repository;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.domain.entity.enums.AppType;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -30,6 +31,8 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
 
     boolean existsBySubscriptionId(UUID subscriptionId);
 
+    @EntityGraph(attributePaths = {"tenant"})
+    Optional<TenantApp> findWithTenantById(UUID id);
     // ==================== FIND BY TENANT ====================
 
     List<TenantApp> findByTenantId(UUID tenantId);
