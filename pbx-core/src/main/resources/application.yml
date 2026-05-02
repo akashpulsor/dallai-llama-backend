@@ -118,6 +118,8 @@ dalaillama:
 # CDN/reverse proxy URL
 # ═══ PBX-Core tuning ═══
 pbxcore:
+  security:
+    trusted-networks: ${TRUSTED_NETWORKS:127.0.0.1,::1,0:0:0:0:0:0:0:1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
   websocket:
     allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}
     # Broker type: "simple" (single pod, local dev) or "redis" (multi-pod production).

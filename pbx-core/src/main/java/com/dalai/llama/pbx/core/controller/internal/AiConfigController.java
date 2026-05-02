@@ -26,7 +26,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * AI Service controller — voice-brain (Pipecat) integration.
+ * Internal AI Service controller — voice-brain (Pipecat) integration.
+ * No JWT required — voice-brain runs inside the cluster (service-to-service).
  *
  * voice-brain calls PBX-Core at different stages of a call:
  *
@@ -44,10 +45,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * Audio flow (NOT through PBX-Core):
  *   FreeSWITCH → mod_audio_stream → WebSocket → voice-brain (direct PCM audio)
  *   PBX-Core is the CONTROL PLANE, not the MEDIA PLANE.
+ *
+ * UI-facing AI endpoints live at /api/v1/ai/** (JWT-protected) — see AiApiController.
  */
 @Slf4j
 @RestController
-@RequestMapping("/ai")
+@RequestMapping("/internal/ai")
 @RequiredArgsConstructor
 public class AiConfigController {
 

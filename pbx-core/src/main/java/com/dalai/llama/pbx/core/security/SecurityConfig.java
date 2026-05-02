@@ -1,7 +1,6 @@
 package com.dalai.llama.pbx.core.security;
 
-
-
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -11,58 +10,74 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 
+import java.util.List;
+
 /**
  * 4-chain security configuration matching PBX-Core's API surface:
  *
- * Chain 1: /internal/** → permitAll
- *   Kamailio http_client (authorize/inbound, events/call-start, events/call-end)
+ * Chain 1: /freeswitch/**, /kamailio/**, /rtpengine/** → IP-restricted, NO JWT
  *   FreeSWITCH mod_xml_curl (directory, dialplan)
- *   voice-brain (AI config)
- *   These run on bare-metal outside the mesh — no JWT possible.
- *   Network-level security: only reachable from telecom namespace / host network.
+ *   Kamailio http_client (authorize/inbound, auth/digest, events)
+ *   RTPEngine config
+ *   These run on bare-metal outside the cluster — no JWT possible.
+ *   Access restricted to localhost + configured trusted IPs (telecom hosts).
+ *   Configure via env: TRUSTED_NETWORKS or pbxcore.security.trusted-networks
  *
- * Chain 2: /api/v1/write/** → permitAll
- *   tenant-service calls these during provisioning.
- *   Secured by Istio mTLS (cross-namespace ServiceEntry).
- *   In local dev, these are open — provisioning happens via curl.
+ * Chain 2: /internal/**, /api/v1/write/**, /api/v1/internal/** → permitAll
+ *   voice-brain (Pipecat) calls /internal/ai/** (service-to-service, no JWT).
+ *   tenant-service calls /api/v1/internal/provisioning/** during tenant setup.
+ *   tenant-service calls /api/v1/write/** for Kamailio table writes.
+ *   Secured by Istio mTLS in production; open in local dev.
  *
  * Chain 3: /api/v1/** → JWT auth (Keycloak)
  *   Agent UI, Supervisor UI, Admin UI call these.
+ *   Includes /api/v1/ai/** (JWT-protected AI config for UI).
  *   Keycloak issues JWT with tenant_id claim — used for tenant isolation.
  *   @PreAuthorize can add role-based checks (AGENT, SUPERVISOR, ADMIN).
  *
- * Chain 4: /actuator/**, /swagger-ui/**, /v3/api-docs/** → permitAll
- *   K8s readiness/liveness probes.
- *   Swagger UI for development.
+ * Chain 4: /actuator/**, /swagger-ui/**, /v3/api-docs/**, /ws/** → permitAll
+ *   K8s readiness/liveness probes, Swagger UI, WebSocket STOMP.
  */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    @Value("${pbxcore.security.trusted-networks:127.0.0.1,::1,0:0:0:0:0:0:0:1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}")
+    private List<String> trustedNetworks;
+
     /**
-     * Chain 1: Internal APIs — NO auth.
+     * Chain 1: Telecom infra endpoints — IP-restricted, NO JWT.
+     * FreeSWITCH, Kamailio, RTPEngine run on bare-metal / host network.
+     * Only requests from trusted IPs (localhost, pod network, telecom hosts) are allowed.
+     *
+     * Configure additional IPs via env: TRUSTED_NETWORKS
      */
     @Bean
     @Order(1)
-    public SecurityFilterChain internalChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain telecomInfraChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/internal/**")
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .securityMatcher("/freeswitch/**", "/kamailio/**", "/rtpengine/**")
+                .authorizeHttpRequests(auth -> auth
+                        .anyRequest().access(new TrustedIpAuthorizationManager(trustedNetworks))
+                )
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         return http.build();
     }
 
     /**
-     * Chain 2: Write + Provisioning APIs — NO JWT (Istio mTLS).
-     * tenant-service calls /api/v1/provisioning/** during tenant setup.
+     * Chain 2: Internal + Write + Provisioning APIs — NO JWT.
+     * /internal/ai/** — voice-brain (Pipecat) service-to-service calls.
+     * /api/v1/internal/** — tenant-service provisioning.
+     * /api/v1/write/** — Kamailio table writes.
+     * Secured by Istio mTLS in production; open in local dev.
      */
     @Bean
     @Order(2)
-    public SecurityFilterChain writeChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain internalChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/api/v1/write/**", "/api/v1/provisioning/**")
+                .securityMatcher("/internal/**", "/api/v1/write/**", "/api/v1/internal/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
@@ -71,6 +86,7 @@ public class SecurityConfig {
 
     /**
      * Chain 3: Operational APIs — Keycloak JWT required.
+     * Includes /api/v1/ai/** for UI-facing AI config.
      */
     @Bean
     @Order(3)
@@ -92,6 +108,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/dnc/**").authenticated()
                         // TURN credentials
                         .requestMatchers("/api/v1/turn/**").authenticated()
+                        // AI config (UI-facing)
+                        .requestMatchers("/api/v1/ai/**").authenticated()
                         // Catch-all
                         .anyRequest().authenticated()
                 )

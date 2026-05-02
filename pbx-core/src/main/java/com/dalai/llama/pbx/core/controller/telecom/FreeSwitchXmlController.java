@@ -1,4 +1,4 @@
-package com.dalai.llama.pbx.core.controller.internal;
+package com.dalai.llama.pbx.core.controller.telecom;
 
 
 import com.dalai.llama.pbx.core.domain.entity.core.TenantDialplan;
@@ -20,6 +20,9 @@ import java.util.Optional;
  *   <param name="gateway-url" value="http://pbx-core:8080/internal/freeswitch/dialplan"/>
  *
  * These replace static XML files — PBX-Core serves config dynamically from DB.
+ *
+ * Security: IP-restricted via TrustedIpAuthorizationManager (chain 1 in SecurityConfig).
+ * FreeSWITCH runs on bare-metal outside the Kubernetes cluster.
  */
 @Slf4j
 @RestController

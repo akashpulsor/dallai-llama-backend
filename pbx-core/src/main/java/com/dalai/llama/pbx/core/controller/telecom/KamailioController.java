@@ -1,4 +1,4 @@
-package com.dalai.llama.pbx.core.controller.internal;
+package com.dalai.llama.pbx.core.controller.telecom;
 
 
 import com.dalai.llama.pbx.core.domain.entity.kamailio.Dispatcher;
@@ -55,6 +55,9 @@ import java.util.*;
  *   │ AI service escalation (voice-brain triggers transfer)               │
  *   │  1. POST /escalation              → ESL transfer/hangup            │
  *   └─────────────────────────────────────────────────────────────────────┘
+ *
+ * Security: IP-restricted via TrustedIpAuthorizationManager (chain 1 in SecurityConfig).
+ * Kamailio runs on bare-metal outside the Kubernetes cluster.
  *
  * ALL responses MUST be <3 seconds (Kamailio http_client timeout).
  */

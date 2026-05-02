@@ -1,4 +1,4 @@
-package com.dalai.llama.pbx.core.controller.write;
+package com.dalai.llama.pbx.core.controller.internal;
 
 
 import com.dalai.llama.pbx.core.domain.entity.kamailio.*;

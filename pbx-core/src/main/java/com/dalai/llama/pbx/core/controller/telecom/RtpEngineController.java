@@ -1,4 +1,4 @@
-package com.dalai.llama.pbx.core.controller.internal;
+package com.dalai.llama.pbx.core.controller.telecom;
 
 
 import com.dalai.llama.pbx.core.redis.RtpEngineConfigRedisService;
@@ -21,6 +21,9 @@ import java.util.*;
  *   - callType=agent AND aiForkEnabled=true → fork-media to ai-service RTP receiver
  *
  * This ensures zero overlap: bot calls use WebSocket STT, agent calls use RTP fork STT.
+ *
+ * Security: IP-restricted via TrustedIpAuthorizationManager (chain 1 in SecurityConfig).
+ * Kamailio runs on bare-metal outside the Kubernetes cluster.
  *
  * ──────────────────────────────────────────────────────────────────
  * Kamailio route block example (add to provisioned kamailio.cfg):
