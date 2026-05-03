@@ -1,6 +1,5 @@
-package com.dalai.llama.product.domain.exception;
+package com.dalai.llama.tenant.domain.exception;
 
-import com.dalai.llama.product.domain.exception.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,36 +18,30 @@ public class GlobalExceptionHandler {
 
     // ==================== 404 NOT FOUND ====================
 
-    @ExceptionHandler(ProductNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleProductNotFound(ProductNotFoundException ex) {
-        log.warn("Product not found: {}", ex.getMessage());
-        return buildResponse(HttpStatus.NOT_FOUND, "PRODUCT_NOT_FOUND", ex.getMessage());
+    @ExceptionHandler(TenantNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleTenantNotFound(TenantNotFoundException ex) {
+        log.warn("Tenant not found: {}", ex.getMessage());
+        return buildResponse(HttpStatus.NOT_FOUND, "TENANT_NOT_FOUND", ex.getMessage());
     }
 
-    @ExceptionHandler(PlanNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handlePlanNotFound(PlanNotFoundException ex) {
-        log.warn("Plan not found: {}", ex.getMessage());
-        return buildResponse(HttpStatus.NOT_FOUND, "PLAN_NOT_FOUND", ex.getMessage());
-    }
-
-    @ExceptionHandler(DidNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleDidNotFound(DidNotFoundException ex) {
-        log.warn("DID not found: {}", ex.getMessage());
-        return buildResponse(HttpStatus.NOT_FOUND, "DID_NOT_FOUND", ex.getMessage());
+    @ExceptionHandler(KeycloakUserNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleKeycloakUserNotFound(KeycloakUserNotFoundException ex) {
+        log.warn("Keycloak user not found: {}", ex.getMessage());
+        return buildResponse(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", ex.getMessage());
     }
 
     // ==================== 409 CONFLICT ====================
 
-    @ExceptionHandler(DidNotAvailableException.class)
-    public ResponseEntity<Map<String, Object>> handleDidNotAvailable(DidNotAvailableException ex) {
-        log.warn("DID not available: {}", ex.getMessage());
-        return buildResponse(HttpStatus.CONFLICT, "DID_NOT_AVAILABLE", ex.getMessage());
+    @ExceptionHandler(TenantAlreadyExistsException.class)
+    public ResponseEntity<Map<String, Object>> handleTenantAlreadyExists(TenantAlreadyExistsException ex) {
+        log.warn("Tenant already exists: {}", ex.getMessage());
+        return buildResponse(HttpStatus.CONFLICT, "TENANT_ALREADY_EXISTS", ex.getMessage());
     }
 
-    @ExceptionHandler(SipEndpointConflictException.class)
-    public ResponseEntity<Map<String, Object>> handleSipConflict(SipEndpointConflictException ex) {
-        log.warn("SIP endpoint conflict: {}", ex.getMessage());
-        return buildResponse(HttpStatus.CONFLICT, "SIP_ENDPOINT_CONFLICT", ex.getMessage());
+    @ExceptionHandler(InvalidStateTransitionException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidStateTransition(InvalidStateTransitionException ex) {
+        log.warn("Invalid state transition: {}", ex.getMessage());
+        return buildResponse(HttpStatus.CONFLICT, "INVALID_STATE_TRANSITION", ex.getMessage());
     }
 
     @ExceptionHandler(IllegalStateException.class)
@@ -57,40 +50,19 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.CONFLICT, "ILLEGAL_STATE", ex.getMessage());
     }
 
-    // ==================== 402 PAYMENT REQUIRED ====================
+    // ==================== 502 BAD GATEWAY ====================
 
-    @ExceptionHandler(InsufficientBalanceException.class)
-    public ResponseEntity<Map<String, Object>> handleInsufficientBalance(InsufficientBalanceException ex) {
-        log.warn("Insufficient balance: {}", ex.getMessage());
-        return buildResponse(HttpStatus.PAYMENT_REQUIRED, "INSUFFICIENT_BALANCE", ex.getMessage());
+    @ExceptionHandler(KeycloakException.class)
+    public ResponseEntity<Map<String, Object>> handleKeycloak(KeycloakException ex) {
+        log.error("Keycloak error: {}", ex.getMessage(), ex);
+        return buildResponse(HttpStatus.BAD_GATEWAY, "KEYCLOAK_ERROR",
+                "Identity provider error: " + ex.getMessage());
     }
 
-    // ==================== 403 FORBIDDEN ====================
-
-    @ExceptionHandler(BillingBlockedException.class)
-    public ResponseEntity<Map<String, Object>> handleBillingBlocked(BillingBlockedException ex) {
-        log.warn("Billing blocked: {}", ex.getMessage());
-        return buildResponse(HttpStatus.FORBIDDEN, "BILLING_BLOCKED", ex.getMessage());
-    }
-
-    @ExceptionHandler(EntitlementExceededException.class)
-    public ResponseEntity<Map<String, Object>> handleEntitlementExceeded(EntitlementExceededException ex) {
-        log.warn("Entitlement exceeded: {}", ex.getMessage());
-        return buildResponse(HttpStatus.FORBIDDEN, "ENTITLEMENT_EXCEEDED", ex.getMessage());
-    }
-
-    // ==================== 502 BAD GATEWAY (external APIs) ====================
-
-    @ExceptionHandler(DidwwApiException.class)
-    public ResponseEntity<Map<String, Object>> handleDidwwApi(DidwwApiException ex) {
-        log.error("DIDWW API error: {}", ex.getMessage(), ex);
-        return buildResponse(HttpStatus.BAD_GATEWAY, "DIDWW_API_ERROR", "DID provider error: " + ex.getMessage());
-    }
-
-    @ExceptionHandler(EpsilonApiException.class)
-    public ResponseEntity<Map<String, Object>> handleEpsilonApi(EpsilonApiException ex) {
-        log.error("Epsilon API error: {}", ex.getMessage(), ex);
-        return buildResponse(HttpStatus.BAD_GATEWAY, "EPSILON_API_ERROR", "SIP trunk provider error: " + ex.getMessage());
+    @ExceptionHandler(ProvisioningException.class)
+    public ResponseEntity<Map<String, Object>> handleProvisioning(ProvisioningException ex) {
+        log.error("Provisioning error: {}", ex.getMessage(), ex);
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "PROVISIONING_ERROR", ex.getMessage());
     }
 
     // ==================== 400 BAD REQUEST ====================

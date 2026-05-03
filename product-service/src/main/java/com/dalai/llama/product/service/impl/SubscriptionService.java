@@ -77,14 +77,12 @@ public class SubscriptionService {
         }
 
         String didNumber = request.getDid().getNumber();
-        didRepository.findByNumber(didNumber).ifPresent(existingDid ->
-                subscriptionRepository.findByDidId(existingDid.getId())
-                        .ifPresent(existingSub -> {
-                            if (existingSub.getStatus() == SubscriptionStatus.ACTIVE) {
-                                throw new IllegalStateException(
-                                        "DID " + didNumber + " is already in use");
-                            }
-                        }));
+        didRepository.findByNumber(didNumber).ifPresent(existingDid -> {
+            if (existingDid.getStatus() != DidStatus.RELEASED) {
+                throw new IllegalStateException(
+                        "DID " + didNumber + " is already reserved (status: " + existingDid.getStatus() + ")");
+            }
+        });
 
         // Calculate amounts
         BigDecimal subscriptionAmount = calculateTotal(plan, request);

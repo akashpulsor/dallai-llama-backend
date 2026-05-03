@@ -3,28 +3,47 @@ package com.dalai.llama.product.service.impl;
 
 import com.dalai.llama.product.dto.request.SearchAvailableDidsRequest;
 import com.dalai.llama.product.dto.response.AvailableDidResponse;
+import com.dalai.llama.product.repository.DidRepository;
 import com.dalai.llama.product.service.DidProvisioningOrchestrator;
 import com.dalai.llama.product.service.DidProvisioningService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DidProvisioningOrchestratorImpl implements DidProvisioningOrchestrator {
 
     private final List<DidProvisioningService> providers;
+    private final DidRepository didRepository;
 
     @Override
     public List<AvailableDidResponse> search(SearchAvailableDidsRequest request) {
 
-        return providers.stream()
+        List<AvailableDidResponse> providerResults = providers.stream()
                 .filter(p -> p.supports(request.getCountry()))
                 .filter(DidProvisioningService::isHealthy)
                 .flatMap(p -> p.searchAvailableDids(request).stream())
+                .toList();
+
+        // Filter out DIDs that are already reserved/in-use in our system
+        Set<String> reservedNumbers = didRepository.findAllReservedNumbers();
+
+        if (reservedNumbers.isEmpty()) {
+            return providerResults;
+        }
+
+        log.debug("Filtering out {} reserved DIDs from {} provider results",
+                reservedNumbers.size(), providerResults.size());
+
+        return providerResults.stream()
+                .filter(did -> !reservedNumbers.contains(did.getNumber()))
                 .toList();
     }
 

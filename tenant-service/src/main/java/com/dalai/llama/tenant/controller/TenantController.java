@@ -4,7 +4,9 @@ import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.UpdateTenantRequest;
 import com.dalai.llama.tenant.dto.response.MyTenantResponse;
 import com.dalai.llama.tenant.dto.response.TenantDetailResponse;
+import com.dalai.llama.tenant.dto.response.TenantAppSummary;
 import com.dalai.llama.tenant.dto.response.TenantResponse;
+import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.TenantService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ import java.util.UUID;
 public class TenantController {
 
     private final TenantService tenantService;
+    private final TenantAppRepository tenantAppRepository;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -41,6 +44,18 @@ public class TenantController {
         return tenantService.findByAdminUserId(keycloakUserId)
                 .map(t -> ResponseEntity.ok(MyTenantResponse.fromTenant(t)))
                 .orElseGet(() -> ResponseEntity.ok(MyTenantResponse.empty()));
+    }
+
+        @GetMapping("/me/apps")
+    public ResponseEntity<List<TenantAppSummary>> getMyApps(@AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> {
+                    List<TenantAppSummary> apps = tenantAppRepository.findAllByTenantId(tenant.getId())
+                            .stream().map(TenantAppSummary::from).toList();
+                    return ResponseEntity.ok(apps);
+                })
+                .orElseGet(() -> ResponseEntity.ok(List.of()));
     }
 
     @GetMapping
