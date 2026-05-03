@@ -7,14 +7,20 @@ import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.event.*;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
+import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
+import com.dalai.llama.tenant.repository.TenantRepository;
+import com.dalai.llama.tenant.service.KeycloakRealmService;
 import com.dalai.llama.tenant.service.TenantAppService;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
+import com.dalai.llama.tenant.service.client.PbxCoreClient;
+import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.*;
@@ -27,6 +33,12 @@ public class TenantAppServiceImpl implements TenantAppService {
     private final TenantAppRepository tenantAppRepository;
     private final ProvisioningOrchestrator provisioningOrchestrator;
     private final TenantEventProducer tenantEventProducer;
+    private final ProductServiceClient productServiceClient;
+    private final PbxCoreClient pbxCoreClient;
+    private final KeycloakRealmService keycloakRealmService;
+    private final KeycloakClientConfigService keycloakClientConfigService;
+    private final ProvisioningTaskRepository provisioningTaskRepository;
+    private final TenantRepository tenantRepository;
 
     @Override
     public Optional<TenantApp> getByDid(String did) {
@@ -143,6 +155,142 @@ public class TenantAppServiceImpl implements TenantAppService {
                     tenantAppRepository.save(app);
                     log.info("Marked TenantApp {} as FAILED", app.getId());
                 });
+    }
+
+    // =========================
+    // DELETE APP
+    // =========================
+    @Override
+    @Transactional
+    public void deleteApp(UUID tenantAppId, UUID tenantId) {
+        TenantApp app = tenantAppRepository.findById(tenantAppId)
+                .orElseThrow(() -> new ProvisioningException("TenantApp not found: " + tenantAppId));
+
+        Tenant tenant = app.getTenant();
+        if (!tenant.getId().equals(tenantId)) {
+            throw new ProvisioningException("TenantApp does not belong to tenant");
+        }
+
+        // Block deletion while provisioning is actively running
+        if (app.getDeploymentStatus() == ProvisioningTaskStatus.RUNNING) {
+            throw new ProvisioningException(
+                    "Cannot delete app while provisioning is RUNNING. Wait for it to complete or fail.");
+        }
+
+        log.info("Deleting TenantApp={} subscription={} tenant={} status={}",
+                tenantAppId, app.getSubscriptionId(), tenantId, app.getDeploymentStatus());
+
+        // 1. Deprovision PBX-Core (Kamailio, FreeSWITCH, TURN, AI config, Redis)
+        if (app.getSubscriptionId() != null) {
+            try {
+                pbxCoreClient.deprovisionAll(app.getSubscriptionId());
+                log.info("PBX-Core deprovision completed for subscription {}", app.getSubscriptionId());
+            } catch (Exception e) {
+                log.warn("PBX-Core deprovision failed (continuing cleanup): {}", e.getMessage());
+            }
+        }
+
+        // 2. Cleanup product-service (DID, SIP endpoint, channels, trunk, subscription)
+        if (app.getSubscriptionId() != null) {
+            try {
+                productServiceClient.cleanupSubscription(app.getSubscriptionId());
+                log.info("Product-service cleanup completed for subscription {}", app.getSubscriptionId());
+            } catch (Exception e) {
+                log.warn("Product-service cleanup failed (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 3. Keycloak — delete OIDC client specific to this app
+        if (app.getKeycloakClientId() != null && tenant.getKeycloakRealmName() != null) {
+            try {
+                keycloakClientConfigService.deleteClient(
+                        tenant.getKeycloakRealmName(), app.getKeycloakClientId());
+                log.info("Keycloak client {} deleted from realm {}",
+                        app.getKeycloakClientId(), tenant.getKeycloakRealmName());
+            } catch (Exception e) {
+                log.warn("Keycloak client deletion failed (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 4. If this is the LAST app for the tenant, also clean admin user
+        long remainingApps = tenantAppRepository.countByTenantId(tenantId) - 1; // -1 for the one being deleted
+        if (remainingApps <= 0 && tenant.getAdminUserId() != null) {
+            // Delete admin user from tenant realm
+            if (tenant.getKeycloakRealmName() != null) {
+                try {
+                    keycloakRealmService.deleteAdminUser(
+                            tenant.getKeycloakRealmName(), tenant.getAdminUserId());
+                    log.info("Keycloak admin user {} deleted (last app)", tenant.getAdminUserId());
+                } catch (Exception e) {
+                    log.warn("Keycloak admin user deletion failed (continuing): {}", e.getMessage());
+                }
+            }
+
+            // Unlink from platform realm
+            try {
+                keycloakRealmService.removeTenantLinkFromMainUser(
+                        tenant.getAdminUserId(), "dalai-llama");
+                log.info("Admin user {} unlinked from platform realm", tenant.getAdminUserId());
+            } catch (Exception e) {
+                log.warn("Platform realm unlink failed (continuing): {}", e.getMessage());
+            }
+
+            // Clear admin references on Tenant
+            tenant.setAdminUserId(null);
+            tenant.setAdminUserEmail(null);
+            tenantRepository.save(tenant);
+        }
+
+        // 7. Delete provisioning tasks for this app
+        try {
+            provisioningTaskRepository.deleteAllByTenantAppId(tenantAppId);
+            log.info("Provisioning tasks deleted for app {}", tenantAppId);
+        } catch (Exception e) {
+            log.warn("Provisioning task cleanup failed (continuing): {}", e.getMessage());
+        }
+
+        // 8. Delete TenantApp record
+        tenantAppRepository.delete(app);
+        log.info("TenantApp {} deleted for tenant {}", tenantAppId, tenantId);
+    }
+
+    // =========================
+    // RETRY PROVISION
+    // =========================
+    @Override
+    @Transactional
+    public void retryProvision(UUID tenantAppId, UUID tenantId) {
+        TenantApp app = tenantAppRepository.findById(tenantAppId)
+                .orElseThrow(() -> new ProvisioningException("TenantApp not found: " + tenantAppId));
+
+        if (!app.getTenant().getId().equals(tenantId)) {
+            throw new ProvisioningException("TenantApp does not belong to tenant");
+        }
+
+        Set<ProvisioningTaskStatus> retryable = Set.of(
+                ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED);
+        if (!retryable.contains(app.getDeploymentStatus())) {
+            throw new ProvisioningException(
+                    "Cannot retry provisioning in state " + app.getDeploymentStatus()
+                            + ". Allowed: " + retryable);
+        }
+
+        // Reset retry count on the existing task so manual retry always works
+        // (even if auto-retries from the scheduler are exhausted)
+        provisioningTaskRepository
+                .findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(
+                        tenantAppId,
+                        List.of(ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED))
+                .ifPresent(task -> {
+                    log.info("Resetting retry count for task={} currentStep={} retries={}",
+                            task.getId(), task.getCurrentStep(), task.getRetryCount());
+                    task.setRetryCount(0);
+                    provisioningTaskRepository.save(task);
+                });
+
+        log.info("Retrying provisioning for TenantApp={} tenant={} currentStatus={}",
+                tenantAppId, tenantId, app.getDeploymentStatus());
+        provisioningOrchestrator.provision(tenantAppId);
     }
 
     // ==================== PRIVATE HELPERS ====================

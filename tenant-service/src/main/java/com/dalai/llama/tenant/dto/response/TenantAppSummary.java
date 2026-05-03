@@ -16,6 +16,7 @@ import java.util.UUID;
 @Builder
 public record TenantAppSummary(
         UUID id,
+        UUID tenantId,
         String appType,
         String displayName,
         String subdomain,
@@ -32,6 +33,7 @@ public record TenantAppSummary(
     public static TenantAppSummary from(TenantApp app) {
         return TenantAppSummary.builder()
                 .id(app.getId())
+                .tenantId(app.getTenant() != null ? app.getTenant().getId() : null)
                 .appType(app.getAppType() != null ? app.getAppType().name() : null)
                 .displayName(app.getDisplayName())
                 .subdomain(app.getSubdomain())

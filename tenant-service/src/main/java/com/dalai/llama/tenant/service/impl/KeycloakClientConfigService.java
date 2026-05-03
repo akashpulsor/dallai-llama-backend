@@ -262,6 +262,20 @@ public class KeycloakClientConfigService {
         }
     }
 
+    public void deleteClient(String realmName, String clientId) {
+        if (clientId == null || clientId.isBlank()) return;
+        try {
+            RealmResource realm = keycloakAdmin.realm(realmName);
+            List<ClientRepresentation> found = realm.clients().findByClientId(clientId);
+            for (ClientRepresentation client : found) {
+                realm.clients().get(client.getId()).remove();
+                log.info("Deleted Keycloak client {} from realm {}", clientId, realmName);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to delete Keycloak client {}: {}", clientId, e.getMessage());
+        }
+    }
+
     public void deleteClientsForTenant(String realmName) {
         try {
             RealmResource realm = keycloakAdmin.realm(realmName);

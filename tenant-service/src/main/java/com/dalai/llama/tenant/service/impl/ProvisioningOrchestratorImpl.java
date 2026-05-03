@@ -116,9 +116,9 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
                 .orElseThrow(() -> new ProvisioningException("TenantApp not found: " + tenantAppId));
         Tenant tenant = app.getTenant();
 
-        // Find or create task
+        // Find or create task (ordered by most recent to ensure we resume from the right point)
         ProvisioningTask task = taskRepository
-                .findFirstByTenantAppIdAndStatusIn(tenantAppId,
+                .findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(tenantAppId,
                         List.of(ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED, ProvisioningTaskStatus.RUNNING))
                 .orElseGet(() -> createTask(tenant, tenantAppId));
 

@@ -78,7 +78,8 @@ public class SubscriptionService {
 
         String didNumber = request.getDid().getNumber();
         didRepository.findByNumber(didNumber).ifPresent(existingDid -> {
-            if (existingDid.getStatus() != DidStatus.RELEASED) {
+            if (existingDid.getStatus() != DidStatus.RELEASED
+                    && existingDid.getStatus() != DidStatus.AVAILABLE) {
                 throw new IllegalStateException(
                         "DID " + didNumber + " is already reserved (status: " + existingDid.getStatus() + ")");
             }

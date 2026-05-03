@@ -95,4 +95,5 @@ public class TenantController {
                        @RequestParam(defaultValue = "Tenant deletion requested") String reason) {
         tenantService.deleteTenant(id, reason);
     }
+
 }

@@ -7,9 +7,12 @@ import com.dalai.llama.tenant.dto.response.ProvisioningStatusResponse;
 import com.dalai.llama.tenant.repository.ProvisioningLogRepository;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.service.TenantAppService;
+import com.dalai.llama.tenant.service.TenantService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +26,7 @@ import java.util.UUID;
 public class ProvisioningController {
 
     private final TenantAppService tenantAppService;
+    private final TenantService tenantService;
     private final ProvisioningTaskRepository taskRepository;
     private final ProvisioningLogRepository logRepository;
 
@@ -74,6 +78,40 @@ public class ProvisioningController {
                 .map(this::toLogResponse)
                 .toList();
         return ResponseEntity.ok(response);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // DELETE APP
+    // ════════════════════════════════════════════════════════════
+
+    @DeleteMapping("/{appId}")
+    public ResponseEntity<Void> deleteApp(
+            @PathVariable UUID appId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> {
+                    tenantAppService.deleteApp(appId, tenant.getId());
+                    return ResponseEntity.noContent().<Void>build();
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // RETRY PROVISIONING
+    // ════════════════════════════════════════════════════════════
+
+    @PostMapping("/{appId}/retry")
+    public ResponseEntity<Void> retryProvision(
+            @PathVariable UUID appId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> {
+                    tenantAppService.retryProvision(appId, tenant.getId());
+                    return ResponseEntity.accepted().<Void>build();
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     // ════════════════════════════════════════════════════════════

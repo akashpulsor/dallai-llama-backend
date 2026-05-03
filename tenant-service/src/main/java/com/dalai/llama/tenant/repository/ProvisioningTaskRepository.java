@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.repository;
 import com.dalai.llama.tenant.domain.entity.ProvisioningTask;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -14,10 +15,13 @@ public interface ProvisioningTaskRepository extends JpaRepository<ProvisioningTa
     Optional<ProvisioningTask> findFirstByTenantIdAndStatusIn(
             UUID tenantId, Iterable<ProvisioningTaskStatus> statuses);
 
-    Optional<ProvisioningTask> findFirstByTenantAppIdAndStatusIn(
+    Optional<ProvisioningTask> findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(
             UUID tenantAppId, Iterable<ProvisioningTaskStatus> statuses);
 
     Optional<ProvisioningTask> findFirstByTenantAppIdOrderByStartedAtDesc(UUID tenantAppId);
+
+    @Modifying
+    void deleteAllByTenantAppId(UUID tenantAppId);
 
     boolean existsByTenantIdAndStatus(UUID tenantId, ProvisioningTaskStatus status);
 

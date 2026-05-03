@@ -213,6 +213,25 @@ public class ProductServiceClient {
     }
 
     /**
+     * Full subscription cleanup — releases DID, SIP endpoint, channels, trunk.
+     * Called when user deletes an app/subscription.
+     */
+    public void cleanupSubscription(UUID subscriptionId) {
+        log.info("Product-service: cleanup subscription {}", subscriptionId);
+        try {
+            client().delete()
+                    .uri("/api/v1/internal/products/subscriptions/{id}/cleanup", subscriptionId)
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(Duration.ofSeconds(30))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to cleanup subscription {}: {}", subscriptionId, e.getMessage());
+            throw new RuntimeException("Subscription cleanup failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Invalidate entitlement cache (called when plan changes).
      */
     public void invalidateCache(UUID tenantId) {

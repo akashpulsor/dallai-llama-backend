@@ -26,4 +26,8 @@ public interface TenantAppService {
 
 
     void handleSubscriptionActivationFailed(SubscriptionActivationFailedEvent event);
+
+    void deleteApp(UUID tenantAppId, UUID tenantId);
+
+    void retryProvision(UUID tenantAppId, UUID tenantId);
 }

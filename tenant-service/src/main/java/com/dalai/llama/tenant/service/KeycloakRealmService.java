@@ -20,6 +20,8 @@ public interface KeycloakRealmService {
 
     void deleteTenant(String slug);
 
+    void deleteAdminUser(String realmName, String userId);
+
     void linkUserToUUID(String realmName, String keycloakUserId, UUID tenantId);
 
     void removeTenantLinkFromMainUser(String userId, String mainRealmName);

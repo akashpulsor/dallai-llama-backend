@@ -49,6 +49,8 @@ public class InternalProductController {
     private  final PlanAssignmentRepository planAssignmentRepository;
     private final ProductAppRepository productAppRepository;
     private final SubscriptionService subscriptionService;
+    private final SipEndpointRepository sipEndpointRepository;
+
     // ==================== SUBSCRIPTION ENDPOINTS ====================
 
 
@@ -476,6 +478,102 @@ public class InternalProductController {
         private int port;
         private String username;
         private String realm;
+    }
+
+    // ==================== SUBSCRIPTION CLEANUP ====================
+
+    /**
+     * Full subscription cleanup — releases DID, deletes SIP endpoint,
+     * channel bundle, tenant SIP trunk, cancels subscription.
+     *
+     * Called by tenant-service when user deletes an app/subscription.
+     */
+    @DeleteMapping("/subscriptions/{subscriptionId}/cleanup")
+    @Operation(summary = "Full subscription cleanup (DID, SIP, channels, trunk)")
+    public ResponseEntity<Map<String, Object>> cleanupSubscription(@PathVariable UUID subscriptionId) {
+        log.info("Cleanup subscription {}", subscriptionId);
+
+        Subscription subscription = subscriptionRepository.findById(subscriptionId).orElse(null);
+        if (subscription == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<String> cleaned = new java.util.ArrayList<>();
+
+        // 1. Release DID
+        if (subscription.getDidId() != null) {
+            try {
+                Did did = didRepository.findById(subscription.getDidId()).orElse(null);
+                if (did != null) {
+                    did.setStatus(com.dalai.llama.product.domain.entity.enums.DidStatus.AVAILABLE);
+                    did.setTenantId(null);
+                    did.setReleasedAt(Instant.now());
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+                    cleaned.add("DID:" + did.getNumber());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to release DID for subscription {}: {}", subscriptionId, e.getMessage());
+            }
+        }
+
+        // 2. Delete SIP endpoint
+        if (subscription.getSipEndpointId() != null) {
+            try {
+                sipEndpointRepository.deleteById(subscription.getSipEndpointId());
+                cleaned.add("SIP_ENDPOINT");
+            } catch (Exception e) {
+                log.warn("Failed to delete SIP endpoint for subscription {}: {}", subscriptionId, e.getMessage());
+            }
+        }
+
+        // 3. Delete channel bundle
+        if (subscription.getChannelBundleId() != null) {
+            try {
+                channelBundleRepository.deleteById(subscription.getChannelBundleId());
+                cleaned.add("CHANNEL_BUNDLE");
+            } catch (Exception e) {
+                log.warn("Failed to delete channel bundle for subscription {}: {}", subscriptionId, e.getMessage());
+            }
+        }
+
+        // 4. Delete tenant SIP trunk
+        if (subscription.getTenantSipTrunkId() != null) {
+            try {
+                tenantSipTrunkRepository.deleteById(subscription.getTenantSipTrunkId());
+                cleaned.add("SIP_TRUNK");
+            } catch (Exception e) {
+                log.warn("Failed to delete SIP trunk for subscription {}: {}", subscriptionId, e.getMessage());
+            }
+        }
+
+        // 5. Remove plan assignment
+        if (subscription.getPlanAssignmentId() != null) {
+            try {
+                planAssignmentRepository.deleteById(subscription.getPlanAssignmentId());
+                cleaned.add("PLAN_ASSIGNMENT");
+            } catch (Exception e) {
+                log.warn("Failed to delete plan assignment for subscription {}: {}", subscriptionId, e.getMessage());
+            }
+        }
+
+        // 6. Cancel subscription
+        subscription.setStatus(SubscriptionStatus.CANCELLED);
+        subscription.setCancelledAt(Instant.now());
+        subscription.setUpdatedAt(Instant.now());
+        subscriptionRepository.save(subscription);
+        cleaned.add("SUBSCRIPTION_CANCELLED");
+
+        // 7. Invalidate entitlement cache
+        entitlementService.invalidateCache(subscription.getTenantId());
+
+        log.info("Subscription {} cleanup complete: {}", subscriptionId, cleaned);
+
+        return ResponseEntity.ok(Map.of(
+                "subscriptionId", subscriptionId,
+                "status", "CLEANED",
+                "cleaned", cleaned
+        ));
     }
 
     // ==================== PRIVATE METHODS ====================

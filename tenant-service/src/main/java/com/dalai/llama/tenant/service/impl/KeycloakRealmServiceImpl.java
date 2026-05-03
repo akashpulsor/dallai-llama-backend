@@ -390,6 +390,19 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     // ════════════════════════════════════════════════════════════════
 
     @Override
+    public void deleteAdminUser(String realmName, String userId) {
+        log.info("Deleting admin user {} from realm {}", userId, realmName);
+        try {
+            keycloakAdminClient.realm(realmName).users().get(userId).remove();
+            log.info("Deleted admin user {} from realm {}", userId, realmName);
+        } catch (NotFoundException e) {
+            log.warn("Admin user {} not found in realm {} — may already be deleted", userId, realmName);
+        } catch (Exception e) {
+            log.error("Failed to delete admin user {} from realm {}: {}", userId, realmName, e.getMessage());
+        }
+    }
+
+    @Override
     public void deleteTenant(String slug) {
         String realmName = "tenant-" + slug;
         log.info("Initiating deletion for realm: {}", realmName);
