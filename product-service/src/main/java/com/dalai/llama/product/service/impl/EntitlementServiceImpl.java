@@ -235,6 +235,7 @@ public class EntitlementServiceImpl implements EntitlementService {
 
                 // AI features
                 .aiSttEnabled(e.isAiSttEnabled())
+                .aiTtsEnabled(e.isAiTtsEnabled())
                 .aiLlmEnabled(e.isAiLlmEnabled())
                 .aiBotEnabled(e.isAiBotEnabled())
                 .aiSentimentEnabled(e.isAiSentimentEnabled())
@@ -243,6 +244,7 @@ public class EntitlementServiceImpl implements EntitlementService {
                 .aiVoiceMorphEnabled(e.isAiVoiceMorphEnabled())
                 .aiAgentAssistEnabled(e.isAiAgentAssistEnabled())
                 .aiTokensPerMonth(e.getAiTokensPerMonth() != null ? e.getAiTokensPerMonth() : 0)
+                .aiTranscriptionEnabled(e.isAiTranscriptionEnabled())
 
                 // Call features
                 .bargeEnabled(e.isBargeEnabled())

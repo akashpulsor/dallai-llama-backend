@@ -97,6 +97,10 @@ public class DidwwWebhookController {
                 .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
                 .findFirst()
                 .ifPresent(did -> {
+                    if (did.getStatus() == DidStatus.RELEASED || did.getStatus() == DidStatus.RELEASING) {
+                        log.warn("Ignoring DIDWW activation for already released DID {}", did.getNumber());
+                        return;
+                    }
                     did.setStatus(DidStatus.ACTIVE);
                     did.setProvisionedAt(Instant.now());
                     did.setUpdatedAt(Instant.now());
@@ -121,6 +125,10 @@ public class DidwwWebhookController {
                 .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
                 .findFirst()
                 .ifPresent(did -> {
+                    if (did.getStatus() == DidStatus.RELEASED || did.getStatus() == DidStatus.RELEASING) {
+                        log.warn("Ignoring DIDWW suspension for already released DID {}", did.getNumber());
+                        return;
+                    }
                     did.setStatus(DidStatus.SUSPENDED);
                     did.setUpdatedAt(Instant.now());
                     didRepository.save(did);
@@ -160,6 +168,10 @@ public class DidwwWebhookController {
                 .filter(d -> payload.getResourceId().equals(d.getDidwwDidId()))
                 .findFirst()
                 .ifPresent(did -> {
+                    if (did.getStatus() == DidStatus.RELEASED || did.getStatus() == DidStatus.RELEASING) {
+                        log.warn("Ignoring DIDWW provisioning failure for already released DID {}", did.getNumber());
+                        return;
+                    }
                     did.setStatus(DidStatus.PENDING);
                     did.setUpdatedAt(Instant.now());
                     didRepository.save(did);

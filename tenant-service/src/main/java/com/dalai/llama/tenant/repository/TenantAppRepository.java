@@ -31,6 +31,8 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
 
     boolean existsBySubscriptionId(UUID subscriptionId);
 
+    boolean existsByTenantIdAndSubscriptionId(UUID tenantId, UUID subscriptionId);
+
     @EntityGraph(attributePaths = {"tenant"})
     Optional<TenantApp> findWithTenantById(UUID id);
     // ==================== FIND BY TENANT ====================

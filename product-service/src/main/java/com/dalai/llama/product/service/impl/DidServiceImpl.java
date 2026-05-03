@@ -192,7 +192,12 @@ public class DidServiceImpl implements DidService {
     public void releaseDid(UUID tenantId, UUID didId) {
         Did did = getDid(tenantId, didId);
 
-        log.info("Releasing DID {} for tenant {}", did.getNumber(), tenantId);
+        if (did.getStatus() == DidStatus.RELEASED || did.getStatus() == DidStatus.RELEASING) {
+            log.info("DID {} already released/releasing, skipping", did.getNumber());
+            return;
+        }
+
+        log.info("Releasing DID {} for tenant {} (current status: {})", did.getNumber(), tenantId, did.getStatus());
 
         did.setStatus(DidStatus.RELEASING);
         did.setUpdatedAt(Instant.now());

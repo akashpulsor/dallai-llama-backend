@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.scheduler;
 import com.dalai.llama.tenant.domain.entity.ProvisioningTask;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
+import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,7 @@ import java.util.List;
 public class ProvisioningRecoveryScheduler {
 
     private final ProvisioningTaskRepository taskRepository;
+    private final TenantAppRepository tenantAppRepository;
     private final ProvisioningOrchestrator provisioningOrchestrator;
 
     private static final int STALE_MINUTES = 15;
@@ -48,6 +50,12 @@ public class ProvisioningRecoveryScheduler {
             task.setLastError("Recovered: task was RUNNING for >" + STALE_MINUTES + " minutes (possible pod crash)");
             task.setLastErrorAt(OffsetDateTime.now());
             taskRepository.save(task);
+
+            // Sync TenantApp deploymentStatus so the UI shows FAILED
+            tenantAppRepository.findById(task.getTenantAppId()).ifPresent(app -> {
+                app.setDeploymentStatus(ProvisioningTaskStatus.FAILED);
+                tenantAppRepository.save(app);
+            });
 
             // Re-trigger — orchestrator will resume from the stuck step
             try {

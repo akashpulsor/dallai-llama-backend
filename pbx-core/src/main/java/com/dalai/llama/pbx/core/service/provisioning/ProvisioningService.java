@@ -199,7 +199,8 @@ public class ProvisioningService {
                     .build());
         }
 
-        log.info("Dialplan stored for tenant={} ({} chars)", tenantId, req.getDialplanContent().length());
+        log.info("Dialplan stored for tenant={} ({} chars)", tenantId,
+                req.getDialplanContent() != null ? req.getDialplanContent().length() : 0);
     }
 
     // ═══════════════════════════════════════════════════════════

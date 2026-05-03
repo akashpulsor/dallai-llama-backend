@@ -32,14 +32,17 @@ public class TenantStateMachineImpl implements TenantStateMachine {
             // Phase 1: Business Setup
             Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
             Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED, TenantStatus.CREATED, TenantStatus.DELETED)),
-            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.PROVISIONING, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
+            Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.PROVISIONING, TenantStatus.PROVISIONING_FAILED, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
 
             // Phase 2: Infrastructure Provisioning
+            // PROVISIONING can complete, fail, or be deleted
             Map.entry(TenantStatus.PROVISIONING, Set.of(TenantStatus.ACTIVE, TenantStatus.PROVISIONING_FAILED, TenantStatus.DELETED)),
+            // PROVISIONING_FAILED can retry (→ PROVISIONING) or be deleted
             Map.entry(TenantStatus.PROVISIONING_FAILED, Set.of(TenantStatus.PROVISIONING, TenantStatus.DELETED)),
 
             // Operational
-            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.SUSPENDED, TenantStatus.DELETED)),
+            // ACTIVE can provision new apps (→ PROVISIONING), suspend, or delete
+            Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.PROVISIONING, TenantStatus.SUSPENDED, TenantStatus.DELETED)),
             Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED))
     );
 

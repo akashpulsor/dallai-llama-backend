@@ -135,13 +135,14 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         app.setDeploymentStatus(ProvisioningTaskStatus.RUNNING);
         appRepository.save(app);
 
-        // On retry: PROVISIONING_FAILED → PROVISIONING
-        if (tenant.getStatus() == com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING_FAILED) {
+        // Transition tenant to PROVISIONING from any retryable state
+        // (PROVISIONING_FAILED, ACTIVE for second-app retry, WALLET_CREATED for first run)
+        if (tenant.getStatus() != com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING) {
             try {
                 stateMachine.transition(tenant, com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING,
-                        "PROVISIONING_ORCHESTRATOR", "Retrying provisioning from " + startStep);
+                        "PROVISIONING_ORCHESTRATOR", "Provisioning from " + tenant.getStatus() + " at step " + startStep);
             } catch (Exception stateEx) {
-                log.warn("Could not transition tenant back to PROVISIONING: {}", stateEx.getMessage());
+                log.warn("Could not transition tenant to PROVISIONING from {}: {}", tenant.getStatus(), stateEx.getMessage());
             }
         }
 
@@ -483,8 +484,9 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private void stepStampInfraUrls(ProvisioningContext ctx) {
         TenantApp app = ctx.getApp();
         String slug = app.getTenant().getSlug();
-        boolean dedicated = ctx.isDedicatedInfra();
-        String ns = ctx.getResolvedNamespace();
+        // Read from persisted app (not ctx) so retries work when step 2 was skipped
+        boolean dedicated = Boolean.TRUE.equals(app.getDedicatedInfrastructure());
+        String ns = app.getNamespace() != null ? app.getNamespace() : sharedNamespace;
 
         // SIP/WSS URLs (shared infra points to same endpoints)
         app.setSipExternalIp("sip." + baseDomain);

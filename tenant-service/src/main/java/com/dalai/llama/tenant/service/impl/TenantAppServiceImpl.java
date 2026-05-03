@@ -267,12 +267,10 @@ public class TenantAppServiceImpl implements TenantAppService {
             throw new ProvisioningException("TenantApp does not belong to tenant");
         }
 
-        Set<ProvisioningTaskStatus> retryable = Set.of(
-                ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED);
-        if (!retryable.contains(app.getDeploymentStatus())) {
+        // Allow retry from PENDING, FAILED, or RUNNING (stuck/crashed mid-provision)
+        if (app.getDeploymentStatus() == ProvisioningTaskStatus.COMPLETED) {
             throw new ProvisioningException(
-                    "Cannot retry provisioning in state " + app.getDeploymentStatus()
-                            + ". Allowed: " + retryable);
+                    "Cannot retry provisioning — app is already COMPLETED");
         }
 
         // Reset retry count on the existing task so manual retry always works
@@ -280,7 +278,7 @@ public class TenantAppServiceImpl implements TenantAppService {
         provisioningTaskRepository
                 .findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(
                         tenantAppId,
-                        List.of(ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED))
+                        List.of(ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED, ProvisioningTaskStatus.RUNNING))
                 .ifPresent(task -> {
                     log.info("Resetting retry count for task={} currentStep={} retries={}",
                             task.getId(), task.getCurrentStep(), task.getRetryCount());

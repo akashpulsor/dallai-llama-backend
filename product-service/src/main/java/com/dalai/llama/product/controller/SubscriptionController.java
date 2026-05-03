@@ -94,9 +94,10 @@ public class SubscriptionController {
      * DELETE /api/v1/subscriptions/{id}
      */
     @DeleteMapping("/{subscriptionId}")
-    @Operation(summary = "Cancel subscription", description = "Cancel a subscription")
+    @Operation(summary = "Cancel subscription", description = "Cancel a subscription — stops recurring billing, releases DID, cleans up resources")
     public ResponseEntity<Void> cancelSubscription(@PathVariable UUID subscriptionId) {
-        // TODO: Implement cancellation
+        log.info("Cancel subscription request: {}", subscriptionId);
+        subscriptionService.cancelSubscription(subscriptionId);
         return ResponseEntity.noContent().build();
     }
 

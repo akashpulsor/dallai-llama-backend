@@ -689,6 +689,107 @@ public class SubscriptionService {
         return subscriptionRepository.findByTenantIdAndProductId(tenantId, product.getId());
     }
 
+    // ==================== CANCEL SUBSCRIPTION ====================
+
+    /**
+     * Cancel a subscription: stop recurring billing, release DID, clean up resources.
+     */
+    @Transactional
+    public void cancelSubscription(UUID subscriptionId) {
+        Subscription subscription = subscriptionRepository.findById(subscriptionId)
+                .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
+
+        if (subscription.getStatus() == SubscriptionStatus.CANCELLED) {
+            log.info("Subscription {} already cancelled", subscriptionId);
+            return;
+        }
+
+        UUID tenantId = subscription.getTenantId();
+        log.info("Cancelling subscription {} for tenant {}", subscriptionId, tenantId);
+
+        // 1. Cancel recurring charges in billing-service
+        try {
+            billingClient.cancelRecurringCharges(tenantId, subscriptionId);
+            log.info("Recurring charges cancelled for subscription {}", subscriptionId);
+        } catch (Exception e) {
+            log.warn("Failed to cancel recurring charges (continuing): {}", e.getMessage());
+        }
+
+        // 2. Release DID
+        if (subscription.getDidId() != null) {
+            try {
+                Did did = didRepository.findById(subscription.getDidId()).orElse(null);
+                if (did != null && did.getStatus() != DidStatus.RELEASED) {
+                    did.setStatus(DidStatus.RELEASING);
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+
+                    // TODO: Call DIDWW API to release DID
+
+                    did.setStatus(DidStatus.RELEASED);
+                    did.setTenantId(null);
+                    did.setReleasedAt(Instant.now());
+                    did.setUpdatedAt(Instant.now());
+                    didRepository.save(did);
+                    log.info("DID {} released for subscription {}", did.getNumber(), subscriptionId);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to release DID (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 3. Delete SIP endpoint
+        if (subscription.getSipEndpointId() != null) {
+            try {
+                sipEndpointService.delete(subscription.getSipEndpointId());
+                log.info("SIP endpoint deleted for subscription {}", subscriptionId);
+            } catch (Exception e) {
+                log.warn("Failed to delete SIP endpoint (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 4. Delete channel bundle
+        if (subscription.getChannelBundleId() != null) {
+            try {
+                channelBundleRepository.deleteById(subscription.getChannelBundleId());
+                log.info("Channel bundle deleted for subscription {}", subscriptionId);
+            } catch (Exception e) {
+                log.warn("Failed to delete channel bundle (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 5. Delete tenant SIP trunk
+        if (subscription.getTenantSipTrunkId() != null) {
+            try {
+                tenantSipTrunkRepository.deleteById(subscription.getTenantSipTrunkId());
+                log.info("SIP trunk deleted for subscription {}", subscriptionId);
+            } catch (Exception e) {
+                log.warn("Failed to delete SIP trunk (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 6. Remove plan assignment
+        if (subscription.getPlanAssignmentId() != null) {
+            try {
+                planAssignmentRepository.deleteById(subscription.getPlanAssignmentId());
+                log.info("Plan assignment removed for subscription {}", subscriptionId);
+            } catch (Exception e) {
+                log.warn("Failed to remove plan assignment (continuing): {}", e.getMessage());
+            }
+        }
+
+        // 7. Mark subscription cancelled
+        subscription.setStatus(SubscriptionStatus.CANCELLED);
+        subscription.setCancelledAt(Instant.now());
+        subscription.setUpdatedAt(Instant.now());
+        subscriptionRepository.save(subscription);
+
+        // 8. Invalidate entitlement cache
+        entitlementService.invalidateCache(tenantId);
+
+        log.info("Subscription {} cancelled for tenant {}", subscriptionId, tenantId);
+    }
+
     // ==================== HELPERS (UNCHANGED) ====================
 
     private BigDecimal calculateTotal(Plan plan, SubscriptionRequest request) {

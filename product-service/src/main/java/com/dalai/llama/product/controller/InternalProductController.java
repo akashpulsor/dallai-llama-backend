@@ -50,6 +50,7 @@ public class InternalProductController {
     private final ProductAppRepository productAppRepository;
     private final SubscriptionService subscriptionService;
     private final SipEndpointRepository sipEndpointRepository;
+    private final com.dalai.llama.product.service.DidService didService;
 
     // ==================== SUBSCRIPTION ENDPOINTS ====================
 
@@ -574,6 +575,51 @@ public class InternalProductController {
                 "status", "CLEANED",
                 "cleaned", cleaned
         ));
+    }
+
+    // ==================== CANCEL SUBSCRIPTION (internal) ====================
+
+    /**
+     * DELETE /api/v1/internal/products/subscriptions/{subscriptionId}/cancel
+     * Cancel subscription: stops recurring billing, releases DID, cleans up resources.
+     * Called by tenant-service.
+     */
+    @DeleteMapping("/subscriptions/{subscriptionId}/cancel")
+    @Operation(summary = "Cancel subscription (internal)")
+    public ResponseEntity<Void> cancelSubscriptionInternal(@PathVariable UUID subscriptionId) {
+        log.info("[Internal] Cancel subscription {}", subscriptionId);
+        subscriptionService.cancelSubscription(subscriptionId);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ==================== DID MANAGEMENT (internal) ====================
+
+    /**
+     * GET /api/v1/internal/products/tenants/{tenantId}/dids
+     * List all DIDs for a tenant. Called by tenant-service.
+     */
+    @GetMapping("/tenants/{tenantId}/dids")
+    @Operation(summary = "List tenant DIDs (internal)")
+    public ResponseEntity<List<DidResponse>> listTenantDidsInternal(@PathVariable UUID tenantId) {
+        List<DidResponse> dids = didService.getTenantDids(tenantId)
+                .stream()
+                .map(mapper::toDidResponse)
+                .toList();
+        return ResponseEntity.ok(dids);
+    }
+
+    /**
+     * DELETE /api/v1/internal/products/tenants/{tenantId}/dids/{didId}
+     * Release a DID. Called by tenant-service.
+     */
+    @DeleteMapping("/tenants/{tenantId}/dids/{didId}")
+    @Operation(summary = "Release DID (internal)")
+    public ResponseEntity<Void> releaseDidInternal(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID didId) {
+        log.info("[Internal] Release DID {} for tenant {}", didId, tenantId);
+        didService.releaseDid(tenantId, didId);
+        return ResponseEntity.noContent().build();
     }
 
     // ==================== PRIVATE METHODS ====================

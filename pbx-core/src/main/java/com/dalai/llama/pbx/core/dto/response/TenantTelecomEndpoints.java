@@ -1,6 +1,8 @@
 package com.dalai.llama.pbx.core.dto.response;
 
 
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,6 +24,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
 public class TenantTelecomEndpoints {
 
     private String sipUdpUrl;         // "sip:{externalIp}:5060;transport=udp"

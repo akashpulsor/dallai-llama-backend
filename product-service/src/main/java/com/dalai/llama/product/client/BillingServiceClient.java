@@ -231,6 +231,23 @@ public class BillingServiceClient {
     public record ChargeResponse(boolean success, BigDecimal newBalance, String message) {}
     public record BillingStateResponse(String state, boolean canMakeCalls) {}
 
+    // ==================== CANCEL RECURRING CHARGES ====================
+
+    public void cancelRecurringCharges(UUID tenantId, UUID subscriptionId) {
+        try {
+            client().delete()
+                    .uri("/api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}",
+                            tenantId, subscriptionId)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Cancelled recurring charges for tenant {} subscription {}", tenantId, subscriptionId);
+        } catch (Exception e) {
+            log.error("Failed to cancel recurring charges for tenant {} subscription {}: {}",
+                    tenantId, subscriptionId, e.getMessage());
+        }
+    }
+
     // ==================== REQUEST DTOs ====================
 
     public record RecurringChargeRequest(

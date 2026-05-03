@@ -8,6 +8,7 @@ import com.dalai.llama.tenant.dto.response.TenantAppSummary;
 import com.dalai.llama.tenant.dto.response.TenantResponse;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.TenantService;
+import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -28,6 +30,7 @@ public class TenantController {
 
     private final TenantService tenantService;
     private final TenantAppRepository tenantAppRepository;
+    private final ProductServiceClient productServiceClient;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -96,4 +99,51 @@ public class TenantController {
         tenantService.deleteTenant(id, reason);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // DID MANAGEMENT — list + release DIDs from dashboard UI
+    // ═══════════════════════════════════════════════════════════
+
+    @GetMapping("/me/dids")
+    public ResponseEntity<List<Map<String, Object>>> getMyDids(@AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> ResponseEntity.ok(productServiceClient.listDids(tenant.getId())))
+                .orElseGet(() -> ResponseEntity.ok(List.of()));
+    }
+
+    @DeleteMapping("/me/dids/{didId}")
+    public ResponseEntity<Void> releaseDid(
+            @PathVariable UUID didId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> {
+                    productServiceClient.releaseDid(tenant.getId(), didId);
+                    return ResponseEntity.noContent().<Void>build();
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // SUBSCRIPTION MANAGEMENT — cancel subscription from dashboard UI
+    // ═══════════════════════════════════════════════════════════
+
+    @DeleteMapping("/me/subscriptions/{subscriptionId}")
+    public ResponseEntity<Void> cancelSubscription(
+            @PathVariable UUID subscriptionId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        return tenantService.findByAdminUserId(keycloakUserId)
+                .map(tenant -> {
+                    // Verify the subscription belongs to this tenant via app
+                    boolean owns = tenantAppRepository.existsByTenantIdAndSubscriptionId(
+                            tenant.getId(), subscriptionId);
+                    if (!owns) {
+                        return ResponseEntity.status(403).<Void>build();
+                    }
+                    productServiceClient.cancelSubscription(subscriptionId);
+                    return ResponseEntity.noContent().<Void>build();
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
 }

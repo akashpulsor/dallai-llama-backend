@@ -27,6 +27,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -176,6 +177,21 @@ public class InternalBillingController {
                 charge.getAmount(),
                 charge.getNextChargeDate()
         ));
+    }
+
+    /**
+     * DELETE /api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}
+     * Cancel all recurring charges for a subscription (called by product-service on cancel)
+     */
+    @DeleteMapping("/recurring-charges/subscription/{subscriptionId}")
+    @Operation(summary = "Cancel recurring charges by subscription")
+    @Transactional
+    public ResponseEntity<Void> cancelRecurringChargesBySubscription(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID subscriptionId) {
+        log.info("Cancelling recurring charges for tenant {} subscription {}", tenantId, subscriptionId);
+        recurringChargeRepository.cancelBySubscriptionId(subscriptionId);
+        return ResponseEntity.noContent().build();
     }
 
     // ==================== CALL AUTHORIZATION ====================

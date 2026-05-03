@@ -70,6 +70,10 @@ public class PlanEntitlement {
     @Builder.Default
     private boolean aiSttEnabled = false;
 
+    @Column(name = "ai_tts_enabled")
+    @Builder.Default
+    private boolean aiTtsEnabled = false;
+
     @Column(name = "ai_llm_enabled")
     @Builder.Default
     private boolean aiLlmEnabled = false;
@@ -101,6 +105,10 @@ public class PlanEntitlement {
     @Column(name = "ai_tokens_per_month")
     @Builder.Default
     private Long  aiTokensPerMonth = 0L;
+
+    @Column(name = "ai_transcription_enabled")
+    @Builder.Default
+    private boolean aiTranscriptionEnabled = false;
 
     // ==================== CALL FEATURES ====================
 

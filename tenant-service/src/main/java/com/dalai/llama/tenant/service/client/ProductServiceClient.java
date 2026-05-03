@@ -252,6 +252,62 @@ public class ProductServiceClient {
     }
 
 
+    /**
+     * List all DIDs for a tenant.
+     */
+    public List<Map<String, Object>> listDids(UUID tenantId) {
+        log.debug("Fetching DIDs for tenant {}", tenantId);
+        try {
+            return client().get()
+                    .uri("/api/v1/internal/products/tenants/{tenantId}/dids", tenantId)
+                    .retrieve()
+                    .bodyToFlux(Map.class)
+                    .map(m -> (Map<String, Object>) m)
+                    .collectList()
+                    .timeout(Duration.ofSeconds(5))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to list DIDs for tenant {}: {}", tenantId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * Release (free up) a DID.
+     */
+    public void releaseDid(UUID tenantId, UUID didId) {
+        log.info("Releasing DID {} for tenant {}", didId, tenantId);
+        try {
+            client().delete()
+                    .uri("/api/v1/internal/products/tenants/{tenantId}/dids/{didId}", tenantId, didId)
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(Duration.ofSeconds(10))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to release DID {} for tenant {}: {}", didId, tenantId, e.getMessage());
+            throw new RuntimeException("Failed to release DID: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Cancel a subscription (stops recurring billing, releases DID, cleans up resources).
+     */
+    public void cancelSubscription(UUID subscriptionId) {
+        log.info("Cancelling subscription {}", subscriptionId);
+        try {
+            client().delete()
+                    .uri("/api/v1/internal/products/subscriptions/{subscriptionId}/cancel", subscriptionId)
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(Duration.ofSeconds(15))
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to cancel subscription {}: {}", subscriptionId, e.getMessage());
+            throw new RuntimeException("Failed to cancel subscription: " + e.getMessage(), e);
+        }
+    }
+
     // Response DTOs
 
     public record TenantSubscriptionInfo(

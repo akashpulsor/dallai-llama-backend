@@ -29,6 +29,7 @@ public record PlanEntitlementResponse(
 
         // ==================== AI FEATURES ====================
         boolean aiSttEnabled,
+        boolean aiTtsEnabled,
         boolean aiLlmEnabled,
         boolean aiBotEnabled,
         boolean aiSentimentEnabled,
@@ -37,7 +38,7 @@ public record PlanEntitlementResponse(
         boolean aiVoiceMorphEnabled,
         boolean aiAgentAssistEnabled,
         long aiTokensPerMonth,
-
+        boolean aiTranscriptionEnabled,
         // ==================== CALL FEATURES ====================
         boolean bargeEnabled,
         boolean whisperEnabled,
