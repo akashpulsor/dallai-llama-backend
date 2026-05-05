@@ -13,6 +13,7 @@ import com.dalai.llama.tenant.service.TenantStateMachine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -29,38 +30,64 @@ public class TenantStateMachineImpl implements TenantStateMachine {
     private final TenantEventProducer eventProducer;
 
     private static final Map<TenantStatus, Set<TenantStatus>> TRANSITIONS = Map.ofEntries(
-            // Phase 1: Business Setup
             Map.entry(TenantStatus.CREATED, Set.of(TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
             Map.entry(TenantStatus.IDENTITY_CREATED, Set.of(TenantStatus.WALLET_CREATED, TenantStatus.CREATED, TenantStatus.DELETED)),
             Map.entry(TenantStatus.WALLET_CREATED, Set.of(TenantStatus.PROVISIONING, TenantStatus.PROVISIONING_FAILED, TenantStatus.IDENTITY_CREATED, TenantStatus.DELETED)),
-
-            // Phase 2: Infrastructure Provisioning
-            // PROVISIONING can complete, fail, or be deleted
             Map.entry(TenantStatus.PROVISIONING, Set.of(TenantStatus.ACTIVE, TenantStatus.PROVISIONING_FAILED, TenantStatus.DELETED)),
-            // PROVISIONING_FAILED can retry (→ PROVISIONING) or be deleted
             Map.entry(TenantStatus.PROVISIONING_FAILED, Set.of(TenantStatus.PROVISIONING, TenantStatus.DELETED)),
-
-            // Operational
-            // ACTIVE can provision new apps (→ PROVISIONING), suspend, or delete
             Map.entry(TenantStatus.ACTIVE, Set.of(TenantStatus.PROVISIONING, TenantStatus.SUSPENDED, TenantStatus.DELETED)),
             Map.entry(TenantStatus.SUSPENDED, Set.of(TenantStatus.ACTIVE, TenantStatus.DELETED))
     );
 
+    /**
+     * Lenient transition: returns true on success, false on invalid transition (no exception).
+     * Use this from non-critical call sites (e.g. orchestrators that should log-and-continue
+     * regardless of whether the transition succeeded).
+     */
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean tryTransition(Tenant tenant, TenantStatus target, String triggerSource, String message) {
+        TenantStatus current = tenant.getStatus();
+        Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
+
+        if (!allowed.contains(target)) {
+            log.warn("Skipping invalid transition: {} -> {} for tenant {} (trigger: {})",
+                    current, target, tenant.getId(), triggerSource);
+            return false;
+        }
+
+        applyTransition(tenant, current, target, triggerSource, message);
+        return true;
+    }
+
+    /**
+     * Strict transition: throws InvalidStateTransitionException on invalid transition.
+     * Use this from REST APIs / call sites that genuinely need to reject invalid input.
+     */
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void transition(Tenant tenant, TenantStatus target, String triggerSource, String message) {
         TenantStatus current = tenant.getStatus();
-
         Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
+
         if (!allowed.contains(target)) {
             log.warn("Invalid transition: {} -> {} for tenant {}", current, target, tenant.getId());
             throw new InvalidStateTransitionException(
                     String.format("Cannot transition from %s to %s", current, target));
         }
 
-        log.info("Tenant {} transitioning: {} -> {} (trigger: {})", tenant.getId(), current, target, triggerSource);
+        applyTransition(tenant, current, target, triggerSource, message);
+    }
 
-        // Audit
+    /**
+     * The actual state change + audit + event publishing.
+     * Private — only called once invariants are validated.
+     */
+    private void applyTransition(Tenant tenant, TenantStatus current, TenantStatus target,
+                                 String triggerSource, String message) {
+        log.info("Tenant {} transitioning: {} -> {} (trigger: {})",
+                tenant.getId(), current, target, triggerSource);
+
         TenantStateAudit audit = new TenantStateAudit();
         audit.setTenant(tenant);
         audit.setOldStatus(current.name());
@@ -69,7 +96,6 @@ public class TenantStateMachineImpl implements TenantStateMachine {
         audit.setMessage(message);
         auditRepository.save(audit);
 
-        // Update tenant
         tenant.setStatus(target);
         tenant.setStatusMessage(message);
         tenant.setStatusChangedAt(OffsetDateTime.now());

@@ -111,7 +111,7 @@ public class TenantServiceImpl implements TenantService {
         log.info("Creating tenant for verified Keycloak user id={} email={}", keycloakUserId, email);
 
         // ── Resume incomplete tenant if exists (lookup by ID, not email) ──
-        Tenant existing = tenantRepository.findFirstByAdminUserIdAndStatusIn(
+        Tenant existing = tenantRepository.findFirstByAdminUserIdAndStatusInOrderByCreatedAtDesc(
                 keycloakUserId,
                 List.of(TenantStatus.CREATED, TenantStatus.IDENTITY_CREATED, TenantStatus.WALLET_CREATED)
         ).orElse(null);
@@ -275,16 +275,14 @@ public class TenantServiceImpl implements TenantService {
         webSocketPublisher.publish(
                 tenantId,
                 "wallet",
-                WalletExternalEvent.builder().
-                        EventType("WALLET_CREATED").
-                        data(
-                        Map.of(
+                WalletExternalEvent.builder()
+                        .eventType("WALLET_CREATED")
+                        .data(Map.of(
                                 "event", "WALLET_CREATED",
                                 "tenant_id", tenantId,
                                 "wallet_id", walletId
-                        )
-                )
-
+                        ))
+                        .build()
         );
 
         log.info("Wallet linked for tenant {}: {}", tenantId, walletId);
@@ -299,12 +297,10 @@ public class TenantServiceImpl implements TenantService {
         webSocketPublisher.publish(
                 walletCreditedEvent.getTenantId(),
                 "wallet",
-                WalletExternalEvent.builder().
-                        EventType("WALLET_FUNDED").
-                        data(
-                                walletCreditedEvent
-                        )
-
+                WalletExternalEvent.builder()
+                        .eventType("WALLET_FUNDED")
+                        .data(walletCreditedEvent)
+                        .build()
         );
     }
 

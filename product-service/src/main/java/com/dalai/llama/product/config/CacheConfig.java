@@ -3,10 +3,14 @@ package com.dalai.llama.product.config;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
@@ -33,41 +37,56 @@ public class CacheConfig {
     private int entitlementsTtlMinutes;
 
     /**
-     * ObjectMapper for Redis — with default typing enabled so cached objects
-     * are deserialized back to their original Java types (not LinkedHashMap).
+     * Universal Redis serializer that handles ALL DTOs correctly.
+     *
+     * Key design choices:
+     *   - DefaultTyping.EVERYTHING        — writes type info on every value (no NON_FINAL traps with String/Integer/BigDecimal)
+     *   - JsonTypeInfo.As.WRAPPER_ARRAY   — matches GenericJackson2JsonRedisSerializer's native format
+     *   - allowIfBaseType(Object.class)   — permissive but only used inside cache, never on user input
+     *   - JavaTimeModule                  — Instant, LocalDateTime, ZonedDateTime, etc.
+     *   - Jdk8Module                      — Optional<T>
+     *   - ParameterNamesModule            — Java records and constructor-based DTOs (no need for @JsonCreator)
+     *   - ACCEPT_CASE_INSENSITIVE_*       — survives accidental casing differences across services
      */
-    @Bean("redisObjectMapper")
-    public ObjectMapper redisObjectMapper() {
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.registerModule(new JavaTimeModule());
-        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
-        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    @Bean
+    public GenericJackson2JsonRedisSerializer redisJsonSerializer() {
+        BasicPolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
+                .allowIfBaseType(Object.class)
+                .build();
+
+        ObjectMapper mapper = JsonMapper.builder()
+                .addModule(new JavaTimeModule())
+                .addModule(new Jdk8Module())
+                .addModule(new ParameterNamesModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE)
+                .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+                .activateDefaultTyping(
+                        ptv,
+                        ObjectMapper.DefaultTyping.EVERYTHING,
+                        JsonTypeInfo.As.WRAPPER_ARRAY
+                )
+                .build();
+
         mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
-        mapper.activateDefaultTyping(
-                BasicPolymorphicTypeValidator.builder()
-                        .allowIfBaseType(Object.class)
-                        .build(),
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
-        return mapper;
+        return new GenericJackson2JsonRedisSerializer(mapper);
     }
 
     @Bean
     @Primary
     public CacheManager cacheManager(RedisConnectionFactory connectionFactory,
-                                     ObjectMapper redisObjectMapper) {
-
-        var jsonSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+                                     GenericJackson2JsonRedisSerializer redisJsonSerializer) {
 
         RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofMinutes(10))
                 .serializeKeysWith(
                         RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
                 .serializeValuesWith(
-                        RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer))
-                .disableCachingNullValues();
+                        RedisSerializationContext.SerializationPair.fromSerializer(redisJsonSerializer))
+                .disableCachingNullValues()
+                .computePrefixWith(cacheName -> "product-service::" + cacheName + "::v3::");
 
         Map<String, RedisCacheConfiguration> cacheConfigs = new HashMap<>();
         cacheConfigs.put("entitlements", defaultConfig.entryTtl(Duration.ofMinutes(entitlementsTtlMinutes)));
@@ -87,17 +106,15 @@ public class CacheConfig {
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory,
-                                                       ObjectMapper redisObjectMapper) {
+                                                       GenericJackson2JsonRedisSerializer redisJsonSerializer) {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);
 
         StringRedisSerializer keySerializer = new StringRedisSerializer();
-        var valueSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper);
-
         template.setKeySerializer(keySerializer);
         template.setHashKeySerializer(keySerializer);
-        template.setValueSerializer(valueSerializer);
-        template.setHashValueSerializer(valueSerializer);
+        template.setValueSerializer(redisJsonSerializer);
+        template.setHashValueSerializer(redisJsonSerializer);
         template.afterPropertiesSet();
 
         return template;

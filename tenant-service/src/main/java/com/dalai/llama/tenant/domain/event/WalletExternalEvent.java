@@ -7,6 +7,6 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class WalletExternalEvent {
-    private String EventType;
+    private String eventType;
     private Object data;
 }

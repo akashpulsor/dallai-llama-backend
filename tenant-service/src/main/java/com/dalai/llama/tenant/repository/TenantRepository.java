@@ -39,7 +39,7 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
 
     List<Tenant> findByExpiresAtBefore(OffsetDateTime now);
 
-    Optional<Tenant> findFirstByAdminUserIdAndStatusIn(String adminUserId, List<TenantStatus> statuses);
+    Optional<Tenant> findFirstByAdminUserIdAndStatusInOrderByCreatedAtDesc(String adminUserId, List<TenantStatus> statuses);
 
     Optional<Tenant> findFirstByAdminUserIdAndDeletedAtIsNull(String adminUserId);
 }

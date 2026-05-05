@@ -58,10 +58,13 @@ public class PublicTenantConfigController {
         }
 
         Tenant tenant = tenantOpt.get();
-        if (!tenant.isActive() && !tenant.getStatus().isProvisioning()) {
+        // Only block truly terminal/suspended tenants.
+        // UI needs config during onboarding (CREATED → PROVISIONING → ACTIVE) for Keycloak + WS bootstrap.
+        if (tenant.getStatus() == com.dalai.llama.tenant.domain.entity.enums.TenantStatus.DELETED
+                || tenant.getStatus() == com.dalai.llama.tenant.domain.entity.enums.TenantStatus.SUSPENDED) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "tenant_inactive",
-                    "message", "Tenant is not active",
+                    "message", "Tenant is not available",
                     "status", tenant.getStatus().name()
             ));
         }
@@ -86,6 +89,9 @@ public class PublicTenantConfigController {
         config.put("keycloak_realm", realmName);
         config.put("keycloak_issuer", keycloakUrl + "/realms/" + realmName);
         config.put("domain", tenant.getSlug() + "." + baseDomain);
+
+        // ── STOMP WebSocket URL (for real-time events: provisioning, billing, notifications) ──
+        config.put("stomp_ws_url", "wss://api." + baseDomain + "/ws");
 
         // ── Per-app configs (PUBLIC — only what UI needs for bootstrap) ──
         // Sensitive fields (capacity, plan_tier, SIP raw IPs) are in the

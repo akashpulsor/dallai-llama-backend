@@ -88,10 +88,8 @@ public class IstioRouteReconciler {
     @Scheduled(fixedDelayString = "${dalaillama.istio.reconcile-interval-ms:300000}")
     public void reconcileAll() {
         try {
-            List<TenantApp> activeApps = appRepository.findByDeploymentStatus(ProvisioningTaskStatus.COMPLETED);
-            // Also include apps currently being provisioned (so routes are ready when provisioning finishes)
-            activeApps.addAll(appRepository.findByDeploymentStatus(ProvisioningTaskStatus.RUNNING));
-
+            List<TenantApp> activeApps = appRepository.findByDeploymentStatusWithTenant(ProvisioningTaskStatus.COMPLETED);
+            activeApps.addAll(appRepository.findByDeploymentStatusWithTenant(ProvisioningTaskStatus.RUNNING));
             if (activeApps.isEmpty()) {
                 log.debug("No active apps, skipping Istio reconciliation");
                 return;

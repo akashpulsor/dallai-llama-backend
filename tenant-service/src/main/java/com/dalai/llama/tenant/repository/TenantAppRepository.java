@@ -187,5 +187,13 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
     List<TenantApp> findAllByDeploymentStatusAndDedicatedInfrastructure(
             ProvisioningTaskStatus status, Boolean dedicated);
 
+    /**
+     * Find apps by deployment status, eagerly fetching the parent tenant.
+     * Used by IstioRouteReconciler.reconcileAll() which runs outside any
+     * transaction and accesses tenant.getSlug() — without JOIN FETCH this
+     * would throw LazyInitializationException.
+     */
+    @Query("SELECT a FROM TenantApp a JOIN FETCH a.tenant WHERE a.deploymentStatus = :status")
+    List<TenantApp> findByDeploymentStatusWithTenant(@Param("status") ProvisioningTaskStatus status);
 }
 

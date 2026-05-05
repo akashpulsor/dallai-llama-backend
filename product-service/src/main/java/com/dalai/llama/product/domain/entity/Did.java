@@ -13,7 +13,7 @@ import java.util.UUID;
 @Table(
         name = "dids",
         indexes = {
-                @Index(name = "idx_did_tenant", columnList = "tenantId"),
+                @Index(name = "idx_did_tenant", columnList = "tenant_id"),
                 @Index(name = "idx_did_status", columnList = "status")
         }
 )
@@ -26,7 +26,7 @@ public class Did {
     @Id
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(name = "tenant_id", nullable = true)
     private UUID tenantId;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -34,11 +34,13 @@ public class Did {
     private SipTrunk sipTrunk;
 
     @Column(nullable = false, unique = true)
-    private String number;              // E.164
+    private String number;
 
     private String displayNumber;
 
+    @Column(nullable = false)
     private String country;
+
     private String region;
     private String city;
 
@@ -46,6 +48,7 @@ public class Did {
     private String didwwTrunkGroupId;
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private DidStatus status;
 
     private BigDecimal monthlyRental;
@@ -59,4 +62,23 @@ public class Did {
 
     @Version
     private long version;
+
+    // ✅ Mirror DB constraint at application level
+    @PrePersist
+    @PreUpdate
+    private void validateTenantConstraint() {
+        if (status == null) {
+            return; // let @Column(nullable = false) handle this
+        }
+
+        boolean isUnownedState =
+                status == DidStatus.AVAILABLE ||
+                        status == DidStatus.RELEASED;
+
+        if (!isUnownedState && tenantId == null) {
+            throw new IllegalStateException(
+                    "tenantId must not be null for status " + status
+            );
+        }
+    }
 }

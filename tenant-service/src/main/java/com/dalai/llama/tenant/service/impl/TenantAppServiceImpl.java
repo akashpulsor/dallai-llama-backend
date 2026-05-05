@@ -130,15 +130,9 @@ public class TenantAppServiceImpl implements TenantAppService {
                 app.getId(), event.getTenantId());
 
         provisionApp(app.getId());
-
-        tenantEventProducer.publishProvisioningCompleted(ProvisioningCompletedEvent.builder()
-                .tenantId(app.getTenant().getId())
-                .tenantAppId(app.getId())
-                .subscriptionId(app.getSubscriptionId())
-                .productCode(app.getProductCode())
-                .status(ProvisioningTaskStatus.COMPLETED)
-                .completedAt(Instant.now())
-                .build());
+        // NOTE: Do NOT publish ProvisioningCompletedEvent here.
+        // provisionApp() is @Async — provisioning hasn't finished yet.
+        // The ProvisioningOrchestrator publishes the event when it actually completes or fails.
     }
 
     // =========================

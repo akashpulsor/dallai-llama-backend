@@ -4,6 +4,8 @@ import com.dalai.llama.tenant.domain.entity.ProvisioningTask;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -28,4 +30,15 @@ public interface ProvisioningTaskRepository extends JpaRepository<ProvisioningTa
     List<ProvisioningTask> findByStatusAndStartedAtBefore(ProvisioningTaskStatus status, OffsetDateTime cutoff);
 
     List<ProvisioningTask> findByStatusAndLastErrorAtBefore(ProvisioningTaskStatus status, OffsetDateTime cutoff);
+
+    @Modifying
+    @Query("UPDATE ProvisioningTask t SET t.status = 'CANCELLED', " +
+            "t.lastError = :reason, t.lastErrorAt = :now " +
+            "WHERE t.tenant.id = :tenantId AND t.status IN :activeStatuses")
+    int cancelAllForTenant(@Param("tenantId") UUID tenantId,
+                           @Param("activeStatuses") List<ProvisioningTaskStatus> activeStatuses,
+                           @Param("reason") String reason,
+                           @Param("now") OffsetDateTime now);
+
+
 }

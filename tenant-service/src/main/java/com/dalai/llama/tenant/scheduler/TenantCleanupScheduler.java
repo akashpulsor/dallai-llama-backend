@@ -1,7 +1,9 @@
 package com.dalai.llama.tenant.scheduler;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
+import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
+import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
 import com.dalai.llama.tenant.service.TenantStateMachine;
@@ -25,6 +27,7 @@ import java.util.List;
  * - expiresAt < now (24-hour window passed)
  * - wallet balance = 0
  */
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -33,7 +36,7 @@ public class TenantCleanupScheduler {
     private final TenantRepository tenantRepository;
     private final BillingServiceClient billingServiceClient;
     private final TenantStateMachine stateMachine;
-
+    private final ProvisioningTaskRepository taskRepository;
     private final KeycloakRealmService keycloakRealmService;
     /**
      * Run every hour
@@ -112,13 +115,20 @@ public class TenantCleanupScheduler {
     }
 
     private void markDeleted(Tenant tenant) {
-        // User has added funds but not subscribed yet
-        // Extend by another 24 hours
         tenant.setExpiresAt(OffsetDateTime.now());
         tenant.setUpdatedAt(OffsetDateTime.now());
         tenant.setStatus(TenantStatus.DELETED);
         tenantRepository.save(tenant);
 
-        log.info("Extended expiry for tenant {} (has funds)", tenant.getSlug());
+        // Cancel any pending/running provisioning tasks so recovery scheduler doesn't pick them up
+        int cancelled = taskRepository.cancelAllForTenant(
+                tenant.getId(),
+                List.of(ProvisioningTaskStatus.RUNNING, ProvisioningTaskStatus.FAILED, ProvisioningTaskStatus.PENDING),
+                "Tenant deleted by cleanup scheduler",
+                OffsetDateTime.now()
+        );
+
+        log.info("Marked tenant {} as DELETED, cancelled {} pending provisioning tasks",
+                tenant.getSlug(), cancelled);
     }
 }

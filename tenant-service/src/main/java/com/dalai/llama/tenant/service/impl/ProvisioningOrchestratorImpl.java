@@ -8,6 +8,7 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningStep;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
+import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
 import com.dalai.llama.tenant.dto.response.AdminCredentials;
 import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
@@ -18,11 +19,8 @@ import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.DistributedLock;
 import com.dalai.llama.tenant.util.PasswordGenerator;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.hibernate.validator.internal.util.stereotypes.Lazy;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -64,6 +62,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private final TenantWebSocketPublisher wsPublisher;
     private final DistributedLock distributedLock;
     private final TenantStateMachineImpl stateMachine;
+    private final com.dalai.llama.tenant.kafka.producer.TenantEventProducer tenantEventProducer;
 
 
     private final ProvisioningTxRunner txRunner;
@@ -88,6 +87,21 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     @Override
     @Async("taskExecutor")
     public void provision(UUID tenantAppId) {
+        // GUARD: short-circuit if tenant is DELETED, BEFORE acquiring lock or opening tx
+        // Use findWithTenantById to eagerly fetch the Tenant (avoid LazyInitializationException outside tx)
+        TenantApp preCheck = appRepository.findWithTenantById(tenantAppId).orElse(null);
+        if (preCheck == null) {
+            log.warn("provision() called for non-existent tenantAppId={}, ignoring", tenantAppId);
+            return;
+        }
+        TenantStatus preStatus = preCheck.getTenant().getStatus();
+        if (preStatus == TenantStatus.DELETED) {
+            log.warn("Skipping provision() — tenant is DELETED. tenantAppId={} tenantId={} slug={}",
+                    tenantAppId, preCheck.getTenant().getId(), preCheck.getTenant().getSlug());
+            cancelAnyPendingTasks(tenantAppId);
+            return;
+        }
+
         String lockKey = "provision:" + tenantAppId;
         String lockVal = UUID.randomUUID().toString();
 
@@ -105,6 +119,25 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         }
     }
 
+    /**
+     * Idempotently mark any RUNNING/FAILED/PENDING task for this app as CANCELLED
+     * so the recovery scheduler stops picking it up.
+     */
+    private void cancelAnyPendingTasks(UUID tenantAppId) {
+        taskRepository.findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(
+                        tenantAppId,
+                        List.of(ProvisioningTaskStatus.PENDING,
+                                ProvisioningTaskStatus.RUNNING,
+                                ProvisioningTaskStatus.FAILED))
+                .ifPresent(task -> {
+                    // If you don't have CANCELLED in the enum, leave as FAILED with a clear lastError.
+                    task.setStatus(ProvisioningTaskStatus.FAILED);
+                    task.setLastError("Cancelled: tenant is DELETED");
+                    task.setLastErrorAt(OffsetDateTime.now());
+                    taskRepository.save(task);
+                    log.info("Cancelled pending provisioning task {} (tenant deleted)", task.getId());
+                });
+    }
 
 
     // ════════════════════════════════════════════════════════════
@@ -115,6 +148,13 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         TenantApp app = appRepository.findById(tenantAppId)
                 .orElseThrow(() -> new ProvisioningException("TenantApp not found: " + tenantAppId));
         Tenant tenant = app.getTenant();
+
+        // BELT-AND-SUSPENDERS: state may have changed between provision() guard and here
+        if (tenant.getStatus() == TenantStatus.DELETED) {
+            log.warn("Tenant became DELETED before provisioning could start. Aborting. tenantId={} slug={}",
+                    tenant.getId(), tenant.getSlug());
+            return;
+        }
 
         // Find or create task (ordered by most recent to ensure we resume from the right point)
         ProvisioningTask task = taskRepository
@@ -137,13 +177,10 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
         // Transition tenant to PROVISIONING from any retryable state
         // (PROVISIONING_FAILED, ACTIVE for second-app retry, WALLET_CREATED for first run)
-        if (tenant.getStatus() != com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING) {
-            try {
-                stateMachine.transition(tenant, com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING,
-                        "PROVISIONING_ORCHESTRATOR", "Provisioning from " + tenant.getStatus() + " at step " + startStep);
-            } catch (Exception stateEx) {
-                log.warn("Could not transition tenant to PROVISIONING from {}: {}", tenant.getStatus(), stateEx.getMessage());
-            }
+        if (tenant.getStatus() != TenantStatus.PROVISIONING) {
+            stateMachine.tryTransition(tenant, TenantStatus.PROVISIONING,
+                    "PROVISIONING_ORCHESTRATOR",
+                    "Provisioning from " + tenant.getStatus() + " at step " + startStep);
         }
 
         wsPublisher.publishProvisioningEvent(tenant.getId(), "STARTED", "Provisioning started at " + startStep.getDescription());
@@ -171,15 +208,23 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
                 appRepository.save(app);
 
                 // Tenant-level state: PROVISIONING → PROVISIONING_FAILED
-                try {
-                    stateMachine.transition(tenant, com.dalai.llama.tenant.domain.entity.enums.TenantStatus.PROVISIONING_FAILED,
-                            "PROVISIONING_ORCHESTRATOR", "Failed at: " + step.getDescription());
-                } catch (Exception stateEx) {
-                    log.warn("Could not transition tenant to PROVISIONING_FAILED: {}", stateEx.getMessage());
-                }
+                // Tenant-level state: PROVISIONING → PROVISIONING_FAILED
+                stateMachine.tryTransition(tenant, TenantStatus.PROVISIONING_FAILED,
+                        "PROVISIONING_ORCHESTRATOR", "Failed at: " + step.getDescription());
 
                 wsPublisher.publishProvisioningEvent(tenant.getId(), "FAILED",
                         "Failed at: " + step.getDescription() + " — " + task.getLastError());
+
+                tenantEventProducer.publishProvisioningCompleted(
+                        com.dalai.llama.tenant.domain.event.ProvisioningCompletedEvent.builder()
+                                .tenantId(tenant.getId())
+                                .tenantAppId(app.getId())
+                                .subscriptionId(app.getSubscriptionId())
+                                .productCode(app.getProductCode())
+                                .status(ProvisioningTaskStatus.FAILED)
+                                .failureReason(task.getLastError())
+                                .completedAt(java.time.Instant.now())
+                                .build());
                 return;
             }
         }
@@ -200,14 +245,21 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         appRepository.save(app);
 
         // Tenant-level state: PROVISIONING → ACTIVE
-        try {
-            stateMachine.transition(tenant, com.dalai.llama.tenant.domain.entity.enums.TenantStatus.ACTIVE,
-                    "PROVISIONING_ORCHESTRATOR", "All provisioning steps completed");
-        } catch (Exception stateEx) {
-            log.warn("Could not transition tenant to ACTIVE: {}", stateEx.getMessage());
-        }
+        // Tenant-level state: PROVISIONING → ACTIVE
+        stateMachine.tryTransition(tenant, TenantStatus.ACTIVE,
+                "PROVISIONING_ORCHESTRATOR", "All provisioning steps completed");
 
         wsPublisher.publishProvisioningEvent(tenant.getId(), "COMPLETED", "All provisioning steps completed successfully");
+
+        tenantEventProducer.publishProvisioningCompleted(
+                com.dalai.llama.tenant.domain.event.ProvisioningCompletedEvent.builder()
+                        .tenantId(tenant.getId())
+                        .tenantAppId(app.getId())
+                        .subscriptionId(app.getSubscriptionId())
+                        .productCode(app.getProductCode())
+                        .status(ProvisioningTaskStatus.COMPLETED)
+                        .completedAt(java.time.Instant.now())
+                        .build());
 
         log.info("Provisioning completed for app={} tenant={}", app.getId(), tenant.getId());
     }

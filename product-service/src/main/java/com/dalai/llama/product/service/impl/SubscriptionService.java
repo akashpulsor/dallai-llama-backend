@@ -727,7 +727,7 @@ public class SubscriptionService {
                     // TODO: Call DIDWW API to release DID
 
                     did.setStatus(DidStatus.RELEASED);
-                    did.setTenantId(null);
+
                     did.setReleasedAt(Instant.now());
                     did.setUpdatedAt(Instant.now());
                     didRepository.save(did);

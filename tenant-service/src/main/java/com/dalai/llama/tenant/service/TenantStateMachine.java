@@ -4,6 +4,6 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 
 public interface TenantStateMachine {
-
     void transition(Tenant tenant, TenantStatus target, String triggerSource, String message);
+    boolean tryTransition(Tenant tenant, TenantStatus target, String triggerSource, String message);
 }
