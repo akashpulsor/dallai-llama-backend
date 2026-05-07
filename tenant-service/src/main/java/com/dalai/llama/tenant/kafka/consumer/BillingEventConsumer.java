@@ -1,6 +1,7 @@
 package com.dalai.llama.tenant.kafka.consumer;
 
 import com.dalai.llama.tenant.domain.event.BillingStateChangedEvent;
+import com.dalai.llama.tenant.domain.event.RefundInitiatedEvent;
 import com.dalai.llama.tenant.domain.event.WalletCreatedEvent;
 import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
 import com.dalai.llama.tenant.domain.event.WalletExternalEvent;
@@ -57,5 +58,11 @@ public class BillingEventConsumer {
         tenantService.onBillingStateChanged(event.getTenantId(), event.getCurrentState().toString());
     }
 
-
+    @KafkaListener(topics = "billing.refund.initiated", groupId = "billing-service",
+            containerFactory = "refundInitiatedListenerFactory")
+    public void onRefundInitiated(RefundInitiatedEvent event) {
+        log.info("Received billing.refund.initiated: tenantId={} paymentId={} amount={} trigger={}",
+                event.getTenantId(), event.getPaymentId(), event.getAmount(), event.getTrigger());
+        tenantService.onRefundInitiated(event);
+    }
 }

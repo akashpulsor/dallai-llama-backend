@@ -1,33 +1,25 @@
-package com.dalai.llama.product.domain.event;
+package com.dalai.llama.billing.domain.event;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.UUID;
 
-@Data
+@Getter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class SubscriptionActivationFailedEvent {
-
-    /**
-     * Unique identifier for this event instance, used by billing-service for
-     * idempotent refund processing under Kafka redelivery. Generated fresh
-     * by product-service on publish; never reused across attempts.
-     */
-    private UUID eventId;
-
     private UUID subscriptionId;
     private UUID tenantId;
 
     /** Wallet debit transaction reference — billing-service uses this to refund. */
     private UUID paymentId;
 
-    /** Saga step that failed (e.g., "PROVISIONING_DID", "TENANT_TRUNK_CREATED"). */
+    /** Saga step that failed (e.g., "DID_PROVISIONED", "TENANT_TRUNK_CREATED"). */
     private String failedAtStep;
 
     /** Exception message / reason for failure. */

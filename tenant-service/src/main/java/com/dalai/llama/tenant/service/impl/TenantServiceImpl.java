@@ -4,6 +4,7 @@ import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.domain.event.TenantCreatedEvent;
 import com.dalai.llama.tenant.domain.event.TenantDeletedEvent;
+import com.dalai.llama.tenant.domain.event.RefundInitiatedEvent;
 import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
 import com.dalai.llama.tenant.domain.event.WalletExternalEvent;
 import com.dalai.llama.tenant.domain.exception.TenantAlreadyExistsException;
@@ -304,6 +305,22 @@ public class TenantServiceImpl implements TenantService {
                 WalletExternalEvent.builder()
                         .eventType("WALLET_FUNDED")
                         .data(walletCreditedEvent)
+                        .build()
+        );
+    }
+
+    @Override
+    public void onRefundInitiated(RefundInitiatedEvent event) {
+        findTenantOrThrow(event.getTenantId());
+        log.info("Refund initiated for tenant={} payment={} amount={} trigger={}",
+                event.getTenantId(), event.getPaymentId(), event.getAmount(), event.getTrigger());
+
+        webSocketPublisher.publish(
+                event.getTenantId(),
+                "wallet",
+                WalletExternalEvent.builder()
+                        .eventType("REFUND_INITIATED")
+                        .data(event)
                         .build()
         );
     }

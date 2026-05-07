@@ -30,10 +30,21 @@ public class SubscriptionSaga {
     @Column(name = "triggered_by_event_id")
     private UUID triggeredByEventId;
 
+    /**
+     * Current step. May be either an in-progress marker (e.g. PROVISIONING_DID)
+     * set BEFORE attempting a step, or a completion marker (e.g. DID_PROVISIONED)
+     * set AFTER the step succeeds. The failure log reads this to identify which
+     * step was being attempted when an exception occurred.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "current_step", nullable = false)
     private SagaStep currentStep;
 
+    /**
+     * Last successfully completed checkpoint. Always a completion marker,
+     * never an in-progress marker. Retry uses this to resume from the
+     * step after the last successful checkpoint.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "last_completed_step")
     private SagaStep lastCompletedStep;
@@ -78,10 +89,17 @@ public class SubscriptionSaga {
     private int retryCount = 0;
 
 
-
-    public void advanceTo(SagaStep step) {
-        this.lastCompletedStep = this.currentStep;
-        this.currentStep = step;
+    /**
+     * Mark a completion step as done. Both currentStep and lastCompletedStep
+     * are set to the completion marker.
+     *
+     * Always pass a completion-marker step (e.g. DID_PROVISIONED), never an
+     * in-progress marker (e.g. PROVISIONING_DID). In-progress markers are
+     * set directly via setCurrentStep() before attempting a step body.
+     */
+    public void advanceTo(SagaStep completionStep) {
+        this.lastCompletedStep = completionStep;
+        this.currentStep = completionStep;
         this.lastUpdatedAt = Instant.now();
     }
 
@@ -98,10 +116,5 @@ public class SubscriptionSaga {
         this.currentStep = SagaStep.COMPLETED;
         this.completedAt = Instant.now();
         this.lastUpdatedAt = Instant.now();
-    }
-
-    public boolean hasCompletedStep(SagaStep step) {
-        if (lastCompletedStep == null) return false;
-        return lastCompletedStep.ordinal() >= step.ordinal();
     }
 }

@@ -1,6 +1,7 @@
 package com.dalai.llama.tenant.service;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
+import com.dalai.llama.tenant.domain.event.RefundInitiatedEvent;
 import com.dalai.llama.tenant.domain.event.WalletCreditedEvent;
 import com.dalai.llama.tenant.dto.request.CreateTenantRequest;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
@@ -31,6 +32,7 @@ public interface TenantService {
 
     void onWalletCreated(UUID tenantId, UUID walletId);
     void onWalletFunded(WalletCreditedEvent walletCreditedEvent);
+    void onRefundInitiated(RefundInitiatedEvent event);
     void onBillingStateChanged(UUID tenantId, String state);
 
     SubscriptionActiveResponse activateSubscription(SubscriptionActiveRequest request);

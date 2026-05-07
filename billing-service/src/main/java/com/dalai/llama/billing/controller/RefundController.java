@@ -1,11 +1,9 @@
 package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.domain.entity.Payment;
-import com.dalai.llama.billing.domain.entity.PaymentEvent;
 import com.dalai.llama.billing.domain.entity.enums.PaymentStatus;
-import com.dalai.llama.billing.repository.PaymentEventRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
-import com.dalai.llama.billing.service.payment.RazorpayService;
+import com.dalai.llama.billing.service.RefundService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Builder;
@@ -35,8 +33,7 @@ import java.util.UUID;
 public class RefundController {
 
     private final PaymentRepository paymentRepository;
-    private final PaymentEventRepository paymentEventRepository;
-    private final RazorpayService razorpayService;
+    private final RefundService refundService;
 
     @PostMapping("/{paymentId}")
     @Operation(summary = "Initiate refund",
@@ -64,15 +61,7 @@ public class RefundController {
                     .build());
         }
 
-        // Guard 3: gateway payment ID must exist
-        if (payment.getGatewayPaymentId() == null) {
-            return ResponseEntity.badRequest().body(RefundResponse.builder()
-                    .success(false)
-                    .message("No gateway payment ID — cannot initiate refund")
-                    .build());
-        }
-
-        // Guard 4: within refund window (7 days from capture)
+        // Guard 3: within refund window (7 days from capture)
         if (payment.getUpdatedAt() != null &&
                 payment.getUpdatedAt().isBefore(Instant.now().minus(7, ChronoUnit.DAYS))) {
             return ResponseEntity.badRequest().body(RefundResponse.builder()
@@ -81,41 +70,26 @@ public class RefundController {
                     .build());
         }
 
-        // Determine refund amount
         BigDecimal refundAmount = (request != null && request.amount != null)
-                ? request.amount : payment.getAmount();
-
-        // Guard 5: amount cannot exceed payment
-        if (refundAmount.compareTo(payment.getAmount()) > 0) {
-            return ResponseEntity.badRequest().body(RefundResponse.builder()
-                    .success(false)
-                    .message("Refund amount exceeds payment amount")
-                    .build());
-        }
+                ? request.amount : null;
+        String reason = (request != null) ? request.reason : null;
 
         try {
-            String refundId = razorpayService.initiateRefund(
-                    payment.getGatewayPaymentId(), refundAmount);
+            String refundId = refundService.initiateRefund(paymentId, refundAmount, reason, "ADMIN");
 
-            // Record initiation event (state change happens via webhook)
-            paymentEventRepository.save(PaymentEvent.record(
-                    payment, PaymentStatus.SUCCESS, PaymentStatus.SUCCESS,
-                    "Refund initiated: " + refundId +
-                            (request != null && request.reason != null
-                                    ? " — " + request.reason : ""),
-                    "SYSTEM"
-            ));
-
-            log.info("Refund initiated: payment={}, refund={}, amount={}",
-                    paymentId, refundId, refundAmount);
-
+            BigDecimal actualAmount = (refundAmount != null) ? refundAmount : payment.getAmount();
             return ResponseEntity.ok(RefundResponse.builder()
                     .success(true)
                     .refundId(refundId)
-                    .amount(refundAmount)
+                    .amount(actualAmount)
                     .message("Refund initiated. Wallet will be debited on confirmation.")
                     .build());
 
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(RefundResponse.builder()
+                    .success(false)
+                    .message(e.getMessage())
+                    .build());
         } catch (Exception e) {
             log.error("Failed to initiate refund for payment {}", paymentId, e);
             return ResponseEntity.internalServerError().body(RefundResponse.builder()

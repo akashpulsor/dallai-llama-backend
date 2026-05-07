@@ -57,7 +57,36 @@ public class SipTrunk {
     private Instant lastHealthCheck;
     private boolean isHealthy;
 
+    /**
+     * ISO 3166-1 alpha-2 country code (e.g. "IN", "US", "GB").
+     * Required for platform trunks (tenantId = NULL) so the saga can route DIDs
+     * to the correct carrier per country. Used by
+     * {@code SipTrunkRepository.findBestPlatformTrunkForCountry}.
+     */
+    @Column(length = 2)
+    private String country;
+
+    /**
+     * Selection priority when multiple platform trunks match a country.
+     * LOWER value = HIGHER priority (sorted ASC). Default 100 — set lower
+     * (e.g. 10) for preferred carriers, higher (e.g. 200) for fallback.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private int priority = 100;
+
+    /**
+     * Provider-specific trunk identifier. Despite the historical column name
+     * ({@code didww_trunk_id}), this is used for any provider — DIDWW, Epsilon,
+     * Twilio, etc. Field name kept for backwards compatibility with existing data.
+     * Cleanup tracked as deferred work.
+     */
     private String didwwTrunkId;
+
+    /**
+     * Provider-specific SIP config identifier. Same provider-agnostic notes as
+     * {@link #didwwTrunkId}.
+     */
     private String didwwSipConfigId;
 
     private Instant createdAt;

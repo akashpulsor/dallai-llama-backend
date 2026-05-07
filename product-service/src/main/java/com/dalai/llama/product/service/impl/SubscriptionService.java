@@ -258,9 +258,6 @@ public class SubscriptionService {
     /**
      * Manual retry endpoint — resumes saga from last completed step.
      */
-    /**
-     * Manual retry endpoint — resumes saga from last completed step.
-     */
     @Transactional
     public SubscriptionResponse retryProvisioning(UUID subscriptionId) {
         SubscriptionSaga saga = sagaRepository.findBySubscriptionId(subscriptionId)
@@ -370,6 +367,10 @@ public class SubscriptionService {
 
         try {
             // ─── STEP 1: DID ──────────────────────────────────────────
+            saga.setCurrentStep(SagaStep.PROVISIONING_DID);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Provisioning DID for subscription {}", saga.getSubscriptionId());
+
             if (saga.getDidId() != null) {
                 did = didRepository.findById(saga.getDidId()).orElse(null);
                 log.info("[SAGA] Reusing existing DID for subscription {}", saga.getSubscriptionId());
@@ -381,8 +382,6 @@ public class SubscriptionService {
                                 .country(subscription.getRequestedDidCountry())
                                 .region(subscription.getRequestedDidRegion())
                                 .city(subscription.getRequestedDidCity())
-
-
                                 .build());
                 saga.setDidId(did.getId());
                 subscription.markDidProvisioned(did.getId());
@@ -393,6 +392,10 @@ public class SubscriptionService {
             sagaRepository.save(saga);
 
             // ─── STEP 2: SIP Endpoint ────────────────────────────────
+            saga.setCurrentStep(SagaStep.CREATING_SIP_ENDPOINT);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Creating SIP endpoint for subscription {}", saga.getSubscriptionId());
+
             if (saga.getSipEndpointId() != null) {
                 sipEndpoint = sipEndpointService.getById(saga.getSipEndpointId());
             }
@@ -401,27 +404,35 @@ public class SubscriptionService {
                 saga.setSipEndpointId(sipEndpoint.getId());
                 subscription.markSipEndpointCreated(sipEndpoint.getId());
                 subscriptionRepository.save(subscription);
-                log.info("[SAGA] SIP endpoint created");
+                log.info("[SAGA] SIP endpoint created for subscription {}", saga.getSubscriptionId());
             }
             saga.advanceTo(SagaStep.SIP_ENDPOINT_CREATED);
             sagaRepository.save(saga);
 
             // ─── STEP 3: Channels ────────────────────────────────────
+            saga.setCurrentStep(SagaStep.ALLOCATING_CHANNELS);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Allocating channels for subscription {}", saga.getSubscriptionId());
+
             if (saga.getChannelBundleId() != null) {
                 channels = channelBundleRepository.findById(saga.getChannelBundleId()).orElse(null);
             }
             if (channels == null) {
                 channels = createChannelBundle(saga.getTenantId(), subscription.getId(),
-                        product.getCode(), plan, entitlement, null);
+                        product.getCode(), plan, entitlement, did, null);
                 saga.setChannelBundleId(channels.getId());
                 subscription.markChannelsAllocated(channels.getId());
                 subscriptionRepository.save(subscription);
-                log.info("[SAGA] Channels allocated");
+                log.info("[SAGA] Channels allocated for subscription {}", saga.getSubscriptionId());
             }
             saga.advanceTo(SagaStep.CHANNELS_ALLOCATED);
             sagaRepository.save(saga);
 
             // ─── STEP 4: Tenant SIP Trunk ────────────────────────────
+            saga.setCurrentStep(SagaStep.CREATING_TENANT_TRUNK);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Creating tenant SIP trunk for subscription {}", saga.getSubscriptionId());
+
             if (saga.getTenantSipTrunkId() != null) {
                 tenantSipTrunk = tenantSipTrunkRepository.findById(saga.getTenantSipTrunkId()).orElse(null);
             }
@@ -433,12 +444,16 @@ public class SubscriptionService {
                 saga.setTenantSipTrunkId(tenantSipTrunk.getId());
                 subscription.setTenantSipTrunkId(tenantSipTrunk.getId());
                 subscriptionRepository.save(subscription);
-                log.info("[SAGA] Tenant SIP trunk created");
+                log.info("[SAGA] Tenant SIP trunk created for subscription {}", saga.getSubscriptionId());
             }
             saga.advanceTo(SagaStep.TENANT_TRUNK_CREATED);
             sagaRepository.save(saga);
 
             // ─── STEP 5: Plan Assignment ─────────────────────────────
+            saga.setCurrentStep(SagaStep.ASSIGNING_PLAN);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Assigning plan for subscription {}", saga.getSubscriptionId());
+
             if (saga.getPlanAssignmentId() != null) {
                 assignment = planAssignmentRepository.findById(saga.getPlanAssignmentId()).orElse(null);
             }
@@ -448,12 +463,16 @@ public class SubscriptionService {
                 saga.setPlanAssignmentId(assignment.getId());
                 subscription.setPlanAssignmentId(assignment.getId());
                 subscriptionRepository.save(subscription);
-                log.info("[SAGA] Plan assigned");
+                log.info("[SAGA] Plan assigned for subscription {}", saga.getSubscriptionId());
             }
             saga.advanceTo(SagaStep.PLAN_ASSIGNED);
             sagaRepository.save(saga);
 
             // ─── STEP 6: Activate ────────────────────────────────────
+            saga.setCurrentStep(SagaStep.ACTIVATING);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Activating subscription {}", saga.getSubscriptionId());
+
             subscription.activate();
             subscriptionRepository.save(subscription);
             saga.advanceTo(SagaStep.ACTIVATED);
@@ -461,6 +480,10 @@ public class SubscriptionService {
             log.info("[SAGA] Subscription {} activated", saga.getSubscriptionId());
 
             // ─── STEP 7: Recurring charges ───────────────────────────
+            saga.setCurrentStep(SagaStep.CREATING_RECURRING_CHARGES);
+            sagaRepository.save(saga);
+            log.info("[SAGA] Creating recurring charges for subscription {}", saga.getSubscriptionId());
+
             createRecurringCharges(saga.getTenantId(), subscription.getId(),
                     plan, did, subscription.getAgentSeats());
             saga.advanceTo(SagaStep.RECURRING_CHARGES_CREATED);
@@ -473,7 +496,8 @@ public class SubscriptionService {
             saga.markCompleted();
             sagaRepository.save(saga);
 
-            SipTrunk platformTrunk = sipTrunkRepository.findPlatformTrunk().orElse(null);
+            // Use the trunk already bound to the DID — no separate lookup needed.
+            SipTrunk platformTrunk = did.getSipTrunk();
             publishActivationSuccessEvent(subscription, product, plan, entitlement,
                     did, sipEndpoint, channels, tenantSipTrunk, platformTrunk);
 
@@ -660,6 +684,7 @@ public class SubscriptionService {
 
     private void publishActivationFailedEvent(SubscriptionSaga saga, Exception e) {
         SubscriptionActivationFailedEvent event = SubscriptionActivationFailedEvent.builder()
+                .eventId(UUID.randomUUID())
                 .subscriptionId(saga.getSubscriptionId())
                 .tenantId(saga.getTenantId())
                 .paymentId(saga.getPaymentId())
@@ -668,6 +693,8 @@ public class SubscriptionService {
                 .failedAt(Instant.now())
                 .build();
         productEventProducer.publishSubscriptionFailed(event);
+        log.info("[SAGA] Published SubscriptionActivationFailedEvent eventId={} subscriptionId={} paymentId={}",
+                event.getEventId(), saga.getSubscriptionId(), saga.getPaymentId());
     }
 
     public Subscription getSubscription(UUID subscriptionId) {
@@ -790,7 +817,7 @@ public class SubscriptionService {
         log.info("Subscription {} cancelled for tenant {}", subscriptionId, tenantId);
     }
 
-    // ==================== HELPERS (UNCHANGED) ====================
+    // ==================== HELPERS ====================
 
     private BigDecimal calculateTotal(Plan plan, SubscriptionRequest request) {
         BigDecimal platformFee = plan.getMonthlyPrice();
@@ -806,9 +833,19 @@ public class SubscriptionService {
         return platformFee.add(agentFee).add(didSetup).add(didMonthly);
     }
 
+    /**
+     * Provision a DID by binding it to the appropriate platform trunk for the country.
+     * Throws if no active platform trunk is configured for the requested country —
+     * ops must seed one in the sip_trunks table per environment.
+     */
     private Did provisionDid(UUID tenantId, String productCode, SubscriptionRequest.DidInfo didInfo) {
-        SipTrunk trunk = sipTrunkRepository.findPlatformTrunk()
-                .orElseThrow(() -> new RuntimeException("Platform trunk not configured"));
+        String country = didInfo.getCountry() != null ? didInfo.getCountry() : "IN";
+
+        SipTrunk trunk = sipTrunkRepository.findBestPlatformTrunkForCountry(country)
+                .orElseThrow(() -> new RuntimeException(
+                        "No active platform trunk configured for country " + country
+                                + ". Ops: insert row into sip_trunks with tenant_id=NULL, country='"
+                                + country + "', status='ACTIVE'."));
 
         Did did = Did.builder()
                 .id(UUID.randomUUID())
@@ -816,7 +853,7 @@ public class SubscriptionService {
                 .sipTrunk(trunk)
                 .number(didInfo.getNumber())
                 .displayNumber(formatDisplayNumber(didInfo.getNumber()))
-                .country(didInfo.getCountry() != null ? didInfo.getCountry() : "IN")
+                .country(country)
                 .region(didInfo.getRegion())
                 .city(didInfo.getCity())
                 .status(DidStatus.PENDING)
@@ -828,12 +865,18 @@ public class SubscriptionService {
         return didRepository.save(did);
     }
 
+    /**
+     * Create a PSTN channel bundle for the subscription.
+     * The trunk is inherited from the DID — same trunk owns the DID and the channels,
+     * since channel limits are negotiated per carrier relationship.
+     */
     private PstnChannelBundle createChannelBundle(UUID tenantId, UUID subscriptionId, String productCode,
                                                   Plan plan, PlanEntitlement entitlement,
+                                                  Did did,
                                                   SubscriptionRequest.ChannelConfig channelConfig) {
         int totalChannels = entitlement.getMaxPstnChannels();
         ChannelDirection direction = getDirectionForProduct(productCode);
-// Default to 0 — DB has NOT NULL constraint
+        // Default to 0 — DB has NOT NULL constraint
         int inbound = 0;
         int outbound = 0;
 
@@ -855,14 +898,13 @@ public class SubscriptionService {
                 }
             }
         }
-        SipTrunk trunk = sipTrunkRepository.findPlatformTrunk().orElse(null);
 
         return channelBundleRepository.save(PstnChannelBundle.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
                 .subscriptionId(subscriptionId)
                 .productCode(productCode)
-                .sipTrunk(trunk)
+                .sipTrunk(did.getSipTrunk())
                 .direction(direction)
                 .totalChannels(totalChannels)
                 .inboundChannels(inbound)

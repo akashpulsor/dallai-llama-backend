@@ -105,4 +105,10 @@ public class KafkaConsumerConfig {
     planAssignedFactory(DefaultErrorHandler kafkaErrorHandler) {
         return buildFactory(PlanAssignedEvent.class, kafkaErrorHandler);
     }
+
+    @Bean(name = "refundInitiatedListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, RefundInitiatedEvent>
+    refundInitiatedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(RefundInitiatedEvent.class, kafkaErrorHandler);
+    }
 }

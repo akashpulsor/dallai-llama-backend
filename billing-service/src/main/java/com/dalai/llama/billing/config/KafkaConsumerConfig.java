@@ -1,9 +1,6 @@
 package com.dalai.llama.billing.config;
 
-import com.dalai.llama.billing.domain.event.TenantActivatedEvent;
-import com.dalai.llama.billing.domain.event.TenantCreatedEvent;
-import com.dalai.llama.billing.domain.event.TenantDeletedEvent;
-import com.dalai.llama.billing.domain.event.TenantStateChangedEvent;
+import com.dalai.llama.billing.domain.event.*;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -103,6 +100,12 @@ public class KafkaConsumerConfig {
     public ConcurrentKafkaListenerContainerFactory<String, TenantActivatedEvent>
     tenantActivatedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
         return buildFactory(TenantActivatedEvent.class, kafkaErrorHandler);
+    }
+
+    @Bean(name = "subscriptionFailedListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, SubscriptionActivationFailedEvent>
+    subscriptionFailedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(SubscriptionActivationFailedEvent.class, kafkaErrorHandler);
     }
 
     @Bean(name = "genericEventListenerFactory")

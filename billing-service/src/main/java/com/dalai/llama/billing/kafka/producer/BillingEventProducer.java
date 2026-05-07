@@ -44,4 +44,8 @@ public class BillingEventProducer {
         kafkaTemplate.send("billing.subscription.activated",
                 event.getTenantId().toString(), event);
     }
+
+    public void publishRefundInitiated(RefundInitiatedEvent event) {
+        kafkaTemplate.send("billing.refund.initiated", event.getTenantId().toString(), event);
+    }
 }
