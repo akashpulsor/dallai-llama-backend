@@ -97,7 +97,7 @@ public class TenantCleanupScheduler {
 
     private void deleteIdentity(Tenant tenant) {
         try {
-            keycloakRealmService.deleteTenant(tenant.getKeycloakRealmName());
+            keycloakRealmService.deleteTenant(tenant.getId());
             log.info("Keycloak realm deleted for tenant {}", tenant.getSlug());
         } catch (Exception e) {
             log.warn("Could not delete Keycloak realm for tenant {}: {}", tenant.getId(), e.getMessage());

@@ -113,7 +113,7 @@ keycloak:
     orchestrator:
       client-id: ${KEYCLOAK_CLIENT_ID:platform-api}
       client-secret: ${KEYCLOAK_CLIENT_SECRET:}
-
+  platform-realm: ${KEYCLOAK_REALM:dalai-llama}
 # ================================================================
 # INTERNAL SERVICE URLs
 # ================================================================

@@ -46,6 +46,7 @@ public class Tenant {
     private TenantStatus status;
 
     private String substatus;
+    @Column(name = "status_message", length = 2000)
     private String statusMessage;
     private OffsetDateTime statusChangedAt;
 

@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Slf4j
 @RestController
@@ -29,6 +32,8 @@ public class ProvisioningController {
     private final TenantService tenantService;
     private final ProvisioningTaskRepository taskRepository;
     private final ProvisioningLogRepository logRepository;
+    @Qualifier("taskExecutor")
+    private final Executor taskExecutor;
 
     // ════════════════════════════════════════════════════════════
     // POST /api/v1/tenants/apps/{tenantAppId}/provision
@@ -42,7 +47,7 @@ public class ProvisioningController {
     public ResponseEntity<Map<String, Object>> provision(@PathVariable UUID tenantAppId) {
         log.info("Provision requested for TenantApp={}", tenantAppId);
 
-        tenantAppService.provisionApp(tenantAppId);
+        CompletableFuture.runAsync(() -> tenantAppService.provisionApp(tenantAppId), taskExecutor);
 
         return ResponseEntity.accepted().body(Map.of(
                 "tenantAppId", tenantAppId,
@@ -108,7 +113,7 @@ public class ProvisioningController {
         String keycloakUserId = jwt.getSubject();
         return tenantService.findByAdminUserId(keycloakUserId)
                 .map(tenant -> {
-                    tenantAppService.retryProvision(appId, tenant.getId());
+                    CompletableFuture.runAsync(() -> tenantAppService.retryProvision(appId, tenant.getId()), taskExecutor);
                     return ResponseEntity.accepted().<Void>build();
                 })
                 .orElseGet(() -> ResponseEntity.notFound().build());

@@ -22,7 +22,6 @@ import com.dalai.llama.tenant.util.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -82,10 +81,10 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
     /**
      * Starts or resumes provisioning for a TenantApp.
-     * Called from controller; runs async so the HTTP call returns immediately.
+     * Runs synchronously — caller decides whether to invoke async.
+     * Kafka consumers call directly; REST controllers wrap with @Async.
      */
     @Override
-    @Async("taskExecutor")
     public void provision(UUID tenantAppId) {
         // GUARD: short-circuit if tenant is DELETED, BEFORE acquiring lock or opening tx
         // Use findWithTenantById to eagerly fetch the Tenant (avoid LazyInitializationException outside tx)

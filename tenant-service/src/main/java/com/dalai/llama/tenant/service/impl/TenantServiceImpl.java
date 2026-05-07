@@ -91,6 +91,7 @@ public class TenantServiceImpl implements TenantService {
         String keycloakUserId = jwt.getSubject();
         String jwtEmail = jwt.getClaimAsString("email");
 
+
         // ── Verify user exists in Keycloak (dalai-llama realm) ──
         UserRepresentation kcUser = keycloakRealmService.getPlatformUser(keycloakUserId);
 
@@ -157,6 +158,9 @@ public class TenantServiceImpl implements TenantService {
         if (tenant.getStatus() == TenantStatus.CREATED) {
             try {
                 String realmName = "tenant-" + tenant.getId();
+                if (!keycloakRealmService.realmExists(realmName)) {
+                    keycloakRealmService.createRealm(realmName, tenant.getName());
+                }
                 keycloakRealmService.createRealm(realmName, tenant.getName());
 
                 // Fetch the created realm's internal UUID
@@ -172,7 +176,7 @@ public class TenantServiceImpl implements TenantService {
                         "SYSTEM", "Keycloak realm created");
             } catch (Exception e) {
                 log.error("Keycloak failed for tenant {}: {}", tenant.getId(), e.getMessage());
-                tenant.setStatusMessage("Keycloak failed: " + e.getMessage());
+                tenant.setStatusMessage(truncate("Keycloak failed: " + e.getMessage(), 1990));
                 tenantRepository.save(tenant);
                 return tenantMapper.toResponse(tenant);
             }
@@ -188,7 +192,7 @@ public class TenantServiceImpl implements TenantService {
                 log.error("Wallet failed for tenant {}: {}", tenant.getId(), e.getMessage());
                 rollbackKeycloak(tenant);
                 tenant.setStatus(TenantStatus.CREATED);
-                tenant.setStatusMessage("Wallet failed: " + e.getMessage());
+                tenant.setStatusMessage(truncate("Wallet failed: " + e.getMessage(), 1990));
                 tenantRepository.save(tenant);
                 return tenantMapper.toResponse(tenant);
             }
@@ -394,6 +398,10 @@ public class TenantServiceImpl implements TenantService {
     }
 
     // ── TenantApp builder — delegates to small mappers ──────────
+
+    private String truncate(String s, int max) {
+        return s != null && s.length() > max ? s.substring(0, max) : s;
+    }
 
     private TenantApp buildTenantApp(Tenant tenant, SubscriptionActiveRequest req) {
         TenantApp.TenantAppBuilder builder = TenantApp.builder()
@@ -679,7 +687,7 @@ public class TenantServiceImpl implements TenantService {
     private void rollbackKeycloak(Tenant tenant) {
         if (tenant.getKeycloakRealmName() != null) {
             try {
-                keycloakRealmService.deleteTenant(tenant.getSlug());
+                keycloakRealmService.deleteTenant(tenant.getId());
                 tenant.setKeycloakRealmName(null);
                 log.info("Rolled back Keycloak realm for tenant {}", tenant.getId());
             } catch (Exception ex) {

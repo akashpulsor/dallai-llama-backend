@@ -18,7 +18,7 @@ public interface KeycloakRealmService {
 
     void createAdminUser(Tenant tenant, String realmName, String email, String tempPassword);
 
-    void deleteTenant(String slug);
+    void deleteTenant(UUID slug);
 
     void deleteAdminUser(String realmName, String userId);
 
@@ -28,6 +28,7 @@ public interface KeycloakRealmService {
 
     void createClientScopes(String realmName);
 
+    boolean realmExists(String realmName);
     // ── NEW METHODS ──
 
     /** Fetch a user from the platform (dalai-llama) realm by ID. Throws if not found. */

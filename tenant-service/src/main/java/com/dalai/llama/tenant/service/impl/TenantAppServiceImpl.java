@@ -130,9 +130,8 @@ public class TenantAppServiceImpl implements TenantAppService {
                 app.getId(), event.getTenantId());
 
         provisionApp(app.getId());
-        // NOTE: Do NOT publish ProvisioningCompletedEvent here.
-        // provisionApp() is @Async — provisioning hasn't finished yet.
-        // The ProvisioningOrchestrator publishes the event when it actually completes or fails.
+        // NOTE: provisionApp() runs synchronously here (Kafka consumer thread).
+        // The ProvisioningOrchestrator publishes the completion/failure event.
     }
 
     // =========================

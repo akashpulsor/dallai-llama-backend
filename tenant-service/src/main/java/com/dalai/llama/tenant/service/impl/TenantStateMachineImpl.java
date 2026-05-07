@@ -45,7 +45,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
      * regardless of whether the transition succeeded).
      */
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public boolean tryTransition(Tenant tenant, TenantStatus target, String triggerSource, String message) {
         TenantStatus current = tenant.getStatus();
         Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
@@ -65,7 +65,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
      * Use this from REST APIs / call sites that genuinely need to reject invalid input.
      */
     @Override
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public void transition(Tenant tenant, TenantStatus target, String triggerSource, String message) {
         TenantStatus current = tenant.getStatus();
         Set<TenantStatus> allowed = TRANSITIONS.getOrDefault(current, Set.of());
@@ -87,7 +87,7 @@ public class TenantStateMachineImpl implements TenantStateMachine {
                                  String triggerSource, String message) {
         log.info("Tenant {} transitioning: {} -> {} (trigger: {})",
                 tenant.getId(), current, target, triggerSource);
-
+        tenantRepository.saveAndFlush(tenant);
         TenantStateAudit audit = new TenantStateAudit();
         audit.setTenant(tenant);
         audit.setOldStatus(current.name());

@@ -29,7 +29,7 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     @Value("${keycloak.admin.url}")
     private String keycloakUrl;
 
-    @Value("${keycloak.admin.realm:dalai-llama}")
+    @Value("${keycloak.platform-realm}")
     private String platformRealm;
 
     private static final List<String> TENANT_ROLES = Arrays.asList(
@@ -43,9 +43,25 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     // ════════════════════════════════════════════════════════════════
     // PLATFORM REALM USER LOOKUP (NEW)
     // ════════════════════════════════════════════════════════════════
+    public boolean realmExists(String realmName) {
+        try {
+            keycloakAdminClient.realm(realmName).toRepresentation();
+            return true;
+        } catch (jakarta.ws.rs.NotFoundException e) {
+            return false;
+        }
+    }
 
     @Override
     public UserRepresentation getPlatformUser(String userId) {
+        if (userId == null || userId.isBlank()) {
+            log.error("JWT missing 'sub' claim — Keycloak realm '{}' misconfigured. " +
+                            "Enable 'access.token.include.sub' in realm settings.",
+                    platformRealm);
+            throw new IllegalStateException(
+                    "Authentication token is invalid (missing subject claim). " +
+                            "Please contact support.");
+        }
         try {
             return keycloakAdminClient
                     .realm(platformRealm)
@@ -403,7 +419,7 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     }
 
     @Override
-    public void deleteTenant(String slug) {
+    public void deleteTenant(UUID slug) {
         String realmName = "tenant-" + slug;
         log.info("Initiating deletion for realm: {}", realmName);
 
