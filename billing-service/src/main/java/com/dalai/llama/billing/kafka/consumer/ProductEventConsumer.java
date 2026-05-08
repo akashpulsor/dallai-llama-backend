@@ -1,7 +1,7 @@
 package com.dalai.llama.billing.kafka.consumer;
 
 import com.dalai.llama.billing.domain.event.SubscriptionActivationFailedEvent;
-import com.dalai.llama.billing.service.RefundService;
+import com.dalai.llama.billing.service.PaymentService;
 import com.dalai.llama.billing.service.UsageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 public class ProductEventConsumer {
 
     private final UsageService usageService;
-    private final RefundService refundService;
+    private final PaymentService paymentService;
 
     @KafkaListener(topics = "product.did.provisioned", groupId = "billing-service",
             containerFactory = "genericEventListenerFactory")
@@ -35,10 +35,9 @@ public class ProductEventConsumer {
             groupId = "billing-service",
             containerFactory = "subscriptionFailedListenerFactory"
     )
-
     public void onSubscriptionFailed(SubscriptionActivationFailedEvent event) {
-        log.warn("Received SubscriptionActivationFailedEvent — subscription={}, paymentId={}, failedAt={}, reason={}",
-                event.getSubscriptionId(), event.getPaymentId(),
+        log.warn("Received SubscriptionActivationFailedEvent — eventId={}, subscription={}, paymentId={}, failedAt={}, reason={}",
+                event.getEventId(), event.getSubscriptionId(), event.getPaymentId(),
                 event.getFailedAtStep(), event.getReason());
 
         if (event.getPaymentId() == null) {
@@ -49,9 +48,14 @@ public class ProductEventConsumer {
         try {
             String reason = "Subscription activation failed at " + event.getFailedAtStep()
                     + ": " + event.getReason();
-            refundService.initiateRefund(event.getPaymentId(), null, reason, "SUBSCRIPTION_FAILED");
+            paymentService.refundSubscriptionPayment(
+                    event.getTenantId(),
+                    event.getPaymentId(),
+                    event.getSubscriptionId(),
+                    reason
+            );
         } catch (Exception e) {
-            log.error("Refund failed for subscription={} payment={}: {}",
+            log.error("Wallet refund failed for subscription={} payment={}: {}",
                     event.getSubscriptionId(), event.getPaymentId(), e.getMessage(), e);
         }
     }

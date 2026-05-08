@@ -186,7 +186,6 @@ public class PaymentServiceImpl implements PaymentService {
         payment.linkSubscription(subscriptionId);
         paymentRepository.save(payment);
 
-        // ✅ FIXED EVENT
         paymentEventRepository.save(PaymentEvent.record(
                 payment,
                 null,
@@ -221,31 +220,82 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     // =========================
-    // REFUND
+    // REFUND (subscription wallet payment, NOT Razorpay cash refund)
     // =========================
+
+    /**
+     * Refund a subscription wallet payment back to the tenant's wallet.
+     *
+     * Triggered when subscription activation fails after the wallet was debited.
+     * Credits the wallet via the standard service path so transaction recording,
+     * event publishing, and STOMP broadcast all happen exactly as for any other
+     * wallet credit.
+     *
+     * Idempotency — three layers:
+     *   1. Tenant validation guards against malicious/buggy events refunding
+     *      the wrong wallet.
+     *   2. Payment status check (REFUNDED → no-op) blocks duplicate runs
+     *      after the first successful refund.
+     *   3. walletService.credit() idempotency key keyed off paymentId blocks
+     *      double-credit even if status check is somehow bypassed by a race.
+     *
+     * NOT a Razorpay cash refund — that's RefundServiceImpl, which pushes
+     * money to the user's bank account. This is purely a platform-internal
+     * wallet adjustment for subscription failure rollback.
+     *
+     * Future: a (paymentId, reason) overload may be added if a caller has
+     * only the paymentId and not the tenant/subscription context.
+     */
+    @Override
     @Transactional
     public void refundSubscriptionPayment(UUID tenantId, UUID paymentId,
                                           UUID subscriptionId, String reason) {
-
-        if (paymentId == null) return;
+        if (paymentId == null) {
+            log.warn("refundSubscriptionPayment called with null paymentId — skipping");
+            return;
+        }
 
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new IllegalStateException("Payment not found: " + paymentId));
 
-        if (payment.getStatus() == PaymentStatus.REFUNDED) return;
-        if (payment.getStatus() != PaymentStatus.SUCCESS) return;
+        // Sanity: tenant on the event must match payment's tenant. Mismatch indicates
+        // a bug or tampered event — fail loudly rather than refund the wrong wallet.
+        if (!payment.getTenantId().equals(tenantId)) {
+            throw new IllegalStateException(
+                    "Tenant mismatch: event tenantId=" + tenantId
+                            + ", payment.tenantId=" + payment.getTenantId()
+                            + ", paymentId=" + paymentId);
+        }
 
-        Wallet wallet = walletRepository.findByTenantIdForUpdate(tenantId)
-                .orElseThrow(() -> new IllegalStateException("Wallet not found: " + tenantId));
+        // Idempotency: already refunded → no-op
+        if (payment.getStatus() == PaymentStatus.REFUNDED) {
+            log.info("Payment {} already REFUNDED — skipping (idempotent)", paymentId);
+            return;
+        }
 
-        wallet.credit(payment.getAmount());
-        walletRepository.save(wallet);
+        // Only refund SUCCESS payments. Anything else (PENDING/FAILED/CANCELLED) is
+        // either not yet captured or never was, so there's nothing to refund.
+        if (payment.getStatus() != PaymentStatus.SUCCESS) {
+            log.warn("Cannot refund payment {} in status {} — skipping",
+                    paymentId, payment.getStatus());
+            return;
+        }
 
-        // ✅ FIX: update state properly
+        // Credit wallet via the standard service path. Idempotency key keyed off
+        // paymentId ensures Kafka redelivery cannot double-credit even if the
+        // payment status check above somehow lets two concurrent attempts through.
+        String idempotencyKey = "REFUND:SUBSCRIPTION:" + paymentId;
+        walletService.credit(
+                tenantId,
+                payment.getAmount(),
+                "REFUND:SUBSCRIPTION_FAILED:" + paymentId,
+                subscriptionId,
+                idempotencyKey
+        );
+
         PaymentStatus previous = payment.markRefunded(reason);
         paymentRepository.save(payment);
 
-        // ✅ FIX: correct transition
         paymentEventRepository.save(PaymentEvent.record(
                 payment,
                 previous,
@@ -254,7 +304,7 @@ public class PaymentServiceImpl implements PaymentService {
                 "SYSTEM"
         ));
 
-        log.info("Refund completed: paymentId={}, amount={}",
-                paymentId, payment.getAmount());
+        log.info("Subscription payment refunded: tenantId={} paymentId={} subscriptionId={} amount={}",
+                tenantId, paymentId, subscriptionId, payment.getAmount());
     }
 }

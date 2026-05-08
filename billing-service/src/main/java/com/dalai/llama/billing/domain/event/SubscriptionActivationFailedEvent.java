@@ -13,6 +13,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 public class SubscriptionActivationFailedEvent {
+    private UUID eventId;
     private UUID subscriptionId;
     private UUID tenantId;
 
