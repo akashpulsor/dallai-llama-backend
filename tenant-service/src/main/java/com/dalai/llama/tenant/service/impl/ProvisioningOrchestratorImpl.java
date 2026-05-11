@@ -2,10 +2,7 @@ package com.dalai.llama.tenant.service.impl;
 
 
 
-import com.dalai.llama.tenant.domain.entity.ProvisioningLog;
-import com.dalai.llama.tenant.domain.entity.ProvisioningTask;
-import com.dalai.llama.tenant.domain.entity.Tenant;
-import com.dalai.llama.tenant.domain.entity.TenantApp;
+import com.dalai.llama.tenant.domain.entity.*;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningStep;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
@@ -16,9 +13,12 @@ import com.dalai.llama.tenant.repository.ProvisioningLogRepository;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
+import com.dalai.llama.tenant.service.TenantService;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
 import com.dalai.llama.tenant.util.DistributedLock;
 import com.dalai.llama.tenant.util.PasswordGenerator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,7 +62,7 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private final DistributedLock distributedLock;
     private final TenantStateMachineImpl stateMachine;
     private final com.dalai.llama.tenant.kafka.producer.TenantEventProducer tenantEventProducer;
-
+    private  final TenantService tenantService;
 
     private final ProvisioningTxRunner txRunner;
 
@@ -86,35 +86,60 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
      */
     @Override
     public void provision(UUID tenantAppId) {
-        // GUARD: short-circuit if tenant is DELETED, BEFORE acquiring lock or opening tx
-        // Use findWithTenantById to eagerly fetch the Tenant (avoid LazyInitializationException outside tx)
+
+        log.info("provision() called tenantAppId={}", tenantAppId);
+
+        // Pre-check (no tx)
         TenantApp preCheck = appRepository.findWithTenantById(tenantAppId).orElse(null);
+
         if (preCheck == null) {
-            log.warn("provision() called for non-existent tenantAppId={}, ignoring", tenantAppId);
+            log.warn("Provision skipped — TenantApp not found tenantAppId={}", tenantAppId);
             return;
         }
+
+        UUID tenantId = preCheck.getTenant().getId();
+        String slug = preCheck.getTenant().getSlug();
         TenantStatus preStatus = preCheck.getTenant().getStatus();
+
+        log.info("Provision pre-check tenantAppId={} tenantId={} status={} slug={}",
+                tenantAppId, tenantId, preStatus, slug);
+
         if (preStatus == TenantStatus.DELETED) {
-            log.warn("Skipping provision() — tenant is DELETED. tenantAppId={} tenantId={} slug={}",
-                    tenantAppId, preCheck.getTenant().getId(), preCheck.getTenant().getSlug());
+            log.warn("Provision blocked — tenant is DELETED tenantAppId={} tenantId={} slug={}",
+                    tenantAppId, tenantId, slug);
+
             cancelAnyPendingTasks(tenantAppId);
+
+            log.info("Cancelled pending tasks for deleted tenant tenantAppId={}", tenantAppId);
             return;
         }
 
         String lockKey = "provision:" + tenantAppId;
         String lockVal = UUID.randomUUID().toString();
 
+        log.info("Attempting to acquire lock key={} tenantAppId={}", lockKey, tenantAppId);
+
         if (!distributedLock.acquire(lockKey, lockVal, Duration.ofMinutes(10))) {
-            log.warn("Provisioning already in progress for app {}", tenantAppId);
+            log.warn("Provision skipped — lock already held tenantAppId={} key={}",
+                    tenantAppId, lockKey);
             return;
         }
 
+        log.info("Lock acquired key={} tenantAppId={}", lockKey, tenantAppId);
+
         try {
+            log.info("Starting provisioning transaction tenantAppId={}", tenantAppId);
+
             txRunner.run(tenantAppId, this::doProvision);
+
+            log.info("Provisioning transaction completed tenantAppId={}", tenantAppId);
+
         } catch (Exception e) {
-            log.error("Provisioning failed for tenantAppId={}", tenantAppId, e);
+            log.error("Provisioning failed tenantAppId={} error={}",
+                    tenantAppId, e.getMessage(), e);
         } finally {
             distributedLock.release(lockKey, lockVal);
+            log.info("Lock released key={} tenantAppId={}", lockKey, tenantAppId);
         }
     }
 
@@ -443,21 +468,87 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     }
 
     // ── Step 3: Keycloak client ──
-
     private void stepCreateKeycloakClient(ProvisioningContext ctx) {
         TenantApp app = ctx.getApp();
         Tenant tenant = ctx.getTenant();
-        keycloakClientService.createClientsForTenant(app);
 
-        // Write back the primary keycloakClientId so PublicTenantConfigController can serve it
-        if (app.getKeycloakClientId() == null || app.getKeycloakClientId().isBlank()) {
-            String clientId = "dalaillama-" + tenant.getSlug();
-            app.setKeycloakClientId(clientId);
-            appRepository.save(app);
-            log.info("Stamped keycloakClientId={} on TenantApp={}", clientId, app.getId());
+        // 1) Parse panel definitions from TenantApp.appPanels (JSON string)
+        List<AppPanel> panelsFromApp = parsePanelsFromTenantApp(app, tenant);
+        if (panelsFromApp.isEmpty()) {
+            log.warn("No panels to provision for TenantApp={} (tenant={}). Skipping keycloak client creation.",
+                    app.getId(), tenant.getId());
+            return;
+        }
+
+        // 2) Provision Keycloak clients — panels enriched in-place with clientId + roles
+        KeycloakClientConfigService.KeycloakProvisioningResult result =
+                keycloakClientService.createClientsForTenant(tenant, app, panelsFromApp);
+
+        // 3) Stamp Keycloak coordinates on Tenant (idempotent — same values every run)
+        tenant.setKeycloakUrl(result.keycloakUrl());
+        tenant.setKeycloakIssuer(result.keycloakIssuer());
+        tenant.setKeycloakRealmName(result.keycloakRealm());
+
+        // 4) Upsert each enriched panel through the Tenant aggregate.
+        // Cascade + orphanRemoval on Tenant.appPanels handles persistence of child rows.
+        for (AppPanel panel : result.panels()) {
+            tenant.upsertAppPanel(panel);
+        }
+
+        // 5) Single save — cascades to all child panels (insert new, update existing)
+        tenantService.updateTenantData(tenant);
+
+        log.info("Provisioned {} app panels for tenant={} app={}",
+                result.panels().size(), tenant.getId(), app.getId());
+    }
+
+    /**
+     * Parse the appPanels JSON string on TenantApp into AppPanel entities.
+     * Returns empty list on null/blank or malformed JSON — never throws, so
+     * a corrupt row doesn't kill the whole provisioning pipeline.
+     */
+    private List<AppPanel> parsePanelsFromTenantApp(TenantApp app, Tenant tenant) {
+        String panelsJson = app.getAppPanels();
+        if (panelsJson == null || panelsJson.isBlank()) {
+            return new ArrayList<>();
+        }
+        try {
+            // Parse into intermediate POJO since the JSON shape is the productApps DTO,
+            // not the AppPanel entity.
+            AppPanelDto[] dtos = new ObjectMapper().readValue(panelsJson, AppPanelDto[].class);
+            List<AppPanel> panels = new ArrayList<>(dtos.length);
+            for (AppPanelDto dto : dtos) {
+                panels.add(AppPanel.builder()
+                        .appType(dto.appType())
+                        .displayName(dto.displayName())
+                        .subdomain(dto.subdomain())
+                        .url(dto.url())
+                        .icon(dto.icon())
+                        .displayOrder(dto.displayOrder())
+                        .build());
+                // keycloakClientId + requiredRoles get set in KeycloakClientConfigService
+            }
+            return panels;
+        } catch (Exception e) {
+            log.error("Failed to parse appPanels JSON for app={} tenant={}. Raw: {}",
+                    app.getId(), tenant.getId(), panelsJson, e);
+            return new ArrayList<>();
         }
     }
 
+    /**
+     * Intermediate DTO matching the JSON shape currently stored in TenantApp.appPanels.
+     * Keep this private to the orchestrator — it's a transport format, not a domain type.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record AppPanelDto(
+            String appType,
+            String displayName,
+            String subdomain,
+            String url,
+            String icon,
+            int displayOrder
+    ) {}
     // ── Step 4: Admin user ──
 
     private void stepCreateAdminUser(ProvisioningContext ctx) {

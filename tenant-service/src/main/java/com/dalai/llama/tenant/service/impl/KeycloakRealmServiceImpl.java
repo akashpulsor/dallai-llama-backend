@@ -32,6 +32,10 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     @Value("${keycloak.platform-realm}")
     private String platformRealm;
 
+
+    @Value("${keycloak.admin.orchestrator.client-id}")
+    private String orchestratorClientId;
+
     private static final List<String> TENANT_ROLES = Arrays.asList(
             "TENANT_ADMIN",
             "SUPERVISOR",
@@ -142,6 +146,8 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
 
             keycloakAdminClient.realms().create(realm);
 
+            grantOrchestratorRolesOnNewRealm(realmName);   // ← add
+
             // Setup global scopes immediately after creation
             createClientScopes(realmName);
 
@@ -158,6 +164,53 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
         catch (Exception e) {
             log.error("Failed to create Keycloak realm: {}", realmName, e);
             throw new KeycloakException("Failed to create realm: " + realmName, e);
+        }
+    }
+
+    private void grantOrchestratorRolesOnNewRealm(String realmName) {
+        try {
+            RealmResource master = keycloakAdminClient.realm("master");
+
+            List<ClientRepresentation> orchClients = master.clients().findByClientId(orchestratorClientId);
+            if (orchClients.isEmpty()) {
+                log.error("Orchestrator client {} not found in master", orchestratorClientId);
+                return;
+            }
+            String saUserId = master.clients()
+                    .get(orchClients.get(0).getId())
+                    .getServiceAccountUser()
+                    .getId();
+
+            String mgmtClientId = realmName + "-realm";
+            List<ClientRepresentation> mgmtClients = master.clients().findByClientId(mgmtClientId);
+            if (mgmtClients.isEmpty()) {
+                log.error("Management client {} not found in master", mgmtClientId);
+                return;
+            }
+            String mgmtClientUuid = mgmtClients.get(0).getId();
+
+            List<RoleRepresentation> rolesToAssign = new ArrayList<>();
+            for (String roleName : List.of("manage-clients", "manage-users", "manage-realm")) {
+                try {
+                    rolesToAssign.add(master.clients()
+                            .get(mgmtClientUuid)
+                            .roles()
+                            .get(roleName)
+                            .toRepresentation());
+                } catch (NotFoundException nfe) {
+                    log.warn("Role '{}' not found on {}", roleName, mgmtClientId);
+                }
+            }
+
+            master.users()
+                    .get(saUserId)
+                    .roles()
+                    .clientLevel(mgmtClientUuid)
+                    .add(rolesToAssign);
+
+            log.info("Granted orchestrator SA {} roles on {}", rolesToAssign.size(), realmName);
+        } catch (Exception e) {
+            log.error("Failed to grant orchestrator roles on {}: {}", realmName, e.getMessage(), e);
         }
     }
 

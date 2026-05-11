@@ -6,7 +6,7 @@ import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.OffsetDateTime;
-import java.util.UUID;
+import java.util.*;
 
 @Entity
 @Table(name = "tenants")
@@ -46,32 +46,82 @@ public class Tenant {
     private TenantStatus status;
 
     private String substatus;
+
     @Column(name = "status_message", length = 2000)
     private String statusMessage;
+
     private OffsetDateTime statusChangedAt;
 
-
-
-    // Global Keycloak Realm Info (Apps will have their own Client IDs)
+    // ─── Keycloak ──────────────────────────────────────────────────────
     private String keycloakRealmName;
     private String keycloakRealmId;
 
+    /** Public Keycloak base URL (what the browser hits). */
+    @Column(length = 255)
+    private String keycloakUrl;
+
+    /** Full OIDC issuer URL: {keycloakUrl}/realms/{keycloakRealmName} */
+    @Column(length = 500)
+    private String keycloakIssuer;
+
+
+
+    @OneToMany(
+            mappedBy = "tenant",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.LAZY
+    )
+    @OrderBy("displayOrder ASC")
+    private List<AppPanel> appPanels = new ArrayList<>();
+
+    /**
+     * Add or update a panel by keycloakClientId. Existing panel fields are updated;
+     * a new panel is added if none exists for the clientId.
+     */
+    public AppPanel upsertAppPanel(AppPanel incoming) {
+        Optional<AppPanel> existing = appPanels.stream()
+                .filter(p -> Objects.equals(p.getKeycloakClientId(), incoming.getKeycloakClientId()))
+                .findFirst();
+
+        if (existing.isPresent()) {
+            AppPanel p = existing.get();
+            p.setAppType(incoming.getAppType());
+            p.setDisplayName(incoming.getDisplayName());
+            p.setSubdomain(incoming.getSubdomain());
+            p.setUrl(incoming.getUrl());
+            p.setIcon(incoming.getIcon());
+            p.setDisplayOrder(incoming.getDisplayOrder());
+            p.setRequiredRoles(incoming.getRequiredRoles());
+            if (incoming.getTenantApp() != null) {
+                p.setTenantApp(incoming.getTenantApp());
+            }
+            return p;
+        } else {
+            incoming.setTenant(this);
+            appPanels.add(incoming);
+            return incoming;
+        }
+    }
+
+    public void removeAppPanel(String keycloakClientId) {
+        appPanels.removeIf(p -> Objects.equals(p.getKeycloakClientId(), keycloakClientId));
+    }
+    // ─── Admin user ────────────────────────────────────────────────────
     private String adminUserId;
     private String adminUserEmail;
 
-    // Billing (Main Wallet)
+    // ─── Billing ───────────────────────────────────────────────────────
     private UUID walletId;
     private String billingState;
     private OffsetDateTime billingReadyAt;
 
-    // Lifecycle
+    // ─── Lifecycle ─────────────────────────────────────────────────────
     private OffsetDateTime createdAt;
     private OffsetDateTime activatedAt;
     private OffsetDateTime suspendedAt;
     private String suspensionReason;
     private OffsetDateTime deletedAt;
-
-    // --- ADD THIS FIELD ---
     private OffsetDateTime expiresAt;
 
     @Version
@@ -91,12 +141,17 @@ public class Tenant {
         updatedAt = OffsetDateTime.now();
     }
 
-    // Helper methods
     public boolean isActive() {
         return status == TenantStatus.ACTIVE;
     }
 
     public String getRealm() {
+        return this.keycloakRealmName;
+    }
+
+    public String getDomain() {
         return slug + ".dalaillama.in";
     }
+
+
 }

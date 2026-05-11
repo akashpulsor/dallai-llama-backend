@@ -41,7 +41,7 @@ public class TenantCleanupScheduler {
     /**
      * Run every hour
      */
-    @Scheduled(cron = "0 0 * * * ?") // Every hour at :00
+//    @Scheduled(cron = "0 0 * * * ?") // Every hour at :00
     @Transactional
     public void cleanupExpiredTenants() {
         log.info("Starting expired tenant cleanup");

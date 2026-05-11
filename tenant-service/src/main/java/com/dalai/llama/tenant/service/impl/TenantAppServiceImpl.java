@@ -253,35 +253,60 @@ public class TenantAppServiceImpl implements TenantAppService {
     @Override
     @Transactional
     public void retryProvision(UUID tenantAppId, UUID tenantId) {
+
+        log.info("retryProvision() called tenantAppId={} tenantId={}", tenantAppId, tenantId);
+
         TenantApp app = tenantAppRepository.findById(tenantAppId)
-                .orElseThrow(() -> new ProvisioningException("TenantApp not found: " + tenantAppId));
+                .orElseThrow(() -> {
+                    log.error("TenantApp not found tenantAppId={}", tenantAppId);
+                    return new ProvisioningException("TenantApp not found: " + tenantAppId);
+                });
 
         if (!app.getTenant().getId().equals(tenantId)) {
+            log.error("Tenant mismatch tenantAppId={} expectedTenant={} actualTenant={}",
+                    tenantAppId, tenantId, app.getTenant().getId());
             throw new ProvisioningException("TenantApp does not belong to tenant");
         }
 
-        // Allow retry from PENDING, FAILED, or RUNNING (stuck/crashed mid-provision)
+        log.info("TenantApp state tenantAppId={} status={}",
+                tenantAppId, app.getDeploymentStatus());
+
+        // Prevent retry on completed
         if (app.getDeploymentStatus() == ProvisioningTaskStatus.COMPLETED) {
+            log.warn("Retry blocked — already COMPLETED tenantAppId={}", tenantAppId);
             throw new ProvisioningException(
                     "Cannot retry provisioning — app is already COMPLETED");
         }
 
-        // Reset retry count on the existing task so manual retry always works
-        // (even if auto-retries from the scheduler are exhausted)
+        // Reset retry count if existing task found
         provisioningTaskRepository
                 .findFirstByTenantAppIdAndStatusInOrderByStartedAtDesc(
                         tenantAppId,
-                        List.of(ProvisioningTaskStatus.PENDING, ProvisioningTaskStatus.FAILED, ProvisioningTaskStatus.RUNNING))
-                .ifPresent(task -> {
-                    log.info("Resetting retry count for task={} currentStep={} retries={}",
+                        List.of(
+                                ProvisioningTaskStatus.PENDING,
+                                ProvisioningTaskStatus.FAILED,
+                                ProvisioningTaskStatus.RUNNING))
+                .ifPresentOrElse(task -> {
+                    log.info("Resetting retry count taskId={} step={} oldRetries={}",
                             task.getId(), task.getCurrentStep(), task.getRetryCount());
+
                     task.setRetryCount(0);
                     provisioningTaskRepository.save(task);
+
+                }, () -> {
+                    log.warn("No existing task found to reset tenantAppId={}", tenantAppId);
                 });
 
-        log.info("Retrying provisioning for TenantApp={} tenant={} currentStatus={}",
-                tenantAppId, tenantId, app.getDeploymentStatus());
-        provisioningOrchestrator.provision(tenantAppId);
+        log.info("Triggering provisioning tenantAppId={} tenantId={}", tenantAppId, tenantId);
+
+        try {
+            provisioningOrchestrator.provision(tenantAppId);
+            log.info("Provisioning triggered successfully tenantAppId={}", tenantAppId);
+        } catch (Exception ex) {
+            log.error("Provisioning trigger failed tenantAppId={} error={}",
+                    tenantAppId, ex.getMessage(), ex);
+            throw ex;
+        }
     }
 
     // ==================== PRIVATE HELPERS ====================

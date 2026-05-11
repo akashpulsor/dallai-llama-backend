@@ -1,27 +1,40 @@
 package com.dalai.llama.tenant.controller;
 
+import com.dalai.llama.tenant.domain.entity.AppPanel;
 import com.dalai.llama.tenant.domain.entity.Tenant;
-import com.dalai.llama.tenant.domain.entity.TenantApp;
-import com.dalai.llama.tenant.repository.TenantAppRepository;
+import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Public (unauthenticated) endpoint for UI bootstrap.
  *
  * The UI's useTenantAuth hook calls this BEFORE login to discover:
- *   - Keycloak realm + client ID (for OIDC login flow)
- *   - SIP/WebSocket/TURN URLs (for WebRTC softphone init)
- *   - Feature flags (for conditional UI rendering)
- *   - Tenant display name & status
+ *   - Tenant identity (id, slug, status, domain)
+ *   - Keycloak realm + base URL + issuer (for OIDC login flow)
+ *   - Available app panels with Keycloak client IDs and required roles
  *
- * Path: GET /api/v1/public/tenant-config/{slug}
+ * Optional ?app= filter returns only the panel matching that UI:
+ *   ?app=admin       → only the admin panel
+ *   ?app=supervisor  → only the supervisor panel
+ *   ?app=agent       → only the agent panel
+ *
+ * Path: GET /api/v1/public/tenant-config/{slug}[?app=admin|supervisor|agent]
  * No JWT required — slug is the public tenant identifier.
+ *
+ * Status codes:
+ *   200 OK            — tenant found and accessible, config returned
+ *   400 Bad Request   — slug or app parameter malformed
+ *   403 Forbidden     — tenant exists but is DELETED or SUSPENDED
+ *   404 Not Found     — no tenant for that slug
  */
 @Slf4j
 @RestController
@@ -30,21 +43,33 @@ import java.util.*;
 public class PublicTenantConfigController {
 
     private final TenantRepository tenantRepository;
-    private final TenantAppRepository tenantAppRepository;
 
-    @org.springframework.beans.factory.annotation.Value("${keycloak.admin.url:http://auth.localhost:8081}")
-    private String keycloakUrl;
+    @Value("${keycloak.public-url:http://auth.localhost:8081}")
+    private String defaultKeycloakUrl;
 
-    @org.springframework.beans.factory.annotation.Value("${dalaillama.domain:dalaillama.in}")
+    @Value("${dalaillama.domain:dalaillama.in}")
     private String baseDomain;
 
-    // Slug must be lowercase alphanumeric + hyphens, 2-50 chars, no leading/trailing hyphen
-    private static final java.util.regex.Pattern SLUG_PATTERN =
-            java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$");
+    private static final Pattern SLUG_PATTERN =
+            Pattern.compile("^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$");
+
+    private static final Set<String> ALLOWED_APP_FILTERS =
+            Set.of("admin", "supervisor", "agent");
+
+    /** Maps the query-string value to the AppPanel.appType stored in DB. */
+    private static final Map<String, String> APP_FILTER_TO_APP_TYPE = Map.of(
+            "admin",      "ADMIN_PANEL",
+            "supervisor", "SUPERVISOR",
+            "agent",      "CONTACT_CENTER"
+    );
 
     @GetMapping("/tenant-config/{slug}")
-    public ResponseEntity<Map<String, Object>> getTenantConfig(@PathVariable String slug) {
-        // Reject malformed slugs before hitting DB
+    @Transactional(readOnly = true)
+    public ResponseEntity<Map<String, Object>> getTenantConfig(
+            @PathVariable String slug,
+            @RequestParam(value = "app", required = false) String appFilter
+    ) {
+        // 1) Validate slug format BEFORE the DB lookup
         if (slug == null || slug.length() < 2 || slug.length() > 50 || !SLUG_PATTERN.matcher(slug).matches()) {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", "invalid_slug",
@@ -52,16 +77,27 @@ public class PublicTenantConfigController {
             ));
         }
 
+        // 2) Validate app filter if provided
+        String normalizedFilter = null;
+        if (appFilter != null && !appFilter.isBlank()) {
+            normalizedFilter = appFilter.toLowerCase(Locale.ROOT).trim();
+            if (!ALLOWED_APP_FILTERS.contains(normalizedFilter)) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "invalid_app",
+                        "message", "app must be one of: admin, supervisor, agent",
+                        "received", appFilter
+                ));
+            }
+        }
+
+        // 3) Lookup tenant
         Optional<Tenant> tenantOpt = tenantRepository.findBySlug(slug);
         if (tenantOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
 
         Tenant tenant = tenantOpt.get();
-        // Only block truly terminal/suspended tenants.
-        // UI needs config during onboarding (CREATED → PROVISIONING → ACTIVE) for Keycloak + WS bootstrap.
-        if (tenant.getStatus() == com.dalai.llama.tenant.domain.entity.enums.TenantStatus.DELETED
-                || tenant.getStatus() == com.dalai.llama.tenant.domain.entity.enums.TenantStatus.SUSPENDED) {
+        if (tenant.getStatus() == TenantStatus.DELETED || tenant.getStatus() == TenantStatus.SUSPENDED) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "tenant_inactive",
                     "message", "Tenant is not available",
@@ -69,68 +105,51 @@ public class PublicTenantConfigController {
             ));
         }
 
-        // Find the primary (first enabled) tenant app
-        List<TenantApp> apps = tenantAppRepository.findByTenantIdAndEnabledTrueOrderByDisplayOrderAsc(tenant.getId());
+        return ResponseEntity.ok(buildConfig(tenant, normalizedFilter));
+    }
 
+    private Map<String, Object> buildConfig(Tenant tenant, String appFilter) {
         Map<String, Object> config = new LinkedHashMap<>();
 
-        // ── Tenant identity ──
-        config.put("tenant_id", tenant.getId());
-        config.put("name", tenant.getName());
+        // ── Identity ──
+        config.put("tenant_id", tenant.getId().toString());
         config.put("slug", tenant.getSlug());
-        config.put("company_name", tenant.getCompanyName());
-        config.put("timezone", tenant.getTimezone());
-        config.put("country", tenant.getCountry());
         config.put("status", tenant.getStatus().name());
-
-        // ── Keycloak auth config (UI needs this for OIDC login) ──
-        String realmName = tenant.getKeycloakRealmName(); // e.g. "tenant-{uuid}"
-        config.put("keycloak_url", keycloakUrl);            // e.g. "https://auth.dalaillama.in"
-        config.put("keycloak_realm", realmName);
-        config.put("keycloak_issuer", keycloakUrl + "/realms/" + realmName);
         config.put("domain", tenant.getSlug() + "." + baseDomain);
 
-        // ── STOMP WebSocket URL (for real-time events: provisioning, billing, notifications) ──
-        config.put("stomp_ws_url", "wss://api." + baseDomain + "/ws");
+        // ── Keycloak (prefer values stamped during provisioning) ──
+        String realmName = tenant.getKeycloakRealmName();
+        String kcUrl = tenant.getKeycloakUrl() != null ? tenant.getKeycloakUrl() : defaultKeycloakUrl;
+        String kcIssuer = tenant.getKeycloakIssuer() != null
+                ? tenant.getKeycloakIssuer()
+                : kcUrl + "/realms/" + realmName;
 
-        // ── Per-app configs (PUBLIC — only what UI needs for bootstrap) ──
-        // Sensitive fields (capacity, plan_tier, SIP raw IPs) are in the
-        // authenticated GET /api/v1/tenants/{id}/apps endpoint instead.
-        List<Map<String, Object>> appConfigs = new ArrayList<>();
-        for (TenantApp app : apps) {
-            Map<String, Object> appCfg = new LinkedHashMap<>();
-            appCfg.put("app_type", app.getAppType() != null ? app.getAppType().name() : null);
-            appCfg.put("product_code", app.getProductCode());
-            appCfg.put("display_name", app.getDisplayName());
-            appCfg.put("keycloak_client_id", app.getKeycloakClientId());
-            appCfg.put("dashboard_url", app.getDashboardUrl());
+        config.put("keycloak_url", kcUrl);
+        config.put("keycloak_realm", realmName);
+        config.put("keycloak_issuer", kcIssuer);
 
-            // WebRTC endpoints (needed pre-login for softphone init)
-            appCfg.put("websocket_url", app.getWebsocketUrl());
-            appCfg.put("turn_url", app.getTurnUrl());
+        // ── App panels (filtered in controller, not DB) ──
+        List<AppPanel> allPanels = tenant.getAppPanels() != null
+                ? tenant.getAppPanels()
+                : List.of();
 
-            // Feature flags (UI renders conditionally)
-            Map<String, Boolean> features = new LinkedHashMap<>();
-            features.put("recording", Boolean.TRUE.equals(app.getRecordingEnabled()));
-            features.put("ai_transcription", Boolean.TRUE.equals(app.getAiTranscriptionEnabled()));
-            features.put("ai_sentiment", Boolean.TRUE.equals(app.getAiSentimentEnabled()));
-            features.put("ai_bot", Boolean.TRUE.equals(app.getAiBotEnabled()));
-            features.put("ai_agent_assist", Boolean.TRUE.equals(app.getAiAgentAssistEnabled()));
-            features.put("barge", Boolean.TRUE.equals(app.getBargeEnabled()));
-            features.put("whisper", Boolean.TRUE.equals(app.getWhisperEnabled()));
-            features.put("listen", Boolean.TRUE.equals(app.getListenEnabled()));
-            features.put("voicemail", Boolean.TRUE.equals(app.getVoicemailEnabled()));
-            features.put("crm_integration", Boolean.TRUE.equals(app.getCrmIntegrationEnabled()));
-            features.put("progressive_dialer", Boolean.TRUE.equals(app.getProgressiveDialerEnabled()));
-            features.put("predictive_dialer", Boolean.TRUE.equals(app.getPredictiveDialerEnabled()));
-            features.put("conversational_ivr", Boolean.TRUE.equals(app.getConversationalIvrEnabled()));
-            features.put("advanced_reporting", Boolean.TRUE.equals(app.getAdvancedReportingEnabled()));
-            appCfg.put("features", features);
+        if (appFilter != null) {
+            String targetAppType = APP_FILTER_TO_APP_TYPE.get(appFilter);
+            AppPanel match = allPanels.stream()
+                    .filter(p -> Objects.equals(p.getAppType(), targetAppType))
+                    .findFirst()
+                    .orElse(null);
 
-            appConfigs.add(appCfg);
+            if (match != null) {
+                config.put("app", match);
+            } else {
+                config.put("app", null);
+                log.debug("No panel of type {} provisioned for tenant {}", targetAppType, tenant.getSlug());
+            }
+        } else {
+            config.put("apps", allPanels);
         }
-        config.put("apps", appConfigs);
 
-        return ResponseEntity.ok(config);
+        return config;
     }
 }

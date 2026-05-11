@@ -371,10 +371,9 @@ public class AgentService {
         // Set namespace from SIP domain: "tenant-acme.dalaillama.in" → "acme"
         // FreeSWITCH directory uses this for user_context = "tenant_{namespace}"
         // which must match dialplan context in tenant_dialplan table
-        if (subscriber.getNamespace() == null || subscriber.getNamespace().isBlank()) {
-            subscriber.setNamespace(deriveNamespace(domain));
-        }
-
+// Stores the FreeSWITCH dialplan context (UUID-based, collision-proof).
+// Must match FreeSwitchConfigService.contextFor() in tenant-service.
+        subscriber.setNamespace("tenant_" + tenantId.toString().replace("-", ""));
         subscriberRepository.save(subscriber);
     }
 

@@ -166,7 +166,7 @@ public class DialerEngine {
                 ? campaign.getOutboundCallerId()
                 : campaign.getDidNumber();
 
-        String context = "tenant_" + campaign.getTenantId();
+        String context = "tenant_" + campaign.getTenantId().toString().replace("-", "");
 
         Map<String, String> variables = Map.of(
                 "campaign_id", campaign.getId().toString(),

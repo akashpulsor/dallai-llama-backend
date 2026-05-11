@@ -21,6 +21,7 @@ public interface TenantService {
 
     Tenant getTenantData(UUID tenantId);
 
+    Tenant updateTenantData( Tenant tenant);
     List<TenantResponse> listTenants();
     TenantResponse getTenant(UUID tenantId);
     TenantDetailResponse getTenantDetails(UUID tenantId);

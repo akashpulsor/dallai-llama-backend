@@ -224,6 +224,11 @@ public class TenantServiceImpl implements TenantService {
     }
 
     @Override
+    public Tenant updateTenantData(Tenant tenant) {
+        return tenantRepository.save(tenant);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public TenantResponse getTenant(UUID tenantId) {
         return tenantRepository.findById(tenantId)

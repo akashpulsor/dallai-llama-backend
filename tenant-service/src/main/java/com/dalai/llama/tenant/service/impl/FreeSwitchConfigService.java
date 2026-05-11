@@ -10,21 +10,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * FreeSWITCH Dialplan Configuration — generates XML dialplan per tenant.
  *
- * KEY CHANGE FROM PREVIOUS VERSION:
- *   OLD: Generated Asterisk extensions.conf format with AGI() calls
- *   NEW: Generates FreeSWITCH XML format with mod_audio_stream WebSocket to voice-brain
- *
- * For AI products (CONV_IVR, VIRTUAL_RECEPTIONIST, AI_CC, OUTBOUND_DIALER):
- *   FreeSWITCH connects bidirectional audio to voice-brain via WebSocket:
- *     <action application="socket" data="ws://voice-brain:8600/audio/${uuid}?tenant_id=...&bot_id=..."/>
- *
- *   voice-brain handles everything: STT, LLM, TTS, intent detection, escalation.
- *   When voice-brain escalates, it calls PBX-Core /internal/ai/escalation
- *   → PBX-Core sends ESL uuid_transfer to FreeSWITCH → call routes to queue/agent.
+ * Identity model:
+ *   - FreeSWITCH context = "tenant_{uuid_hex}" (collision-proof, see contextFor)
+ *   - This must match Subscriber.namespace set by AgentService.contextFor()
+ *   - Slug/namespace remain only as display labels in comments and CDR
  *
  * Flow:
  *   Provisioning: tenant-service → generates XML → POST to PBX-Core → stored in tenant_dialplan
@@ -43,11 +37,21 @@ public class FreeSwitchConfigService {
     @Value("${dalaillama.ai-service.ws-url:ws://127.0.0.1:8601}")
     private String voiceBrainUrl;
 
+    /**
+     * Build FreeSWITCH context name from tenant UUID.
+     * Format: "tenant_{uuid_hex}" — 32 hex chars, no dashes.
+     *
+     * Collision-proof. Must match AgentService.contextFor() in pbx-core.
+     */
+    public static String contextFor(UUID tenantId) {
+        return "tenant_" + tenantId.toString().replace("-", "");
+    }
+
     public String configureForSubscription(TenantApp app, PlanEntitlementResponse e) {
         log.info("Generating FreeSWITCH XML dialplan: tenant={} product={}",
                 app.getNamespace(), app.getProductCode());
 
-        String ctx = "tenant_" + app.getNamespace();
+        String ctx = contextFor(app.getTenant().getId());
         String tenantId = app.getTenant().getId().toString();
 
         String xml = switch (app.getProductCode()) {
@@ -75,8 +79,8 @@ public class FreeSwitchConfigService {
 
         pbxCoreClient.storeFreeSwitchDialplan(request);
 
-        log.info("FreeSWITCH dialplan stored: tenant={} product={} lines={}",
-                app.getNamespace(), app.getProductCode(), dialplanXml.lines().count());
+        log.info("FreeSWITCH dialplan stored: tenant={} context={} product={} lines={}",
+                app.getNamespace(), ctx, app.getProductCode(), dialplanXml.lines().count());
 
         return dialplanXml;
     }
@@ -88,7 +92,7 @@ public class FreeSwitchConfigService {
     private String generateConversationalIvr(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
         String ws = voiceBrainWsUrl(tenantId, "CONV_IVR");
         return """
-              <!-- CONVERSATIONAL IVR — voice-brain handles entire call -->
+              <!-- CONVERSATIONAL IVR (context=%s) — voice-brain handles entire call -->
               <extension name="conv_ivr_inbound">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -101,6 +105,7 @@ public class FreeSwitchConfigService {
                 </condition>
               </extension>
         """.formatted(
+                ctx,
                 cdrVars(tenantId, app),
                 recording(e),
                 ws,
@@ -115,7 +120,7 @@ public class FreeSwitchConfigService {
     private String generateVirtualReceptionist(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
         String ws = voiceBrainWsUrl(tenantId, "VIRTUAL_RECEPTIONIST");
         return """
-              <!-- VIRTUAL RECEPTIONIST — bot greets, takes messages, books appointments -->
+              <!-- VIRTUAL RECEPTIONIST (context=%s) — bot greets, takes messages, books appointments -->
               <extension name="virtual_receptionist_inbound">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -126,6 +131,7 @@ public class FreeSwitchConfigService {
                 </condition>
               </extension>
         """.formatted(
+                ctx,
                 cdrVars(tenantId, app),
                 recording(e),
                 ws,
@@ -140,7 +146,7 @@ public class FreeSwitchConfigService {
     private String generateAiContactCenter(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
         String ws = voiceBrainWsUrl(tenantId, "AI_CC");
         return """
-              <!-- AI CONTACT CENTER — fork audio to voice-brain for STT + sentiment, bridge to agent -->
+              <!-- AI CONTACT CENTER (context=%s) — fork audio to voice-brain for STT + sentiment, bridge to agent -->
               <extension name="ai_cc_inbound">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -148,15 +154,17 @@ public class FreeSwitchConfigService {
                   %s
                   <!-- Fork audio to voice-brain (one-way listen for transcript + sentiment) -->
                   <action application="export" data="execute_on_answer=uuid_audio_fork ${uuid} %s&amp;direction=INBOUND both"/>
-                  <!-- Bridge to agent/queue -->
-                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@${sip_h_X-Tenant-ID}"/>
+                  <!-- Bridge to agent/queue within tenant context -->
+                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@%s"/>
                   %s
                 </condition>
               </extension>
         """.formatted(
+                ctx,
                 cdrVars(tenantId, app),
                 recording(e),
                 ws,
+                ctx,
                 voicemailFallback(ctx, e)
         );
     }
@@ -170,7 +178,7 @@ public class FreeSwitchConfigService {
         boolean aiEnabled = e.aiBotEnabled() || e.aiTranscriptionEnabled();
 
         return """
-              <!-- BASIC PBX — DTMF IVR menu, optional AI transcript -->
+              <!-- BASIC PBX (context=%s) — DTMF IVR menu, optional AI transcript -->
               <extension name="basic_pbx_inbound">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -178,7 +186,7 @@ public class FreeSwitchConfigService {
                   %s
                   %s
                   <!-- Bridge to routing target (extension, queue, ring group) -->
-                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@${sip_h_X-Tenant-ID}"/>
+                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@%s"/>
                   %s
                 </condition>
               </extension>
@@ -186,17 +194,20 @@ public class FreeSwitchConfigService {
               <!-- Internal extension dialing -->
               <extension name="basic_pbx_extensions">
                 <condition field="destination_number" expression="^(1\\d{2})$">
-                  <action application="bridge" data="sofia/internal/$1@${sip_h_X-Tenant-ID}"/>
+                  <action application="bridge" data="sofia/internal/$1@%s"/>
                 </condition>
               </extension>
         """.formatted(
+                ctx,
                 cdrVars(tenantId, app),
                 recording(e),
                 aiEnabled ? """
                   <!-- Fork audio to voice-brain for live transcript -->
                   <action application="export" data="execute_on_answer=uuid_audio_fork ${uuid} %s&amp;direction=INBOUND both"/>
                 """.formatted(ws) : "<!-- AI not enabled -->",
-                voicemailFallback(ctx, e)
+                ctx,
+                voicemailFallback(ctx, e),
+                ctx
         );
     }
 
@@ -207,7 +218,7 @@ public class FreeSwitchConfigService {
     private String generateOutboundDialer(String ctx, String tenantId, TenantApp app, PlanEntitlementResponse e) {
         // Outbound: DialerEngine sets X-Campaign-ID, X-Contact-ID, X-Bot-ID via ESL originate
         return """
-              <!-- OUTBOUND DIALER — voice-brain runs campaign script -->
+              <!-- OUTBOUND DIALER (context=%s) — voice-brain runs campaign script -->
               <extension name="outbound_dialer">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -220,16 +231,17 @@ public class FreeSwitchConfigService {
                 </condition>
               </extension>
 
-              <!-- Callback: when lead calls back the campaign DID -->
+              <!-- Callback: when lead calls back the campaign DID, route into tenant queue -->
               <extension name="outbound_dialer_callback">
                 <condition field="${sip_h_X-Routing-Type}" expression="CALLBACK">
                   <action application="answer"/>
                   %s
-                  <action application="queue" data="%s-callback"/>
+                  <action application="bridge" data="sofia/internal/${sip_h_X-Routing-Target}@%s"/>
                   <action application="hangup"/>
                 </condition>
               </extension>
         """.formatted(
+                ctx,
                 cdrVars(tenantId, app),
                 recording(e),
                 e.amdEnabled() ? """
@@ -238,7 +250,7 @@ public class FreeSwitchConfigService {
                 """ : "<!-- AMD not enabled -->",
                 voiceBrainUrl, tenantId,
                 cdrVars(tenantId, app),
-                app.getNamespace()
+                ctx
         );
     }
 
@@ -248,6 +260,7 @@ public class FreeSwitchConfigService {
 
     private String generateDefault(String ctx, String tenantId) {
         return """
+              <!-- DEFAULT (context=%s) — unknown product, fallback handler -->
               <extension name="default_handler">
                 <condition field="destination_number" expression="^(.*)$">
                   <action application="answer"/>
@@ -255,7 +268,7 @@ public class FreeSwitchConfigService {
                   <action application="hangup" data="NORMAL_CLEARING"/>
                 </condition>
               </extension>
-        """;
+        """.formatted(ctx);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -266,7 +279,8 @@ public class FreeSwitchConfigService {
         return """
             <?xml version="1.0" encoding="UTF-8" standalone="no"?>
             <!--
-              Tenant: %s | Product: %s | Plan: %s
+              Tenant: %s (%s) | Product: %s | Plan: %s
+              Context: %s
               Generated: %s
               AI: %s | Recording: %s | Agents: %d | Queues: %d
               voice-brain: %s
@@ -279,7 +293,8 @@ public class FreeSwitchConfigService {
               </section>
             </document>
         """.formatted(
-                app.getNamespace(), app.getProductCode(), app.getPlanCode(),
+                app.getNamespace(), app.getTenant().getId(), app.getProductCode(), app.getPlanCode(),
+                ctx,
                 Instant.now(),
                 e.aiBotEnabled(), e.recordingEnabled(), e.maxAgents(), e.maxQueues(),
                 voiceBrainUrl,
