@@ -35,14 +35,12 @@ import com.dalai.llama.tenant.domain.entity.enums.DeploymentModel;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.dto.request.ProductAppInfo;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
-//import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse.AdminCredentials;
-//import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse.AppInfo;
-//import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse.ConfigStatus;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import java.time.OffsetDateTime;
 import java.util.*;
 
@@ -66,7 +64,7 @@ public class TenantServiceImpl implements TenantService {
     private final ObjectMapper objectMapper;
 
 
-    @Value("${infra.base-domain:dalaillama.in}")
+    @Value("${dalaillama.domain:dalaillama.in}")
     private String domain;
 
     private static final int TENANT_EXPIRY_HOURS = 24;
@@ -91,7 +89,6 @@ public class TenantServiceImpl implements TenantService {
     public TenantResponse createTenant(CreateTenantRequest request, Jwt jwt) {
         String keycloakUserId = jwt.getSubject();
         String jwtEmail = jwt.getClaimAsString("email");
-
 
         // ── Verify user exists in Keycloak (dalai-llama realm) ──
         UserRepresentation kcUser = keycloakRealmService.getPlatformUser(keycloakUserId);
@@ -159,10 +156,17 @@ public class TenantServiceImpl implements TenantService {
         if (tenant.getStatus() == TenantStatus.CREATED) {
             try {
                 String realmName = "tenant-" + tenant.getId();
+
                 if (!keycloakRealmService.realmExists(realmName)) {
+                    // Fresh creation
                     keycloakRealmService.createRealm(realmName, tenant.getName());
+                    keycloakRealmService.grantMasterAdminAccessToRealm(realmName);
+                    log.info("Created realm and granted master admin access — name={}", realmName);
+                } else {
+                    // Resume case: realm already exists, re-assert admin grant (idempotent)
+                    keycloakRealmService.grantMasterAdminAccessToRealm(realmName);
+                    log.info("Realm {} already exists — reasserted master admin access", realmName);
                 }
-                keycloakRealmService.createRealm(realmName, tenant.getName());
 
                 // Fetch the created realm's internal UUID
                 String realmId = keycloakRealmService.getRealmId(realmName);
@@ -171,7 +175,7 @@ public class TenantServiceImpl implements TenantService {
                 tenant.setKeycloakRealmId(realmId);
                 tenantRepository.save(tenant);
 
-                log.info("Keycloak realm created — name={} id={}", realmName, realmId);
+                log.info("Keycloak realm ready — name={} id={}", realmName, realmId);
 
                 stateMachine.transition(tenant, TenantStatus.IDENTITY_CREATED,
                         "SYSTEM", "Keycloak realm created");
@@ -203,6 +207,7 @@ public class TenantServiceImpl implements TenantService {
         log.info("Tenant provisioning complete: {} ({})", tenant.getName(), tenant.getSlug());
         return tenantMapper.toResponse(tenant);
     }
+
     // ================================================================
     // CRUD
     // ================================================================
@@ -297,6 +302,7 @@ public class TenantServiceImpl implements TenantService {
 
         log.info("Wallet linked for tenant {}: {}", tenantId, walletId);
     }
+
     @Override
     public void onWalletFunded(WalletCreditedEvent walletCreditedEvent) {
         Tenant tenant = findTenantOrThrow(walletCreditedEvent.getTenantId());
@@ -464,7 +470,6 @@ public class TenantServiceImpl implements TenantService {
     }
 
     private void mapEntitlements(TenantApp.TenantAppBuilder b, SubscriptionActiveRequest req) {
-        // Basic entitlements from activation request
         b.agentSeats(req.agentSeats())
                 .maxAgents(req.maxAgents())
                 .maxDids(req.maxDids())
@@ -472,7 +477,6 @@ public class TenantServiceImpl implements TenantService {
                 .includedMinutes(req.includedMinutes())
                 .aiRatePerMinute(req.aiRatePerMin());
 
-        // Fetch full feature flags from product-service and stamp ALL entitlements
         if (req.planId() != null) {
             try {
                 PlanEntitlementResponse ent = productServiceClient.getPlanEntitlements(req.planId());
@@ -617,12 +621,19 @@ public class TenantServiceImpl implements TenantService {
     }
 
     private void mapDashboard(TenantApp.TenantAppBuilder b, Tenant tenant, SubscriptionActiveRequest req) {
-        String primaryUrl = buildDashboardUrl(
-                req.productApps() != null && !req.productApps().isEmpty()
-                        ? req.productApps().get(0).subdomain() : "app",
-                tenant.getSlug());
+        // Primary dashboard URL: prefer admin panel, fall back to lowest displayOrder
+        String primarySubdomain = "app";
+        if (req.productApps() != null && !req.productApps().isEmpty()) {
+            primarySubdomain = req.productApps().stream()
+                    .filter(p -> "ADMIN_PANEL".equals(p.appType()))
+                    .findFirst()
+                    .or(() -> req.productApps().stream()
+                            .min(Comparator.comparingInt(ProductAppInfo::displayOrder)))
+                    .map(ProductAppInfo::subdomain)
+                    .orElse("app");
+        }
 
-        b.dashboardUrl(primaryUrl)
+        b.dashboardUrl(buildDashboardUrl(primarySubdomain, tenant.getSlug()))
                 .appPanels(buildAppPanelsJson(req.productApps(), tenant.getSlug()));
     }
 
@@ -632,16 +643,25 @@ public class TenantServiceImpl implements TenantService {
         return "https://" + subdomain + "-" + tenantSlug + "." + domain;
     }
 
+    /**
+     * Serialize panel definitions to JSON.
+     * Keys MUST match what KeycloakClientConfigService / orchestrator parses:
+     * appType, displayName, subdomain, url, icon, displayOrder
+     */
     private String buildAppPanelsJson(List<ProductAppInfo> apps, String tenantSlug) {
         if (apps == null || apps.isEmpty()) return "[]";
 
         List<Map<String, Object>> panels = apps.stream()
-                .map(app -> Map.<String, Object>of(
-                        "type", app.appType(),
-                        "name", app.displayName(),
-                        "url", buildDashboardUrl(app.subdomain(), tenantSlug),
-                        "icon", app.icon() != null ? app.icon() : "",
-                        "order", app.displayOrder()))
+                .map(app -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("appType", app.appType());
+                    m.put("displayName", app.displayName());
+                    m.put("subdomain", app.subdomain());
+                    m.put("url", buildDashboardUrl(app.subdomain(), tenantSlug));
+                    m.put("icon", app.icon() != null ? app.icon() : "");
+                    m.put("displayOrder", app.displayOrder());
+                    return m;
+                })
                 .toList();
         try {
             return objectMapper.writeValueAsString(panels);
@@ -670,6 +690,10 @@ public class TenantServiceImpl implements TenantService {
                 .build();
     }
 
+    /**
+     * Parse appPanels JSON back to AppInfo DTOs.
+     * Keys must match the writer in buildAppPanelsJson.
+     */
     private List<AppInfo> parseAppPanels(TenantApp app) {
         try {
             List<Map<String, Object>> panels = objectMapper.readValue(
@@ -679,8 +703,8 @@ public class TenantServiceImpl implements TenantService {
             return panels.stream()
                     .map(p -> AppInfo.builder()
                             .id(app.getId())
-                            .appType((String) p.get("type"))
-                            .displayName((String) p.get("name"))
+                            .appType((String) p.get("appType"))
+                            .displayName((String) p.get("displayName"))
                             .url((String) p.get("url"))
                             .icon((String) p.get("icon"))
                             .build())
@@ -697,6 +721,7 @@ public class TenantServiceImpl implements TenantService {
         try { return AppType.valueOf(productCode); }
         catch (IllegalArgumentException e) { return AppType.CONTACT_CENTER; }
     }
+
     // ================================================================
     // PRIVATE HELPERS
     // ================================================================

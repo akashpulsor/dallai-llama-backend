@@ -85,6 +85,10 @@ dalaillama:
   pbx-core:
     url: ${PBX_CORE_URL:http://pbx-core.apps.svc.cluster.local:8080}
 
+  credentials:
+    encryption-key: ${DALAI_CRED_ENCRYPTION_KEY:}
+    ttl-hours: ${DALAI_CRED_TTL_HOURS:72}
+
   istio:
     gateway-name: ${ISTIO_GATEWAY_NAME:central-gateway}
     gateway-namespace: ${ISTIO_GATEWAY_NAMESPACE:istio-system}

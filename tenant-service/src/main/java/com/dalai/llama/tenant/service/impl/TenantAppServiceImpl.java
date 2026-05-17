@@ -6,10 +6,13 @@ import com.dalai.llama.tenant.domain.entity.enums.AppType;
 import com.dalai.llama.tenant.domain.entity.enums.ProvisioningTaskStatus;
 import com.dalai.llama.tenant.domain.event.*;
 import com.dalai.llama.tenant.domain.exception.ProvisioningException;
+import com.dalai.llama.tenant.dto.response.AdminCredentials;
+import com.dalai.llama.tenant.dto.response.SubscriptionDetailResponse;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.repository.TenantRepository;
+import com.dalai.llama.tenant.service.CredentialDeliveryService;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
 import com.dalai.llama.tenant.service.TenantAppService;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
@@ -39,6 +42,7 @@ public class TenantAppServiceImpl implements TenantAppService {
     private final KeycloakClientConfigService keycloakClientConfigService;
     private final ProvisioningTaskRepository provisioningTaskRepository;
     private final TenantRepository tenantRepository;
+    private final CredentialDeliveryService credentialDeliveryService;
 
     @Override
     public Optional<TenantApp> getByDid(String did) {
@@ -150,6 +154,21 @@ public class TenantAppServiceImpl implements TenantAppService {
                 });
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public SubscriptionDetailResponse getSubscriptionDetails(UUID tenantId, UUID subscriptionId) {
+        TenantApp app = tenantAppRepository
+                .findByTenantIdAndSubscriptionId(tenantId, subscriptionId)
+                .orElseThrow(() -> new ProvisioningException(
+                        "TenantApp not found for tenant=" + tenantId
+                                + " subscription=" + subscriptionId));
+
+        AdminCredentials adminCredentials = credentialDeliveryService
+                .getAdminCredentials(tenantId)
+                .orElse(null);
+
+        return SubscriptionDetailResponse.from(app, adminCredentials);
+    }
     // =========================
     // DELETE APP
     // =========================

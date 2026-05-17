@@ -1,0 +1,14 @@
+package com.dalai.llama.creator.domain;
+
+public enum PromptTemplateType {
+    TREND_REFRESH,
+    TREND_PREDICT,
+    TREND_INSIGHT,
+    AUDIENCE_SUGGEST,
+    IDEA_GENERATE,
+    STORY_SCRIPT_GENERATE,
+    SCRIPT_GENERATE,
+    STORYBOARD_GENERATE,
+    SCENE_REGENERATE,
+    EXPORT_SUMMARY
+}

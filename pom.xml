@@ -28,6 +28,7 @@
 
       <module>tenant-service</module>
       <module>product-service</module>
+      <module>creator-service</module>
   </modules>
 
   <properties>

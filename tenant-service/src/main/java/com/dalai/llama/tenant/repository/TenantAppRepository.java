@@ -29,6 +29,8 @@ public interface TenantAppRepository extends JpaRepository<TenantApp, UUID> {
 
     Optional<TenantApp> findBySubscriptionId(UUID subscriptionId);
 
+    Optional<TenantApp> findByTenantIdAndSubscriptionId(UUID tenantId, UUID subscriptionId);
+
     boolean existsBySubscriptionId(UUID subscriptionId);
 
     boolean existsByTenantIdAndSubscriptionId(UUID tenantId, UUID subscriptionId);

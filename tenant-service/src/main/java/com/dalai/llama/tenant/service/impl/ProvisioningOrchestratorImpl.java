@@ -12,6 +12,7 @@ import com.dalai.llama.tenant.dto.response.PlanEntitlementResponse;
 import com.dalai.llama.tenant.repository.ProvisioningLogRepository;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
+import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.service.ProvisioningOrchestrator;
 import com.dalai.llama.tenant.service.TenantService;
 import com.dalai.llama.tenant.service.client.ProductServiceClient;
@@ -62,9 +63,9 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
     private final DistributedLock distributedLock;
     private final TenantStateMachineImpl stateMachine;
     private final com.dalai.llama.tenant.kafka.producer.TenantEventProducer tenantEventProducer;
-    private  final TenantService tenantService;
-
+    private final TenantRepository tenantRepository;
     private final ProvisioningTxRunner txRunner;
+    private final com.dalai.llama.tenant.service.CredentialDeliveryService credentialDeliveryService;
 
 
     @Value("${dalaillama.domain:dalaillama.in}")
@@ -495,9 +496,8 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
             tenant.upsertAppPanel(panel);
         }
 
-        // 5) Single save — cascades to all child panels (insert new, update existing)
-        tenantService.updateTenantData(tenant);
 
+        tenantRepository.save(tenant);
         log.info("Provisioned {} app panels for tenant={} app={}",
                 result.panels().size(), tenant.getId(), app.getId());
     }
@@ -553,7 +553,6 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
 
     private void stepCreateAdminUser(ProvisioningContext ctx) {
         Tenant tenant = ctx.getTenant();
-        TenantApp app = ctx.getApp();
 
         // Only create if not already created (idempotency)
         if (tenant.getAdminUserId() != null && tenant.getAdminUserEmail() != null) {
@@ -565,17 +564,25 @@ public class ProvisioningOrchestratorImpl implements ProvisioningOrchestrator {
         }
 
         String email = tenant.getPrimaryContactEmail();
-        String tempPassword = PasswordGenerator.generate(14);
 
-        String userId = keycloakRealmService.createAdminUser(
-                tenant.getKeycloakRealmName(), email, tenant.getPrimaryContactName(), tempPassword);
+        // Delegate to CredentialDeliveryService — creates KC user + TenantUser + encrypted delivery
+        var result = credentialDeliveryService.provisionTenantUser(
+                com.dalai.llama.tenant.dto.request.ProvisionTenantUserRequest.builder()
+                        .tenantId(tenant.getId())
+                        .primaryRole(com.dalai.llama.tenant.domain.entity.enums.UserRole.ADMIN)
+                        .firstName(tenant.getPrimaryContactName())
+                        .email(email)
+                        .username(email)
+                        .createdBy("PROVISIONING_ORCHESTRATOR")
+                        .build());
 
-        tenant.setAdminUserId(userId);
+        tenant.setAdminUserId(result.keycloakUserId());
         tenant.setAdminUserEmail(email);
 
         ctx.setAdminCredentials(new AdminCredentials(
-                email, tempPassword,
-                "https://admin-" + tenant.getSlug() + "." + baseDomain));
+                email,
+                null, // temp password is now encrypted in user_credential_deliveries — reveal via API
+                result.loginUrl()));
     }
 
     // ── Step 5: Kamailio ──

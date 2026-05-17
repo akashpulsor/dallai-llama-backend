@@ -1,9 +1,12 @@
 package com.dalai.llama.tenant.controller;
 
 import com.dalai.llama.tenant.domain.entity.TenantApp;
+import com.dalai.llama.tenant.dto.request.ProvisionTenantUserRequest;
 import com.dalai.llama.tenant.dto.request.SubscriptionActiveRequest;
+import com.dalai.llama.tenant.dto.response.ProvisionedUserResult;
 import com.dalai.llama.tenant.dto.response.SubscriptionActiveResponse;
 import com.dalai.llama.tenant.dto.response.TenantResponse;
+import com.dalai.llama.tenant.service.CredentialDeliveryService;
 import com.dalai.llama.tenant.service.TenantAppService;
 import com.dalai.llama.tenant.service.TenantService;
 import com.dalai.llama.tenant.service.impl.AgentProvisionService;
@@ -19,7 +22,6 @@ import java.util.UUID;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/internal/tenants")
 @Slf4j
 @Hidden
 public class InternalTenantController {
@@ -27,13 +29,14 @@ public class InternalTenantController {
     private final TenantService tenantService;
     private final AgentProvisionService agentProvisionService;
     private final TenantAppService tenantAppService;
+    private final CredentialDeliveryService credentialDeliveryService;
 
-    @GetMapping("/{id}")
+    @GetMapping("/api/v1/internal/tenants/{id}")
     public TenantResponse get(@PathVariable UUID id) {
         return tenantService.getTenant(id);
     }
 
-    @GetMapping("/apps/did/{did}")
+    @GetMapping("/api/v1/internal/tenants/apps/did/{did}")
     public ResponseEntity<Map<String, Object>> getTenantByDid(
             @PathVariable String did) {
 
@@ -43,7 +46,7 @@ public class InternalTenantController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/apps/tenant/{tenantId}")
+    @GetMapping("/api/v1/internal/tenants/apps/tenant/{tenantId}")
     public ResponseEntity<Map<String, Object>> getTenantByTenantId(
             @PathVariable UUID tenantId) {
 
@@ -57,7 +60,7 @@ public class InternalTenantController {
      * POST /api/v1/internal/tenants/{tenantId}/activate
      * Called by product-service after payment succeeds to create TenantApp and trigger provisioning.
      */
-    @PostMapping("/{tenantId}/activate")
+    @PostMapping("/api/v1/internal/tenants/{tenantId}/activate")
     public ResponseEntity<SubscriptionActiveResponse> activateSubscription(
             @PathVariable UUID tenantId,
             @RequestBody SubscriptionActiveRequest request) {
@@ -93,7 +96,7 @@ public class InternalTenantController {
     /**
      * POST /api/v1/internal/tenants/agents/provision
      */
-    @PostMapping("/agents/provision")
+    @PostMapping("/api/v1/internal/tenants/agents/provision")
     public ResponseEntity<Map<String, Object>> provisionAgent(
             @RequestBody Map<String, Object> request) {
 
@@ -112,5 +115,35 @@ public class InternalTenantController {
                 : ResponseEntity.unprocessableEntity().body(result);
     }
 
+    @PostMapping("/api/v1/internal/tenant/users")
+    public ResponseEntity<ProvisionedUserResult> provisionTenantUser(
+            @RequestBody ProvisionTenantUserRequest request) {
+        return ResponseEntity.ok(credentialDeliveryService.provisionTenantUser(request));
+    }
 
+    @PatchMapping("/api/v1/internal/tenant/users/{id}/password")
+    public ResponseEntity<Void> changePassword(
+            @PathVariable UUID id,
+            @RequestBody ChangePasswordRequest request) {
+        credentialDeliveryService.changePassword(id, request.newPassword(), request.requesterSubject());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/internal/tenant/users/{id}/deprovision")
+    public ResponseEntity<Void> deprovisionTenantUser(
+            @PathVariable UUID id,
+            @RequestBody DeprovisionRequest request) {
+        credentialDeliveryService.deprovisionTenantUser(id, request.reason(), request.requesterSubject());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/api/v1/internal/tenant/users/{id}/disable")
+    public ResponseEntity<Void> disableTenantUser(@PathVariable UUID id) {
+        credentialDeliveryService.deprovisionTenantUser(id, "Disabled via internal API", "SYSTEM");
+        return ResponseEntity.noContent().build();
+    }
+
+    public record ChangePasswordRequest(String newPassword, String requesterSubject) {}
+
+    public record DeprovisionRequest(String reason, String requesterSubject) {}
 }

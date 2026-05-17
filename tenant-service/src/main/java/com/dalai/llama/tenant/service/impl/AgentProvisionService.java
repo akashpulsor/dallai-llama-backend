@@ -2,32 +2,27 @@ package com.dalai.llama.tenant.service.impl;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.domain.entity.TenantApp;
+import com.dalai.llama.tenant.domain.entity.enums.UserRole;
+import com.dalai.llama.tenant.dto.request.ProvisionTenantUserRequest;
+import com.dalai.llama.tenant.dto.response.ProvisionedUserResult;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.repository.TenantRepository;
+import com.dalai.llama.tenant.service.CredentialDeliveryService;
 import com.dalai.llama.tenant.util.PasswordGenerator;
-import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.keycloak.admin.client.Keycloak;
-import org.keycloak.admin.client.resource.RealmResource;
-import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.representations.idm.CredentialRepresentation;
-import org.keycloak.representations.idm.RoleRepresentation;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * Agent provisioning — called by PBX-Core POST /api/v1/internal/agents/provision.
+ * Agent provisioning called by PBX-Core.
  *
- * Counting rules:
- *   TENANT_ADMIN → does NOT count against maxAgents (1 free admin per tenant)
- *   AGENT        → counts against maxAgents
- *   SUPERVISOR   → counts against maxAgents (supervisor IS an agent who can monitor)
- *
- * PBX-Core sends current_agent_count (it owns the agents table).
- * We validate against TenantApp.maxAgents here.
+ * Tenant-service validates the tenant subscription and owns Keycloak credential
+ * creation. PBX-Core still owns the SIP subscriber password.
  */
 @Slf4j
 @Service
@@ -36,7 +31,7 @@ public class AgentProvisionService {
 
     private final TenantRepository tenantRepository;
     private final TenantAppRepository tenantAppRepository;
-    private final Keycloak keycloakAdmin;
+    private final CredentialDeliveryService credentialDeliveryService;
 
     public Map<String, Object> provisionAgent(Map<String, Object> request) {
         UUID tenantId = UUID.fromString((String) request.get("tenant_id"));
@@ -51,13 +46,11 @@ public class AgentProvisionService {
         log.info("Agent provision: tenant={} user={} role={} current={}",
                 tenantId, username, role, currentAgentCount);
 
-        // 1. Find tenant
         Tenant tenant = tenantRepository.findById(tenantId).orElse(null);
         if (tenant == null) {
             return denied("tenant_not_found", "Tenant not found: " + tenantId);
         }
 
-        // 2. Find TenantApp (has maxAgents from plan entitlements)
         TenantApp app = subscriptionId != null
                 ? tenantAppRepository.findBySubscriptionId(UUID.fromString(subscriptionId)).orElse(null)
                 : tenantAppRepository.findFirstByTenantId(tenantId).orElse(null);
@@ -66,8 +59,8 @@ public class AgentProvisionService {
             return denied("no_subscription", "No active subscription for tenant");
         }
 
-        // 3. Validate entitlement (admin is free, agents/supervisors count)
-        if (!"TENANT_ADMIN".equalsIgnoreCase(role)) {
+        UserRole userRole = toUserRole(role);
+        if (userRole != UserRole.ADMIN) {
             int maxAgents = app.getMaxAgents() != null ? app.getMaxAgents() : 0;
             if (currentAgentCount >= maxAgents) {
                 log.warn("Agent limit: tenant={} current={} max={}", tenantId, currentAgentCount, maxAgents);
@@ -77,100 +70,56 @@ public class AgentProvisionService {
             }
         }
 
-        // 4. Create Keycloak user
-        String realmName = tenant.getKeycloakRealmName();
-        if (realmName == null || realmName.isBlank()) {
+        if (tenant.getKeycloakRealmName() == null || tenant.getKeycloakRealmName().isBlank()) {
             return denied("no_realm", "Tenant Keycloak realm not configured");
         }
 
-        String sipPassword = PasswordGenerator.generate(16);
+        NameParts nameParts = splitName(displayName);
+        ProvisionedUserResult provisionedUser = credentialDeliveryService.provisionTenantUser(
+                ProvisionTenantUserRequest.builder()
+                        .tenantId(tenantId)
+                        .primaryRole(userRole)
+                        .firstName(nameParts.firstName())
+                        .lastName(nameParts.lastName())
+                        .email(email)
+                        .username(username)
+                        .additionalRoles(userRole == UserRole.ADMIN ? java.util.Set.of("TENANT_ADMIN") : null)
+                        .createdBy("PBX_CORE")
+                        .build());
 
-        try {
-            RealmResource realm = keycloakAdmin.realm(realmName);
-            UsersResource users = realm.users();
-
-            // Check existing by email
-            List<UserRepresentation> existing = users.searchByEmail(email, true);
-            if (!existing.isEmpty()) {
-                String existingId = existing.get(0).getId();
-                ensureRole(realm, existingId, mapRole(role));
-                log.info("Keycloak user exists: {} ({})", email, existingId);
-                return approved(existingId, sipPassword);
-            }
-
-            // Create new user
-            UserRepresentation user = new UserRepresentation();
-            user.setUsername(username);
-            user.setEmail(email);
-            user.setEmailVerified(true);
-            user.setEnabled(true);
-            user.setAttributes(Map.of("tenant_id", List.of(tenantId.toString())));
-
-            if (displayName != null && !displayName.isBlank()) {
-                String[] parts = displayName.split(" ", 2);
-                user.setFirstName(parts[0]);
-                if (parts.length > 1) user.setLastName(parts[1]);
-            }
-
-            CredentialRepresentation cred = new CredentialRepresentation();
-            cred.setType(CredentialRepresentation.PASSWORD);
-            cred.setValue(email);
-            cred.setTemporary(true);
-            user.setCredentials(List.of(cred));
-            user.setRequiredActions(List.of("UPDATE_PASSWORD"));
-
-            Response response = users.create(user);
-            if (response.getStatus() != 201) {
-                String body = response.readEntity(String.class);
-                log.error("Keycloak create failed: {} — {}", response.getStatus(), body);
-                return denied("keycloak_error", "Keycloak user creation failed: " + body);
-            }
-
-            String keycloakUserId = extractUserId(response);
-            ensureRole(realm, keycloakUserId, mapRole(role));
-
-            log.info("Created Keycloak user: {} ({}) realm={} role={}",
-                    email, keycloakUserId, realmName, role);
-            return approved(keycloakUserId, sipPassword);
-
-        } catch (Exception e) {
-            log.error("Keycloak error for {}: {}", email, e.getMessage(), e);
-            return denied("keycloak_error", "Keycloak error: " + e.getMessage());
-        }
+        return approved(provisionedUser, PasswordGenerator.generate(16));
     }
 
-    private Map<String, Object> approved(String keycloakUserId, String sipPassword) {
-        return new LinkedHashMap<>(Map.of(
-                "approved", true,
-                "keycloak_user_id", keycloakUserId,
-                "sip_password", sipPassword
-        ));
+    private Map<String, Object> approved(ProvisionedUserResult provisionedUser, String sipPassword) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("approved", true);
+        result.put("keycloak_user_id", provisionedUser.keycloakUserId());
+        result.put("tenant_user_id", provisionedUser.tenantUserId());
+        result.put("credential_delivery_id", provisionedUser.credentialDeliveryId());
+        result.put("login_url", provisionedUser.loginUrl());
+        result.put("sip_password", sipPassword);
+        return result;
     }
 
     private Map<String, Object> denied(String code, String reason) {
         return new LinkedHashMap<>(Map.of("approved", false, "code", code, "reason", reason));
     }
 
-    private String mapRole(String role) {
-        return switch (role.toUpperCase()) {
-            case "TENANT_ADMIN", "ADMIN" -> "TENANT_ADMIN";
-            case "SUPERVISOR" -> "SUPERVISOR";
-            default -> "AGENT";
+    private UserRole toUserRole(String role) {
+        return switch (role == null ? "AGENT" : role.toUpperCase()) {
+            case "TENANT_ADMIN", "ADMIN" -> UserRole.ADMIN;
+            case "SUPERVISOR" -> UserRole.SUPERVISOR;
+            default -> UserRole.AGENT;
         };
     }
 
-    private void ensureRole(RealmResource realm, String userId, String roleName) {
-        try {
-            RoleRepresentation r = realm.roles().get(roleName).toRepresentation();
-            realm.users().get(userId).roles().realmLevel().add(List.of(r));
-        } catch (Exception e) {
-            log.warn("Could not assign role {} to {}: {}", roleName, userId, e.getMessage());
+    private NameParts splitName(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return new NameParts(null, null);
         }
+        List<String> parts = List.of(displayName.trim().split("\\s+", 2));
+        return new NameParts(parts.get(0), parts.size() > 1 ? parts.get(1) : null);
     }
 
-    private String extractUserId(Response response) {
-        String loc = response.getHeaderString("Location");
-        if (loc != null) return loc.substring(loc.lastIndexOf('/') + 1);
-        throw new RuntimeException("Could not extract user ID from Keycloak response");
-    }
+    private record NameParts(String firstName, String lastName) {}
 }

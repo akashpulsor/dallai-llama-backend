@@ -1,0 +1,6 @@
+INSERT INTO creator_prompt_templates (template_key, version, name, template_body, metadata)
+VALUES
+    ('TREND_INSIGHT', 2, 'AI posting-time planner for selected trend',
+     'You are an AI short-form distribution strategist. Explain why the selected trend worked and predict best local posting windows using AI reasoning, not fixed category defaults. Trend: {{trendJson}}. Posting context: {{postingContextJson}}. Country: {{countryCode}}. Timezone: {{timezone}}. Estimate how long the platform ranking algorithm may take to test and expand the post, when the target audience is available in the timezone, how trend age/freshness/velocity changes urgency, and whether the creator should post before peak audience time. Return compact JSON: summary, whyItWorked[], bestTimes[] with label/window/timezone/reason, creatorActions[], confidenceScore, evidenceType, postingStrategy with rankingDelayEstimateMinutes, recommendedPublishLeadMinutes, audiencePeakLabel, trendUrgency, decisionFactors[].',
+     '{"inputContract": ["trendJson", "postingContextJson", "countryCode", "timezone"], "outputContract": "summary, whyItWorked[], bestTimes[], creatorActions[], postingStrategy"}'::jsonb)
+ON CONFLICT (template_key, version) DO NOTHING;

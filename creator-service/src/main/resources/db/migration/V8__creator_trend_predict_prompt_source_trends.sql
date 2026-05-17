@@ -1,0 +1,6 @@
+INSERT INTO creator_prompt_templates (template_key, version, name, template_body, metadata)
+VALUES
+    ('TREND_PREDICT', 2, 'Predict creator trends from category signals and trend history',
+     'You are predicting short-form creator trends for category {{categoryCode}} on target platform {{platformCode}} in country {{countryCode}} over the next {{horizonHours}} hours. Use recent structured trend signals first: {{recentSignalsJson}}. Use selected or existing stored trends for category momentum: {{sourceTrendsJson}}. Use user-provided signals/context when present: {{userSignalsJson}} {{userContext}} {{parametersJson}}. If evidence is thin, you may use general market memory, historical content cycles, repeated audience behavior, and public-leader/action patterns, but label those predictions as heuristic and lower confidence. Do not fabricate source evidence. Return compact JSON with predictions: title, summary, confidenceScore, rationale, evidenceType, suggestedTags.',
+     '{"inputContract": ["categoryCode", "platformCode", "countryCode", "horizonHours", "recentSignalsJson", "sourceTrendsJson"], "outputContract": "predictions[]"}'::jsonb)
+ON CONFLICT (template_key, version) DO NOTHING;

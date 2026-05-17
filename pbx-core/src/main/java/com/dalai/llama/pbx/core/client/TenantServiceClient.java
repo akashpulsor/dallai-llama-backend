@@ -1,6 +1,8 @@
 package com.dalai.llama.pbx.core.client;
 
 
+import com.dalai.llama.pbx.core.dto.request.ProvisionTenantUserRequest;
+import com.dalai.llama.pbx.core.dto.response.ProvisionedUserResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -118,7 +120,7 @@ public class TenantServiceClient {
     public Optional<Map<String, Object>> provisionAgent(UUID tenantId, Map<String, Object> request) {
         try {
             Map<String, Object> result = client.post()
-                    .uri("/api/v1/internal/agents/provision")
+                    .uri("/api/v1/internal/tenants/agents/provision")
                     .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
@@ -137,6 +139,83 @@ public class TenantServiceClient {
             return Optional.empty();
         }
     }
+    // ════════════════════════════════════════════════════════════
+    // TENANT USER PROVISIONING (Credential Delivery System)
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Provision a tenant user (AGENT/SUPERVISOR) — creates KC user + TenantUser + credential delivery.
+     * tenant-service endpoint: POST /api/v1/internal/tenant/users
+     */
+    public Optional<ProvisionedUserResult> provisionTenantUser(ProvisionTenantUserRequest request) {
+        try {
+            ProvisionedUserResult result = client.post()
+                    .uri("/api/v1/internal/tenant/users")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(ProvisionedUserResult.class)
+                    .timeout(TIMEOUT)
+                    .block();
+            log.info("Provisioned tenant user via tenant-service: tenantUserId={} kcUserId={}",
+                    result != null ? result.tenantUserId() : "null",
+                    result != null ? result.keycloakUserId() : "null");
+            return Optional.ofNullable(result);
+        } catch (WebClientResponseException e) {
+            log.error("Tenant user provisioning failed: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Tenant user provisioning failed: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Deprovision a tenant user — revokes credentials, disables KC user.
+     * tenant-service endpoint: POST /api/v1/internal/tenant/users/{id}/deprovision
+     */
+    public boolean deprovisionTenantUser(UUID tenantUserId, String reason, String requesterSubject) {
+        try {
+            client.post()
+                    .uri("/api/v1/internal/tenant/users/{id}/deprovision", tenantUserId)
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of("reason", reason, "requesterSubject", requesterSubject))
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(TIMEOUT)
+                    .block();
+            log.info("Deprovisioned tenant user {} via tenant-service", tenantUserId);
+            return true;
+        } catch (WebClientResponseException e) {
+            log.error("Tenant user deprovision failed for {}: {} {}",
+                    tenantUserId, e.getStatusCode(), e.getResponseBodyAsString());
+            return false;
+        } catch (Exception e) {
+            log.error("Tenant user deprovision failed for {}: {}", tenantUserId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Disable a tenant user — quick disable without full deprovision.
+     * tenant-service endpoint: POST /api/v1/internal/tenant/users/{id}/disable
+     */
+    public boolean disableTenantUser(UUID tenantUserId) {
+        try {
+            client.post()
+                    .uri("/api/v1/internal/tenant/users/{id}/disable", tenantUserId)
+                    .retrieve()
+                    .bodyToMono(Void.class)
+                    .timeout(TIMEOUT)
+                    .block();
+            log.info("Disabled tenant user {} via tenant-service", tenantUserId);
+            return true;
+        } catch (Exception e) {
+            log.error("Tenant user disable failed for {}: {}", tenantUserId, e.getMessage());
+            return false;
+        }
+    }
+
     /**
      * Health check — verify tenant-service is reachable.
      * Used by actuator health indicator.

@@ -494,6 +494,12 @@ public class TenantApp {
     @Column(name = "kamailio_config", columnDefinition = "TEXT")
     private String kamailioConfig;
 
+    /**
+     * Raw panel definitions from product-service (input).
+     * The provisioning orchestrator parses this and creates enriched AppPanel rows
+     * in tenant_app_panels. For runtime queries about a tenant's panels, prefer
+     * Tenant.getAppPanels() (the relational source of truth).
+     */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "app_panels")
     private String appPanels;

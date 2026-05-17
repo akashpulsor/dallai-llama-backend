@@ -1,6 +1,7 @@
 package com.dalai.llama.tenant.service.impl;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
+import com.dalai.llama.tenant.domain.entity.enums.UserRole;
 import com.dalai.llama.tenant.domain.exception.KeycloakException;
 import com.dalai.llama.tenant.domain.exception.KeycloakUserNotFoundException;
 import com.dalai.llama.tenant.service.KeycloakRealmService;
@@ -370,6 +371,67 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     }
 
     @Override
+    public String createTenantUser(String realmName, UUID tenantId, String username, String email,
+                                   String displayName, String temporaryPassword, UserRole role) {
+        log.info("Creating tenant user {} in realm {} role={}", email, realmName, role);
+
+        try {
+            RealmResource realm = keycloakAdminClient.realm(realmName);
+            UsersResource users = realm.users();
+
+            String userId;
+            List<UserRepresentation> existing = users.searchByEmail(email, true);
+            if (!existing.isEmpty()) {
+                UserRepresentation user = existing.get(0);
+                userId = user.getId();
+                UserResource userResource = users.get(userId);
+                UserRepresentation current = userResource.toRepresentation();
+                current.setEnabled(true);
+                current.setUsername(username);
+                current.setEmail(email);
+                current.setEmailVerified(true);
+                applyDisplayName(current, displayName);
+                current.singleAttribute("tenant_id", tenantId.toString());
+                userResource.update(current);
+            } else {
+                UserRepresentation user = new UserRepresentation();
+                user.setEnabled(true);
+                user.setUsername(username);
+                user.setEmail(email);
+                user.setEmailVerified(true);
+                user.setRequiredActions(Collections.singletonList("UPDATE_PASSWORD"));
+                user.setAttributes(Map.of("tenant_id", List.of(tenantId.toString())));
+                applyDisplayName(user, displayName);
+
+                Response response = users.create(user);
+                if (response.getStatus() != 201) {
+                    String body = response.readEntity(String.class);
+                    throw new KeycloakException("Failed to create tenant user: HTTP "
+                            + response.getStatus() + " " + body, null);
+                }
+                userId = extractUserIdFromLocation(response);
+                response.close();
+            }
+
+            CredentialRepresentation credential = new CredentialRepresentation();
+            credential.setType(CredentialRepresentation.PASSWORD);
+            credential.setValue(temporaryPassword);
+            credential.setTemporary(true);
+            users.get(userId).resetPassword(credential);
+
+            assignTenantRole(realm, userId, role);
+
+            log.info("Tenant user ready {} in realm {} with id {}", email, realmName, userId);
+            return userId;
+        } catch (KeycloakException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to create tenant user {} in realm {}", email, realmName, e);
+            throw new KeycloakException("Failed to create tenant user: " + email, e);
+        }
+    }
+
+    @Override
     public void createAdminUser(Tenant tenant, String realmName, String email, String tempPassword) {
         log.info("Creating admin user {} for realm: {}", email, realmName);
         try {
@@ -423,6 +485,32 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
     // ════════════════════════════════════════════════════════════════
     // USER ↔ TENANT LINKING
     // ════════════════════════════════════════════════════════════════
+
+    private void assignTenantRole(RealmResource realm, String userId, UserRole role) {
+        String roleName = switch (role) {
+            case ADMIN -> "TENANT_ADMIN";
+            case SUPERVISOR -> "SUPERVISOR";
+            case AGENT -> "AGENT";
+        };
+
+        try {
+            RoleRepresentation realmRole = realm.roles().get(roleName).toRepresentation();
+            realm.users().get(userId).roles().realmLevel().add(Collections.singletonList(realmRole));
+        } catch (Exception e) {
+            log.warn("Could not assign {} role to {}: {}", roleName, userId, e.getMessage());
+        }
+    }
+
+    private void applyDisplayName(UserRepresentation user, String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return;
+        }
+        String[] parts = displayName.trim().split("\\s+", 2);
+        user.setFirstName(parts[0]);
+        if (parts.length > 1) {
+            user.setLastName(parts[1]);
+        }
+    }
 
     @Override
     public void linkUserToUUID(String realmName, String keycloakUserId, UUID tenantId) {
@@ -536,6 +624,54 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
         }
     }
 
+    @Override
+    public void grantMasterAdminAccessToRealm(String realmName) {
+        try {
+            RealmResource masterRealm = keycloakAdminClient.realm("master");
+            String mgmtClientId = realmName + "-realm";
+
+            List<ClientRepresentation> mgmtClients = masterRealm.clients().findByClientId(mgmtClientId);
+            if (mgmtClients.isEmpty()) {
+                log.error("Management client {} not found in master realm — was the realm actually created?",
+                        mgmtClientId);
+                return;
+            }
+            String mgmtClientUuid = mgmtClients.get(0).getId();
+
+            RoleRepresentation adminRole;
+            try {
+                adminRole = masterRealm.clients()
+                        .get(mgmtClientUuid)
+                        .roles()
+                        .get("admin")
+                        .toRepresentation();
+            } catch (Exception e) {
+                log.error("Could not find 'admin' role on management client {}: {}",
+                        mgmtClientId, e.getMessage());
+                return;
+            }
+
+            List<UserRepresentation> adminUsers = masterRealm.users().search("admin", true);
+            if (adminUsers.isEmpty()) {
+                log.error("Could not find 'admin' user in master realm");
+                return;
+            }
+            String adminUserId = adminUsers.get(0).getId();
+
+            masterRealm.users()
+                    .get(adminUserId)
+                    .roles()
+                    .clientLevel(mgmtClientUuid)
+                    .add(List.of(adminRole));
+
+            log.info("Granted master admin full management rights on realm {}", realmName);
+        } catch (Exception e) {
+            log.error("Failed to grant master admin access to realm {}: {}",
+                    realmName, e.getMessage(), e);
+            throw new RuntimeException("Failed to grant admin access on realm " + realmName, e);
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════
     // HELPERS
     // ════════════════════════════════════════════════════════════════
@@ -565,5 +701,75 @@ public class KeycloakRealmServiceImpl implements KeycloakRealmService {
             return location.substring(location.lastIndexOf('/') + 1);
         }
         return null;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // CREDENTIAL MANAGEMENT (NEW — used by CredentialDeliveryService)
+    // ════════════════════════════════════════════════════════════════
+
+    @Override
+    public void resetUserPassword(String realmName, String keycloakUserId, String newPassword, boolean temporary) {
+        try {
+            CredentialRepresentation cred = new CredentialRepresentation();
+            cred.setType(CredentialRepresentation.PASSWORD);
+            cred.setValue(newPassword);
+            cred.setTemporary(temporary);
+
+            keycloakAdminClient.realm(realmName)
+                    .users().get(keycloakUserId)
+                    .resetPassword(cred);
+
+            log.info("Reset password for KC user {} in realm {} (temporary={})", keycloakUserId, realmName, temporary);
+        } catch (NotFoundException e) {
+            throw new KeycloakUserNotFoundException("KC user " + keycloakUserId + " not found in realm " + realmName);
+        } catch (Exception e) {
+            throw new KeycloakException("Failed to reset password for user " + keycloakUserId + " in realm " + realmName, e);
+        }
+    }
+
+    @Override
+    public void disableUser(String realmName, String keycloakUserId) {
+        try {
+            UserResource userResource = keycloakAdminClient.realm(realmName)
+                    .users().get(keycloakUserId);
+            UserRepresentation user = userResource.toRepresentation();
+            user.setEnabled(false);
+            userResource.update(user);
+            log.info("Disabled KC user {} in realm {}", keycloakUserId, realmName);
+        } catch (NotFoundException e) {
+            log.warn("Cannot disable — KC user {} not found in realm {}", keycloakUserId, realmName);
+        } catch (Exception e) {
+            throw new KeycloakException("Failed to disable user " + keycloakUserId + " in realm " + realmName, e);
+        }
+    }
+
+    @Override
+    public void enableUser(String realmName, String keycloakUserId) {
+        try {
+            UserResource userResource = keycloakAdminClient.realm(realmName)
+                    .users().get(keycloakUserId);
+            UserRepresentation user = userResource.toRepresentation();
+            user.setEnabled(true);
+            userResource.update(user);
+            log.info("Enabled KC user {} in realm {}", keycloakUserId, realmName);
+        } catch (NotFoundException e) {
+            log.warn("Cannot enable — KC user {} not found in realm {}", keycloakUserId, realmName);
+        } catch (Exception e) {
+            throw new KeycloakException("Failed to enable user " + keycloakUserId + " in realm " + realmName, e);
+        }
+    }
+
+    @Override
+    public Optional<UserRepresentation> findUserByEmailInRealm(String realmName, String email) {
+        try {
+            List<UserRepresentation> users = keycloakAdminClient.realm(realmName)
+                    .users().searchByEmail(email, true);
+            return users.stream()
+                    .filter(u -> email.equalsIgnoreCase(u.getEmail()))
+                    .findFirst();
+        } catch (Exception e) {
+            log.warn("Failed to search for user by email {} in realm {}: {}", email, realmName, e.getMessage());
+            return Optional.empty();
+        }
     }
 }
