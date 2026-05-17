@@ -2,6 +2,7 @@ package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.PromptTemplateType;
+import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
 import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorPromptTemplate;
 import com.dalai.llama.creator.domain.entity.CreatorTrend;
@@ -33,6 +34,7 @@ public class TrendInsightService {
     private final CreatorPromptRunRepository promptRunRepository;
     private final PromptTemplateService promptTemplateService;
     private final CreatorAiService creatorAiService;
+    private final GenerationJobService generationJobService;
     private final CreatorProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -41,6 +43,7 @@ public class TrendInsightService {
             CreatorPromptRunRepository promptRunRepository,
             PromptTemplateService promptTemplateService,
             CreatorAiService creatorAiService,
+            GenerationJobService generationJobService,
             CreatorProperties properties,
             ObjectMapper objectMapper
     ) {
@@ -48,6 +51,7 @@ public class TrendInsightService {
         this.promptRunRepository = promptRunRepository;
         this.promptTemplateService = promptTemplateService;
         this.creatorAiService = creatorAiService;
+        this.generationJobService = generationJobService;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -77,39 +81,75 @@ public class TrendInsightService {
         aiInput.put("timezone", effectiveTimezone);
         aiInput.put("renderedPrompt", renderedPrompt);
 
-        Map<String, Object> aiOutput = creatorAiService.generate(PromptTemplateType.TREND_INSIGHT.name(), aiInput);
-        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
-                .tenantId(defaultString(tenantId, "unknown"))
-                .userId(defaultString(userId, "unknown"))
-                .promptTemplateId(template.getId())
-                .promptTemplateKey(template.getTemplateKey())
-                .promptTemplateVersion(template.getVersion())
-                .renderedPrompt(renderedPrompt)
-                .inputSnapshot(aiInput)
-                .provider(creatorAiService.providerName())
-                .model(properties.getAi().getModel())
-                .outputPayload(aiOutput)
-                .status("COMPLETED")
-                .completedAt(OffsetDateTime.now())
-                .build());
-
-        return new TrendInsightResponse(
-                trend.getId(),
-                promptRun.getId(),
-                trend.getTitle(),
-                trend.getCategoryCode(),
-                trend.getPlatformCode(),
-                countryCode,
-                stringValue(aiOutput.get("summary"), trend.getSummary()),
-                stringList(aiOutput.get("whyItWorked")),
-                postingWindows(aiOutput.get("bestTimes"), effectiveTimezone),
-                stringList(aiOutput.get("creatorActions")),
-                decimalValue(aiOutput.get("confidenceScore")),
-                stringValue(aiOutput.get("evidenceType"), "AI_TIMING_MODEL"),
-                mapValue(aiOutput.get("postingStrategy")),
-                aiOutput,
-                OffsetDateTime.now()
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.TREND_INSIGHT.name(),
+                tenantId,
+                userId,
+                null,
+                aiInput
         );
+
+        try {
+            CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                    tenantId,
+                    userId,
+                    null,
+                    generationJob.getId(),
+                    null
+            );
+            CreatorAiService.MeteredAiResponse aiResponse =
+                    creatorAiService.generateMetered(PromptTemplateType.TREND_INSIGHT.name(), aiInput, usageContext);
+            Map<String, Object> aiOutput = aiResponse.output();
+            CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                    .tenantId(defaultString(tenantId, "unknown"))
+                    .userId(defaultString(userId, "unknown"))
+                    .jobId(generationJob.getId())
+                    .promptTemplateId(template.getId())
+                    .promptTemplateKey(template.getTemplateKey())
+                    .promptTemplateVersion(template.getVersion())
+                    .renderedPrompt(renderedPrompt)
+                    .inputSnapshot(aiInput)
+                    .provider(creatorAiService.providerName())
+                    .model(creatorAiService.modelName())
+                    .outputPayload(aiOutput)
+                    .tokenMetadata(aiResponse.tokenMetadata())
+                    .costMetadata(aiResponse.costMetadata())
+                    .status("COMPLETED")
+                    .completedAt(OffsetDateTime.now())
+                    .build());
+            creatorAiService.publishBillingDebit(
+                    PromptTemplateType.TREND_INSIGHT.name(),
+                    aiResponse,
+                    usageContext.withPromptRunId(promptRun.getId())
+            );
+
+            Map<String, Object> jobOutput = new LinkedHashMap<>();
+            jobOutput.put("promptRunId", promptRun.getId().toString());
+            jobOutput.put("trendId", trend.getId().toString());
+            jobOutput.put("aiOutput", aiOutput);
+            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+
+            return new TrendInsightResponse(
+                    trend.getId(),
+                    promptRun.getId(),
+                    trend.getTitle(),
+                    trend.getCategoryCode(),
+                    trend.getPlatformCode(),
+                    countryCode,
+                    stringValue(aiOutput.get("summary"), trend.getSummary()),
+                    stringList(aiOutput.get("whyItWorked")),
+                    postingWindows(aiOutput.get("bestTimes"), effectiveTimezone),
+                    stringList(aiOutput.get("creatorActions")),
+                    decimalValue(aiOutput.get("confidenceScore")),
+                    stringValue(aiOutput.get("evidenceType"), "AI_TIMING_MODEL"),
+                    mapValue(aiOutput.get("postingStrategy")),
+                    aiOutput,
+                    OffsetDateTime.now()
+            );
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            throw ex;
+        }
     }
 
     private Map<String, Object> toTrendSnapshot(CreatorTrend trend) {

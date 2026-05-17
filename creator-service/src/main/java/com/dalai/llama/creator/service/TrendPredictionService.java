@@ -3,6 +3,7 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.PromptTemplateType;
 import com.dalai.llama.creator.domain.entity.CreatorCategory;
+import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
 import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorPromptTemplate;
 import com.dalai.llama.creator.domain.entity.CreatorTrend;
@@ -43,6 +44,7 @@ public class TrendPredictionService {
     private final CreatorPromptRunRepository promptRunRepository;
     private final PromptTemplateService promptTemplateService;
     private final CreatorAiService creatorAiService;
+    private final GenerationJobService generationJobService;
     private final CreatorProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -53,6 +55,7 @@ public class TrendPredictionService {
             CreatorPromptRunRepository promptRunRepository,
             PromptTemplateService promptTemplateService,
             CreatorAiService creatorAiService,
+            GenerationJobService generationJobService,
             CreatorProperties properties,
             ObjectMapper objectMapper
     ) {
@@ -62,6 +65,7 @@ public class TrendPredictionService {
         this.promptRunRepository = promptRunRepository;
         this.promptTemplateService = promptTemplateService;
         this.creatorAiService = creatorAiService;
+        this.generationJobService = generationJobService;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -135,41 +139,77 @@ public class TrendPredictionService {
         Map<String, Object> aiInput = new LinkedHashMap<>(inputSnapshot);
         aiInput.put("renderedPrompt", renderedPrompt);
 
-        Map<String, Object> aiOutput = creatorAiService.generate(PromptTemplateType.TREND_PREDICT.name(), aiInput);
-
-        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
-                .tenantId(defaultString(tenantId, "unknown"))
-                .userId(defaultString(userId, "unknown"))
-                .promptTemplateId(template.getId())
-                .promptTemplateKey(template.getTemplateKey())
-                .promptTemplateVersion(template.getVersion())
-                .renderedPrompt(renderedPrompt)
-                .inputSnapshot(inputSnapshot)
-                .provider(creatorAiService.providerName())
-                .model(properties.getAi().getModel())
-                .outputPayload(aiOutput)
-                .status("COMPLETED")
-                .completedAt(OffsetDateTime.now())
-                .build());
-
-        List<TrendPredictionItemResponse> predictions =
-                persistPredictions(promptRun.getId(), categoryCode, platformCode, countryCode, evidence.size(), aiOutput);
-
-        return new TrendPredictionResponse(
-                promptRun.getId(),
-                template.getTemplateKey(),
-                template.getVersion(),
-                creatorAiService.providerName(),
-                properties.getAi().getModel(),
-                categoryCode,
-                platformCode,
-                countryCode,
-                horizonHours,
-                predictionMode,
-                evidence.size(),
-                predictions,
-                aiOutput
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.TREND_PREDICT.name(),
+                tenantId,
+                userId,
+                null,
+                aiInput
         );
+
+        try {
+            CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                    tenantId,
+                    userId,
+                    null,
+                    generationJob.getId(),
+                    null
+            );
+            CreatorAiService.MeteredAiResponse aiResponse =
+                    creatorAiService.generateMetered(PromptTemplateType.TREND_PREDICT.name(), aiInput, usageContext);
+            Map<String, Object> aiOutput = aiResponse.output();
+
+            CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                    .tenantId(defaultString(tenantId, "unknown"))
+                    .userId(defaultString(userId, "unknown"))
+                    .jobId(generationJob.getId())
+                    .promptTemplateId(template.getId())
+                    .promptTemplateKey(template.getTemplateKey())
+                    .promptTemplateVersion(template.getVersion())
+                    .renderedPrompt(renderedPrompt)
+                    .inputSnapshot(inputSnapshot)
+                    .provider(creatorAiService.providerName())
+                    .model(creatorAiService.modelName())
+                    .outputPayload(aiOutput)
+                    .tokenMetadata(aiResponse.tokenMetadata())
+                    .costMetadata(aiResponse.costMetadata())
+                    .status("COMPLETED")
+                    .completedAt(OffsetDateTime.now())
+                    .build());
+            creatorAiService.publishBillingDebit(
+                    PromptTemplateType.TREND_PREDICT.name(),
+                    aiResponse,
+                    usageContext.withPromptRunId(promptRun.getId())
+            );
+
+            List<TrendPredictionItemResponse> predictions =
+                    persistPredictions(promptRun.getId(), categoryCode, platformCode, countryCode, evidence.size(), aiOutput);
+
+            Map<String, Object> jobOutput = new LinkedHashMap<>();
+            jobOutput.put("promptRunId", promptRun.getId().toString());
+            jobOutput.put("predictionCount", predictions.size());
+            jobOutput.put("aiOutput", aiOutput);
+            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+
+            return new TrendPredictionResponse(
+                    promptRun.getId(),
+                    template.getTemplateKey(),
+                    template.getVersion(),
+                    creatorAiService.providerName(),
+                    creatorAiService.modelName(),
+                    categoryCode,
+                    platformCode,
+                    countryCode,
+                    horizonHours,
+                    predictionMode,
+                    evidence.size(),
+                    predictions,
+                    aiOutput
+            );
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            throw ex;
+        }
     }
 
     private List<TrendPredictionItemResponse> persistPredictions(

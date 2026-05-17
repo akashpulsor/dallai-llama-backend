@@ -10,9 +10,11 @@ import com.dalai.llama.billing.dto.response.CallAuthorizationResponse;
 import com.dalai.llama.billing.repository.BillingStateRepository;
 import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
+import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.CallAuthorizationService;
 import com.dalai.llama.billing.service.PaymentService;
+import com.dalai.llama.billing.service.UsageService;
 import com.dalai.llama.billing.service.WalletService;
 import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -61,6 +63,7 @@ public class InternalBillingController {
     private final BillingStateService billingStateService;
     private final UsageRecordRepository usageRecordRepository;
     private final RecurringChargeRepository recurringChargeRepository;
+    private final UsageService usageService;
 
     private final PaymentService paymentService;
     // ==================== WALLET MANAGEMENT ====================
@@ -302,28 +305,21 @@ public class InternalBillingController {
             @PathVariable UUID tenantId,
             @Valid @RequestBody RecordUsageRequest request) {
 
-        UsageRecord record = UsageRecord.builder()
-                .id(UUID.randomUUID())
-                .tenantId(tenantId)
-                .metric(request.metric)
-                .quantity(request.quantity)
-                .unit(request.unit)
-                .unitCost(request.unitCost)
-                .totalCost(request.totalCost)
-                .sourceType(request.sourceType)
-                .sourceId(request.sourceId)
-                .description(request.description)
-                .recordedAt(Instant.now())
-                .createdAt(Instant.now())
-                .build();
-
-        usageRecordRepository.save(record);
-
-        // Debit wallet if there's a cost
-        if (request.totalCost != null && request.totalCost.signum() > 0) {
-            walletService.debit(tenantId, request.totalCost, "USAGE:" + request.metric.name(),request.subscriptionId);
-            billingStateService.evaluateState(tenantId);
-        }
+        usageService.recordBillableUsage(new BillableUsageRequest(
+                tenantId,
+                request.metric,
+                request.quantity,
+                request.unit,
+                request.unitCost,
+                request.totalCost,
+                request.sourceType,
+                request.sourceId,
+                request.description,
+                request.subscriptionId,
+                null,
+                null,
+                Instant.now()
+        ));
 
         return ResponseEntity.ok().build();
     }

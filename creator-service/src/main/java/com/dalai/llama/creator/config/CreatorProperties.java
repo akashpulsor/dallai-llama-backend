@@ -2,10 +2,13 @@ package com.dalai.llama.creator.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.math.BigDecimal;
+
 @ConfigurationProperties(prefix = "creator")
 public class CreatorProperties {
 
     private final Ai ai = new Ai();
+    private final Billing billing = new Billing();
     private final Jobs jobs = new Jobs();
     private final Kafka kafka = new Kafka();
     private final Storage storage = new Storage();
@@ -14,6 +17,10 @@ public class CreatorProperties {
 
     public Ai getAi() {
         return ai;
+    }
+
+    public Billing getBilling() {
+        return billing;
     }
 
     public Jobs getJobs() {
@@ -37,8 +44,13 @@ public class CreatorProperties {
     }
 
     public static class Ai {
-        private String provider = "mock";
-        private String model = "mock-creator-v1";
+        private String provider = "openai";
+        private String model = "gpt-4o-mini";
+        private String apiKey = "";
+        private String baseUrl = "https://api.openai.com/v1";
+        private long timeoutMs = 60000;
+        private Integer maxOutputTokens = 4096;
+        private final AiBilling billing = new AiBilling();
 
         public String getProvider() {
             return provider;
@@ -54,6 +66,111 @@ public class CreatorProperties {
 
         public void setModel(String model) {
             this.model = model;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public long getTimeoutMs() {
+            return timeoutMs;
+        }
+
+        public void setTimeoutMs(long timeoutMs) {
+            this.timeoutMs = timeoutMs;
+        }
+
+        public Integer getMaxOutputTokens() {
+            return maxOutputTokens;
+        }
+
+        public void setMaxOutputTokens(Integer maxOutputTokens) {
+            this.maxOutputTokens = maxOutputTokens;
+        }
+
+        public AiBilling getBilling() {
+            return billing;
+        }
+    }
+
+    public static class AiBilling {
+        private boolean enabled = true;
+        private BigDecimal tokenRate = new BigDecimal("0.0001");
+        private BigDecimal minimumCharge = BigDecimal.ZERO;
+        private String currency = "INR";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public BigDecimal getTokenRate() {
+            return tokenRate;
+        }
+
+        public void setTokenRate(BigDecimal tokenRate) {
+            this.tokenRate = tokenRate;
+        }
+
+        public BigDecimal getMinimumCharge() {
+            return minimumCharge;
+        }
+
+        public void setMinimumCharge(BigDecimal minimumCharge) {
+            this.minimumCharge = minimumCharge;
+        }
+
+        public String getCurrency() {
+            return currency;
+        }
+
+        public void setCurrency(String currency) {
+            this.currency = currency;
+        }
+    }
+
+    public static class Billing {
+        private boolean walletGuardEnabled = true;
+        private BigDecimal minimumWalletBalance = BigDecimal.valueOf(100);
+        private long walletCheckTimeoutMs = 3000;
+
+        public boolean isWalletGuardEnabled() {
+            return walletGuardEnabled;
+        }
+
+        public void setWalletGuardEnabled(boolean walletGuardEnabled) {
+            this.walletGuardEnabled = walletGuardEnabled;
+        }
+
+        public BigDecimal getMinimumWalletBalance() {
+            return minimumWalletBalance;
+        }
+
+        public void setMinimumWalletBalance(BigDecimal minimumWalletBalance) {
+            this.minimumWalletBalance = minimumWalletBalance;
+        }
+
+        public long getWalletCheckTimeoutMs() {
+            return walletCheckTimeoutMs;
+        }
+
+        public void setWalletCheckTimeoutMs(long walletCheckTimeoutMs) {
+            this.walletCheckTimeoutMs = walletCheckTimeoutMs;
         }
     }
 
@@ -106,6 +223,7 @@ public class CreatorProperties {
         private String creatorAssetsBucket = "creator-assets";
         private String creatorExportsBucket = "creator-exports";
         private String publicUrl = "http://localhost:9000";
+        private long signedUrlTtlSeconds = 3600;
 
         public String getEndpoint() {
             return endpoint;
@@ -153,6 +271,14 @@ public class CreatorProperties {
 
         public void setPublicUrl(String publicUrl) {
             this.publicUrl = publicUrl;
+        }
+
+        public long getSignedUrlTtlSeconds() {
+            return signedUrlTtlSeconds;
+        }
+
+        public void setSignedUrlTtlSeconds(long signedUrlTtlSeconds) {
+            this.signedUrlTtlSeconds = signedUrlTtlSeconds;
         }
     }
 

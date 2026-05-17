@@ -2,6 +2,7 @@ package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.PromptTemplateType;
+import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
 import com.dalai.llama.creator.domain.entity.CreatorIdea;
 import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorPromptTemplate;
@@ -68,6 +69,7 @@ public class IdeaService {
     private final CreatorPromptRunRepository promptRunRepository;
     private final PromptTemplateService promptTemplateService;
     private final CreatorAiService creatorAiService;
+    private final GenerationJobService generationJobService;
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -78,6 +80,7 @@ public class IdeaService {
             CreatorPromptRunRepository promptRunRepository,
             PromptTemplateService promptTemplateService,
             CreatorAiService creatorAiService,
+            GenerationJobService generationJobService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper
@@ -87,6 +90,7 @@ public class IdeaService {
         this.promptRunRepository = promptRunRepository;
         this.promptTemplateService = promptTemplateService;
         this.creatorAiService = creatorAiService;
+        this.generationJobService = generationJobService;
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -110,11 +114,40 @@ public class IdeaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idea must be locked before generating candidates.");
         }
 
-        ensureGeneratedIdeas(lockedIdea);
-        Pageable normalizedPageable = normalizePageable(pageable);
-        return ideaRepository
-                .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
-                .map(this::toResponse);
+        Map<String, Object> jobInput = new LinkedHashMap<>();
+        jobInput.put("lockedIdeaId", lockedIdeaId.toString());
+        jobInput.put("lockedIdeaTitle", lockedIdea.getTitle());
+        jobInput.put("durationSeconds", lockedIdea.getDurationSeconds());
+        jobInput.put("source", lockedIdea.getSource());
+        jobInput.put("selectionContext", lockedIdea.getSelectionContext());
+
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.IDEA_GENERATE.name(),
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                lockedIdea.getProjectId(),
+                jobInput
+        );
+
+        try {
+            int generatedCount = ensureGeneratedIdeas(lockedIdea, generationJob.getId());
+            Pageable normalizedPageable = normalizePageable(pageable);
+            Page<GeneratedIdeaResponse> response = ideaRepository
+                    .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
+                    .map(this::toResponse);
+
+            Map<String, Object> jobOutput = new LinkedHashMap<>();
+            jobOutput.put("lockedIdeaId", lockedIdeaId.toString());
+            jobOutput.put("generatedCount", generatedCount);
+            jobOutput.put("returnedCount", response.getNumberOfElements());
+            jobOutput.put("totalAvailable", response.getTotalElements());
+            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+
+            return response;
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            throw ex;
+        }
     }
 
     @Transactional
@@ -169,41 +202,76 @@ public class IdeaService {
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
-        Map<String, Object> providerOutput = creatorAiService.generate(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerInput);
-
-        GeneratedStoryScriptResponse.StoryScript storyScript = buildStoryScriptPayload(
-                storyIdea,
-                durationSeconds,
-                categoryCode,
-                inferredTone,
-                dialogueLanguage,
-                screenType
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.STORY_SCRIPT_GENERATE.name(),
+                storyIdea.getTenantId(),
+                storyIdea.getUserId(),
+                storyIdea.getProjectId(),
+                providerInput
         );
-        Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
-        Map<String, Object> promptOutputPayload = new LinkedHashMap<>(storyScriptMap);
-        promptOutputPayload.put("providerOutput", providerOutput);
 
-        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
-                .tenantId(storyIdea.getTenantId())
-                .userId(storyIdea.getUserId())
-                .projectId(storyIdea.getProjectId())
-                .promptTemplateId(template.getId())
-                .promptTemplateKey(template.getTemplateKey())
-                .promptTemplateVersion(template.getVersion())
-                .renderedPrompt(renderedPrompt)
-                .inputSnapshot(inputSnapshot)
-                .provider(creatorAiService.providerName())
-                .model(properties.getAi().getModel())
-                .outputPayload(promptOutputPayload)
-                .status("COMPLETED")
-                .completedAt(OffsetDateTime.now())
-                .build());
+        try {
+            CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                    storyIdea.getTenantId(),
+                    storyIdea.getUserId(),
+                    storyIdea.getProjectId(),
+                    generationJob.getId(),
+                    null
+            );
+            CreatorAiService.MeteredAiResponse aiResponse =
+                    creatorAiService.generateMetered(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerInput, usageContext);
+            Map<String, Object> providerOutput = aiResponse.output();
 
-        String scriptText = buildStoryScriptText(storyScript);
-        CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRun.getId(), durationSeconds, dialogueLanguage, screenType);
-        linkProjectSelectedIdea(savedIdea);
+            GeneratedStoryScriptResponse.StoryScript storyScript = buildStoryScriptPayload(
+                    storyIdea,
+                    durationSeconds,
+                    categoryCode,
+                    inferredTone,
+                    dialogueLanguage,
+                    screenType
+            );
+            Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
+            Map<String, Object> promptOutputPayload = new LinkedHashMap<>(storyScriptMap);
+            promptOutputPayload.put("providerOutput", providerOutput);
 
-        return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRun.getId(), storyScript, scriptText);
+            CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                    .tenantId(storyIdea.getTenantId())
+                    .userId(storyIdea.getUserId())
+                    .projectId(storyIdea.getProjectId())
+                    .jobId(generationJob.getId())
+                    .promptTemplateId(template.getId())
+                    .promptTemplateKey(template.getTemplateKey())
+                    .promptTemplateVersion(template.getVersion())
+                    .renderedPrompt(renderedPrompt)
+                    .inputSnapshot(inputSnapshot)
+                    .provider(creatorAiService.providerName())
+                    .model(creatorAiService.modelName())
+                    .outputPayload(promptOutputPayload)
+                    .tokenMetadata(aiResponse.tokenMetadata())
+                    .costMetadata(aiResponse.costMetadata())
+                    .status("COMPLETED")
+                    .completedAt(OffsetDateTime.now())
+                    .build());
+            creatorAiService.publishBillingDebit(
+                    PromptTemplateType.STORY_SCRIPT_GENERATE.name(),
+                    aiResponse,
+                    usageContext.withPromptRunId(promptRun.getId())
+            );
+
+            String scriptText = buildStoryScriptText(storyScript);
+            CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRun.getId(), generationJob.getId(), durationSeconds, dialogueLanguage, screenType);
+            linkProjectSelectedIdea(savedIdea);
+
+            Map<String, Object> jobOutput = new LinkedHashMap<>(promptOutputPayload);
+            jobOutput.put("promptRunId", promptRun.getId().toString());
+            jobOutput.put("storyIdeaId", savedIdea.getId().toString());
+            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+
+            return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRun.getId(), storyScript, scriptText);
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            throw ex;
+        }
     }
 
     @Transactional
@@ -241,7 +309,7 @@ public class IdeaService {
 
         String scriptText = defaultString(request == null ? null : request.scriptText(), buildStoryScriptText(storyScript));
         UUID promptRunId = storyIdea.getPromptRunId();
-        CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, durationSeconds, dialogueLanguage, screenType);
+        CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, storyIdea.getGenerationJobId(), durationSeconds, dialogueLanguage, screenType);
         linkProjectSelectedIdea(savedIdea);
 
         return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRunId, storyScript, scriptText);
@@ -288,89 +356,127 @@ public class IdeaService {
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
-        Map<String, Object> providerOutput = creatorAiService.generate(PromptTemplateType.SCRIPT_GENERATE.name(), providerInput);
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.SCRIPT_GENERATE.name(),
+                storyIdea.getTenantId(),
+                storyIdea.getUserId(),
+                storyIdea.getProjectId(),
+                providerInput
+        );
 
-        GeneratedScriptResponse.CinematicScript scriptPayload = buildCinematicScriptPayload(storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
-        scriptPayload.setProvider(creatorAiService.providerName());
-        scriptPayload.setModel(properties.getAi().getModel());
-        Map<String, Object> scriptPayloadMap = toMap(scriptPayload);
-        Map<String, Object> promptOutputPayload = new LinkedHashMap<>(scriptPayloadMap);
-        promptOutputPayload.put("providerOutput", providerOutput);
+        try {
+            CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                    storyIdea.getTenantId(),
+                    storyIdea.getUserId(),
+                    storyIdea.getProjectId(),
+                    generationJob.getId(),
+                    null
+            );
+            CreatorAiService.MeteredAiResponse aiResponse =
+                    creatorAiService.generateMetered(PromptTemplateType.SCRIPT_GENERATE.name(), providerInput, usageContext);
+            Map<String, Object> providerOutput = aiResponse.output();
 
-        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
-                .tenantId(storyIdea.getTenantId())
-                .userId(storyIdea.getUserId())
-                .projectId(storyIdea.getProjectId())
-                .promptTemplateId(template.getId())
-                .promptTemplateKey(template.getTemplateKey())
-                .promptTemplateVersion(template.getVersion())
-                .renderedPrompt(renderedPrompt)
-                .inputSnapshot(inputSnapshot)
-                .provider(creatorAiService.providerName())
-                .model(properties.getAi().getModel())
-                .outputPayload(promptOutputPayload)
-                .status("COMPLETED")
-                .completedAt(OffsetDateTime.now())
-                .build());
+            GeneratedScriptResponse.CinematicScript scriptPayload = buildCinematicScriptPayload(storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+            scriptPayload.setProvider(creatorAiService.providerName());
+            scriptPayload.setModel(creatorAiService.modelName());
+            Map<String, Object> scriptPayloadMap = toMap(scriptPayload);
+            Map<String, Object> promptOutputPayload = new LinkedHashMap<>(scriptPayloadMap);
+            promptOutputPayload.put("providerOutput", providerOutput);
 
-        List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
-        List<Map<String, Object>> shotPayloads = toMapList(shots);
-        String script = buildScriptText(storyIdea, shots);
+            CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                    .tenantId(storyIdea.getTenantId())
+                    .userId(storyIdea.getUserId())
+                    .projectId(storyIdea.getProjectId())
+                    .jobId(generationJob.getId())
+                    .promptTemplateId(template.getId())
+                    .promptTemplateKey(template.getTemplateKey())
+                    .promptTemplateVersion(template.getVersion())
+                    .renderedPrompt(renderedPrompt)
+                    .inputSnapshot(inputSnapshot)
+                    .provider(creatorAiService.providerName())
+                    .model(creatorAiService.modelName())
+                    .outputPayload(promptOutputPayload)
+                    .tokenMetadata(aiResponse.tokenMetadata())
+                    .costMetadata(aiResponse.costMetadata())
+                    .status("COMPLETED")
+                    .completedAt(OffsetDateTime.now())
+                    .build());
+            creatorAiService.publishBillingDebit(
+                    PromptTemplateType.SCRIPT_GENERATE.name(),
+                    aiResponse,
+                    usageContext.withPromptRunId(promptRun.getId())
+            );
 
-        CreatorScript creatorScript = scriptRepository.save(CreatorScript.builder()
-                .tenantId(storyIdea.getTenantId())
-                .userId(storyIdea.getUserId())
-                .projectId(storyIdea.getProjectId())
-                .lockedIdeaId(lockedIdeaId)
-                .storyIdeaId(storyIdeaId)
-                .promptRunId(promptRun.getId())
-                .categoryCode(categoryCode)
-                .durationSeconds(durationSeconds)
-                .dialogueLanguage(dialogueLanguage)
-                .screenType(screenType)
-                .title(scriptPayload.getProjectTitle())
-                .scriptText(script)
-                .scriptPayload(scriptPayloadMap)
-                .shots(shotPayloads)
-                .status("GENERATED")
-                .createdAt(OffsetDateTime.now())
-                .updatedAt(OffsetDateTime.now())
-                .build());
+            List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
+            List<Map<String, Object>> shotPayloads = toMapList(shots);
+            String script = buildScriptText(storyIdea, shots);
 
-        Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
-        context.put("scriptId", creatorScript.getId().toString());
-        context.put("promptRunId", promptRun.getId().toString());
-        context.put("scriptGeneratedAt", OffsetDateTime.now().toString());
-        context.put("scriptSceneCount", shots.size());
-        context.put("scriptSource", creatorAiService.providerName());
-        context.put("scriptCategoryCode", categoryCode);
-        context.put("scriptDurationSeconds", durationSeconds);
-        context.put("scriptDialogueLanguage", dialogueLanguage);
-        context.put("scriptScreenType", screenType);
+            CreatorScript creatorScript = scriptRepository.save(CreatorScript.builder()
+                    .tenantId(storyIdea.getTenantId())
+                    .userId(storyIdea.getUserId())
+                    .projectId(storyIdea.getProjectId())
+                    .lockedIdeaId(lockedIdeaId)
+                    .storyIdeaId(storyIdeaId)
+                    .promptRunId(promptRun.getId())
+                    .categoryCode(categoryCode)
+                    .durationSeconds(durationSeconds)
+                    .dialogueLanguage(dialogueLanguage)
+                    .screenType(screenType)
+                    .title(scriptPayload.getProjectTitle())
+                    .scriptText(script)
+                    .scriptPayload(scriptPayloadMap)
+                    .shots(shotPayloads)
+                    .status("GENERATED")
+                    .createdAt(OffsetDateTime.now())
+                    .updatedAt(OffsetDateTime.now())
+                    .build());
 
-        storyIdea.setScript(script);
-        storyIdea.setScenes(shotPayloads);
-        storyIdea.setDurationSeconds(durationSeconds);
-        storyIdea.setSelectionContext(context);
-        storyIdea.setStatus("SCRIPT_GENERATED");
-        storyIdea.setSaved(true);
-        storyIdea.setUpdatedAt(OffsetDateTime.now());
-        CreatorIdea savedIdea = ideaRepository.save(storyIdea);
-        linkProjectSelectedIdea(savedIdea);
+            Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
+            context.put("scriptId", creatorScript.getId().toString());
+            context.put("promptRunId", promptRun.getId().toString());
+            context.put("generationJobId", generationJob.getId().toString());
+            context.put("scriptGeneratedAt", OffsetDateTime.now().toString());
+            context.put("scriptSceneCount", shots.size());
+            context.put("scriptSource", creatorAiService.providerName());
+            context.put("scriptCategoryCode", categoryCode);
+            context.put("scriptDurationSeconds", durationSeconds);
+            context.put("scriptDialogueLanguage", dialogueLanguage);
+            context.put("scriptScreenType", screenType);
 
-        return GeneratedScriptResponse.builder()
-                .scriptId(creatorScript.getId())
-                .ideaId(savedIdea.getId())
-                .lockedIdeaId(lockedIdeaId)
-                .promptRunId(promptRun.getId())
-                .title(savedIdea.getTitle())
-                .script(savedIdea.getScript())
-                .scriptJson(scriptPayload)
-                .scenes(shots)
-                .durationSeconds(savedIdea.getDurationSeconds())
-                .status(savedIdea.getStatus())
-                .generatedAt(savedIdea.getUpdatedAt())
-                .build();
+            storyIdea.setScript(script);
+            storyIdea.setScenes(shotPayloads);
+            storyIdea.setDurationSeconds(durationSeconds);
+            storyIdea.setGenerationJobId(generationJob.getId());
+            storyIdea.setSelectionContext(context);
+            storyIdea.setStatus("SCRIPT_GENERATED");
+            storyIdea.setSaved(true);
+            storyIdea.setUpdatedAt(OffsetDateTime.now());
+            CreatorIdea savedIdea = ideaRepository.save(storyIdea);
+            linkProjectSelectedIdea(savedIdea);
+
+            Map<String, Object> jobOutput = new LinkedHashMap<>(promptOutputPayload);
+            jobOutput.put("promptRunId", promptRun.getId().toString());
+            jobOutput.put("scriptId", creatorScript.getId().toString());
+            jobOutput.put("storyIdeaId", savedIdea.getId().toString());
+            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+
+            return GeneratedScriptResponse.builder()
+                    .scriptId(creatorScript.getId())
+                    .ideaId(savedIdea.getId())
+                    .lockedIdeaId(lockedIdeaId)
+                    .promptRunId(promptRun.getId())
+                    .title(savedIdea.getTitle())
+                    .script(savedIdea.getScript())
+                    .scriptJson(scriptPayload)
+                    .scenes(shots)
+                    .durationSeconds(savedIdea.getDurationSeconds())
+                    .status(savedIdea.getStatus())
+                    .generatedAt(savedIdea.getUpdatedAt())
+                    .build();
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            throw ex;
+        }
     }
 
     @Transactional
@@ -479,7 +585,7 @@ public class IdeaService {
         return storyIdea;
     }
 
-    private void ensureGeneratedIdeas(CreatorIdea lockedIdea) {
+    private int ensureGeneratedIdeas(CreatorIdea lockedIdea, UUID generationJobId) {
         Page<CreatorIdea> existing = ideaRepository.findGeneratedIdeasForLockedBrief(
                 lockedIdea.getId(),
                 lockedIdea.getTenantId(),
@@ -488,14 +594,16 @@ public class IdeaService {
         );
         int existingCount = (int) existing.getTotalElements();
         if (existingCount >= GENERATED_IDEA_COUNT) {
-            return;
+            return 0;
         }
 
         OffsetDateTime now = OffsetDateTime.now();
+        int generatedCount = 0;
         for (int index = existingCount; index < GENERATED_IDEA_COUNT; index++) {
             int ideaNumber = index + 1;
             String angle = IDEA_ANGLES.get(index % IDEA_ANGLES.size());
             Map<String, Object> context = buildGeneratedContext(lockedIdea, ideaNumber, angle);
+            context.put("generationJobId", generationJobId.toString());
             ideaRepository.save(CreatorIdea.builder()
                     .tenantId(lockedIdea.getTenantId())
                     .userId(lockedIdea.getUserId())
@@ -506,11 +614,14 @@ public class IdeaService {
                     .summary(buildSummary(lockedIdea, angle))
                     .durationSeconds(lockedIdea.getDurationSeconds())
                     .status("DRAFT")
+                    .generationJobId(generationJobId)
                     .selectionContext(context)
                     .createdAt(now.plusNanos(ideaNumber))
                     .updatedAt(now.plusNanos(ideaNumber))
                     .build());
+            generatedCount++;
         }
+        return generatedCount;
     }
 
     private Map<String, Object> buildGeneratedContext(CreatorIdea lockedIdea, int ideaNumber, String angle) {
@@ -694,6 +805,7 @@ public class IdeaService {
             GeneratedStoryScriptResponse.StoryScript storyScript,
             String scriptText,
             UUID promptRunId,
+            UUID generationJobId,
             int durationSeconds,
             String dialogueLanguage,
             String screenType
@@ -702,6 +814,7 @@ public class IdeaService {
         context.put("storyScript", toStoryScriptMap(storyScript));
         context.put("storyScriptGeneratedAt", OffsetDateTime.now().toString());
         context.put("storyScriptPromptRunId", promptRunId == null ? null : promptRunId.toString());
+        context.put("storyScriptGenerationJobId", generationJobId == null ? null : generationJobId.toString());
         context.put("storyScriptDurationSeconds", durationSeconds);
         context.put("storyScriptDialogueLanguage", dialogueLanguage);
         context.put("storyScriptScreenType", screenType);
@@ -710,6 +823,7 @@ public class IdeaService {
         storyIdea.setScript(scriptText);
         storyIdea.setDurationSeconds(durationSeconds);
         storyIdea.setPromptRunId(promptRunId);
+        storyIdea.setGenerationJobId(generationJobId);
         storyIdea.setSelectionContext(context);
         storyIdea.setStatus("SCRIPT_GENERATED");
         storyIdea.setSaved(true);

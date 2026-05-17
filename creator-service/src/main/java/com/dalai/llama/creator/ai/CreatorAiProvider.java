@@ -6,5 +6,9 @@ public interface CreatorAiProvider {
 
     String providerName();
 
+    default boolean supports(String providerCode) {
+        return providerName().equalsIgnoreCase(providerCode);
+    }
+
     Map<String, Object> generate(String promptType, Map<String, Object> input);
 }

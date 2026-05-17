@@ -108,6 +108,12 @@ public class KafkaConsumerConfig {
         return buildFactory(SubscriptionActivationFailedEvent.class, kafkaErrorHandler);
     }
 
+    @Bean(name = "creatorAiUsageDebitListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, CreatorAiUsageDebitEvent>
+    creatorAiUsageDebitListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(CreatorAiUsageDebitEvent.class, kafkaErrorHandler);
+    }
+
     @Bean(name = "genericEventListenerFactory")
     public ConcurrentKafkaListenerContainerFactory<String, Object>
     genericEventListenerFactory(DefaultErrorHandler kafkaErrorHandler) {

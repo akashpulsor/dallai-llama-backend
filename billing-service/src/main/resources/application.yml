@@ -68,6 +68,11 @@ billing:
   grace-period-days: ${GRACE_PERIOD_DAYS:7}
   low-balance-threshold: ${LOW_BALANCE_THRESHOLD:500}
   default-currency: ${DEFAULT_CURRENCY:INR}
+  kafka:
+    creator-billing-events-topic: ${CREATOR_KAFKA_BILLING_EVENTS_TOPIC:creator.billing.events}
+  currency:
+    usage-margin-percent: ${BILLING_USAGE_MARGIN_PERCENT:80}
+    conversion-rates: ${BILLING_CURRENCY_CONVERSION_RATES:INR_INR=1}
 
 # Service URLs (for internal communication)
 services:

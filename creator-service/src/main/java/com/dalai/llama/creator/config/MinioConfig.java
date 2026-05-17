@@ -7,6 +7,7 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
 
@@ -32,5 +33,27 @@ public class MinioConfig {
                         .pathStyleAccessEnabled(true)
                         .build())
                 .build();
+    }
+
+    @Bean
+    public S3Presigner s3Presigner() {
+        CreatorProperties.Storage storage = properties.getStorage();
+        return S3Presigner.builder()
+                .endpointOverride(URI.create(publicEndpoint(storage)))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(storage.getAccessKey(), storage.getSecretKey())
+                ))
+                .region(Region.US_EAST_1)
+                .serviceConfiguration(S3Configuration.builder()
+                        .pathStyleAccessEnabled(true)
+                        .build())
+                .build();
+    }
+
+    private String publicEndpoint(CreatorProperties.Storage storage) {
+        if (storage.getPublicUrl() == null || storage.getPublicUrl().isBlank()) {
+            return storage.getEndpoint();
+        }
+        return storage.getPublicUrl();
     }
 }

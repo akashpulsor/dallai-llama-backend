@@ -100,8 +100,21 @@ management:
 
 creator:
   ai:
-    provider: ${CREATOR_AI_PROVIDER:mock}
-    model: ${CREATOR_AI_MODEL:mock-creator-v1}
+    provider: ${CREATOR_AI_PROVIDER:openai}
+    model: ${CREATOR_AI_MODEL:${OPENAI_LLM_MODEL:gpt-4o-mini}}
+    api-key: ${OPENAI_API_KEY:${CREATOR_OPENAI_API_KEY:}}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    timeout-ms: ${CREATOR_AI_TIMEOUT_MS:60000}
+    max-output-tokens: ${CREATOR_AI_MAX_OUTPUT_TOKENS:4096}
+    billing:
+      enabled: ${CREATOR_AI_BILLING_ENABLED:true}
+      token-rate: ${CREATOR_AI_TOKEN_RATE:0.0001}
+      minimum-charge: ${CREATOR_AI_MINIMUM_CHARGE:0}
+      currency: ${CREATOR_AI_BILLING_CURRENCY:INR}
+  billing:
+    wallet-guard-enabled: ${CREATOR_WALLET_GUARD_ENABLED:true}
+    minimum-wallet-balance: ${CREATOR_MINIMUM_WALLET_BALANCE:100}
+    wallet-check-timeout-ms: ${CREATOR_WALLET_CHECK_TIMEOUT_MS:3000}
   jobs:
     ttl-seconds: ${CREATOR_JOB_TTL_SECONDS:86400}
   kafka:
@@ -115,6 +128,7 @@ creator:
     creator-assets-bucket: ${MINIO_BUCKET_CREATOR_ASSETS:creator-assets}
     creator-exports-bucket: ${MINIO_BUCKET_CREATOR_EXPORTS:creator-exports}
     public-url: ${MINIO_PUBLIC_URL:http://localhost:9000}
+    signed-url-ttl-seconds: ${MINIO_SIGNED_URL_TTL_SECONDS:3600}
   services:
     tenant-url: ${TENANT_SERVICE_URL:http://localhost:8081}
     product-url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
