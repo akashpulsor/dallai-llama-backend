@@ -60,6 +60,10 @@ public class CreatorCharacterCastMapping {
     @Column(name = "script_id")
     private UUID scriptId;
 
+    /** Optional normalized script character row that this mapping assigns to an actor. */
+    @Column(name = "script_character_id")
+    private UUID scriptCharacterId;
+
     /** Stable frontend/backend key for the character, normally slug/name plus index. */
     @Column(name = "character_key", nullable = false, length = 160)
     private String characterKey;

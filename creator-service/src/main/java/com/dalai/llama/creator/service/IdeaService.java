@@ -3,9 +3,12 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.PromptTemplateType;
 import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
+import com.dalai.llama.creator.domain.entity.CreatorCharacterCastMapping;
 import com.dalai.llama.creator.domain.entity.CreatorIdea;
+import com.dalai.llama.creator.domain.entity.CreatorProfile;
 import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorPromptTemplate;
+import com.dalai.llama.creator.domain.entity.CreatorProject;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
 import com.dalai.llama.creator.dto.request.GenerateStoryIdeaScriptRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryScriptRequest;
@@ -14,11 +17,18 @@ import com.dalai.llama.creator.dto.request.SaveStoryScriptRequest;
 import com.dalai.llama.creator.dto.response.GeneratedIdeaResponse;
 import com.dalai.llama.creator.dto.response.GeneratedScriptResponse;
 import com.dalai.llama.creator.dto.response.GeneratedStoryScriptResponse;
+import com.dalai.llama.creator.dto.response.ShotProductionPlanTagResponse;
+import com.dalai.llama.creator.exception.CreatorAiOutputException;
+import com.dalai.llama.creator.repository.CreatorCharacterCastMappingRepository;
 import com.dalai.llama.creator.repository.CreatorIdeaRepository;
 import com.dalai.llama.creator.repository.CreatorPromptRunRepository;
+import com.dalai.llama.creator.repository.CreatorProfileRepository;
 import com.dalai.llama.creator.repository.CreatorScriptRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,7 +49,10 @@ import java.util.UUID;
 @Service
 public class IdeaService {
 
+    private static final Logger log = LoggerFactory.getLogger(IdeaService.class);
+
     private static final int GENERATED_IDEA_COUNT = 20;
+    private static final int GENERATED_IDEA_AI_BATCH_SIZE = 5;
     private static final int DEFAULT_PAGE_SIZE = 5;
 
     private static final List<String> IDEA_ANGLES = List.of(
@@ -67,9 +81,14 @@ public class IdeaService {
     private final CreatorIdeaRepository ideaRepository;
     private final CreatorScriptRepository scriptRepository;
     private final CreatorPromptRunRepository promptRunRepository;
+    private final CreatorCharacterCastMappingRepository characterCastMappingRepository;
+    private final CreatorProfileRepository profileRepository;
     private final PromptTemplateService promptTemplateService;
     private final CreatorAiService creatorAiService;
     private final GenerationJobService generationJobService;
+    private final ScriptStructureService scriptStructureService;
+    private final ProductionPlanTagService productionPlanTagService;
+    private final CreatorProjectService projectService;
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -78,9 +97,14 @@ public class IdeaService {
             CreatorIdeaRepository ideaRepository,
             CreatorScriptRepository scriptRepository,
             CreatorPromptRunRepository promptRunRepository,
+            CreatorCharacterCastMappingRepository characterCastMappingRepository,
+            CreatorProfileRepository profileRepository,
             PromptTemplateService promptTemplateService,
             CreatorAiService creatorAiService,
             GenerationJobService generationJobService,
+            ScriptStructureService scriptStructureService,
+            ProductionPlanTagService productionPlanTagService,
+            CreatorProjectService projectService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper
@@ -88,9 +112,14 @@ public class IdeaService {
         this.ideaRepository = ideaRepository;
         this.scriptRepository = scriptRepository;
         this.promptRunRepository = promptRunRepository;
+        this.characterCastMappingRepository = characterCastMappingRepository;
+        this.profileRepository = profileRepository;
         this.promptTemplateService = promptTemplateService;
         this.creatorAiService = creatorAiService;
         this.generationJobService = generationJobService;
+        this.scriptStructureService = scriptStructureService;
+        this.productionPlanTagService = productionPlanTagService;
+        this.projectService = projectService;
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -113,13 +142,21 @@ public class IdeaService {
         if (!"LOCKED".equalsIgnoreCase(lockedIdea.getStatus())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idea must be locked before generating candidates.");
         }
+        lockedIdea = ensureProjectOnLockedIdea(lockedIdea);
+        log.info(
+                "Creator idea generation started lockedIdeaId={} tenantId={} userId={} source={} title=\"{}\" page={} size={} provider={} model={}",
+                lockedIdeaId,
+                safeTenantId,
+                safeUserId,
+                lockedIdea.getSource(),
+                lockedIdea.getTitle(),
+                pageable == null ? null : pageable.getPageNumber(),
+                pageable == null ? null : pageable.getPageSize(),
+                creatorAiService.providerName(),
+                creatorAiService.modelName()
+        );
 
-        Map<String, Object> jobInput = new LinkedHashMap<>();
-        jobInput.put("lockedIdeaId", lockedIdeaId.toString());
-        jobInput.put("lockedIdeaTitle", lockedIdea.getTitle());
-        jobInput.put("durationSeconds", lockedIdea.getDurationSeconds());
-        jobInput.put("source", lockedIdea.getSource());
-        jobInput.put("selectionContext", lockedIdea.getSelectionContext());
+        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea);
 
         CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
                 PromptTemplateType.IDEA_GENERATE.name(),
@@ -128,26 +165,219 @@ public class IdeaService {
                 lockedIdea.getProjectId(),
                 jobInput
         );
+        log.info(
+                "Creator idea generation job created jobId={} lockedIdeaId={} tenantId={} userId={}",
+                generationJob.getId(),
+                lockedIdeaId,
+                safeTenantId,
+                safeUserId
+        );
 
         try {
-            int generatedCount = ensureGeneratedIdeas(lockedIdea, generationJob.getId());
+            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJob.getId());
             Pageable normalizedPageable = normalizePageable(pageable);
             Page<GeneratedIdeaResponse> response = ideaRepository
                     .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
                     .map(this::toResponse);
 
-            Map<String, Object> jobOutput = new LinkedHashMap<>();
-            jobOutput.put("lockedIdeaId", lockedIdeaId.toString());
-            jobOutput.put("generatedCount", generatedCount);
-            jobOutput.put("returnedCount", response.getNumberOfElements());
-            jobOutput.put("totalAvailable", response.getTotalElements());
+            Map<String, Object> jobOutput = buildIdeaGenerationJobOutput(lockedIdeaId, generationResult, response);
             generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+            log.info(
+                    "Creator idea generation completed jobId={} lockedIdeaId={} tenantId={} userId={} generatedCount={} returnedCount={} totalAvailable={} promptRuns={} provider={} model={}",
+                    generationJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    generationResult.generatedCount(),
+                    response.getNumberOfElements(),
+                    response.getTotalElements(),
+                    generationResult.promptRunIds().size(),
+                    creatorAiService.providerName(),
+                    creatorAiService.modelName()
+            );
 
             return response;
         } catch (RuntimeException ex) {
             generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            log.error(
+                    "Creator idea generation failed jobId={} lockedIdeaId={} tenantId={} userId={} provider={} model={} errorType={} errorMessage={}",
+                    generationJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    creatorAiService.providerName(),
+                    creatorAiService.modelName(),
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    ex
+            );
             throw ex;
         }
+    }
+
+    @Transactional
+    public CreatorGenerationJob startGenerateIdeasForLockedBriefJob(
+            UUID lockedIdeaId,
+            String tenantId,
+            String userId,
+            Pageable pageable
+    ) {
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        CreatorIdea lockedIdea = ideaRepository.findById(lockedIdeaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found."));
+        if (!safeTenantId.equals(lockedIdea.getTenantId()) || !safeUserId.equals(lockedIdea.getUserId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found.");
+        }
+        if (!"LOCKED".equalsIgnoreCase(lockedIdea.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idea must be locked before generating candidates.");
+        }
+        lockedIdea = ensureProjectOnLockedIdea(lockedIdea);
+
+        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea);
+        jobInput.put("page", pageable == null ? 0 : pageable.getPageNumber());
+        jobInput.put("size", pageable == null ? DEFAULT_PAGE_SIZE : pageable.getPageSize());
+        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
+                PromptTemplateType.IDEA_GENERATE.name(),
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                lockedIdea.getProjectId(),
+                jobInput
+        );
+        log.info(
+                "Creator async idea generation job accepted jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={}",
+                generationJob.getId(),
+                lockedIdeaId,
+                safeTenantId,
+                safeUserId,
+                pageable == null ? null : pageable.getPageNumber(),
+                pageable == null ? null : pageable.getPageSize()
+        );
+        return generationJob;
+    }
+
+    @Transactional
+    public void runGenerateIdeasForLockedBriefJob(
+            UUID generationJobId,
+            UUID lockedIdeaId,
+            String tenantId,
+            String userId,
+            Pageable pageable
+    ) {
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        try {
+            CreatorIdea lockedIdea = ideaRepository.findById(lockedIdeaId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found."));
+            if (!safeTenantId.equals(lockedIdea.getTenantId()) || !safeUserId.equals(lockedIdea.getUserId())) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found.");
+            }
+            if (!"LOCKED".equalsIgnoreCase(lockedIdea.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idea must be locked before generating candidates.");
+            }
+            lockedIdea = ensureProjectOnLockedIdea(lockedIdea);
+
+            generationJobService.updateGenerationJobProgress(generationJobId, 15, "Generating story ideas with AI");
+            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJobId);
+            generationJobService.updateGenerationJobProgress(generationJobId, 82, "Preparing generated story ideas");
+
+            Pageable normalizedPageable = normalizePageable(pageable);
+            Page<GeneratedIdeaResponse> response = ideaRepository
+                    .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
+                    .map(this::toResponse);
+
+            Map<String, Object> jobOutput = buildIdeaGenerationJobOutput(lockedIdeaId, generationResult, response);
+            jobOutput.put("message", "Story ideas generated");
+            generationJobService.completeGenerationJob(generationJobId, jobOutput);
+            log.info(
+                    "Creator async idea generation completed jobId={} lockedIdeaId={} tenantId={} userId={} generatedCount={} returnedCount={} totalAvailable={}",
+                    generationJobId,
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    generationResult.generatedCount(),
+                    response.getNumberOfElements(),
+                    response.getTotalElements()
+            );
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(generationJobId, defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            log.error(
+                    "Creator async idea generation failed jobId={} lockedIdeaId={} tenantId={} userId={} errorType={} errorMessage={}",
+                    generationJobId,
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    ex
+            );
+            throw ex;
+        }
+    }
+
+    private Map<String, Object> buildIdeaGenerationJobInput(CreatorIdea lockedIdea) {
+        Map<String, Object> jobInput = new LinkedHashMap<>();
+        jobInput.put("lockedIdeaId", lockedIdea.getId().toString());
+        if (lockedIdea.getProjectId() != null) {
+            jobInput.put("projectId", lockedIdea.getProjectId().toString());
+        }
+        jobInput.put("lockedIdeaTitle", lockedIdea.getTitle());
+        jobInput.put("durationSeconds", lockedIdea.getDurationSeconds());
+        jobInput.put("source", lockedIdea.getSource());
+        jobInput.put("selectionContext", lockedIdea.getSelectionContext());
+        return jobInput;
+    }
+
+    private Map<String, Object> buildIdeaGenerationJobOutput(
+            UUID lockedIdeaId,
+            IdeaGenerationResult generationResult,
+            Page<GeneratedIdeaResponse> response
+    ) {
+        Map<String, Object> jobOutput = new LinkedHashMap<>();
+        jobOutput.put("lockedIdeaId", lockedIdeaId.toString());
+        jobOutput.put("generatedCount", generationResult.generatedCount());
+        jobOutput.put("returnedCount", response.getNumberOfElements());
+        jobOutput.put("totalAvailable", response.getTotalElements());
+        jobOutput.put("page", generatedIdeaPagePayload(response));
+        if (!generationResult.promptRunIds().isEmpty()) {
+            jobOutput.put("promptRunIds", generationResult.promptRunIds().stream()
+                    .map(UUID::toString)
+                    .toList());
+            jobOutput.put("provider", creatorAiService.providerName());
+            jobOutput.put("model", creatorAiService.modelName());
+            jobOutput.put("aiOutputs", generationResult.providerOutputs());
+        }
+        return jobOutput;
+    }
+
+    private Map<String, Object> generatedIdeaPagePayload(Page<GeneratedIdeaResponse> response) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("content", response.getContent().stream()
+                .map(this::generatedIdeaPayload)
+                .toList());
+        payload.put("number", response.getNumber());
+        payload.put("size", response.getSize());
+        payload.put("totalElements", response.getTotalElements());
+        payload.put("totalPages", response.getTotalPages());
+        payload.put("numberOfElements", response.getNumberOfElements());
+        payload.put("first", response.isFirst());
+        payload.put("last", response.isLast());
+        payload.put("empty", response.isEmpty());
+        return payload;
+    }
+
+    private Map<String, Object> generatedIdeaPayload(GeneratedIdeaResponse idea) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", idea.id() == null ? null : idea.id().toString());
+        payload.put("lockedIdeaId", idea.lockedIdeaId() == null ? null : idea.lockedIdeaId().toString());
+        payload.put("title", idea.title());
+        payload.put("description", idea.description());
+        payload.put("source", idea.source());
+        payload.put("durationSeconds", idea.durationSeconds());
+        payload.put("hashtags", idea.hashtags());
+        payload.put("creativeNotes", idea.creativeNotes());
+        payload.put("createdAt", idea.createdAt() == null ? null : idea.createdAt().toString());
+        return payload;
     }
 
     @Transactional
@@ -179,9 +409,9 @@ public class IdeaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Save the story idea before generating script.");
         }
 
-        int durationSeconds = normalizeDuration(request == null ? null : request.durationSeconds(), storyIdea.getDurationSeconds());
-        String categoryCode = defaultString(request == null ? null : request.categoryCode(), inferCategory(storyIdea));
         String ideaText = defaultString(request == null ? null : request.idea(), storyIdea.getTitle() + "\n" + defaultString(storyIdea.getSummary(), ""));
+        int durationSeconds = normalizeDuration(request == null ? null : request.durationSeconds(), storyIdea.getDurationSeconds());
+        String categoryCode = resolveStoryScriptCategory(request == null ? null : request.categoryCode(), storyIdea, ideaText);
         String dialogueLanguage = normalizeDialogueLanguage(request == null ? null : request.dialogueLanguage());
         String screenType = normalizeScreenType(request == null ? null : request.screenType());
         String inferredTone = inferTone(ideaText, categoryCode);
@@ -210,6 +440,8 @@ public class IdeaService {
                 providerInput
         );
 
+        Map<String, Object> providerOutputForDebug = new LinkedHashMap<>();
+        Map<String, Object> aiOutputDiagnostics = new LinkedHashMap<>();
         try {
             CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
                     storyIdea.getTenantId(),
@@ -221,18 +453,22 @@ public class IdeaService {
             CreatorAiService.MeteredAiResponse aiResponse =
                     creatorAiService.generateMetered(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerInput, usageContext);
             Map<String, Object> providerOutput = aiResponse.output();
+            providerOutputForDebug = copyDebugMap(providerOutput);
 
-            GeneratedStoryScriptResponse.StoryScript storyScript = buildStoryScriptPayload(
+            GeneratedStoryScriptResponse.StoryScript storyScript = resolveStoryScriptPayload(
+                    providerOutput,
                     storyIdea,
                     durationSeconds,
                     categoryCode,
                     inferredTone,
                     dialogueLanguage,
-                    screenType
+                    screenType,
+                    aiOutputDiagnostics
             );
             Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
             Map<String, Object> promptOutputPayload = new LinkedHashMap<>(storyScriptMap);
             promptOutputPayload.put("providerOutput", providerOutput);
+            promptOutputPayload.put("aiOutputDiagnostics", aiOutputDiagnostics);
 
             CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
                     .tenantId(storyIdea.getTenantId())
@@ -257,19 +493,30 @@ public class IdeaService {
                     aiResponse,
                     usageContext.withPromptRunId(promptRun.getId())
             );
+            Map<String, Object> rawPromptResponse = rawPromptResponse(
+                    promptRun.getId(),
+                    PromptTemplateType.STORY_SCRIPT_GENERATE.name(),
+                    providerOutput,
+                    aiOutputDiagnostics
+            );
 
             String scriptText = buildStoryScriptText(storyScript);
             CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRun.getId(), generationJob.getId(), durationSeconds, dialogueLanguage, screenType);
             linkProjectSelectedIdea(savedIdea);
 
             Map<String, Object> jobOutput = new LinkedHashMap<>(promptOutputPayload);
+            jobOutput.put("rawPromptResponse", rawPromptResponse);
             jobOutput.put("promptRunId", promptRun.getId().toString());
             jobOutput.put("storyIdeaId", savedIdea.getId().toString());
             generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
 
-            return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRun.getId(), storyScript, scriptText);
+            return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRun.getId(), storyScript, scriptText, rawPromptResponse);
         } catch (RuntimeException ex) {
-            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            generationJobService.failGenerationJob(
+                    generationJob.getId(),
+                    defaultString(ex.getMessage(), ex.getClass().getSimpleName()),
+                    rawPromptFailureOutput(ex, PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerOutputForDebug, aiOutputDiagnostics)
+            );
             throw ex;
         }
     }
@@ -312,7 +559,7 @@ public class IdeaService {
         CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, storyIdea.getGenerationJobId(), durationSeconds, dialogueLanguage, screenType);
         linkProjectSelectedIdea(savedIdea);
 
-        return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRunId, storyScript, scriptText);
+        return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRunId, storyScript, scriptText, null);
     }
 
     @Transactional
@@ -328,16 +575,50 @@ public class IdeaService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Save the story idea before generating script.");
         }
 
-        int durationSeconds = normalizeDuration(request == null ? null : request.durationSeconds(), storyIdea.getDurationSeconds());
-        String categoryCode = defaultString(request == null ? null : request.categoryCode(), inferCategory(storyIdea));
         String ideaText = defaultString(request == null ? null : request.idea(), storyIdea.getTitle() + "\n" + defaultString(storyIdea.getSummary(), ""));
+        int durationSeconds = normalizeDuration(request == null ? null : request.durationSeconds(), storyIdea.getDurationSeconds());
         String dialogueLanguage = normalizeDialogueLanguage(request == null ? null : request.dialogueLanguage());
         String screenType = normalizeScreenType(request == null ? null : request.screenType());
-        String inferredTone = inferTone(ideaText, categoryCode);
         GeneratedStoryScriptResponse.StoryScript storyScript = readStoryScriptFromIdea(storyIdea);
         if (storyScript == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Generate and save the story script before creating the shot-wise screenplay.");
         }
+        String categoryCode = resolveScreenplayCategory(request == null ? null : request.categoryCode(), storyIdea, storyScript, ideaText);
+        String inferredTone = inferTone(ideaText, categoryCode);
+        Map<String, Object> requestContext = request == null ? Map.of() : toGenericMap(request.context());
+        Map<String, Object> lockedPackageContext = mapValue(requestContext.get("lockedPackage"));
+        String budgetTier = defaultString(
+                request == null ? null : request.budgetTier(),
+                stringValue(requestContext.get("budgetTier"), stringValue(lockedPackageContext.get("budgetTier"), inferBudgetTier(durationSeconds)))
+        );
+        List<Map<String, Object>> storyCharacters = toGenericMapList(storyScript.getCharacters());
+        List<Map<String, Object>> storyBeats = toGenericMapList(storyScript.getBeats());
+        List<Map<String, Object>> characterCastMappings = nonEmptyList(
+                request == null ? null : toGenericMapList(request.characterCastMappings()),
+                nonEmptyList(
+                        mapListValue(requestContext.get("characterCastMappings")),
+                        nonEmptyList(mapListValue(lockedPackageContext.get("characterCastMappings")), promptCharacterCastMappings(storyIdea, lockedIdeaId, storyIdeaId))
+                )
+        );
+        List<Map<String, Object>> availableActors = nonEmptyList(
+                request == null ? null : toGenericMapList(request.availableActors()),
+                nonEmptyList(
+                        mapListValue(requestContext.get("availableActors")),
+                        nonEmptyList(mapListValue(lockedPackageContext.get("availableActors")), promptAvailableActors(storyIdea))
+                )
+        );
+        Map<String, Object> audienceDecision = nonEmptyMap(
+                request == null ? null : toGenericMap(request.audienceDecision()),
+                nonEmptyMap(mapValue(requestContext.get("audienceDecision")), mapValue(lockedPackageContext.get("audienceDecision")))
+        );
+        Map<String, Object> brandContext = nonEmptyMap(
+                request == null ? null : toGenericMap(request.brandContext()),
+                nonEmptyMap(mapValue(requestContext.get("brandContext")), mapValue(lockedPackageContext.get("brandContext")))
+        );
+        Map<String, Object> creatorContext = nonEmptyMap(
+                request == null ? null : toGenericMap(request.creatorContext()),
+                nonEmptyMap(mapValue(requestContext.get("creatorContext")), mapValue(lockedPackageContext.get("creatorContext")))
+        );
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.SCRIPT_GENERATE.name());
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
@@ -347,11 +628,19 @@ public class IdeaService {
         inputSnapshot.put("dialogueLanguage", dialogueLanguage);
         inputSnapshot.put("screenType", screenType);
         inputSnapshot.put("tone", inferredTone);
+        inputSnapshot.put("budgetTier", budgetTier);
         inputSnapshot.put("lockedIdeaId", lockedIdeaId);
         inputSnapshot.put("storyIdeaId", storyIdeaId);
         inputSnapshot.put("storyIdea", toPromptIdeaMap(storyIdea));
         inputSnapshot.put("storyScript", storyScript);
-        inputSnapshot.put("context", request == null || request.context() == null ? Map.of() : request.context());
+        inputSnapshot.put("storyBeats", storyBeats);
+        inputSnapshot.put("storyCharacters", storyCharacters);
+        inputSnapshot.put("characterCastMappings", characterCastMappings);
+        inputSnapshot.put("availableActors", availableActors);
+        inputSnapshot.put("audienceDecision", audienceDecision);
+        inputSnapshot.put("brandContext", brandContext);
+        inputSnapshot.put("creatorContext", creatorContext);
+        inputSnapshot.put("context", requestContext);
 
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
@@ -364,6 +653,8 @@ public class IdeaService {
                 providerInput
         );
 
+        Map<String, Object> providerOutputForDebug = new LinkedHashMap<>();
+        Map<String, Object> aiOutputDiagnostics = new LinkedHashMap<>();
         try {
             CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
                     storyIdea.getTenantId(),
@@ -375,13 +666,54 @@ public class IdeaService {
             CreatorAiService.MeteredAiResponse aiResponse =
                     creatorAiService.generateMetered(PromptTemplateType.SCRIPT_GENERATE.name(), providerInput, usageContext);
             Map<String, Object> providerOutput = aiResponse.output();
+            providerOutputForDebug = copyDebugMap(providerOutput);
 
-            GeneratedScriptResponse.CinematicScript scriptPayload = buildCinematicScriptPayload(storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+            GeneratedScriptResponse.CinematicScript scriptPayload;
+            try {
+                scriptPayload = resolveCinematicScriptPayload(providerOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, aiOutputDiagnostics);
+            } catch (CreatorAiOutputException ex) {
+                if (!shouldRetryScreenplayGeneration(aiOutputDiagnostics)) {
+                    throw ex;
+                }
+                Map<String, Object> firstAttemptDiagnostics = copyDebugMap(aiOutputDiagnostics);
+                Map<String, Object> firstAttemptProviderOutput = copyDebugMap(providerOutput);
+                Map<String, Object> retryProviderInput = compactScreenplayRetryInput(providerInput, renderedPrompt, firstAttemptDiagnostics, durationSeconds);
+                String retryRenderedPrompt = stringValue(retryProviderInput.get("renderedPrompt"), renderedPrompt);
+                Map<String, Object> retryDiagnostics = new LinkedHashMap<>();
+                CreatorAiService.MeteredAiResponse retryResponse =
+                        creatorAiService.generateMetered(PromptTemplateType.SCRIPT_GENERATE.name(), retryProviderInput, usageContext);
+                Map<String, Object> retryProviderOutput = retryResponse.output();
+                try {
+                    scriptPayload = resolveCinematicScriptPayload(retryProviderOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, retryDiagnostics);
+                } catch (CreatorAiOutputException retryEx) {
+                    retryDiagnostics.put("retryAttempt", 1);
+                    retryDiagnostics.put("retryOfFailureReason", firstAttemptDiagnostics.getOrDefault("failureReason", ""));
+                    retryDiagnostics.put("firstAttemptDiagnostics", firstAttemptDiagnostics);
+                    retryDiagnostics.put("firstAttemptProviderPreview", truncate(toJson(firstAttemptProviderOutput), 4000));
+                    aiOutputDiagnostics = retryDiagnostics;
+                    providerOutputForDebug = copyDebugMap(retryProviderOutput);
+                    throw retryEx;
+                }
+                retryDiagnostics.put("retryAttempt", 1);
+                retryDiagnostics.put("retryOfFailureReason", firstAttemptDiagnostics.getOrDefault("failureReason", ""));
+                retryDiagnostics.put("firstAttemptDiagnostics", firstAttemptDiagnostics);
+                retryDiagnostics.put("firstAttemptProviderPreview", truncate(toJson(firstAttemptProviderOutput), 4000));
+                aiResponse = retryResponse;
+                providerOutput = retryProviderOutput;
+                providerOutputForDebug = copyDebugMap(providerOutput);
+                aiOutputDiagnostics = retryDiagnostics;
+                providerInput = retryProviderInput;
+                renderedPrompt = retryRenderedPrompt;
+            }
             scriptPayload.setProvider(creatorAiService.providerName());
             scriptPayload.setModel(creatorAiService.modelName());
+            enrichAudioAndMusicDesign(scriptPayload, categoryCode, inferredTone);
             Map<String, Object> scriptPayloadMap = toMap(scriptPayload);
+            putStoryStructure(scriptPayloadMap, storyScript);
+            putScreenplayPlanningContext(scriptPayloadMap, budgetTier, characterCastMappings, availableActors, audienceDecision, brandContext, creatorContext);
             Map<String, Object> promptOutputPayload = new LinkedHashMap<>(scriptPayloadMap);
             promptOutputPayload.put("providerOutput", providerOutput);
+            promptOutputPayload.put("aiOutputDiagnostics", aiOutputDiagnostics);
 
             CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
                     .tenantId(storyIdea.getTenantId())
@@ -406,6 +738,12 @@ public class IdeaService {
                     aiResponse,
                     usageContext.withPromptRunId(promptRun.getId())
             );
+            Map<String, Object> rawPromptResponse = rawPromptResponse(
+                    promptRun.getId(),
+                    PromptTemplateType.SCRIPT_GENERATE.name(),
+                    providerOutput,
+                    aiOutputDiagnostics
+            );
 
             List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
             List<Map<String, Object>> shotPayloads = toMapList(shots);
@@ -420,6 +758,12 @@ public class IdeaService {
                     .promptRunId(promptRun.getId())
                     .categoryCode(categoryCode)
                     .durationSeconds(durationSeconds)
+                    .formatTier(scriptPayload.getFormatTier())
+                    .actStructure(scriptPayload.getActStructure())
+                    .budgetTier(defaultString(scriptPayload.getBudgetTier(), budgetTier))
+                    .totalShots(scriptPayload.getTotalShots())
+                    .sceneCount(scriptPayload.getSceneCount())
+                    .sequenceCount(scriptPayload.getSequenceCount())
                     .dialogueLanguage(dialogueLanguage)
                     .screenType(screenType)
                     .title(scriptPayload.getProjectTitle())
@@ -430,6 +774,20 @@ public class IdeaService {
                     .createdAt(OffsetDateTime.now())
                     .updatedAt(OffsetDateTime.now())
                     .build());
+            scriptStructureService.syncFromStoryScript(creatorScript, storyScript);
+            ProductionPlanGenerationResult productionPlanResult = productionPlanNotStarted();
+            List<ShotProductionPlanTagResponse> productionPlanTags = productionPlanResult.tags();
+            enrichScriptPayloadWithProductionPlanTags(scriptPayload, productionPlanTags);
+            Map<String, Object> enrichedScriptPayloadMap = toMap(scriptPayload);
+            putStoryStructure(enrichedScriptPayloadMap, storyScript);
+            putScreenplayPlanningContext(enrichedScriptPayloadMap, budgetTier, characterCastMappings, availableActors, audienceDecision, brandContext, creatorContext);
+            putProductionPlanStatus(enrichedScriptPayloadMap, productionPlanResult);
+            List<Map<String, Object>> enrichedShotPayloads = toMapList(shots);
+            creatorScript.setScriptPayload(enrichedScriptPayloadMap);
+            creatorScript.setShots(enrichedShotPayloads);
+            creatorScript.setUpdatedAt(OffsetDateTime.now());
+            creatorScript = scriptRepository.save(creatorScript);
+            scriptStructureService.syncScreenplayShots(creatorScript, enrichedScriptPayloadMap, enrichedShotPayloads);
 
             Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
             context.put("scriptId", creatorScript.getId().toString());
@@ -442,9 +800,15 @@ public class IdeaService {
             context.put("scriptDurationSeconds", durationSeconds);
             context.put("scriptDialogueLanguage", dialogueLanguage);
             context.put("scriptScreenType", screenType);
+            context.put("productionPlanTagCount", productionPlanTags.size());
+            context.put("productionPlanStatus", productionPlanResult.status());
+            if (!productionPlanResult.error().isBlank()) {
+                context.put("productionPlanError", productionPlanResult.error());
+            }
+            context.put("productionPlanGeneratedAt", OffsetDateTime.now().toString());
 
             storyIdea.setScript(script);
-            storyIdea.setScenes(shotPayloads);
+            storyIdea.setScenes(enrichedShotPayloads);
             storyIdea.setDurationSeconds(durationSeconds);
             storyIdea.setGenerationJobId(generationJob.getId());
             storyIdea.setSelectionContext(context);
@@ -455,26 +819,45 @@ public class IdeaService {
             linkProjectSelectedIdea(savedIdea);
 
             Map<String, Object> jobOutput = new LinkedHashMap<>(promptOutputPayload);
+            jobOutput.put("rawPromptResponse", rawPromptResponse);
             jobOutput.put("promptRunId", promptRun.getId().toString());
             jobOutput.put("scriptId", creatorScript.getId().toString());
             jobOutput.put("storyIdeaId", savedIdea.getId().toString());
+            jobOutput.put("productionPlanTags", productionPlanTagMaps(productionPlanTags));
+            jobOutput.put("productionPlanStatus", productionPlanResult.status());
+            if (!productionPlanResult.error().isBlank()) {
+                jobOutput.put("productionPlanError", productionPlanResult.error());
+            }
+            if (!productionPlanResult.debug().isEmpty()) {
+                jobOutput.put("productionPlanDebug", productionPlanResult.debug());
+            }
             generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
 
             return GeneratedScriptResponse.builder()
                     .scriptId(creatorScript.getId())
                     .ideaId(savedIdea.getId())
                     .lockedIdeaId(lockedIdeaId)
+                    .projectId(savedIdea.getProjectId())
                     .promptRunId(promptRun.getId())
                     .title(savedIdea.getTitle())
                     .script(savedIdea.getScript())
                     .scriptJson(scriptPayload)
+                    .rawPromptResponse(rawPromptResponse)
                     .scenes(shots)
+                    .productionPlanTags(productionPlanTags)
+                    .productionPlanStatus(productionPlanResult.status())
+                    .productionPlanError(productionPlanResult.error())
+                    .productionPlanDebug(productionPlanResult.debug())
                     .durationSeconds(savedIdea.getDurationSeconds())
                     .status(savedIdea.getStatus())
                     .generatedAt(savedIdea.getUpdatedAt())
                     .build();
         } catch (RuntimeException ex) {
-            generationJobService.failGenerationJob(generationJob.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            generationJobService.failGenerationJob(
+                    generationJob.getId(),
+                    defaultString(ex.getMessage(), ex.getClass().getSimpleName()),
+                    rawPromptFailureOutput(ex, PromptTemplateType.SCRIPT_GENERATE.name(), providerOutputForDebug, aiOutputDiagnostics)
+            );
             throw ex;
         }
     }
@@ -518,15 +901,27 @@ public class IdeaService {
         String screenType = normalizeScreenType(defaultString(request == null ? null : request.screenType(), defaultString(scriptJson.getScreenType(), creatorScript.getScreenType())));
         scriptJson.setDialogueLanguage(dialogueLanguage);
         scriptJson.setScreenType(screenType);
+        stripEmbeddedProductionPlanTags(scriptJson);
 
         String title = defaultString(request == null ? null : request.title(), defaultString(scriptJson.getProjectTitle(), storyIdea.getTitle()));
         scriptJson.setProjectTitle(title);
         String scriptText = defaultString(request == null ? null : request.script(), buildScriptText(storyIdea, shots));
+        String categoryCode = defaultString(scriptJson.getCategory(), creatorScript.getCategoryCode());
+        String inferredTone = defaultString(scriptJson.getInferredTone(), inferTone(scriptText, categoryCode));
+        enrichAudioAndMusicDesign(scriptJson, categoryCode, inferredTone);
         Map<String, Object> scriptPayloadMap = toMap(scriptJson);
+        GeneratedStoryScriptResponse.StoryScript storyScript = readStoryScriptFromIdea(storyIdea);
+        putStoryStructure(scriptPayloadMap, storyScript);
         List<Map<String, Object>> shotPayloads = toMapList(shots);
 
         creatorScript.setTitle(title);
         creatorScript.setDurationSeconds(durationSeconds);
+        creatorScript.setFormatTier(scriptJson.getFormatTier());
+        creatorScript.setActStructure(scriptJson.getActStructure());
+        creatorScript.setBudgetTier(scriptJson.getBudgetTier());
+        creatorScript.setTotalShots(scriptJson.getTotalShots());
+        creatorScript.setSceneCount(scriptJson.getSceneCount());
+        creatorScript.setSequenceCount(scriptJson.getSequenceCount());
         creatorScript.setDialogueLanguage(dialogueLanguage);
         creatorScript.setScreenType(screenType);
         creatorScript.setScriptText(scriptText);
@@ -535,6 +930,19 @@ public class IdeaService {
         creatorScript.setStatus("EDITED");
         creatorScript.setUpdatedAt(OffsetDateTime.now());
         CreatorScript savedScript = scriptRepository.save(creatorScript);
+        scriptStructureService.syncFromStoryScript(savedScript, storyScript);
+        ProductionPlanGenerationResult productionPlanResult = productionPlanNotStarted();
+        List<ShotProductionPlanTagResponse> productionPlanTags = productionPlanResult.tags();
+        enrichScriptPayloadWithProductionPlanTags(scriptJson, productionPlanTags);
+        Map<String, Object> enrichedScriptPayloadMap = toMap(scriptJson);
+        putStoryStructure(enrichedScriptPayloadMap, storyScript);
+        putProductionPlanStatus(enrichedScriptPayloadMap, productionPlanResult);
+        List<Map<String, Object>> enrichedShotPayloads = toMapList(shots);
+        savedScript.setScriptPayload(enrichedScriptPayloadMap);
+        savedScript.setShots(enrichedShotPayloads);
+        savedScript.setUpdatedAt(OffsetDateTime.now());
+        savedScript = scriptRepository.save(savedScript);
+        scriptStructureService.syncScreenplayShots(savedScript, enrichedScriptPayloadMap, enrichedShotPayloads);
 
         Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
         context.put("scriptId", savedScript.getId().toString());
@@ -543,10 +951,16 @@ public class IdeaService {
         context.put("scriptDurationSeconds", durationSeconds);
         context.put("scriptDialogueLanguage", dialogueLanguage);
         context.put("scriptScreenType", screenType);
+        context.put("productionPlanTagCount", productionPlanTags.size());
+        context.put("productionPlanStatus", productionPlanResult.status());
+        if (!productionPlanResult.error().isBlank()) {
+            context.put("productionPlanError", productionPlanResult.error());
+        }
+        context.put("productionPlanGeneratedAt", OffsetDateTime.now().toString());
 
         storyIdea.setTitle(title);
         storyIdea.setScript(scriptText);
-        storyIdea.setScenes(shotPayloads);
+        storyIdea.setScenes(enrichedShotPayloads);
         storyIdea.setDurationSeconds(durationSeconds);
         storyIdea.setSelectionContext(context);
         storyIdea.setStatus("SCRIPT_EDITED");
@@ -559,11 +973,16 @@ public class IdeaService {
                 .scriptId(savedScript.getId())
                 .ideaId(savedIdea.getId())
                 .lockedIdeaId(lockedIdeaId)
+                .projectId(savedIdea.getProjectId())
                 .promptRunId(savedScript.getPromptRunId())
                 .title(savedIdea.getTitle())
                 .script(savedIdea.getScript())
                 .scriptJson(scriptJson)
                 .scenes(shots)
+                .productionPlanTags(productionPlanTags)
+                .productionPlanStatus(productionPlanResult.status())
+                .productionPlanError(productionPlanResult.error())
+                .productionPlanDebug(productionPlanResult.debug())
                 .durationSeconds(durationSeconds)
                 .status(savedIdea.getStatus())
                 .generatedAt(savedIdea.getUpdatedAt())
@@ -573,6 +992,11 @@ public class IdeaService {
     private CreatorIdea getStoryIdeaForLockedBrief(UUID lockedIdeaId, UUID storyIdeaId, String tenantId, String userId) {
         String safeTenantId = defaultString(tenantId, "unknown");
         String safeUserId = defaultString(userId, "anonymous");
+        CreatorIdea lockedIdea = ideaRepository.findById(lockedIdeaId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found."));
+        if (!safeTenantId.equals(lockedIdea.getTenantId()) || !safeUserId.equals(lockedIdea.getUserId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found.");
+        }
         CreatorIdea storyIdea = ideaRepository.findById(storyIdeaId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Story idea was not found."));
         if (!safeTenantId.equals(storyIdea.getTenantId()) || !safeUserId.equals(storyIdea.getUserId())) {
@@ -582,10 +1006,11 @@ public class IdeaService {
         if (!lockedIdeaId.toString().equals(String.valueOf(context.get("parentLockedIdeaId")))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Story idea does not belong to the locked brief.");
         }
+        storyIdea = ensureProjectOnStoryIdea(lockedIdea, storyIdea);
         return storyIdea;
     }
 
-    private int ensureGeneratedIdeas(CreatorIdea lockedIdea, UUID generationJobId) {
+    private IdeaGenerationResult ensureGeneratedIdeas(CreatorIdea lockedIdea, UUID generationJobId) {
         Page<CreatorIdea> existing = ideaRepository.findGeneratedIdeasForLockedBrief(
                 lockedIdea.getId(),
                 lockedIdea.getTenantId(),
@@ -594,56 +1019,266 @@ public class IdeaService {
         );
         int existingCount = (int) existing.getTotalElements();
         if (existingCount >= GENERATED_IDEA_COUNT) {
-            return 0;
+            return new IdeaGenerationResult(0, List.of(), List.of());
+        }
+
+        int targetCount = GENERATED_IDEA_COUNT - existingCount;
+        Map<String, Object> sourceBrief = buildSourceBrief(lockedIdea);
+        CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.IDEA_GENERATE.name());
+
+        List<GeneratedIdeaCandidate> generatedCandidates = new ArrayList<>();
+        List<UUID> promptRunIds = new ArrayList<>();
+        List<Map<String, Object>> providerOutputs = new ArrayList<>();
+        int maxAttempts = Math.max(4, ((targetCount + GENERATED_IDEA_AI_BATCH_SIZE - 1) / GENERATED_IDEA_AI_BATCH_SIZE) + 2);
+
+        for (int attempt = 0; generatedCandidates.size() < targetCount && attempt < maxAttempts; attempt++) {
+            int batchSize = Math.min(GENERATED_IDEA_AI_BATCH_SIZE, targetCount - generatedCandidates.size());
+            AiIdeaBatchResult batchResult = generateIdeaBatch(
+                    lockedIdea,
+                    generationJobId,
+                    template,
+                    sourceBrief,
+                    existingCount,
+                    generatedCandidates.size(),
+                    batchSize
+            );
+            if (batchResult.promptRunId() != null) {
+                promptRunIds.add(batchResult.promptRunId());
+            }
+            if (!batchResult.providerOutput().isEmpty()) {
+                providerOutputs.add(batchResult.providerOutput());
+            }
+
+            int beforeBatch = generatedCandidates.size();
+            for (IdeaCandidate candidate : batchResult.candidates()) {
+                if (generatedCandidates.size() >= targetCount) {
+                    break;
+                }
+                generatedCandidates.add(new GeneratedIdeaCandidate(candidate, batchResult.promptRunId()));
+            }
+            if (generatedCandidates.size() == beforeBatch) {
+                break;
+            }
+        }
+
+        while (generatedCandidates.size() < targetCount) {
+            int ideaNumber = existingCount + generatedCandidates.size() + 1;
+            generatedCandidates.add(new GeneratedIdeaCandidate(fallbackIdeaCandidate(lockedIdea, ideaNumber), null));
         }
 
         OffsetDateTime now = OffsetDateTime.now();
         int generatedCount = 0;
-        for (int index = existingCount; index < GENERATED_IDEA_COUNT; index++) {
-            int ideaNumber = index + 1;
-            String angle = IDEA_ANGLES.get(index % IDEA_ANGLES.size());
-            Map<String, Object> context = buildGeneratedContext(lockedIdea, ideaNumber, angle);
-            context.put("generationJobId", generationJobId.toString());
+        for (int index = 0; index < generatedCandidates.size(); index++) {
+            int ideaNumber = existingCount + index + 1;
+            GeneratedIdeaCandidate generated = generatedCandidates.get(index);
+            IdeaCandidate candidate = generated.candidate();
+            Map<String, Object> context = buildGeneratedContext(lockedIdea, ideaNumber, candidate, generated.promptRunId(), generationJobId);
             ideaRepository.save(CreatorIdea.builder()
                     .tenantId(lockedIdea.getTenantId())
                     .userId(lockedIdea.getUserId())
                     .projectId(lockedIdea.getProjectId())
                     .trendId(lockedIdea.getTrendId())
                     .source("AI_FROM_LOCKED_BRIEF")
-                    .title(buildTitle(lockedIdea, angle, ideaNumber))
-                    .summary(buildSummary(lockedIdea, angle))
+                    .title(truncate(candidate.title(), 240))
+                    .summary(candidate.summary())
                     .durationSeconds(lockedIdea.getDurationSeconds())
                     .status("DRAFT")
                     .generationJobId(generationJobId)
+                    .promptRunId(generated.promptRunId())
                     .selectionContext(context)
                     .createdAt(now.plusNanos(ideaNumber))
                     .updatedAt(now.plusNanos(ideaNumber))
                     .build());
             generatedCount++;
         }
-        return generatedCount;
+        return new IdeaGenerationResult(generatedCount, promptRunIds, providerOutputs);
     }
 
-    private Map<String, Object> buildGeneratedContext(CreatorIdea lockedIdea, int ideaNumber, String angle) {
+    private AiIdeaBatchResult generateIdeaBatch(
+            CreatorIdea lockedIdea,
+            UUID generationJobId,
+            CreatorPromptTemplate template,
+            Map<String, Object> sourceBrief,
+            int existingCount,
+            int alreadyGeneratedCount,
+            int candidateCount
+    ) {
+        List<String> batchAngles = ideaAnglesForBatch(existingCount + alreadyGeneratedCount, candidateCount);
+        Map<String, Object> inputSnapshot = new LinkedHashMap<>();
+        inputSnapshot.put("lockedIdeaId", lockedIdea.getId().toString());
+        inputSnapshot.put("candidateCount", candidateCount);
+        inputSnapshot.put("totalCandidateTarget", GENERATED_IDEA_COUNT);
+        inputSnapshot.put("existingCandidateCount", existingCount + alreadyGeneratedCount);
+        inputSnapshot.put("durationSeconds", lockedIdea.getDurationSeconds() == null ? 30 : lockedIdea.getDurationSeconds());
+        inputSnapshot.put("lockedBrief", sourceBrief);
+        inputSnapshot.put("ideaAngles", batchAngles);
+        inputSnapshot.put("generationRules", List.of(
+                "Generate distinct short-form story ideas from the locked brief.",
+                "Each idea must be practical for a beginner creator using a phone.",
+                "Do not return a screenplay or storyboard yet.",
+                "Return JSON only with an ideas array."
+        ));
+
+        Map<String, Object> renderVariables = new LinkedHashMap<>(inputSnapshot);
+        renderVariables.put("lockedBriefJson", toJson(sourceBrief));
+        renderVariables.put("ideaAnglesJson", toJson(batchAngles));
+        String renderedPrompt = promptTemplateService.render(template, renderVariables);
+
+        Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
+        providerInput.put("renderedPrompt", renderedPrompt);
+
+        CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                lockedIdea.getProjectId(),
+                generationJobId,
+                null
+        );
+        CreatorAiService.MeteredAiResponse aiResponse =
+                creatorAiService.generateMetered(PromptTemplateType.IDEA_GENERATE.name(), providerInput, usageContext);
+        Map<String, Object> providerOutput = aiResponse.output();
+
+        List<IdeaCandidate> candidates = ideaCandidates(providerOutput, candidateCount);
+        List<Map<String, Object>> normalizedIdeas = candidates.stream()
+                .map(IdeaCandidate::toMap)
+                .toList();
+        Map<String, Object> promptOutputPayload = new LinkedHashMap<>();
+        promptOutputPayload.put("ideas", normalizedIdeas);
+        promptOutputPayload.put("providerOutput", providerOutput);
+
+        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                .tenantId(lockedIdea.getTenantId())
+                .userId(lockedIdea.getUserId())
+                .projectId(lockedIdea.getProjectId())
+                .jobId(generationJobId)
+                .promptTemplateId(template.getId())
+                .promptTemplateKey(template.getTemplateKey())
+                .promptTemplateVersion(template.getVersion())
+                .renderedPrompt(renderedPrompt)
+                .inputSnapshot(inputSnapshot)
+                .provider(creatorAiService.providerName())
+                .model(creatorAiService.modelName())
+                .outputPayload(promptOutputPayload)
+                .tokenMetadata(aiResponse.tokenMetadata())
+                .costMetadata(aiResponse.costMetadata())
+                .status("COMPLETED")
+                .completedAt(OffsetDateTime.now())
+                .build());
+        creatorAiService.publishBillingDebit(
+                PromptTemplateType.IDEA_GENERATE.name(),
+                aiResponse,
+                usageContext.withPromptRunId(promptRun.getId())
+        );
+
+        return new AiIdeaBatchResult(candidates, promptRun.getId(), providerOutput);
+    }
+
+    private List<String> ideaAnglesForBatch(int offset, int count) {
+        List<String> angles = new ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            angles.add(IDEA_ANGLES.get((offset + index) % IDEA_ANGLES.size()));
+        }
+        return angles;
+    }
+
+    private Map<String, Object> buildGeneratedContext(
+            CreatorIdea lockedIdea,
+            int ideaNumber,
+            IdeaCandidate candidate,
+            UUID promptRunId,
+            UUID generationJobId
+    ) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("parentLockedIdeaId", lockedIdea.getId().toString());
         context.put("generatedIndex", ideaNumber);
-        context.put("angle", angle);
+        context.put("angle", candidate.angle());
+        context.put("sourceBrief", buildSourceBrief(lockedIdea));
+        context.put("hashtags", candidate.hashtags().isEmpty() ? hashtagsFor(lockedIdea, candidate.angle()) : candidate.hashtags());
+        context.put("creativeNotes", candidate.creativeNotes());
+        context.put("provider", creatorAiService.providerName());
+        context.put("model", creatorAiService.modelName());
+        if (promptRunId != null) {
+            context.put("promptRunId", promptRunId.toString());
+        }
+        context.put("generationJobId", generationJobId.toString());
+        context.put("aiGenerated", promptRunId != null);
+        return context;
+    }
+
+    private Map<String, Object> buildSourceBrief(CreatorIdea lockedIdea) {
         Map<String, Object> sourceBrief = new LinkedHashMap<>();
         sourceBrief.put("title", lockedIdea.getTitle());
         sourceBrief.put("summary", defaultString(lockedIdea.getSummary(), ""));
         sourceBrief.put("source", lockedIdea.getSource());
         sourceBrief.put("durationSeconds", lockedIdea.getDurationSeconds() == null ? 30 : lockedIdea.getDurationSeconds());
-        sourceBrief.put("categoryCode", lockedIdea.getSelectionContext() == null ? null : lockedIdea.getSelectionContext().get("categoryCode"));
-        context.put("sourceBrief", sourceBrief);
-        context.put("hashtags", hashtagsFor(lockedIdea, angle));
-        context.put("creativeNotes", Map.of(
-                "hook", angle,
-                "targetEmotion", targetEmotionFor(angle),
-                "storyShape", storyShapeFor(angle),
-                "selectionReason", "Generated from the locked trend/original brief so the creator can choose a stronger production angle."
-        ));
-        return context;
+
+        Map<String, Object> selectionContext = lockedIdea.getSelectionContext() == null ? Map.of() : lockedIdea.getSelectionContext();
+        putIfPresent(sourceBrief, "platformCode", selectionContext.get("platformCode"));
+        putIfPresent(sourceBrief, "categoryCode", selectionContext.get("categoryCode"));
+        putIfPresent(sourceBrief, "countryCode", selectionContext.get("countryCode"));
+        putIfPresent(sourceBrief, "timeframe", selectionContext.get("timeframe"));
+        putIfPresent(sourceBrief, "selectionPayload", selectionContext.get("selectionPayload"));
+        putIfPresent(sourceBrief, "trend", selectionContext.get("trend"));
+        return sourceBrief;
+    }
+
+    private List<IdeaCandidate> ideaCandidates(Map<String, Object> providerOutput, int limit) {
+        List<Map<String, Object>> rawIdeas = firstMapList(providerOutput, "ideas", "storyIdeas", "candidates", "items", "results");
+        if (rawIdeas.isEmpty()) {
+            rawIdeas = rawTextIdeaMaps(providerOutput == null ? null : providerOutput.get("rawText"));
+        }
+        List<IdeaCandidate> candidates = new ArrayList<>();
+        for (Map<String, Object> rawIdea : rawIdeas) {
+            if (candidates.size() >= limit) {
+                break;
+            }
+            String title = stringValue(firstValue(rawIdea, "title", "ideaTitle", "name", "hook"), "");
+            String summary = stringValue(firstValue(rawIdea, "description", "summary", "idea", "concept", "logline"), "");
+            if (title.isBlank() && !summary.isBlank()) {
+                title = truncate(summary, 80);
+            }
+            if (summary.isBlank() && !title.isBlank()) {
+                summary = title;
+            }
+            if (title.isBlank() || summary.isBlank()) {
+                continue;
+            }
+
+            List<String> hashtags = stringList(firstValue(rawIdea, "hashtags", "tags", "suggestedTags"));
+            Map<String, Object> creativeNotes = new LinkedHashMap<>(mapValue(rawIdea.get("creativeNotes")));
+            copyIfPresent(rawIdea, creativeNotes, "hook");
+            copyIfPresent(rawIdea, creativeNotes, "targetEmotion");
+            copyIfPresent(rawIdea, creativeNotes, "storyShape");
+            copyIfPresent(rawIdea, creativeNotes, "selectionReason");
+            copyIfPresent(rawIdea, creativeNotes, "whyItWorks");
+            copyIfPresent(rawIdea, creativeNotes, "openingVisual");
+            copyIfPresent(rawIdea, creativeNotes, "audiencePromise");
+            creativeNotes.putIfAbsent("hook", title);
+            creativeNotes.putIfAbsent("selectionReason", "AI generated from the locked creator brief.");
+
+            candidates.add(new IdeaCandidate(
+                    truncate(title, 240),
+                    truncate(summary, 1000),
+                    hashtags,
+                    creativeNotes
+            ));
+        }
+        return candidates;
+    }
+
+    private IdeaCandidate fallbackIdeaCandidate(CreatorIdea lockedIdea, int ideaNumber) {
+        String angle = IDEA_ANGLES.get((ideaNumber - 1) % IDEA_ANGLES.size());
+        Map<String, Object> creativeNotes = new LinkedHashMap<>();
+        creativeNotes.put("hook", angle);
+        creativeNotes.put("targetEmotion", targetEmotionFor(angle));
+        creativeNotes.put("storyShape", storyShapeFor(angle));
+        creativeNotes.put("selectionReason", "Fallback idea added because the AI provider returned fewer candidates than requested.");
+        return new IdeaCandidate(
+                buildTitle(lockedIdea, angle, ideaNumber),
+                buildSummary(lockedIdea, angle),
+                hashtagsFor(lockedIdea, angle),
+                creativeNotes
+        );
     }
 
     private String buildTitle(CreatorIdea lockedIdea, String angle, int ideaNumber) {
@@ -692,6 +1327,588 @@ public class IdeaService {
                 .build();
     }
 
+    private GeneratedStoryScriptResponse.StoryScript resolveStoryScriptPayload(
+            Map<String, Object> providerOutput,
+            CreatorIdea storyIdea,
+            int durationSeconds,
+            String categoryCode,
+            String inferredTone,
+            String dialogueLanguage,
+            String screenType,
+            Map<String, Object> diagnostics
+    ) {
+        GeneratedStoryScriptResponse.StoryScript fallback = buildStoryScriptPayload(
+                storyIdea,
+                durationSeconds,
+                categoryCode,
+                inferredTone,
+                dialogueLanguage,
+                screenType
+        );
+        populateAiOutputDiagnostics(diagnostics, PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerOutput);
+        Map<String, Object> payload = extractStructuredProviderPayload(providerOutput, "scriptJson", "storyScript", "script", "story");
+        populatePayloadDiagnostics(diagnostics, payload);
+        if (!payload.isEmpty()) {
+            try {
+                Map<String, Object> retainedPayload = storyScriptFields(payload);
+                diagnostics.put("retainedPayloadKeys", retainedPayload.keySet().stream().toList());
+                GeneratedStoryScriptResponse.StoryScript storyScript =
+                        objectMapper.convertValue(retainedPayload, GeneratedStoryScriptResponse.StoryScript.class);
+                String validationReason = storyScriptValidationReason(storyScript);
+                if (validationReason.isBlank()) {
+                    applyStoryScriptDefaults(storyScript, fallback, storyIdea, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+                    diagnostics.put("usedAiOutput", true);
+                    diagnostics.put("fallbackUsed", false);
+                    log.info("Creator story script AI output accepted storyIdeaId={} payloadKeys={}",
+                            storyIdea.getId(),
+                            payload.keySet());
+                    return storyScript;
+                }
+                diagnostics.put("failureReason", validationReason);
+            } catch (IllegalArgumentException ex) {
+                diagnostics.put("failureReason", "CONVERSION_FAILED: " + truncate(defaultString(ex.getMessage(), ex.getClass().getSimpleName()), 500));
+                log.warn("Creator story script AI output could not be converted storyIdeaId={} reason={}", storyIdea.getId(), ex.getMessage());
+            }
+        } else {
+            diagnostics.put("failureReason", rawTextFailureReason(providerOutput, "NO_STRUCTURED_PROVIDER_OUTPUT"));
+        }
+
+        diagnostics.put("usedAiOutput", false);
+        diagnostics.put("fallbackUsed", false);
+        diagnostics.putIfAbsent("failureReason", "MISSING_USABLE_STORY_SCRIPT");
+        log.error("Creator story script AI output rejected storyIdeaId={} reason={} providerKeys={} payloadKeys={} providerPreview={}",
+                storyIdea.getId(),
+                diagnostics.get("failureReason"),
+                diagnostics.get("providerKeys"),
+                diagnostics.get("payloadKeys"),
+                diagnostics.get("providerOutputPreview"));
+        throw storyScriptGenerationFailure(storyIdea, diagnostics, providerOutput);
+    }
+
+    private ResponseStatusException storyScriptGenerationFailure(CreatorIdea storyIdea, Map<String, Object> diagnostics, Map<String, Object> providerOutput) {
+        String reason = stringValue(diagnostics == null ? null : diagnostics.get("failureReason"), "MISSING_USABLE_STORY_SCRIPT");
+        String payloadKeys = String.valueOf(diagnostics == null ? List.of() : diagnostics.getOrDefault("payloadKeys", List.of()));
+        String message = "Storyline generation failed because the AI did not return complete parseable story JSON. "
+                + "Reason: " + reason + ". Payload keys: " + payloadKeys + ". "
+                + "Please regenerate with complete JSON containing projectTitle, logline, storyline, centralConflict, emotionalArc, hook, endingPayoff, characters, and beats. "
+                + "StoryIdeaId=" + (storyIdea == null ? "" : storyIdea.getId()) + ".";
+        return new CreatorAiOutputException(
+                HttpStatus.BAD_GATEWAY,
+                message,
+                rawPromptDebugPayload(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerOutput, diagnostics)
+        );
+    }
+
+    private boolean isUsableStoryScript(GeneratedStoryScriptResponse.StoryScript storyScript) {
+        return storyScriptValidationReason(storyScript).isBlank();
+    }
+
+    private String storyScriptValidationReason(GeneratedStoryScriptResponse.StoryScript storyScript) {
+        if (storyScript == null) {
+            return "NULL_STORY_SCRIPT";
+        }
+        boolean hasStory = !defaultString(storyScript.getProjectTitle(), "").isBlank()
+                || !defaultString(storyScript.getLogline(), "").isBlank()
+                || !defaultString(storyScript.getStoryline(), "").isBlank();
+        boolean hasStructure = storyScript.getCharacters() != null && !storyScript.getCharacters().isEmpty()
+                || storyScript.getBeats() != null && !storyScript.getBeats().isEmpty();
+        if (!hasStory) {
+            return "MISSING_PROJECT_TITLE_LOGLINE_AND_STORYLINE";
+        }
+        if (!hasStructure) {
+            return "MISSING_CHARACTERS_AND_BEATS";
+        }
+        return "";
+    }
+
+    private void applyStoryScriptDefaults(
+            GeneratedStoryScriptResponse.StoryScript storyScript,
+            GeneratedStoryScriptResponse.StoryScript fallback,
+            CreatorIdea storyIdea,
+            int durationSeconds,
+            String categoryCode,
+            String inferredTone,
+            String dialogueLanguage,
+            String screenType
+    ) {
+        storyScript.setProjectTitle(defaultString(storyScript.getProjectTitle(), fallback.getProjectTitle()));
+        storyScript.setDuration(storyScript.getDuration() == null || storyScript.getDuration() <= 0 ? durationSeconds : storyScript.getDuration());
+        storyScript.setCategory(defaultString(storyScript.getCategory(), categoryCode));
+        storyScript.setDialogueLanguage(defaultString(storyScript.getDialogueLanguage(), dialogueLanguage));
+        storyScript.setScreenType(normalizeScreenType(defaultString(storyScript.getScreenType(), screenType)));
+        storyScript.setLogline(defaultString(storyScript.getLogline(), fallback.getLogline()));
+        storyScript.setCentralConflict(defaultString(storyScript.getCentralConflict(), fallback.getCentralConflict()));
+        storyScript.setStoryline(defaultString(storyScript.getStoryline(), fallback.getStoryline()));
+        storyScript.setEmotionalArc(defaultString(storyScript.getEmotionalArc(), fallback.getEmotionalArc()));
+        storyScript.setHook(defaultString(storyScript.getHook(), fallback.getHook()));
+        storyScript.setEndingPayoff(defaultString(storyScript.getEndingPayoff(), fallback.getEndingPayoff()));
+        storyScript.setSetting(defaultString(storyScript.getSetting(), fallback.getSetting()));
+        storyScript.setInferredTone(defaultString(storyScript.getInferredTone(), inferredTone));
+        if (storyScript.getCharacters() == null || storyScript.getCharacters().isEmpty()) {
+            storyScript.setCharacters(fallback.getCharacters());
+        }
+        if (storyScript.getBeats() == null || storyScript.getBeats().isEmpty()) {
+            storyScript.setBeats(storyBeatsFor(durationSeconds, storyScript.getCharacters()));
+        }
+    }
+
+    private GeneratedScriptResponse.CinematicScript resolveCinematicScriptPayload(
+            Map<String, Object> providerOutput,
+            CreatorIdea storyIdea,
+            GeneratedStoryScriptResponse.StoryScript storyScript,
+            int durationSeconds,
+            String categoryCode,
+            String inferredTone,
+            String dialogueLanguage,
+            String screenType,
+            Map<String, Object> diagnostics
+    ) {
+        GeneratedScriptResponse.CinematicScript fallback = buildCinematicScriptPayload(
+                storyIdea,
+                storyScript,
+                durationSeconds,
+                categoryCode,
+                inferredTone,
+                dialogueLanguage,
+                screenType
+        );
+        populateAiOutputDiagnostics(diagnostics, PromptTemplateType.SCRIPT_GENERATE.name(), providerOutput);
+        Map<String, Object> payload = extractStructuredProviderPayload(providerOutput, "scriptJson", "screenplay", "cinematicScript", "script");
+        populatePayloadDiagnostics(diagnostics, payload);
+        if (!payload.isEmpty()) {
+            try {
+                Map<String, Object> retainedPayload = cinematicScriptFields(payload);
+                diagnostics.put("retainedPayloadKeys", retainedPayload.keySet().stream().toList());
+                GeneratedScriptResponse.CinematicScript scriptPayload =
+                        objectMapper.convertValue(retainedPayload, GeneratedScriptResponse.CinematicScript.class);
+                if (scriptPayload != null && (scriptPayload.getShots() == null || scriptPayload.getShots().isEmpty())) {
+                    scriptPayload.setShots(flattenCinematicShots(retainedPayload));
+                }
+                if (scriptPayload != null && scriptPayload.getShots() != null && !scriptPayload.getShots().isEmpty()) {
+                    applyCinematicScriptDefaults(scriptPayload, fallback, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+                    diagnostics.put("usedAiOutput", true);
+                    diagnostics.put("fallbackUsed", false);
+                    log.info("Creator screenplay AI output accepted storyIdeaId={} payloadKeys={}",
+                            storyIdea.getId(),
+                            payload.keySet());
+                    return scriptPayload;
+                }
+                diagnostics.put("failureReason", scriptPayload == null ? "NULL_SCREENPLAY" : missingShotsFailureReason(providerOutput, retainedPayload));
+            } catch (IllegalArgumentException ex) {
+                diagnostics.put("failureReason", "CONVERSION_FAILED: " + truncate(defaultString(ex.getMessage(), ex.getClass().getSimpleName()), 500));
+                log.warn("Creator screenplay AI output could not be converted storyIdeaId={} reason={}", storyIdea.getId(), ex.getMessage());
+            }
+        } else {
+            diagnostics.put("failureReason", rawTextFailureReason(providerOutput, "NO_STRUCTURED_PROVIDER_OUTPUT"));
+        }
+
+        diagnostics.put("usedAiOutput", false);
+        diagnostics.put("fallbackUsed", false);
+        diagnostics.putIfAbsent("failureReason", "MISSING_USABLE_SCREENPLAY");
+        log.error("Creator screenplay AI output rejected storyIdeaId={} reason={} providerKeys={} payloadKeys={} providerPreview={}",
+                storyIdea.getId(),
+                diagnostics.get("failureReason"),
+                diagnostics.get("providerKeys"),
+                diagnostics.get("payloadKeys"),
+                diagnostics.get("providerOutputPreview"));
+        throw screenplayGenerationFailure(storyIdea, diagnostics, providerOutput);
+    }
+
+    private ResponseStatusException screenplayGenerationFailure(CreatorIdea storyIdea, Map<String, Object> diagnostics, Map<String, Object> providerOutput) {
+        String reason = stringValue(diagnostics == null ? null : diagnostics.get("failureReason"), "MISSING_USABLE_SCREENPLAY");
+        String payloadKeys = String.valueOf(diagnostics == null ? List.of() : diagnostics.getOrDefault("payloadKeys", List.of()));
+        String message = "Screenplay generation failed because the AI did not return complete parseable screenplay JSON with shots. "
+                + "Reason: " + reason + ". Payload keys: " + payloadKeys + ". "
+                + "Please regenerate with a complete screenplay JSON that includes shots/scenes/sequences, exact numeric timing, character continuity, blockingNotes, lighting, structured soundDesign with ambient_bed and sync_hit, backgroundMusicPlan/backgroundMusicCue, captionTrack, safetyFlags, resourceRequirements, and postProductionNotes. "
+                + "StoryIdeaId=" + (storyIdea == null ? "" : storyIdea.getId()) + ".";
+        return new CreatorAiOutputException(
+                HttpStatus.BAD_GATEWAY,
+                message,
+                rawPromptDebugPayload(PromptTemplateType.SCRIPT_GENERATE.name(), providerOutput, diagnostics)
+        );
+    }
+
+    private void applyCinematicScriptDefaults(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            GeneratedScriptResponse.CinematicScript fallback,
+            int durationSeconds,
+            String categoryCode,
+            String inferredTone,
+            String dialogueLanguage,
+            String screenType
+    ) {
+        scriptPayload.setProjectTitle(defaultString(scriptPayload.getProjectTitle(), fallback.getProjectTitle()));
+        scriptPayload.setDuration(scriptPayload.getDuration() == null || scriptPayload.getDuration() <= 0 ? durationSeconds : scriptPayload.getDuration());
+        scriptPayload.setTotalShots(scriptPayload.getTotalShots() == null || scriptPayload.getTotalShots() <= 0
+                ? scriptPayload.getShots().size()
+                : scriptPayload.getTotalShots());
+        scriptPayload.setFormatTier(defaultString(scriptPayload.getFormatTier(), formatTierFor(durationSeconds)));
+        scriptPayload.setActStructure(defaultString(scriptPayload.getActStructure(), actStructureFor(scriptPayload.getFormatTier())));
+        scriptPayload.setBudgetTier(defaultString(scriptPayload.getBudgetTier(), inferBudgetTier(durationSeconds)));
+        scriptPayload.setSceneCount(scriptPayload.getSceneCount() == null ? mapListValue(scriptPayload.getScenes()).size() : scriptPayload.getSceneCount());
+        scriptPayload.setSequenceCount(scriptPayload.getSequenceCount() == null ? mapListValue(scriptPayload.getSequences()).size() : scriptPayload.getSequenceCount());
+        scriptPayload.setPacingStyle(defaultString(scriptPayload.getPacingStyle(), fallback.getPacingStyle()));
+        scriptPayload.setEmotionalArc(defaultString(scriptPayload.getEmotionalArc(), fallback.getEmotionalArc()));
+        scriptPayload.setHookStrategy(defaultString(scriptPayload.getHookStrategy(), fallback.getHookStrategy()));
+        scriptPayload.setCreatorFitReasoning(defaultString(scriptPayload.getCreatorFitReasoning(), fallback.getCreatorFitReasoning()));
+        scriptPayload.setAudienceFitReasoning(defaultString(scriptPayload.getAudienceFitReasoning(), fallback.getAudienceFitReasoning()));
+        scriptPayload.setOverallExecutionDifficulty(defaultString(scriptPayload.getOverallExecutionDifficulty(), fallback.getOverallExecutionDifficulty()));
+        scriptPayload.setCategory(defaultString(scriptPayload.getCategory(), categoryCode));
+        scriptPayload.setInferredTone(defaultString(scriptPayload.getInferredTone(), inferredTone));
+        scriptPayload.setDialogueLanguage(defaultString(scriptPayload.getDialogueLanguage(), dialogueLanguage));
+        scriptPayload.setScreenType(normalizeScreenType(defaultString(scriptPayload.getScreenType(), screenType)));
+    }
+
+    private List<GeneratedScriptResponse.CinematicShot> flattenCinematicShots(Map<String, Object> payload) {
+        List<Map<String, Object>> shotMaps = new ArrayList<>();
+        shotMaps.addAll(mapListValue(payload.get("shots")));
+        if (shotMaps.isEmpty()) {
+            for (Map<String, Object> scene : mapListValue(payload.get("scenes"))) {
+                Integer sceneNumber = integerValue(scene.get("sceneNumber"), null);
+                for (Map<String, Object> shot : mapListValue(scene.get("shots"))) {
+                    Map<String, Object> copy = new LinkedHashMap<>(shot);
+                    copy.putIfAbsent("sceneNumber", sceneNumber);
+                    shotMaps.add(copy);
+                }
+            }
+        }
+        if (shotMaps.isEmpty()) {
+            for (Map<String, Object> sequence : mapListValue(payload.get("sequences"))) {
+                Integer sequenceNumber = integerValue(sequence.get("sequenceNumber"), null);
+                for (Map<String, Object> scene : mapListValue(sequence.get("scenes"))) {
+                    Integer sceneNumber = integerValue(scene.get("sceneNumber"), null);
+                    for (Map<String, Object> shot : mapListValue(scene.get("shots"))) {
+                        Map<String, Object> copy = new LinkedHashMap<>(shot);
+                        copy.putIfAbsent("sequenceNumber", sequenceNumber);
+                        copy.putIfAbsent("sceneNumber", sceneNumber);
+                        shotMaps.add(copy);
+                    }
+                }
+            }
+        }
+        return shotMaps.stream()
+                .map(shot -> objectMapper.convertValue(shot, GeneratedScriptResponse.CinematicShot.class))
+                .toList();
+    }
+
+    private Map<String, Object> extractStructuredProviderPayload(Map<String, Object> providerOutput, String... wrapperKeys) {
+        if (providerOutput == null || providerOutput.isEmpty()) {
+            return Map.of();
+        }
+        for (String key : wrapperKeys) {
+            Map<String, Object> nested = mapValue(providerOutput.get(key));
+            if (!nested.isEmpty()) {
+                return nested;
+            }
+        }
+
+        Map<String, Object> rawTextPayload = rawTextJsonMap(providerOutput.get("rawText"));
+        if (!rawTextPayload.isEmpty()) {
+            for (String key : wrapperKeys) {
+                Map<String, Object> nested = mapValue(rawTextPayload.get(key));
+                if (!nested.isEmpty()) {
+                    return nested;
+                }
+            }
+            return rawTextPayload;
+        }
+
+        return providerPayloadWithoutMetadata(providerOutput);
+    }
+
+    private Map<String, Object> providerPayloadWithoutMetadata(Map<String, Object> providerOutput) {
+        if (providerOutput == null || providerOutput.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> payload = new LinkedHashMap<>(providerOutput);
+        payload.remove("rawText");
+        payload.remove("provider");
+        payload.remove("model");
+        payload.remove("promptType");
+        payload.remove("status");
+        payload.remove("responseId");
+        payload.remove("tokenUsage");
+        payload.remove("promptFeedback");
+        payload.remove("finishReason");
+        payload.remove("finishReasons");
+        return payload;
+    }
+
+    private boolean shouldRetryScreenplayGeneration(Map<String, Object> diagnostics) {
+        String reason = stringValue(diagnostics == null ? null : diagnostics.get("failureReason")).toUpperCase(Locale.ROOT);
+        return reason.contains("RAW_TEXT")
+                || reason.contains("TRUNCATED")
+                || reason.contains("MISSING_SHOTS")
+                || reason.contains("NO_STRUCTURED")
+                || reason.contains("CONVERSION_FAILED");
+    }
+
+    private Map<String, Object> compactScreenplayRetryInput(
+            Map<String, Object> originalProviderInput,
+            String originalRenderedPrompt,
+            Map<String, Object> firstAttemptDiagnostics,
+            int durationSeconds
+    ) {
+        Map<String, Object> retryInput = new LinkedHashMap<>(originalProviderInput == null ? Map.of() : originalProviderInput);
+        String failureReason = stringValue(firstAttemptDiagnostics == null ? null : firstAttemptDiagnostics.get("failureReason"), "");
+        String shotGuidance = compactShotGuidance(durationSeconds);
+
+        Map<String, Object> retryContext = new LinkedHashMap<>(mapValue(retryInput.get("context")));
+        retryContext.put("screenplayRetryMode", "COMPACT_JSON");
+        retryContext.put("previousFailureReason", failureReason);
+        retryContext.put("shotCountGuidance", shotGuidance);
+        retryInput.put("context", retryContext);
+        retryInput.put("screenplayRetryMode", "COMPACT_JSON");
+        retryInput.put("previousFailureReason", failureReason);
+        retryInput.put("renderedPrompt",
+                defaultString(originalRenderedPrompt, stringValue(retryInput.get("renderedPrompt")))
+                        + compactScreenplayRetryInstruction(failureReason, shotGuidance));
+        return retryInput;
+    }
+
+    private String compactScreenplayRetryInstruction(String failureReason, String shotGuidance) {
+        return "\n\nBACKEND RETRY MODE - COMPACT SCREENPLAY JSON\n"
+                + "The previous response failed validation because: " + defaultString(failureReason, "UNKNOWN") + ".\n"
+                + "Return one complete parseable JSON object now. Do not return markdown, prose, explanations, or partial JSON.\n"
+                + "Compact the screenplay so it fits safely in the output budget:\n"
+                + "- Use " + shotGuidance + ".\n"
+                + "- Keep every string field to one short sentence. No paragraphs.\n"
+                + "- Prefer top-level shots for micro_short, short_form, and medium_form.\n"
+                + "- Keep continuityBible, soundDesignPlan, backgroundMusicPlan, resourceRequirements, and postProductionNotes present but concise.\n"
+                + "- Every shot must still include numeric timing, characters, blockingNotes, lighting, soundDesign with ambient_bed and sync_hit, ambientBedDescription, syncHitDescription, backgroundMusicCue, captionTrack, safetyFlags, resourceRequirements, postProductionNotes, and sketchPrompt.\n"
+                + "- If a detail is unknown, use empty string, empty array, empty object, 0, 0.0, or false. Do not omit keys.\n"
+                + "- Close every array and object. The final character must be }.\n";
+    }
+
+    private String compactShotGuidance(int durationSeconds) {
+        if (durationSeconds <= 20) {
+            return "3 to 5 top-level shots";
+        }
+        if (durationSeconds <= 60) {
+            return "5 to 9 top-level shots";
+        }
+        if (durationSeconds <= 180) {
+            return "10 to 18 top-level shots, favoring the lower count when the story allows it";
+        }
+        if (durationSeconds <= 600) {
+            return "scene groups with 25 to 50 total nested shots, favoring compact shot descriptions";
+        }
+        if (durationSeconds <= 1800) {
+            return "scene groups with 80 to 160 total nested shots, using concise shot objects";
+        }
+        return "sequence groups with concise nested scenes and shots, using the minimum complete shot count for the story";
+    }
+
+    private Map<String, Object> storyScriptFields(Map<String, Object> payload) {
+        return retainKeys(payload,
+                "projectTitle",
+                "duration",
+                "category",
+                "dialogueLanguage",
+                "screenType",
+                "logline",
+                "centralConflict",
+                "storyline",
+                "emotionalArc",
+                "hook",
+                "endingPayoff",
+                "setting",
+                "inferredTone",
+                "characters",
+                "beats");
+    }
+
+    private Map<String, Object> cinematicScriptFields(Map<String, Object> payload) {
+        return payload == null ? new LinkedHashMap<>() : new LinkedHashMap<>(payload);
+    }
+
+    private Map<String, Object> retainKeys(Map<String, Object> payload, String... keys) {
+        Map<String, Object> retained = new LinkedHashMap<>();
+        if (payload == null) {
+            return retained;
+        }
+        for (String key : keys) {
+            Object value = payload.get(key);
+            if (value != null) {
+                retained.put(key, value);
+            }
+        }
+        return retained;
+    }
+
+    private void populateAiOutputDiagnostics(
+            Map<String, Object> diagnostics,
+            String promptType,
+            Map<String, Object> providerOutput
+    ) {
+        if (diagnostics == null) {
+            return;
+        }
+        diagnostics.put("promptType", promptType);
+        diagnostics.put("providerKeys", providerOutput == null ? List.of() : providerOutput.keySet().stream().toList());
+        diagnostics.put("hasRawText", providerOutput != null && providerOutput.get("rawText") != null);
+        diagnostics.put("rawTextPreview", providerOutput == null ? "" : truncate(stringValue(providerOutput.get("rawText")), 4000));
+        diagnostics.put("finishReason", providerOutput == null ? "" : stringValue(providerOutput.get("finishReason")));
+        diagnostics.put("finishReasons", providerOutput == null ? List.of() : firstListValue(providerOutput.get("finishReasons")));
+        diagnostics.put("tokenUsage", providerOutput == null ? Map.of() : mapValue(providerOutput.get("tokenUsage")));
+        diagnostics.put("providerOutputPreview", truncate(toJson(providerOutput == null ? Map.of() : providerOutput), 4000));
+    }
+
+    private void populatePayloadDiagnostics(Map<String, Object> diagnostics, Map<String, Object> payload) {
+        if (diagnostics == null) {
+            return;
+        }
+        diagnostics.put("payloadKeys", payload == null ? List.of() : payload.keySet().stream().toList());
+        diagnostics.put("payloadPreview", truncate(toJson(payload == null ? Map.of() : payload), 4000));
+    }
+
+    private String rawTextFailureReason(Map<String, Object> providerOutput, String fallback) {
+        if (providerOutput == null || providerOutput.isEmpty()) {
+            return fallback;
+        }
+        if (isMaxTokensFinish(providerOutput)) {
+            return "RAW_TEXT_TRUNCATED_BY_MAX_OUTPUT_TOKENS";
+        }
+        if (providerOutput.get("rawText") != null) {
+            return "RAW_TEXT_JSON_PARSE_FAILED";
+        }
+        return fallback;
+    }
+
+    private String missingShotsFailureReason(Map<String, Object> providerOutput, Map<String, Object> retainedPayload) {
+        if (isMaxTokensFinish(providerOutput)) {
+            return "RAW_TEXT_TRUNCATED_BEFORE_SHOTS";
+        }
+        if (providerOutput != null && providerOutput.get("rawText") != null && (retainedPayload == null || retainedPayload.isEmpty())) {
+            return "RAW_TEXT_JSON_PARSE_FAILED";
+        }
+        return "MISSING_SHOTS";
+    }
+
+    private boolean isMaxTokensFinish(Map<String, Object> providerOutput) {
+        String reason = stringValue(providerOutput == null ? null : providerOutput.get("finishReason")).toUpperCase(Locale.ROOT);
+        if (reason.contains("MAX_TOKEN") || reason.contains("MAX_OUTPUT")) {
+            return true;
+        }
+        for (Object item : firstListValue(providerOutput == null ? null : providerOutput.get("finishReasons"))) {
+            String text = stringValue(item).toUpperCase(Locale.ROOT);
+            if (text.contains("MAX_TOKEN") || text.contains("MAX_OUTPUT")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<String, Object> rawPromptResponse(
+            UUID promptRunId,
+            String promptType,
+            Map<String, Object> providerOutput,
+            Map<String, Object> diagnostics
+    ) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        if (promptRunId != null) {
+            response.put("promptRunId", promptRunId.toString());
+        }
+        response.put("promptType", defaultString(promptType, ""));
+        response.put("provider", creatorAiService.providerName());
+        response.put("model", creatorAiService.modelName());
+        response.put("providerOutput", copyDebugMap(providerOutput));
+        response.put("diagnostics", copyDebugMap(diagnostics));
+        return response;
+    }
+
+    private Map<String, Object> rawPromptDebugPayload(
+            String promptType,
+            Map<String, Object> providerOutput,
+            Map<String, Object> diagnostics
+    ) {
+        Map<String, Object> debug = new LinkedHashMap<>();
+        debug.put("rawPromptResponse", rawPromptResponse(null, promptType, providerOutput, diagnostics));
+        return debug;
+    }
+
+    private Map<String, Object> rawPromptFailureOutput(
+            RuntimeException ex,
+            String promptType,
+            Map<String, Object> providerOutput,
+            Map<String, Object> diagnostics
+    ) {
+        if (ex instanceof CreatorAiOutputException aiOutputException && !aiOutputException.getDebugPayload().isEmpty()) {
+            return new LinkedHashMap<>(aiOutputException.getDebugPayload());
+        }
+        return rawPromptDebugPayload(promptType, providerOutput, diagnostics);
+    }
+
+    private Map<String, Object> copyDebugMap(Map<String, Object> payload) {
+        return payload == null ? new LinkedHashMap<>() : new LinkedHashMap<>(payload);
+    }
+
+    private Map<String, Object> rawTextJsonMap(Object rawText) {
+        String text = stripJsonFence(stringValue(rawText).trim());
+        if (text.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(text, new TypeReference<LinkedHashMap<String, Object>>() {
+            });
+        } catch (JsonProcessingException ex) {
+            String objectJson = firstBalancedJsonObject(text);
+            if (!objectJson.isBlank()) {
+                try {
+                    return objectMapper.readValue(objectJson, new TypeReference<LinkedHashMap<String, Object>>() {
+                    });
+                } catch (JsonProcessingException ignored) {
+                    return Map.of();
+                }
+            }
+            return Map.of();
+        }
+    }
+
+    private String firstBalancedJsonObject(String text) {
+        int start = text == null ? -1 : text.indexOf('{');
+        if (start < 0) {
+            return "";
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int index = start; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (character == '\\' && inString) {
+                escaped = true;
+                continue;
+            }
+            if (character == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (character == '{') {
+                depth++;
+            } else if (character == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, index + 1).trim();
+                }
+            }
+        }
+        return "";
+    }
+
+    private List<Object> firstListValue(Object value) {
+        if (value instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        return List.of();
+    }
+
     private List<GeneratedStoryScriptResponse.CharacterProfile> characterProfilesFor(
             CreatorIdea storyIdea,
             String categoryCode,
@@ -699,6 +1916,42 @@ public class IdeaService {
             String dialogueLanguage
     ) {
         String category = defaultString(categoryCode, "creator").toLowerCase(Locale.ROOT);
+        if (category.contains("politic") || category.contains("news")) {
+            return List.of(
+                    GeneratedStoryScriptResponse.CharacterProfile.builder()
+                            .name(isHindiLikeLanguage(dialogueLanguage) ? "Creator" : "Commentator")
+                            .role("Neutral creator commentator")
+                            .gender("Any")
+                            .age("26")
+                            .ageRange("22-35")
+                            .look("Everyday creator look, expressive face, clean background, phone-friendly framing.")
+                            .profile("A neutral short-form creator interpreting the silent public moment without impersonating any politician.")
+                            .persona("Observant, restrained, curious, and careful with claims.")
+                            .backstory(defaultString(storyIdea.getSummary(), "Notices a silent political reaction and turns it into a non-partisan observation about body language and public perception."))
+                            .motivation("Make viewers notice the non-verbal story without adding unsupported claims.")
+                            .fearOrBlock("Overexplaining the moment or sounding biased.")
+                            .relationshipToStory("Carries the viewer through the observation and keeps the piece grounded.")
+                            .speakingStyle(languageInstructionFor(dialogueLanguage) + ", neutral, concise, and non-defamatory")
+                            .visualIdentity("Simple creator setup, readable face, neutral clothing, no party colors as costume.")
+                            .build(),
+                    GeneratedStoryScriptResponse.CharacterProfile.builder()
+                            .name(isHindiLikeLanguage(dialogueLanguage) ? "Dost" : "Viewer Friend")
+                            .role("Audience proxy")
+                            .gender("Any")
+                            .age("28")
+                            .ageRange("22-40")
+                            .look("Casual viewer styling, simple reaction expression, minimal movement.")
+                            .profile("Represents the audience asking what the silent reaction could mean.")
+                            .persona("Curious but skeptical; asks for context instead of accepting a hot take.")
+                            .backstory("Has seen many over-edited political clips and wants a cleaner read of the moment.")
+                            .motivation("Push the creator to explain the observation clearly and fairly.")
+                            .fearOrBlock("Turning a body-language moment into a false claim.")
+                            .relationshipToStory("Creates contrast and keeps the interpretation responsible.")
+                            .speakingStyle(languageInstructionFor(dialogueLanguage) + ", conversational and balanced")
+                            .visualIdentity("Subtle reaction, side glance, easy to read in a phone frame.")
+                            .build()
+            );
+        }
         String mainName = isHindiLikeLanguage(dialogueLanguage) ? "Priya" : "Asha";
         String friendName = isHindiLikeLanguage(dialogueLanguage) ? "Neha" : "Maya";
         String observerName = category.contains("family") || inferredTone.contains("comedy") ? "Aunty" : "Rohan";
@@ -836,15 +2089,18 @@ public class IdeaService {
             UUID lockedIdeaId,
             UUID promptRunId,
             GeneratedStoryScriptResponse.StoryScript storyScript,
-            String scriptText
+            String scriptText,
+            Map<String, Object> rawPromptResponse
     ) {
         return GeneratedStoryScriptResponse.builder()
                 .ideaId(savedIdea.getId())
                 .lockedIdeaId(lockedIdeaId)
+                .projectId(savedIdea.getProjectId())
                 .promptRunId(promptRunId)
                 .title(savedIdea.getTitle())
                 .scriptText(scriptText)
                 .scriptJson(storyScript)
+                .rawPromptResponse(rawPromptResponse)
                 .durationSeconds(savedIdea.getDurationSeconds())
                 .status(savedIdea.getStatus())
                 .generatedAt(savedIdea.getUpdatedAt())
@@ -978,7 +2234,7 @@ public class IdeaService {
                 .shotNumber(shotNumber)
                 .startTime(formatTime(startSecond))
                 .endTime(formatTime(endSecond))
-                .durationSeconds(Math.max(1, endSecond - startSecond))
+                .durationSeconds((double) Math.max(1, endSecond - startSecond))
                 .title("%02d. %s".formatted(shotNumber, titleForPhase(phase)))
                 .purpose(purposeForPhase(phase))
                 .shotType(shotType)
@@ -1000,11 +2256,11 @@ public class IdeaService {
                 .environment(environmentFor(categoryCode))
                 .action(action)
                 .voiceOver(voiceOverFor(phase, dialogueLanguage))
-                .dialogue(dialogueForPhase(phase, dialogueLanguage))
+                .dialogue(dialogueMapForPhase(phase, dialogueLanguage))
                 .textOverlay(textOverlayFor(phase, dialogueLanguage))
                 .transition(transitionFor(phase))
-                .soundDesign(soundDesignFor(phase))
-                .editingNotes(editingNotesFor(phase))
+                .soundDesign(new ArrayList<Object>(soundDesignFor(phase)))
+                .editingNotes(new ArrayList<Object>(editingNotesFor(phase)))
                 .retentionGoal(retentionGoalFor(phase))
                 .creatorDirection(creatorDirectionFor(phase))
                 .subtitlePosition("lower-middle")
@@ -1054,7 +2310,7 @@ public class IdeaService {
         StringBuilder builder = new StringBuilder();
         builder.append("Title: ").append(idea.getTitle()).append("\n\n");
         builder.append("Summary: ").append(defaultString(idea.getSummary(), "Generated creator script.")).append("\n\n");
-        for (GeneratedScriptResponse.CinematicShot scene : scenes) {
+        for (GeneratedScriptResponse.CinematicShot scene : scenes == null ? List.<GeneratedScriptResponse.CinematicShot>of() : scenes) {
             builder.append("Scene ").append(scene.getShotNumber())
                     .append(" (").append(scene.getStartTime()).append(" - ").append(scene.getEndTime()).append(")\n");
             builder.append("Visual: ").append(scene.getAction()).append("\n");
@@ -1076,19 +2332,529 @@ public class IdeaService {
         });
     }
 
+    private void enrichScriptPayloadWithProductionPlanTags(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            List<ShotProductionPlanTagResponse> productionPlanTags
+    ) {
+        if (scriptPayload == null) {
+            return;
+        }
+        List<Map<String, Object>> tagMaps = productionPlanTagMaps(productionPlanTags, false);
+        scriptPayload.putExtra("productionPlanTags", tagMaps);
+        scriptPayload.putExtra("productionPlanTagCount", tagMaps.size());
+
+        Map<Integer, ShotProductionPlanTagResponse> planByShotNumber = new LinkedHashMap<>();
+        for (ShotProductionPlanTagResponse tag : productionPlanTags == null ? List.<ShotProductionPlanTagResponse>of() : productionPlanTags) {
+            if (tag != null && tag.shotNumber() != null) {
+                planByShotNumber.put(tag.shotNumber(), tag);
+            }
+        }
+
+        List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
+        if (shots == null) {
+            return;
+        }
+        for (int index = 0; index < shots.size(); index++) {
+            GeneratedScriptResponse.CinematicShot shot = shots.get(index);
+            if (shot == null) {
+                continue;
+            }
+            int shotNumber = shot.getShotNumber() == null ? index + 1 : shot.getShotNumber();
+            ShotProductionPlanTagResponse plan = planByShotNumber.get(shotNumber);
+            if (plan == null) {
+                continue;
+            }
+            shot.putExtra("shotPlanId", plan.planId() == null ? "" : plan.planId().toString());
+            shot.putExtra("styleKey", plan.styleKey());
+            shot.putExtra("storyboardTag", plan.storyboardTag() == null ? Map.of() : plan.storyboardTag());
+            shot.putExtra("lightingBuildSheetTag", plan.lightingBuildSheetTag() == null ? Map.of() : plan.lightingBuildSheetTag());
+            shot.putExtra("cameraPlanSheetTag", plan.cameraPlanSheetTag() == null ? Map.of() : plan.cameraPlanSheetTag());
+            shot.putExtra("productionPromptRunIds", plan.promptRunIds() == null ? Map.of() : plan.promptRunIds());
+        }
+    }
+
+    private ProductionPlanGenerationResult generateProductionPlanTagsIfPossible(
+            CreatorScript script,
+            Map<String, Object> scriptPayloadMap,
+            List<Map<String, Object>> shotPayloads
+    ) {
+        if (shotPayloads == null || shotPayloads.isEmpty()) {
+            return new ProductionPlanGenerationResult(List.of(), "SKIPPED", "No screenplay shots were available for production plan tags.", Map.of());
+        }
+        try {
+            List<ShotProductionPlanTagResponse> tags =
+                    productionPlanTagService.generateTagsForScript(script, scriptPayloadMap, shotPayloads, null);
+            return new ProductionPlanGenerationResult(tags, "GENERATED", "", Map.of());
+        } catch (RuntimeException ex) {
+            String message = generationExceptionMessage(ex);
+            Map<String, Object> debug = ex instanceof CreatorAiOutputException aiOutputException
+                    ? new LinkedHashMap<>(aiOutputException.getDebugPayload())
+                    : Map.of();
+            log.warn(
+                    "Creator screenplay generated but production plan tags failed scriptId={} storyIdeaId={} reason={}",
+                    script == null ? null : script.getId(),
+                    script == null ? null : script.getStoryIdeaId(),
+                    message,
+                    ex
+            );
+            return new ProductionPlanGenerationResult(List.of(), "FAILED", message, debug);
+        }
+    }
+
+    private ProductionPlanGenerationResult productionPlanNotStarted() {
+        return new ProductionPlanGenerationResult(
+                List.of(),
+                "NOT_STARTED",
+                "Production plan JSON has not been generated yet. Use the shot plan generation step after reviewing the screenplay.",
+                Map.of()
+        );
+    }
+
+    private void putProductionPlanStatus(
+            Map<String, Object> scriptPayloadMap,
+            ProductionPlanGenerationResult productionPlanResult
+    ) {
+        if (scriptPayloadMap == null || productionPlanResult == null) {
+            return;
+        }
+        scriptPayloadMap.put("productionPlanStatus", productionPlanResult.status());
+        scriptPayloadMap.put("productionPlanTagCount", productionPlanResult.tags().size());
+        if (!productionPlanResult.error().isBlank()) {
+            scriptPayloadMap.put("productionPlanError", productionPlanResult.error());
+        }
+        if (!productionPlanResult.debug().isEmpty()) {
+            scriptPayloadMap.put("productionPlanDebug", productionPlanResult.debug());
+        }
+    }
+
+    private String generationExceptionMessage(RuntimeException ex) {
+        if (ex instanceof ResponseStatusException responseStatusException) {
+            return defaultString(responseStatusException.getReason(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+        }
+        return defaultString(ex == null ? null : ex.getMessage(), ex == null ? "Generation failed." : ex.getClass().getSimpleName());
+    }
+
+    private void stripEmbeddedProductionPlanTags(GeneratedScriptResponse.CinematicScript scriptPayload) {
+        if (scriptPayload == null) {
+            return;
+        }
+        scriptPayload.getExtra().remove("productionPlanTags");
+        scriptPayload.getExtra().remove("productionPlanTagCount");
+        if (scriptPayload.getShots() == null) {
+            return;
+        }
+        for (GeneratedScriptResponse.CinematicShot shot : scriptPayload.getShots()) {
+            if (shot == null) {
+                continue;
+            }
+            shot.getExtra().remove("shotPlanId");
+            shot.getExtra().remove("styleKey");
+            shot.getExtra().remove("storyboardTag");
+            shot.getExtra().remove("lightingBuildSheetTag");
+            shot.getExtra().remove("cameraPlanSheetTag");
+            shot.getExtra().remove("productionPromptRunIds");
+        }
+    }
+
+    private void enrichAudioAndMusicDesign(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            String categoryCode,
+            String inferredTone
+    ) {
+        if (scriptPayload == null) {
+            return;
+        }
+        String tone = defaultString(inferredTone, defaultString(scriptPayload.getInferredTone(), "emotionally clear, practical, and creator-friendly"));
+        String category = defaultString(categoryCode, defaultString(scriptPayload.getCategory(), "creator"));
+        String musicMood = backgroundMusicMood(category, tone);
+
+        Map<String, Object> soundPlan = new LinkedHashMap<>();
+        soundPlan.put("mixIntent", "Dialogue and performance stay primary; sound design supports the emotional beat without covering speech.");
+        soundPlan.put("ambientBedStrategy", "Every shot carries a low continuous room/location bed so cuts do not feel empty.");
+        soundPlan.put("syncHitStrategy", "Each shot has one clear punctuation hit timed to the visual action, text reveal, or dialogue turn.");
+        soundPlan.put("dialogueMixNote", "Keep spoken lines forward, clean, and centered; duck music under dialogue.");
+        soundPlan.put("deliverables", List.of("ambient_bed", "sync_hit", "background_music_cue", "dialogue_clean_track"));
+        scriptPayload.setSoundDesignPlan(nonEmptyMap(scriptPayload.getSoundDesignPlan(), soundPlan));
+
+        Map<String, Object> musicPlan = new LinkedHashMap<>();
+        musicPlan.put("musicMood", musicMood);
+        musicPlan.put("bpmRange", bpmRangeFor(tone));
+        musicPlan.put("instrumentation", instrumentationFor(category, tone));
+        musicPlan.put("energyCurve", "hook restraint -> mid-story pulse -> payoff lift -> clean tail for final caption");
+        musicPlan.put("duckingRule", "Music drops 6-9 dB under dialogue and rises only during silent action or payoff reaction.");
+        musicPlan.put("usageNote", "Use royalty-safe or original music only; avoid recognizable copyrighted tracks.");
+        scriptPayload.setBackgroundMusicPlan(nonEmptyMap(scriptPayload.getBackgroundMusicPlan(), musicPlan));
+
+        List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
+        if (shots == null || shots.isEmpty()) {
+            return;
+        }
+        int totalShots = scriptPayload.getTotalShots() == null || scriptPayload.getTotalShots() <= 0
+                ? shots.size()
+                : scriptPayload.getTotalShots();
+        for (GeneratedScriptResponse.CinematicShot shot : shots) {
+            if (shot == null) {
+                continue;
+            }
+            int shotNumber = shot.getShotNumber() == null ? 1 : shot.getShotNumber();
+            String phase = shotPhase(shotNumber, totalShots);
+            double start = secondsValue(shot.getStartTime(), Math.max(0, shotNumber - 1));
+            double duration = shot.getDurationSeconds() == null || shot.getDurationSeconds() <= 0
+                    ? Math.max(1d, secondsValue(shot.getEndTime(), start + 3d) - start)
+                    : shot.getDurationSeconds();
+            double end = secondsValue(shot.getEndTime(), start + duration);
+            String ambient = defaultString(
+                    firstSoundLayerDescription(shot.getSoundDesign(), "ambient_bed"),
+                    ambientBedFor(category, phase)
+            );
+            String sync = defaultString(
+                    firstSoundLayerDescription(shot.getSoundDesign(), "sync_hit"),
+                    syncHitFor(phase, shot)
+            );
+
+            shot.setSoundDesign(normalizedSoundDesignLayers(shot.getSoundDesign(), ambient, sync, start, end));
+            shot.setAmbientBedDescription(defaultString(shot.getAmbientBedDescription(), ambient));
+            shot.setSyncHitDescription(defaultString(shot.getSyncHitDescription(), sync));
+            shot.setBackgroundMusicCue(nonEmptyMap(shot.getBackgroundMusicCue(), backgroundMusicCueFor(phase, musicMood, start, end, duration)));
+            if (defaultString(shot.getAudioDescription(), "").isBlank()) {
+                shot.setAudioDescription("Ambient bed: " + ambient + ". Sync hit: " + sync + ". Music: " + musicMood + ".");
+            }
+        }
+    }
+
+    private Map<String, Object> backgroundMusicCueFor(String phase, String musicMood, double start, double end, double duration) {
+        Map<String, Object> cue = new LinkedHashMap<>();
+        cue.put("cueType", switch (phase) {
+            case "hook" -> "tension_hook";
+            case "payoff" -> "payoff_lift";
+            case "close" -> "resolve_tail";
+            default -> "light_pulse";
+        });
+        cue.put("musicMood", musicMood);
+        cue.put("startTimeSeconds", start);
+        cue.put("endTimeSeconds", end);
+        cue.put("durationSeconds", duration);
+        cue.put("volumeLevel", "low_under_dialogue");
+        cue.put("duckUnderDialogue", true);
+        cue.put("editNote", "Cut music on the visual transition; do not let the cue fight the spoken line.");
+        return cue;
+    }
+
+    private List<Object> normalizedSoundDesignLayers(List<Object> existing, String ambient, String sync, double start, double end) {
+        List<Object> layers = new ArrayList<>();
+        layers.add(soundLayer("ambient_bed", ambient, start, "low"));
+        layers.add(soundLayer("sync_hit", sync, Math.max(start, end - 0.35d), "high"));
+        for (Object item : existing == null ? List.of() : existing) {
+            Map<String, Object> map = mapValue(item);
+            String layerType = stringValue(map.get("layerType"));
+            if ("ambient_bed".equalsIgnoreCase(layerType) || "sync_hit".equalsIgnoreCase(layerType)) {
+                continue;
+            }
+            if (!map.isEmpty()) {
+                layers.add(map);
+            }
+        }
+        return layers;
+    }
+
+    private Map<String, Object> soundLayer(String layerType, String description, double timingSeconds, String volumeLevel) {
+        Map<String, Object> layer = new LinkedHashMap<>();
+        layer.put("layerType", layerType);
+        layer.put("description", description);
+        layer.put("timingSeconds", timingSeconds);
+        layer.put("volumeLevel", volumeLevel);
+        return layer;
+    }
+
+    private String firstSoundLayerDescription(List<Object> soundDesign, String layerType) {
+        if (soundDesign == null) {
+            return "";
+        }
+        for (Object item : soundDesign) {
+            Map<String, Object> map = mapValue(item);
+            if (!map.isEmpty() && layerType.equalsIgnoreCase(stringValue(map.get("layerType")))) {
+                return stringValue(map.get("description"));
+            }
+        }
+        return "";
+    }
+
+    private String ambientBedFor(String categoryCode, String phase) {
+        String category = defaultString(categoryCode, "creator").toLowerCase(Locale.ROOT);
+        if (category.contains("food")) {
+            return "Kitchen room tone + soft utensil movement + faint appliance hum";
+        }
+        if (category.contains("fitness")) {
+            return "Indoor workout room tone + shoe movement + soft breath texture";
+        }
+        if (category.contains("politic") || category.contains("news")) {
+            return "Neutral room tone + faint phone playback texture kept low";
+        }
+        if ("hook".equals(phase)) {
+            return "Low room ambience with a tiny pre-beat silence";
+        }
+        return "Clean room tone + subtle natural action sound";
+    }
+
+    private String syncHitFor(String phase, GeneratedScriptResponse.CinematicShot shot) {
+        String overlay = defaultString(shot == null ? null : shot.getTextOverlay(), "the beat");
+        return switch (phase) {
+            case "hook" -> "Soft whoosh hit as the hook text appears";
+            case "payoff" -> "Light musical lift on " + truncate(overlay, 40);
+            case "close" -> "Clean button hit under the final caption";
+            default -> "Small tactile hit matched to the main action";
+        };
+    }
+
+    private String backgroundMusicMood(String categoryCode, String tone) {
+        String text = (defaultString(categoryCode, "") + " " + defaultString(tone, "")).toLowerCase(Locale.ROOT);
+        if (text.contains("comedy") || text.contains("funny") || text.contains("relatable")) {
+            return "light playful pulse with soft comedic timing";
+        }
+        if (text.contains("romantic") || text.contains("relationship")) {
+            return "warm emotional pop bed with gentle lift";
+        }
+        if (text.contains("fitness") || text.contains("motivation") || text.contains("confidence")) {
+            return "clean motivational beat with restrained rise";
+        }
+        if (text.contains("politic") || text.contains("news")) {
+            return "minimal neutral tension bed, documentary-clean";
+        }
+        return "subtle creator-friendly bed with emotional lift at payoff";
+    }
+
+    private String bpmRangeFor(String tone) {
+        String text = defaultString(tone, "").toLowerCase(Locale.ROOT);
+        if (text.contains("urgent") || text.contains("fitness") || text.contains("motivation")) {
+            return "96-118 BPM";
+        }
+        if (text.contains("emotional") || text.contains("romantic")) {
+            return "70-88 BPM";
+        }
+        return "82-104 BPM";
+    }
+
+    private String instrumentationFor(String categoryCode, String tone) {
+        String text = (defaultString(categoryCode, "") + " " + defaultString(tone, "")).toLowerCase(Locale.ROOT);
+        if (text.contains("comedy")) {
+            return "soft pluck, muted percussion, light bass pulse";
+        }
+        if (text.contains("fitness") || text.contains("motivation")) {
+            return "clean kick, light clap, warm synth pulse";
+        }
+        if (text.contains("politic") || text.contains("news")) {
+            return "low pad, subtle tick, restrained documentary pulse";
+        }
+        return "warm pad, light percussion, simple melodic lift";
+    }
+
+    private double secondsValue(Object value, double fallback) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        String text = stringValue(value).trim();
+        if (text.contains(":")) {
+            String[] parts = text.split(":");
+            try {
+                return (Double.parseDouble(parts[0].replaceAll("[^0-9.\\-]", "")) * 60d)
+                        + Double.parseDouble(parts[1].replaceAll("[^0-9.\\-]", ""));
+            } catch (RuntimeException ignored) {
+                return fallback;
+            }
+        }
+        try {
+            return text.isBlank() ? fallback : Double.parseDouble(text.replaceAll("[^0-9.\\-]", ""));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private List<Map<String, Object>> productionPlanTagMaps(List<ShotProductionPlanTagResponse> productionPlanTags) {
+        return productionPlanTagMaps(productionPlanTags, true);
+    }
+
+    private List<Map<String, Object>> productionPlanTagMaps(List<ShotProductionPlanTagResponse> productionPlanTags, boolean includeRawPromptResponses) {
+        List<Map<String, Object>> tagMaps = objectMapper.convertValue(
+                productionPlanTags == null ? List.of() : productionPlanTags,
+                new TypeReference<List<Map<String, Object>>>() {
+                }
+        );
+        if (includeRawPromptResponses) {
+            return tagMaps;
+        }
+        for (Map<String, Object> tagMap : tagMaps) {
+            if (tagMap != null) {
+                tagMap.remove("rawPromptResponses");
+            }
+        }
+        return tagMaps;
+    }
+
+    private void putStoryStructure(Map<String, Object> scriptPayloadMap, GeneratedStoryScriptResponse.StoryScript storyScript) {
+        if (scriptPayloadMap == null || storyScript == null) {
+            return;
+        }
+        scriptPayloadMap.put("storyCharacters", toGenericMapList(storyScript.getCharacters()));
+        scriptPayloadMap.put("storyBeats", toGenericMapList(storyScript.getBeats()));
+        scriptPayloadMap.put("storyline", storyScript.getStoryline());
+        scriptPayloadMap.put("logline", storyScript.getLogline());
+        scriptPayloadMap.put("centralConflict", storyScript.getCentralConflict());
+        scriptPayloadMap.put("endingPayoff", storyScript.getEndingPayoff());
+    }
+
+    private void putScreenplayPlanningContext(
+            Map<String, Object> scriptPayloadMap,
+            String budgetTier,
+            List<Map<String, Object>> characterCastMappings,
+            List<Map<String, Object>> availableActors,
+            Map<String, Object> audienceDecision,
+            Map<String, Object> brandContext,
+            Map<String, Object> creatorContext
+    ) {
+        if (scriptPayloadMap == null) {
+            return;
+        }
+        scriptPayloadMap.put("budgetTier", defaultString(stringValue(scriptPayloadMap.get("budgetTier")), budgetTier));
+        scriptPayloadMap.put("characterCastMappings", characterCastMappings == null ? List.of() : characterCastMappings);
+        scriptPayloadMap.put("availableActors", availableActors == null ? List.of() : availableActors);
+        scriptPayloadMap.put("audienceDecision", audienceDecision == null ? Map.of() : audienceDecision);
+        scriptPayloadMap.put("brandContext", brandContext == null ? Map.of() : brandContext);
+        scriptPayloadMap.put("creatorContext", creatorContext == null ? Map.of() : creatorContext);
+    }
+
     private List<Map<String, Object>> toMapList(List<GeneratedScriptResponse.CinematicShot> shots) {
-        return objectMapper.convertValue(shots, new TypeReference<List<Map<String, Object>>>() {
+        return objectMapper.convertValue(shots == null ? List.of() : shots, new TypeReference<List<Map<String, Object>>>() {
         });
     }
 
-    private String dialogueText(Map<String, String> dialogue) {
+    private Map<String, Object> toGenericMap(Object value) {
+        if (value == null) {
+            return Map.of();
+        }
+        Map<String, Object> converted = objectMapper.convertValue(value, new TypeReference<LinkedHashMap<String, Object>>() {
+        });
+        Object cleaned = cleanPromptValue(converted);
+        return cleaned instanceof Map<?, ?> map
+                ? map.entrySet().stream()
+                .collect(LinkedHashMap::new, (target, entry) -> target.put(String.valueOf(entry.getKey()), entry.getValue()), LinkedHashMap::putAll)
+                : Map.of();
+    }
+
+    private List<Map<String, Object>> toGenericMapList(Object values) {
+        List<Map<String, Object>> converted = objectMapper.convertValue(values == null ? List.of() : values, new TypeReference<List<Map<String, Object>>>() {
+        });
+        Object cleaned = cleanPromptValue(converted);
+        if (!(cleaned instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> map = (Map<String, Object>) item;
+                    return map;
+                })
+                .toList();
+    }
+
+    private Object cleanPromptValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String string) {
+            String trimmed = string.trim();
+            return trimmed.isBlank() ? null : trimmed;
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> cleaned = new LinkedHashMap<>();
+            map.forEach((key, item) -> {
+                Object child = cleanPromptValue(item);
+                if (child != null) {
+                    cleaned.put(String.valueOf(key), child);
+                }
+            });
+            return cleaned.isEmpty() ? null : cleaned;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> cleaned = list.stream()
+                    .map(this::cleanPromptValue)
+                    .filter(item -> item != null)
+                    .toList();
+            return cleaned.isEmpty() ? null : cleaned;
+        }
+        return value;
+    }
+
+    private List<Map<String, Object>> nonEmptyList(List<Map<String, Object>> primary, List<Map<String, Object>> fallback) {
+        return primary == null || primary.isEmpty() ? fallback == null ? List.of() : fallback : primary;
+    }
+
+    private Map<String, Object> nonEmptyMap(Map<String, Object> primary, Map<String, Object> fallback) {
+        return primary == null || primary.isEmpty() ? fallback == null ? Map.of() : fallback : primary;
+    }
+
+    private List<Map<String, Object>> promptCharacterCastMappings(CreatorIdea storyIdea, UUID lockedIdeaId, UUID storyIdeaId) {
+        List<CreatorCharacterCastMapping> mappings = characterCastMappingRepository
+                .findByTenantIdAndUserIdAndLockedIdeaIdAndStoryIdeaIdOrderByCreatedAtAsc(
+                        storyIdea.getTenantId(),
+                        storyIdea.getUserId(),
+                        lockedIdeaId,
+                        storyIdeaId
+                );
+        return mappings.stream().map(this::mappingPromptMap).toList();
+    }
+
+    private Map<String, Object> mappingPromptMap(CreatorCharacterCastMapping mapping) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("characterKey", mapping.getCharacterKey());
+        data.put("scriptCharacterId", mapping.getScriptCharacterId());
+        data.put("characterName", mapping.getCharacterName());
+        data.put("characterRole", mapping.getCharacterRole());
+        data.put("castProfileId", mapping.getCastProfileId());
+        data.put("actorName", mapping.getCastDisplayName());
+        data.put("castPayload", mapping.getCastPayload());
+        return data;
+    }
+
+    private List<Map<String, Object>> promptAvailableActors(CreatorIdea storyIdea) {
+        List<CreatorProfile> profiles = profileRepository.findByTenantIdAndUserIdOrderByUpdatedAtDesc(storyIdea.getTenantId(), storyIdea.getUserId());
+        return profiles.stream().map(this::profilePromptMap).toList();
+    }
+
+    private Map<String, Object> profilePromptMap(CreatorProfile profile) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", profile.getId());
+        data.put("displayName", profile.getDisplayName());
+        data.put("roleInShort", profile.getRoleInShort());
+        data.put("confirmed", profile.isConfirmed());
+        data.put("attributes", profile.getAttributes());
+        return data;
+    }
+
+    private String dialogueText(Map<String, Object> dialogue) {
         if (dialogue == null || dialogue.isEmpty()) {
             return "";
         }
         return dialogue.entrySet().stream()
-                .map(entry -> entry.getKey() + ": " + entry.getValue())
+                .map(entry -> entry.getKey() + ": " + dialogueValueText(entry.getValue()))
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("");
+    }
+
+    private String dialogueValueText(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream().map(this::dialogueValueText).filter(item -> !item.isBlank()).reduce((left, right) -> left + " / " + right).orElse("");
+        }
+        if (value instanceof Map<?, ?> map && map.get("line") != null) {
+            return String.valueOf(map.get("line"));
+        }
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private Map<String, Object> dialogueMapForPhase(String phase, String dialogueLanguage) {
+        Map<String, Object> dialogue = new LinkedHashMap<>();
+        dialogueForPhase(phase, dialogueLanguage).forEach(dialogue::put);
+        return dialogue;
     }
 
     private String listText(List<String> values) {
@@ -1109,16 +2875,53 @@ public class IdeaService {
                 """
                 update creator_projects
                    set selected_idea_id = ?,
+                       status = coalesce(?, status),
                        updated_at = now()
                  where id = ?
                    and tenant_id = ?
                    and user_id = ?
                 """,
                 idea.getId(),
+                idea.getStatus(),
                 idea.getProjectId(),
                 idea.getTenantId(),
                 idea.getUserId()
         );
+    }
+
+    private CreatorIdea ensureProjectOnLockedIdea(CreatorIdea lockedIdea) {
+        if (lockedIdea == null || lockedIdea.getProjectId() != null) {
+            return lockedIdea;
+        }
+        Map<String, Object> context = lockedIdea.getSelectionContext() == null ? Map.of() : lockedIdea.getSelectionContext();
+        CreatorProject project = projectService.ensureProjectForLockedIdea(
+                null,
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                lockedIdea.getTitle(),
+                lockedIdea.getSummary(),
+                lockedIdea.getSource(),
+                lockedIdea.getTrendId(),
+                stringValue(context.get("platformCode"), null),
+                stringValue(context.get("categoryCode"), null),
+                stringValue(context.get("countryCode"), null),
+                stringValue(context.get("timeframe"), null),
+                lockedIdea.getDurationSeconds(),
+                context
+        );
+        lockedIdea.setProjectId(project.getId());
+        lockedIdea.setUpdatedAt(OffsetDateTime.now());
+        return ideaRepository.save(lockedIdea);
+    }
+
+    private CreatorIdea ensureProjectOnStoryIdea(CreatorIdea lockedIdea, CreatorIdea storyIdea) {
+        if (storyIdea == null || storyIdea.getProjectId() != null) {
+            return storyIdea;
+        }
+        CreatorIdea projectLockedIdea = ensureProjectOnLockedIdea(lockedIdea);
+        storyIdea.setProjectId(projectLockedIdea.getProjectId());
+        storyIdea.setUpdatedAt(OffsetDateTime.now());
+        return ideaRepository.save(storyIdea);
     }
 
     private Pageable normalizePageable(Pageable pageable) {
@@ -1140,6 +2943,7 @@ public class IdeaService {
         return new GeneratedIdeaResponse(
                 idea.getId(),
                 UUID.fromString(String.valueOf(context.get("parentLockedIdeaId"))),
+                idea.getProjectId(),
                 idea.getTitle(),
                 idea.getSummary(),
                 idea.getSource(),
@@ -1182,7 +2986,7 @@ public class IdeaService {
 
     private int normalizeDuration(Integer requestedDuration, Integer ideaDuration) {
         int duration = requestedDuration == null ? (ideaDuration == null ? 30 : ideaDuration) : requestedDuration;
-        if (duration <= 15) {
+        if (duration < 15) {
             return 15;
         }
         if (duration <= 30) {
@@ -1191,7 +2995,10 @@ public class IdeaService {
         if (duration <= 45) {
             return 45;
         }
-        return 60;
+        if (duration <= 60) {
+            return 60;
+        }
+        return Math.min(duration, 10800);
     }
 
     private String normalizeDialogueLanguage(String requestedLanguage) {
@@ -1204,7 +3011,59 @@ public class IdeaService {
         if (screenType.contains("horizontal") || screenType.contains("landscape") || screenType.contains("16:9")) {
             return "horizontal";
         }
+        if (screenType.contains("square") || screenType.contains("1:1")) {
+            return "square";
+        }
+        if (screenType.contains("cinemascope") || screenType.contains("2.39")) {
+            return "cinemascope";
+        }
         return "vertical";
+    }
+
+    private String formatTierFor(int durationSeconds) {
+        if (durationSeconds <= 20) {
+            return "micro_short";
+        }
+        if (durationSeconds <= 60) {
+            return "short_form";
+        }
+        if (durationSeconds <= 180) {
+            return "medium_form";
+        }
+        if (durationSeconds <= 600) {
+            return "long_short";
+        }
+        if (durationSeconds <= 1800) {
+            return "episodic";
+        }
+        return "feature_film";
+    }
+
+    private String actStructureFor(String formatTier) {
+        return switch (defaultString(formatTier, "short_form")) {
+            case "micro_short", "short_form" -> "single_punch";
+            case "medium_form" -> "two_act";
+            case "long_short" -> "three_act_compressed";
+            case "episodic" -> "three_act_full";
+            case "feature_film" -> "save_the_cat";
+            default -> "single_punch";
+        };
+    }
+
+    private String inferBudgetTier(int durationSeconds) {
+        if (durationSeconds <= 60) {
+            return "zero_budget";
+        }
+        if (durationSeconds <= 180) {
+            return "micro_budget";
+        }
+        if (durationSeconds <= 600) {
+            return "indie";
+        }
+        if (durationSeconds <= 1800) {
+            return "mid_budget";
+        }
+        return "studio";
     }
 
     private String inferCategory(CreatorIdea idea) {
@@ -1217,10 +3076,51 @@ public class IdeaService {
         return category == null ? "creator" : String.valueOf(category);
     }
 
+    private String resolveStoryScriptCategory(String requestedCategory, CreatorIdea storyIdea, String ideaText) {
+        String currentCategory = defaultString(requestedCategory, inferCategory(storyIdea));
+        if (isAiInferCategory(currentCategory)) {
+            return "AI_INFER_FROM_IDEA";
+        }
+        return defaultString(currentCategory, "creator");
+    }
+
+    private String resolveScreenplayCategory(
+            String requestedCategory,
+            CreatorIdea storyIdea,
+            GeneratedStoryScriptResponse.StoryScript storyScript,
+            String ideaText
+    ) {
+        String currentCategory = defaultString(requestedCategory, defaultString(storyScript == null ? null : storyScript.getCategory(), inferCategory(storyIdea)));
+        if (isAiInferCategory(currentCategory)) {
+            return defaultString(storyScript == null ? null : storyScript.getCategory(), "AI_INFER_FROM_IDEA");
+        }
+        return defaultString(currentCategory, "creator");
+    }
+
+    private boolean isAiInferCategory(String category) {
+        String normalized = defaultString(category, "").trim().toLowerCase(Locale.ROOT);
+        return normalized.isBlank()
+                || normalized.equals("auto")
+                || normalized.equals("ai_infer")
+                || normalized.equals("ai_infer_from_idea")
+                || normalized.equals("infer")
+                || normalized.equals("dynamic")
+                || normalized.equals("creator");
+    }
+
     private String inferTone(String ideaText, String categoryCode) {
+        if (isAiInferCategory(categoryCode)) {
+            return "Infer the best tone dynamically from the written idea, including blended humor, emotion, commentary, discipline, or aspiration when the topic mixes worlds.";
+        }
         String text = (defaultString(ideaText, "") + " " + defaultString(categoryCode, "")).toLowerCase(Locale.ROOT);
+        if (text.matches(".*(modi|rahul|bjp|congress|election|parliament|politic|minister|rally|campaign).*")) {
+            return "neutral political commentary with restrained satire and responsible non-verbal analysis";
+        }
         if (text.matches(".*(funny|comedy|pov|saas|bahu|joke|relatable).*")) {
             return "relatable comedy with natural reactions";
+        }
+        if (text.matches(".*(pati|patni|husband|wife|couple|marriage|relationship).*")) {
+            return "relatable relationship comedy with natural reactions";
         }
         if (text.matches(".*(transformation|confidence|gym|fitness|self|motivation).*")) {
             return "motivational but grounded and realistic";
@@ -1377,6 +3277,24 @@ public class IdeaService {
 
     private String environmentFor(String categoryCode) {
         String category = defaultString(categoryCode, "creator").toLowerCase(Locale.ROOT);
+        if ((category.contains("politic") || category.contains("news")) && category.contains("fitness")) {
+            return "A practical setting that visually bridges public commentary with fitness, discipline, image, or physical effort";
+        }
+        if (category.contains("relationship") && category.contains("fitness")) {
+            return "A practical setting that visually bridges relationship comedy with fitness, routine, movement, or shared discipline";
+        }
+        if ((category.contains("politic") || category.contains("news")) && category.contains("food")) {
+            return "A practical setting that visually bridges public commentary with food, taste, budget, or everyday public reaction";
+        }
+        if (category.contains("relationship") && category.contains("food")) {
+            return "Home kitchen, dinner table, or street-food counter with domestic comedy staging";
+        }
+        if (category.contains("politic") || category.contains("news")) {
+            return "Neutral creator commentary setup, simple room, desk, or phone reaction frame with a public-clip reference";
+        }
+        if (category.contains("relationship")) {
+            return "Real home setting, living room, kitchen doorway, or everyday couple conversation space";
+        }
         if (category.contains("fitness")) {
             return "Simple gym corner, home workout space, or outdoor walking area";
         }
@@ -1805,8 +3723,258 @@ public class IdeaService {
         };
     }
 
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            return String.valueOf(value);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> mapValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        return Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> mapListValue(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> (Map<String, Object>) item)
+                .toList();
+    }
+
+    private Integer integerValue(Object value, Integer fallback) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null || String.valueOf(value).isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> firstMapList(Map<String, Object> source, String... keys) {
+        if (source == null) {
+            return List.of();
+        }
+        for (String key : keys) {
+            Object value = source.get(key);
+            if (value instanceof List<?> list) {
+                return list.stream()
+                        .filter(Map.class::isInstance)
+                        .map(item -> (Map<String, Object>) item)
+                        .toList();
+            }
+        }
+        return List.of();
+    }
+
+    private List<Map<String, Object>> rawTextIdeaMaps(Object rawText) {
+        String text = stripJsonFence(stringValue(rawText).trim());
+        if (text.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(text, new TypeReference<LinkedHashMap<String, Object>>() {
+            });
+            List<Map<String, Object>> ideas = firstMapList(parsed, "ideas", "storyIdeas", "candidates", "items", "results");
+            if (!ideas.isEmpty()) {
+                return ideas;
+            }
+        } catch (JsonProcessingException ignored) {
+            // Some providers return a useful JSON prefix even when the full response is truncated.
+        }
+
+        try {
+            return objectMapper.readValue(text, new TypeReference<List<Map<String, Object>>>() {
+            });
+        } catch (JsonProcessingException ignored) {
+            return salvageCompleteIdeaObjects(text);
+        }
+    }
+
+    private String stripJsonFence(String text) {
+        if (text.startsWith("```")) {
+            int firstLineEnd = text.indexOf('\n');
+            int closingFence = text.lastIndexOf("```");
+            if (firstLineEnd >= 0 && closingFence > firstLineEnd) {
+                return text.substring(firstLineEnd + 1, closingFence).trim();
+            }
+        }
+        return text;
+    }
+
+    private List<Map<String, Object>> salvageCompleteIdeaObjects(String text) {
+        int ideasIndex = text.indexOf("\"ideas\"");
+        int arrayStart = ideasIndex >= 0 ? text.indexOf('[', ideasIndex) : text.indexOf('[');
+        if (arrayStart < 0) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> ideas = new ArrayList<>();
+        int depth = 0;
+        int objectStart = -1;
+        boolean inString = false;
+        boolean escaped = false;
+
+        for (int index = arrayStart + 1; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (character == '\\' && inString) {
+                escaped = true;
+                continue;
+            }
+            if (character == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (character == '{') {
+                if (depth == 0) {
+                    objectStart = index;
+                }
+                depth++;
+            } else if (character == '}') {
+                depth--;
+                if (depth == 0 && objectStart >= 0) {
+                    String objectJson = text.substring(objectStart, index + 1);
+                    try {
+                        ideas.add(objectMapper.readValue(objectJson, new TypeReference<LinkedHashMap<String, Object>>() {
+                        }));
+                    } catch (JsonProcessingException ignored) {
+                        // Keep any later complete objects instead of failing the whole provider response.
+                    }
+                    objectStart = -1;
+                }
+            }
+        }
+        return ideas;
+    }
+
+    private Object firstValue(Map<String, Object> source, String... keys) {
+        if (source == null) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = source.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        Object value = source.get(key);
+        if (value != null && !String.valueOf(value).isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private List<String> stringList(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(String::valueOf)
+                    .map(String::trim)
+                    .filter(item -> !item.isBlank())
+                    .toList();
+        }
+        if (value instanceof String string && !string.isBlank()) {
+            return List.of(string.split(","))
+                    .stream()
+                    .map(String::trim)
+                    .filter(item -> !item.isBlank())
+                    .toList();
+        }
+        return List.of();
+    }
+
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    private String stringValue(Object value, String fallback) {
+        String text = stringValue(value).trim();
+        return text.isBlank() ? fallback : text;
+    }
+
+    private record IdeaGenerationResult(
+            int generatedCount,
+            List<UUID> promptRunIds,
+            List<Map<String, Object>> providerOutputs
+    ) {
+    }
+
+    private record AiIdeaBatchResult(
+            List<IdeaCandidate> candidates,
+            UUID promptRunId,
+            Map<String, Object> providerOutput
+    ) {
+    }
+
+    private record GeneratedIdeaCandidate(
+            IdeaCandidate candidate,
+            UUID promptRunId
+    ) {
+    }
+
+    private record ProductionPlanGenerationResult(
+            List<ShotProductionPlanTagResponse> tags,
+            String status,
+            String error,
+            Map<String, Object> debug
+    ) {
+        private ProductionPlanGenerationResult {
+            tags = tags == null ? List.of() : tags;
+            status = status == null || status.isBlank() ? "SKIPPED" : status;
+            error = error == null ? "" : error;
+            debug = debug == null ? Map.of() : debug;
+        }
+    }
+
+    private record IdeaCandidate(
+            String title,
+            String summary,
+            List<String> hashtags,
+            Map<String, Object> creativeNotes
+    ) {
+        private String angle() {
+            Object hook = creativeNotes == null ? null : creativeNotes.get("hook");
+            return hook == null || String.valueOf(hook).isBlank() ? title : String.valueOf(hook);
+        }
+
+        private Map<String, Object> toMap() {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("title", title);
+            payload.put("description", summary);
+            payload.put("hashtags", hashtags == null ? List.of() : hashtags);
+            payload.put("creativeNotes", creativeNotes == null ? Map.of() : creativeNotes);
+            return payload;
+        }
     }
 
     private String languageBucket(String dialogueLanguage) {

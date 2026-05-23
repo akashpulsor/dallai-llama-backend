@@ -14,6 +14,8 @@ import java.util.Locale;
 @Service
 public class TrendService {
 
+    private static final String INDIA_COUNTRY_CODE = "IN";
+
     private final CreatorTrendRepository trendRepository;
 
     public TrendService(CreatorTrendRepository trendRepository) {
@@ -33,7 +35,7 @@ public class TrendService {
         return trendRepository.findRankedTrends(
                 normalizeLower(platform),
                 normalizeLower(category),
-                normalizeUpper(country),
+                trendCountryCode(),
                 effectiveDays == null ? null : OffsetDateTime.now().minusDays(effectiveDays),
                 pageable
         ).map(this::toResponse);
@@ -63,11 +65,9 @@ public class TrendService {
         return value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private String normalizeUpper(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value.trim().toUpperCase(Locale.ROOT);
+    private String trendCountryCode() {
+        // Creator trend reads are intentionally India-only for the current rollout.
+        return INDIA_COUNTRY_CODE;
     }
 
     private Integer resolveDays(Integer days, String timeframe) {

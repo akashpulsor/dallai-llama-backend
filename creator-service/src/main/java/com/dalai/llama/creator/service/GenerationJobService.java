@@ -3,6 +3,7 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.GenerationJobStatus;
 import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
+import com.dalai.llama.creator.dto.response.GenerationJobResponse;
 import com.dalai.llama.creator.repository.CreatorGenerationJobRepository;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -70,13 +72,90 @@ public class GenerationJobService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public CreatorGenerationJob failGenerationJob(UUID jobId, String errorMessage) {
+        return failGenerationJob(jobId, errorMessage, Map.of());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public CreatorGenerationJob failGenerationJob(UUID jobId, String errorMessage, Map<String, Object> outputPatch) {
         CreatorGenerationJob job = generationJobRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
         job.setStatus(GenerationJobStatus.FAILED.name());
         job.setProgress(100);
         job.setErrorMessage(errorMessage);
+        Map<String, Object> outputPayload = copyPayload(job.getOutputPayload());
+        if (errorMessage != null && !errorMessage.isBlank()) {
+            outputPayload.put("message", errorMessage);
+        }
+        if (outputPatch != null && !outputPatch.isEmpty()) {
+            outputPayload.putAll(outputPatch);
+        }
+        job.setOutputPayload(outputPayload);
         job.setCompletedAt(OffsetDateTime.now());
         return generationJobRepository.save(job);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public CreatorGenerationJob updateGenerationJobProgress(UUID jobId, int progress, String message) {
+        return updateGenerationJobProgress(jobId, progress, message, Map.of());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public CreatorGenerationJob updateGenerationJobProgress(UUID jobId, int progress, String message, Map<String, Object> outputPatch) {
+        CreatorGenerationJob job = generationJobRepository.findById(jobId)
+                .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        job.setStatus(GenerationJobStatus.RUNNING.name());
+        job.setProgress(Math.max(0, Math.min(99, progress)));
+        Map<String, Object> outputPayload = copyPayload(job.getOutputPayload());
+        if (message != null && !message.isBlank()) {
+            outputPayload.put("message", message);
+        }
+        if (outputPatch != null && !outputPatch.isEmpty()) {
+            outputPayload.putAll(outputPatch);
+        }
+        job.setOutputPayload(outputPayload);
+        if (job.getStartedAt() == null) {
+            job.setStartedAt(OffsetDateTime.now());
+        }
+        return generationJobRepository.save(job);
+    }
+
+    @Transactional(readOnly = true)
+    public GenerationJobResponse getGenerationJob(UUID jobId, String tenantId, String userId) {
+        CreatorGenerationJob job = generationJobRepository
+                .findByIdAndTenantIdAndUserId(
+                        jobId,
+                        defaultString(tenantId, "unknown"),
+                        defaultString(userId, "anonymous")
+                )
+                .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        return toResponse(job);
+    }
+
+    @Transactional(readOnly = true)
+    public List<GenerationJobResponse> listGenerationJobs(
+            String tenantId,
+            String userId,
+            String jobType,
+            UUID lockedIdeaId
+    ) {
+        String normalizedJobType = defaultString(jobType, "").trim();
+        String normalizedLockedIdeaId = lockedIdeaId == null ? "" : lockedIdeaId.toString();
+        return generationJobRepository
+                .findTop20ByTenantIdAndUserIdOrderByCreatedAtDesc(
+                        defaultString(tenantId, "unknown"),
+                        defaultString(userId, "anonymous")
+                )
+                .stream()
+                .filter(job -> normalizedJobType.isBlank() || normalizedJobType.equalsIgnoreCase(job.getJobType()))
+                .filter(job -> {
+                    if (normalizedLockedIdeaId.isBlank()) {
+                        return true;
+                    }
+                    String jobLockedIdeaId = stringValue(job.getInputPayload() == null ? null : job.getInputPayload().get("lockedIdeaId"), "");
+                    return normalizedLockedIdeaId.equals(jobLockedIdeaId);
+                })
+                .map(this::toResponse)
+                .toList();
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -148,5 +227,37 @@ public class GenerationJobService {
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    public GenerationJobResponse toResponse(CreatorGenerationJob job) {
+        Map<String, Object> outputPayload = copyPayload(job.getOutputPayload());
+        String message = stringValue(outputPayload.get("message"), defaultMessage(job));
+        return new GenerationJobResponse(
+                job.getId(),
+                job.getJobType(),
+                job.getStatus(),
+                job.getProgress(),
+                message,
+                copyPayload(job.getInputPayload()),
+                outputPayload,
+                job.getErrorMessage(),
+                job.getCreatedAt(),
+                job.getStartedAt(),
+                job.getCompletedAt()
+        );
+    }
+
+    private String defaultMessage(CreatorGenerationJob job) {
+        String status = defaultString(job.getStatus(), GenerationJobStatus.PENDING.name());
+        if (GenerationJobStatus.COMPLETED.name().equalsIgnoreCase(status)) {
+            return "Generation completed";
+        }
+        if (GenerationJobStatus.FAILED.name().equalsIgnoreCase(status)) {
+            return defaultString(job.getErrorMessage(), "Generation failed");
+        }
+        if (GenerationJobStatus.RUNNING.name().equalsIgnoreCase(status)) {
+            return "Generation in progress";
+        }
+        return "Generation queued";
     }
 }

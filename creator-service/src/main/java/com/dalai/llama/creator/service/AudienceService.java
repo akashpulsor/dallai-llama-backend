@@ -262,7 +262,9 @@ public class AudienceService {
         }
         entityManager.createNativeQuery("""
                 UPDATE creator_projects
-                SET selected_audience_id = :audienceId, updated_at = now()
+                SET selected_audience_id = :audienceId,
+                    status = 'AUDIENCE_CONFIRMED',
+                    updated_at = now()
                 WHERE id = :projectId AND tenant_id = :tenantId AND user_id = :userId
                 """)
                 .setParameter("audienceId", audienceId)

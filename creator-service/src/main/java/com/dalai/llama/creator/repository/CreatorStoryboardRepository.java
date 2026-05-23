@@ -9,4 +9,13 @@ import java.util.UUID;
 public interface CreatorStoryboardRepository extends JpaRepository<CreatorStoryboard, UUID> {
 
     Optional<CreatorStoryboard> findByIdAndTenantIdAndUserId(UUID id, String tenantId, String userId);
+
+    Optional<CreatorStoryboard> findTopByProjectIdAndIdeaIdAndTenantIdAndUserIdOrderByCreatedAtDesc(
+            UUID projectId,
+            UUID ideaId,
+            String tenantId,
+            String userId
+    );
+
+    Optional<CreatorStoryboard> findTopByIdeaIdAndTenantIdAndUserIdOrderByCreatedAtDesc(UUID ideaId, String tenantId, String userId);
 }

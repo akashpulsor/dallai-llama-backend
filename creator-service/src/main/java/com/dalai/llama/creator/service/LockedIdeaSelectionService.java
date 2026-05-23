@@ -1,6 +1,7 @@
 package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.domain.entity.CreatorIdea;
+import com.dalai.llama.creator.domain.entity.CreatorProject;
 import com.dalai.llama.creator.domain.entity.CreatorTrend;
 import com.dalai.llama.creator.dto.request.LockIdeaSelectionRequest;
 import com.dalai.llama.creator.dto.response.LockedIdeaSelectionResponse;
@@ -25,15 +26,18 @@ public class LockedIdeaSelectionService {
 
     private final CreatorIdeaRepository ideaRepository;
     private final CreatorTrendRepository trendRepository;
+    private final CreatorProjectService projectService;
     private final JdbcTemplate jdbcTemplate;
 
     public LockedIdeaSelectionService(
             CreatorIdeaRepository ideaRepository,
             CreatorTrendRepository trendRepository,
+            CreatorProjectService projectService,
             JdbcTemplate jdbcTemplate
     ) {
         this.ideaRepository = ideaRepository;
         this.trendRepository = trendRepository;
+        this.projectService = projectService;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -59,11 +63,26 @@ public class LockedIdeaSelectionService {
         String summary = defaultString(request.ideaText(), trend == null ? title : trend.getSummary());
         int durationSeconds = normalizeDuration(request.durationSeconds());
         Map<String, Object> selectionContext = buildSelectionContext(request, source, trend, durationSeconds, now);
+        CreatorProject project = projectService.ensureProjectForLockedIdea(
+                request.projectId(),
+                defaultString(tenantId, "unknown"),
+                defaultString(userId, "anonymous"),
+                title,
+                summary,
+                source,
+                trend == null ? request.trendId() : trend.getId(),
+                request.platformCode(),
+                request.categoryCode(),
+                request.countryCode(),
+                request.timeframe(),
+                durationSeconds,
+                selectionContext
+        );
 
         CreatorIdea idea = ideaRepository.save(CreatorIdea.builder()
                 .tenantId(defaultString(tenantId, "unknown"))
                 .userId(defaultString(userId, "anonymous"))
-                .projectId(request.projectId())
+                .projectId(project.getId())
                 .trendId(trend == null ? request.trendId() : trend.getId())
                 .source(source)
                 .title(title)
@@ -76,6 +95,7 @@ public class LockedIdeaSelectionService {
                 .updatedAt(now)
                 .build());
 
+        projectService.markSelectedIdea(idea);
         linkProjectSelection(idea);
         return toResponse(idea);
     }
@@ -107,10 +127,12 @@ public class LockedIdeaSelectionService {
     ) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("sourceType", source);
-        context.put("platformCode", request.platformCode());
-        context.put("categoryCode", request.categoryCode());
-        context.put("countryCode", request.countryCode());
-        context.put("timeframe", request.timeframe());
+        if ("TREND".equals(source)) {
+            putIfPresent(context, "platformCode", request.platformCode());
+            putIfPresent(context, "categoryCode", request.categoryCode());
+            putIfPresent(context, "countryCode", request.countryCode());
+            putIfPresent(context, "timeframe", request.timeframe());
+        }
         context.put("durationSeconds", durationSeconds);
         context.put("lockedAt", lockedAt.toString());
         context.put("selectionPayload", request.selectionPayload() == null ? Map.of() : request.selectionPayload());
@@ -195,6 +217,12 @@ public class LockedIdeaSelectionService {
 
     private String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
     }
 
     private String truncate(String value, int maxLength) {

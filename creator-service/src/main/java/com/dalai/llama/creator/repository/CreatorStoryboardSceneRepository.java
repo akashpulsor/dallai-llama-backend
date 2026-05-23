@@ -4,9 +4,12 @@ import com.dalai.llama.creator.domain.entity.CreatorStoryboardScene;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface CreatorStoryboardSceneRepository extends JpaRepository<CreatorStoryboardScene, UUID> {
 
     List<CreatorStoryboardScene> findByStoryboardIdOrderByShotNumberAsc(UUID storyboardId);
+
+    Optional<CreatorStoryboardScene> findByStoryboardIdAndShotNumber(UUID storyboardId, Integer shotNumber);
 }

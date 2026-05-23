@@ -15,6 +15,7 @@ public record CharacterCastMappingRequest(
         @NotEmpty List<@Valid CharacterCastMappingItem> mappings
 ) {
     public record CharacterCastMappingItem(
+            UUID scriptCharacterId,
             @NotBlank @Size(max = 160) String characterKey,
             @NotBlank @Size(max = 160) String characterName,
             @Size(max = 120) String characterRole,

@@ -15,6 +15,8 @@ public interface CreatorIdeaRepository extends JpaRepository<CreatorIdea, UUID> 
 
     List<CreatorIdea> findTop20ByTenantIdAndUserIdOrderByUpdatedAtDesc(String tenantId, String userId);
 
+    List<CreatorIdea> findTop20ByProjectIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID projectId, String tenantId, String userId);
+
     Optional<CreatorIdea> findByIdAndTenantIdAndUserId(UUID id, String tenantId, String userId);
 
     @Query(

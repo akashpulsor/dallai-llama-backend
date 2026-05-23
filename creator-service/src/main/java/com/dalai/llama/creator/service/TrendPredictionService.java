@@ -17,6 +17,8 @@ import com.dalai.llama.creator.repository.CreatorTrendRepository;
 import com.dalai.llama.creator.repository.CreatorTrendSignalRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,8 +36,9 @@ import java.util.UUID;
 @Service
 public class TrendPredictionService {
 
+    private static final Logger log = LoggerFactory.getLogger(TrendPredictionService.class);
     private static final String DEFAULT_PLATFORM = "instagram_reels";
-    private static final String DEFAULT_COUNTRY = "IN";
+    private static final String INDIA_COUNTRY_CODE = "IN";
     private static final int DEFAULT_HORIZON_HOURS = 24;
 
     private final CreatorCategoryRepository categoryRepository;
@@ -78,7 +81,7 @@ public class TrendPredictionService {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown or inactive category: " + request.category()));
 
         String platformCode = normalizeLowerOrDefault(request.platform(), DEFAULT_PLATFORM);
-        String countryCode = normalizeUpperOrDefault(request.country(), DEFAULT_COUNTRY);
+        String countryCode = trendCountryCode();
         int horizonHours = request.horizonHours() == null || request.horizonHours() <= 0
                 ? DEFAULT_HORIZON_HOURS
                 : request.horizonHours();
@@ -108,6 +111,17 @@ public class TrendPredictionService {
                 .filter(trend -> categoryCode.equals(trend.getCategoryCode()))
                 .map(this::toSourceTrendMap)
                 .toList();
+
+        log.info(
+                "Creator trend prediction started category={} platform={} country={} horizonHours={} mode={} recentSignals={} sourceTrends={}",
+                categoryCode,
+                platformCode,
+                countryCode,
+                horizonHours,
+                predictionMode,
+                evidence.size(),
+                sourceTrendEvidence.size()
+        );
 
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("categoryCode", categoryCode);
@@ -185,6 +199,18 @@ public class TrendPredictionService {
             List<TrendPredictionItemResponse> predictions =
                     persistPredictions(promptRun.getId(), categoryCode, platformCode, countryCode, evidence.size(), aiOutput);
 
+            log.info(
+                    "Creator trends persisted to creator_trends promptRunId={} jobId={} provider={} model={} platform={} category={} country={} savedTrendCount={}",
+                    promptRun.getId(),
+                    generationJob.getId(),
+                    creatorAiService.providerName(),
+                    creatorAiService.modelName(),
+                    platformCode,
+                    categoryCode,
+                    countryCode,
+                    predictions.size()
+            );
+
             Map<String, Object> jobOutput = new LinkedHashMap<>();
             jobOutput.put("promptRunId", promptRun.getId().toString());
             jobOutput.put("predictionCount", predictions.size());
@@ -223,10 +249,12 @@ public class TrendPredictionService {
         List<Map<String, Object>> outputPredictions = extractPredictions(aiOutput);
         List<TrendPredictionItemResponse> responses = new ArrayList<>();
         OffsetDateTime now = OffsetDateTime.now();
+        int skippedPredictions = 0;
 
         for (Map<String, Object> prediction : outputPredictions) {
             String title = truncate(stringValue(prediction.get("title")), 240);
             if (title == null || title.isBlank()) {
+                skippedPredictions++;
                 continue;
             }
             String summary = stringValue(prediction.get("summary"));
@@ -269,6 +297,17 @@ public class TrendPredictionService {
                     tags
             ));
         }
+
+        log.info(
+                "creator_trends insert complete promptRunId={} platform={} category={} country={} aiPredictionCount={} savedTrendCount={} skippedPredictionCount={}",
+                promptRunId,
+                platformCode,
+                categoryCode,
+                countryCode,
+                outputPredictions.size(),
+                responses.size(),
+                skippedPredictions
+        );
 
         return responses;
     }
@@ -323,6 +362,11 @@ public class TrendPredictionService {
 
     private String normalizeUpperOrDefault(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String trendCountryCode() {
+        // Creator trend prediction and persisted creator_trends are India-only for now.
+        return INDIA_COUNTRY_CODE;
     }
 
     private List<?> nullToList(List<?> value) {

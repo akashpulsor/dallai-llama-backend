@@ -10,11 +10,17 @@ import com.dalai.llama.creator.dto.response.CharacterCastMappingResponse;
 import com.dalai.llama.creator.dto.response.GeneratedIdeaResponse;
 import com.dalai.llama.creator.dto.response.GeneratedScriptResponse;
 import com.dalai.llama.creator.dto.response.GeneratedStoryScriptResponse;
+import com.dalai.llama.creator.dto.response.GenerationJobResponse;
 import com.dalai.llama.creator.dto.response.LockedIdeaSelectionResponse;
 import com.dalai.llama.creator.service.CharacterCastMappingService;
+import com.dalai.llama.creator.service.CreatorIdeaGenerationAsyncService;
+import com.dalai.llama.creator.service.CreatorScreenplayAsyncService;
+import com.dalai.llama.creator.service.GenerationJobService;
 import com.dalai.llama.creator.service.IdeaService;
 import com.dalai.llama.creator.service.LockedIdeaSelectionService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -36,18 +42,29 @@ import java.util.UUID;
 @RequestMapping("/api/v1/creator/locked-ideas")
 public class CreatorLockedIdeaController {
 
+    private static final Logger log = LoggerFactory.getLogger(CreatorLockedIdeaController.class);
+
     private final LockedIdeaSelectionService lockedIdeaSelectionService;
     private final IdeaService ideaService;
     private final CharacterCastMappingService characterCastMappingService;
+    private final CreatorIdeaGenerationAsyncService asyncIdeaGenerationService;
+    private final CreatorScreenplayAsyncService asyncScreenplayService;
+    private final GenerationJobService generationJobService;
 
     public CreatorLockedIdeaController(
             LockedIdeaSelectionService lockedIdeaSelectionService,
             IdeaService ideaService,
-            CharacterCastMappingService characterCastMappingService
+            CharacterCastMappingService characterCastMappingService,
+            CreatorIdeaGenerationAsyncService asyncIdeaGenerationService,
+            CreatorScreenplayAsyncService asyncScreenplayService,
+            GenerationJobService generationJobService
     ) {
         this.lockedIdeaSelectionService = lockedIdeaSelectionService;
         this.ideaService = ideaService;
         this.characterCastMappingService = characterCastMappingService;
+        this.asyncIdeaGenerationService = asyncIdeaGenerationService;
+        this.asyncScreenplayService = asyncScreenplayService;
+        this.generationJobService = generationJobService;
     }
 
     @PostMapping("/selection")
@@ -70,7 +87,61 @@ public class CreatorLockedIdeaController {
             @PageableDefault(size = 5) Pageable pageable
     ) {
         String userId = authentication == null ? "anonymous" : authentication.getName();
-        return ResponseEntity.ok(ideaService.generateIdeasForLockedBrief(lockedIdeaId, tenantId, userId, pageable));
+        log.info(
+                "Creator story ideas generation API requested lockedIdeaId={} tenantId={} userId={} page={} size={}",
+                lockedIdeaId,
+                tenantId,
+                userId,
+                pageable.getPageNumber(),
+                pageable.getPageSize()
+        );
+        try {
+            Page<GeneratedIdeaResponse> response = ideaService.generateIdeasForLockedBrief(lockedIdeaId, tenantId, userId, pageable);
+            log.info(
+                    "Creator story ideas generation API completed lockedIdeaId={} tenantId={} userId={} returnedCount={} totalElements={} totalPages={}",
+                    lockedIdeaId,
+                    tenantId,
+                    userId,
+                    response.getNumberOfElements(),
+                    response.getTotalElements(),
+                    response.getTotalPages()
+            );
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException ex) {
+            log.error(
+                    "Creator story ideas generation API failed lockedIdeaId={} tenantId={} userId={} page={} size={} errorType={} errorMessage={}",
+                    lockedIdeaId,
+                    tenantId,
+                    userId,
+                    pageable.getPageNumber(),
+                    pageable.getPageSize(),
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    ex
+            );
+            throw ex;
+        }
+    }
+
+    @PostMapping("/{lockedIdeaId}/ideas/generate-async")
+    public ResponseEntity<GenerationJobResponse> generateIdeaCandidatesAsync(
+            @PathVariable UUID lockedIdeaId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication,
+            @PageableDefault(size = 5) Pageable pageable
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        log.info(
+                "Creator story ideas async generation requested lockedIdeaId={} tenantId={} userId={} page={} size={}",
+                lockedIdeaId,
+                tenantId,
+                userId,
+                pageable.getPageNumber(),
+                pageable.getPageSize()
+        );
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(generationJobService.toResponse(asyncIdeaGenerationService.startIdeaGeneration(lockedIdeaId, tenantId, userId, pageable)));
     }
 
     @PostMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/save")
@@ -141,6 +212,20 @@ public class CreatorLockedIdeaController {
     ) {
         String userId = authentication == null ? "anonymous" : authentication.getName();
         return ResponseEntity.ok(ideaService.generateScriptForStoryIdea(lockedIdeaId, storyIdeaId, request, tenantId, userId));
+    }
+
+    @PostMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/screenplay/generate-async")
+    public ResponseEntity<GenerationJobResponse> generateStoryIdeaScriptAsync(
+            @PathVariable UUID lockedIdeaId,
+            @PathVariable UUID storyIdeaId,
+            @Valid @RequestBody(required = false) GenerateStoryIdeaScriptRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(generationJobService.toResponse(asyncScreenplayService.startScreenplayGeneration(lockedIdeaId, storyIdeaId, request, tenantId, userId)));
     }
 
     @PutMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/screenplay/{scriptId}")

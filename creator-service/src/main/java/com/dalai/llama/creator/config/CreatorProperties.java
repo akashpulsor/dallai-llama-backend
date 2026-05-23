@@ -11,6 +11,7 @@ public class CreatorProperties {
     private final Billing billing = new Billing();
     private final Jobs jobs = new Jobs();
     private final Kafka kafka = new Kafka();
+    private final Connectors connectors = new Connectors();
     private final Storage storage = new Storage();
     private final Services services = new Services();
     private final Trends trends = new Trends();
@@ -31,6 +32,10 @@ public class CreatorProperties {
         return kafka;
     }
 
+    public Connectors getConnectors() {
+        return connectors;
+    }
+
     public Storage getStorage() {
         return storage;
     }
@@ -48,8 +53,13 @@ public class CreatorProperties {
         private String model = "gpt-4o-mini";
         private String apiKey = "";
         private String baseUrl = "https://api.openai.com/v1";
+        private String geminiApiKey = "";
+        private String geminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+        private String geminiModel = "gemini-2.5-flash";
+        private String geminiImageModel = "imagen-3.0-generate-001";
+        private boolean storyboardImageGenerationEnabled = true;
         private long timeoutMs = 60000;
-        private Integer maxOutputTokens = 4096;
+        private Integer maxOutputTokens = 32768;
         private final AiBilling billing = new AiBilling();
 
         public String getProvider() {
@@ -82,6 +92,46 @@ public class CreatorProperties {
 
         public void setBaseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
+        }
+
+        public String getGeminiApiKey() {
+            return geminiApiKey;
+        }
+
+        public void setGeminiApiKey(String geminiApiKey) {
+            this.geminiApiKey = geminiApiKey;
+        }
+
+        public String getGeminiBaseUrl() {
+            return geminiBaseUrl;
+        }
+
+        public void setGeminiBaseUrl(String geminiBaseUrl) {
+            this.geminiBaseUrl = geminiBaseUrl;
+        }
+
+        public String getGeminiModel() {
+            return geminiModel;
+        }
+
+        public void setGeminiModel(String geminiModel) {
+            this.geminiModel = geminiModel;
+        }
+
+        public String getGeminiImageModel() {
+            return geminiImageModel;
+        }
+
+        public void setGeminiImageModel(String geminiImageModel) {
+            this.geminiImageModel = geminiImageModel;
+        }
+
+        public boolean isStoryboardImageGenerationEnabled() {
+            return storyboardImageGenerationEnabled;
+        }
+
+        public void setStoryboardImageGenerationEnabled(boolean storyboardImageGenerationEnabled) {
+            this.storyboardImageGenerationEnabled = storyboardImageGenerationEnabled;
         }
 
         public long getTimeoutMs() {
@@ -213,6 +263,76 @@ public class CreatorProperties {
 
         public void setAnalyticsEventsTopic(String analyticsEventsTopic) {
             this.analyticsEventsTopic = analyticsEventsTopic;
+        }
+    }
+
+    public static class Connectors {
+        private final Reddit reddit = new Reddit();
+
+        public Reddit getReddit() {
+            return reddit;
+        }
+    }
+
+    public static class Reddit {
+        private String clientId = "";
+        private String clientSecret = "";
+        private String userAgent = "DalaiLlamaCreatorBot/1.0";
+        private String tokenUrl = "https://www.reddit.com/api/v1/access_token";
+        private String apiBaseUrl = "https://oauth.reddit.com";
+        private long tokenRefreshSkewSeconds = 60;
+
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        public String getClientSecret() {
+            return clientSecret;
+        }
+
+        public void setClientSecret(String clientSecret) {
+            this.clientSecret = clientSecret;
+        }
+
+        public String getUserAgent() {
+            return userAgent;
+        }
+
+        public void setUserAgent(String userAgent) {
+            this.userAgent = userAgent;
+        }
+
+        public String getTokenUrl() {
+            return tokenUrl;
+        }
+
+        public void setTokenUrl(String tokenUrl) {
+            this.tokenUrl = tokenUrl;
+        }
+
+        public String getApiBaseUrl() {
+            return apiBaseUrl;
+        }
+
+        public void setApiBaseUrl(String apiBaseUrl) {
+            this.apiBaseUrl = apiBaseUrl;
+        }
+
+        public long getTokenRefreshSkewSeconds() {
+            return tokenRefreshSkewSeconds;
+        }
+
+        public void setTokenRefreshSkewSeconds(long tokenRefreshSkewSeconds) {
+            this.tokenRefreshSkewSeconds = tokenRefreshSkewSeconds;
+        }
+
+        public boolean hasCredentials() {
+            return clientId != null && !clientId.isBlank()
+                    && clientSecret != null && !clientSecret.isBlank();
         }
     }
 

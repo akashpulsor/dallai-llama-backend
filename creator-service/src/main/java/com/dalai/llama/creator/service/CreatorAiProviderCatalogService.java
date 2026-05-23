@@ -66,6 +66,9 @@ public class CreatorAiProviderCatalogService {
         if ("OPENAI_API_KEY".equalsIgnoreCase(key)) {
             return properties.getAi().getApiKey() != null && !properties.getAi().getApiKey().isBlank();
         }
+        if ("GEMINI_API_KEY".equalsIgnoreCase(key)) {
+            return properties.getAi().getGeminiApiKey() != null && !properties.getAi().getGeminiApiKey().isBlank();
+        }
         return key != null && !key.isBlank() && System.getenv(key) != null && !System.getenv(key).isBlank();
     }
 

@@ -3,6 +3,8 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.domain.entity.CreatorCharacterCastMapping;
 import com.dalai.llama.creator.domain.entity.CreatorIdea;
 import com.dalai.llama.creator.domain.entity.CreatorProfile;
+import com.dalai.llama.creator.domain.entity.CreatorProject;
+import com.dalai.llama.creator.domain.entity.CreatorScriptCharacter;
 import com.dalai.llama.creator.dto.request.CharacterCastMappingRequest;
 import com.dalai.llama.creator.dto.response.CharacterCastMappingResponse;
 import com.dalai.llama.creator.repository.CreatorCharacterCastMappingRepository;
@@ -27,20 +29,26 @@ public class CharacterCastMappingService {
     private final CreatorIdeaRepository ideaRepository;
     private final CreatorProfileRepository profileRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final ScriptStructureService scriptStructureService;
+    private final CreatorProjectService projectService;
 
     public CharacterCastMappingService(
             CreatorCharacterCastMappingRepository mappingRepository,
             CreatorIdeaRepository ideaRepository,
             CreatorProfileRepository profileRepository,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            ScriptStructureService scriptStructureService,
+            CreatorProjectService projectService
     ) {
         this.mappingRepository = mappingRepository;
         this.ideaRepository = ideaRepository;
         this.profileRepository = profileRepository;
         this.jdbcTemplate = jdbcTemplate;
+        this.scriptStructureService = scriptStructureService;
+        this.projectService = projectService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public CharacterCastMappingResponse listMappings(
             UUID lockedIdeaId,
             UUID storyIdeaId,
@@ -49,11 +57,12 @@ public class CharacterCastMappingService {
     ) {
         String safeTenantId = defaultString(tenantId, "unknown");
         String safeUserId = defaultString(userId, "anonymous");
-        validateIdea(lockedIdeaId, safeTenantId, safeUserId, "Locked idea was not found.");
+        CreatorIdea lockedIdea = validateIdea(lockedIdeaId, safeTenantId, safeUserId, "Locked idea was not found.");
         CreatorIdea storyIdea = validateIdea(storyIdeaId, safeTenantId, safeUserId, "Story idea was not found.");
+        UUID projectId = storyIdea.getProjectId() == null ? ensureProjectOnIdeas(lockedIdea, storyIdea) : storyIdea.getProjectId();
         List<CreatorCharacterCastMapping> mappings = mappingRepository
                 .findByTenantIdAndUserIdAndLockedIdeaIdAndStoryIdeaIdOrderByCreatedAtAsc(safeTenantId, safeUserId, lockedIdeaId, storyIdeaId);
-        return toResponse(lockedIdeaId, storyIdeaId, storyIdea.getProjectId(), null, mappings);
+        return toResponse(lockedIdeaId, storyIdeaId, projectId, null, mappings);
     }
 
     @Transactional
@@ -66,9 +75,16 @@ public class CharacterCastMappingService {
     ) {
         String safeTenantId = defaultString(tenantId, "unknown");
         String safeUserId = defaultString(userId, "anonymous");
-        validateIdea(lockedIdeaId, safeTenantId, safeUserId, "Locked idea was not found.");
+        CreatorIdea lockedIdea = validateIdea(lockedIdeaId, safeTenantId, safeUserId, "Locked idea was not found.");
         CreatorIdea storyIdea = validateIdea(storyIdeaId, safeTenantId, safeUserId, "Story idea was not found.");
+        if (request == null || request.mappings() == null || request.mappings().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Map at least one story character to a cast profile before confirming cast.");
+        }
         UUID projectId = request == null || request.projectId() == null ? storyIdea.getProjectId() : request.projectId();
+        if (projectId == null) {
+            projectId = ensureProjectOnIdeas(lockedIdea, storyIdea);
+        }
+        UUID resolvedProjectId = projectId;
         UUID scriptId = request == null ? null : request.scriptId();
         OffsetDateTime now = OffsetDateTime.now();
 
@@ -94,8 +110,9 @@ public class CharacterCastMappingService {
                                     .characterKey(item.characterKey())
                                     .createdAt(now)
                                     .build());
-                    mapping.setProjectId(projectId);
+                    mapping.setProjectId(resolvedProjectId);
                     mapping.setScriptId(scriptId);
+                    mapping.setScriptCharacterId(resolveScriptCharacterId(scriptId, item));
                     mapping.setCharacterName(item.characterName());
                     mapping.setCharacterRole(item.characterRole());
                     mapping.setCastProfileId(profile == null ? item.castProfileId() : profile.getId());
@@ -149,6 +166,7 @@ public class CharacterCastMappingService {
                 """
                 update creator_projects
                    set selected_profile_id = ?,
+                       status = 'CAST_MAPPED',
                        updated_at = now()
                  where id = ?
                    and tenant_id = ?
@@ -167,6 +185,34 @@ public class CharacterCastMappingService {
                 .filter(id -> id != null)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private UUID ensureProjectOnIdeas(CreatorIdea lockedIdea, CreatorIdea storyIdea) {
+        Map<String, Object> context = lockedIdea.getSelectionContext() == null ? Map.of() : lockedIdea.getSelectionContext();
+        CreatorProject project = projectService.ensureProjectForLockedIdea(
+                lockedIdea.getProjectId(),
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                lockedIdea.getTitle(),
+                lockedIdea.getSummary(),
+                lockedIdea.getSource(),
+                lockedIdea.getTrendId(),
+                stringValue(context.get("platformCode")),
+                stringValue(context.get("categoryCode")),
+                stringValue(context.get("countryCode")),
+                stringValue(context.get("timeframe")),
+                lockedIdea.getDurationSeconds(),
+                context
+        );
+        if (lockedIdea.getProjectId() == null) {
+            lockedIdea.setProjectId(project.getId());
+            lockedIdea.setUpdatedAt(OffsetDateTime.now());
+            ideaRepository.save(lockedIdea);
+        }
+        storyIdea.setProjectId(project.getId());
+        storyIdea.setUpdatedAt(OffsetDateTime.now());
+        ideaRepository.save(storyIdea);
+        return project.getId();
     }
 
     private CharacterCastMappingResponse toResponse(
@@ -190,6 +236,7 @@ public class CharacterCastMappingService {
     private CharacterCastMappingResponse.Item toItem(CreatorCharacterCastMapping mapping) {
         return CharacterCastMappingResponse.Item.builder()
                 .id(mapping.getId())
+                .scriptCharacterId(mapping.getScriptCharacterId())
                 .characterKey(mapping.getCharacterKey())
                 .characterName(mapping.getCharacterName())
                 .characterRole(mapping.getCharacterRole())
@@ -205,6 +252,7 @@ public class CharacterCastMappingService {
     private Map<String, Object> toMap(CreatorCharacterCastMapping mapping) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", mapping.getId() == null ? null : mapping.getId().toString());
+        value.put("scriptCharacterId", mapping.getScriptCharacterId() == null ? null : mapping.getScriptCharacterId().toString());
         value.put("characterKey", mapping.getCharacterKey());
         value.put("characterName", mapping.getCharacterName());
         value.put("characterRole", mapping.getCharacterRole());
@@ -217,5 +265,18 @@ public class CharacterCastMappingService {
 
     private String defaultString(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private UUID resolveScriptCharacterId(UUID scriptId, CharacterCastMappingRequest.CharacterCastMappingItem item) {
+        if (item.scriptCharacterId() != null) {
+            return item.scriptCharacterId();
+        }
+        return scriptStructureService.findScriptCharacter(scriptId, item.characterKey())
+                .map(CreatorScriptCharacter::getId)
+                .orElse(null);
     }
 }

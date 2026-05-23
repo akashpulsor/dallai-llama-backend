@@ -57,6 +57,11 @@ spring:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalai-llama}
           jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8080/realms/dalai-llama/protocol/openid-connect/certs}
 
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+  allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+  max-age: ${CORS_MAX_AGE:86400}
+
 # Razorpay Configuration
 razorpay:
   key-id: ${RAZORPAY_KEY_ID:rzp_test_xxxxx}

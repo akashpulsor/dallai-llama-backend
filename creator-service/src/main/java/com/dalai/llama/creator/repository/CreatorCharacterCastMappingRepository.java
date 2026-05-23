@@ -9,6 +9,12 @@ import java.util.UUID;
 
 public interface CreatorCharacterCastMappingRepository extends JpaRepository<CreatorCharacterCastMapping, UUID> {
 
+    List<CreatorCharacterCastMapping> findByTenantIdAndUserIdAndProjectIdOrderByCreatedAtAsc(
+            String tenantId,
+            String userId,
+            UUID projectId
+    );
+
     List<CreatorCharacterCastMapping> findByTenantIdAndUserIdAndLockedIdeaIdAndStoryIdeaIdOrderByCreatedAtAsc(
             String tenantId,
             String userId,

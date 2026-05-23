@@ -30,6 +30,7 @@ public class CharacterCastMappingResponse {
     @AllArgsConstructor
     public static class Item {
         private UUID id;
+        private UUID scriptCharacterId;
         private String characterKey;
         private String characterName;
         private String characterRole;

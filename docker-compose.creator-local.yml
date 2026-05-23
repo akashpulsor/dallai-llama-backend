@@ -1,0 +1,137 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: creator-local-postgres
+    environment:
+      POSTGRES_DB: creator_db
+      POSTGRES_USER: creator_user
+      POSTGRES_PASSWORD: creator_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - creator_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creator_user -d creator_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: creator-local-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - creator_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: creator-local-kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "29092:29092"
+    volumes:
+      - creator_kafka_data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  minio:
+    image: minio/minio:latest
+    container_name: creator-local-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - creator_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: creator-local-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/creator-assets &&
+      mc mb --ignore-existing local/creator-exports
+      "
+
+  creator-service:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: creator-service/Dockerfile
+    container_name: creator-local-service
+    environment:
+      SERVER_PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: creator_db
+      DB_USERNAME: creator_user
+      DB_PASSWORD: creator_password
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_URL: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_CREATOR_ASSETS: creator-assets
+      MINIO_BUCKET_CREATOR_EXPORTS: creator-exports
+      CREATOR_WALLET_GUARD_ENABLED: "false"
+      CREATOR_AI_BILLING_ENABLED: "false"
+      CREATOR_AI_PROVIDER: ${CREATOR_AI_PROVIDER:-mock}
+      CREATOR_AI_MODEL: ${CREATOR_AI_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-https://auth.dalaillama.in/realms/dalai-llama}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: ${KEYCLOAK_JWKS_URI:-https://auth.dalaillama.in/realms/dalai-llama/protocol/openid-connect/certs}
+      CORS_ALLOWED_ORIGINS: http://localhost:5181,http://localhost:5182,http://localhost:5173
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  creator_postgres_data:
+  creator_redis_data:
+  creator_kafka_data:
+  creator_minio_data:

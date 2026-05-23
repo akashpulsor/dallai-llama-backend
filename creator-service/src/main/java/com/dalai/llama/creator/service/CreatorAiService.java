@@ -148,6 +148,9 @@ public class CreatorAiService {
     }
 
     public String modelName() {
+        if ("gemini".equalsIgnoreCase(providerName())) {
+            return properties.getAi().getGeminiModel();
+        }
         return properties.getAi().getModel();
     }
 

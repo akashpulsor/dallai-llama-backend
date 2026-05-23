@@ -11,5 +11,7 @@ public interface CreatorAudienceRepository extends JpaRepository<CreatorAudience
 
     List<CreatorAudience> findByTenantIdAndUserIdOrderByUpdatedAtDesc(String tenantId, String userId);
 
+    List<CreatorAudience> findByProjectIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID projectId, String tenantId, String userId);
+
     Optional<CreatorAudience> findByIdAndTenantIdAndUserId(UUID id, String tenantId, String userId);
 }

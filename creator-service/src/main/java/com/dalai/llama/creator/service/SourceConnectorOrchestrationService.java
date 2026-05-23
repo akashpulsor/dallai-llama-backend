@@ -25,6 +25,8 @@ import com.dalai.llama.creator.repository.CreatorSourceConnectorRepository;
 import com.dalai.llama.creator.repository.CreatorTrendCombinationRepository;
 import com.dalai.llama.creator.repository.CreatorTrendDumpRepository;
 import com.dalai.llama.creator.repository.CreatorTrendSignalRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -32,11 +34,13 @@ import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @Service
 public class SourceConnectorOrchestrationService {
+
+    private static final Logger log = LoggerFactory.getLogger(SourceConnectorOrchestrationService.class);
+    private static final String INDIA_COUNTRY_CODE = "IN";
 
     private final CreatorProperties properties;
     private final SourceConnectorClientRegistry clientRegistry;
@@ -76,19 +80,49 @@ public class SourceConnectorOrchestrationService {
     public void collectOnce(String trigger) {
         OffsetDateTime windowEndedAt = OffsetDateTime.now().truncatedTo(ChronoUnit.SECONDS);
         OffsetDateTime windowStartedAt = windowEndedAt.minusMinutes(properties.getTrends().getScheduler().getWindowMinutes());
-        String countryCode = normalizeCountry(properties.getTrends().getScheduler().getCountryCode());
+        String countryCode = schedulerCountryCode();
 
         List<CreatorTrendCombination> combinations =
                 trendCombinationRepository.findByEnabledTrueOrderByPlatformCodeAscCategoryCodeAsc();
+
+        log.info(
+                "Creator trend ingestion started trigger={} country={} windowStart={} windowEnd={} activeCombinations={}",
+                trigger,
+                countryCode,
+                windowStartedAt,
+                windowEndedAt,
+                combinations.size()
+        );
+
+        if (combinations.isEmpty()) {
+            log.warn("Creator trend ingestion skipped trigger={} country={} reason=no_active_platform_category_combinations", trigger, countryCode);
+        }
 
         for (CreatorTrendCombination combination : combinations) {
             List<CreatorConnectorCategoryMap> mappings =
                     connectorCategoryMapRepository.findRunnableMappingsForCategory(combination.getCategoryCode());
 
+            log.info(
+                    "Creator trend ingestion combination targetPlatform={} category={} country={} connectorMappings={}",
+                    combination.getPlatformCode(),
+                    combination.getCategoryCode(),
+                    countryCode,
+                    mappings.size()
+            );
+
             for (CreatorConnectorCategoryMap mapping : mappings) {
                 runConnectorSafely(mapping, combination, countryCode, windowStartedAt, windowEndedAt, trigger);
             }
         }
+
+        log.info(
+                "Creator trend ingestion finished trigger={} country={} windowStart={} windowEnd={} activeCombinations={}",
+                trigger,
+                countryCode,
+                windowStartedAt,
+                windowEndedAt,
+                combinations.size()
+        );
     }
 
     private void runConnectorSafely(
@@ -122,6 +156,17 @@ public class SourceConnectorOrchestrationService {
                 .startedAt(OffsetDateTime.now())
                 .build());
 
+        log.info(
+                "Creator trend connector run started trigger={} runId={} connector={} sourcePlatform={} targetPlatform={} category={} country={}",
+                trigger,
+                run.getId(),
+                connector.getCode(),
+                connector.getSourcePlatformCode(),
+                combination.getPlatformCode(),
+                category.getCode(),
+                countryCode
+        );
+
         if (isRateLimited(connector)) {
             markRateLimited(run);
             return;
@@ -131,6 +176,17 @@ public class SourceConnectorOrchestrationService {
                 categoryKeywordRepository.findActiveByCategoryCodeAndSourceType(category.getCode(), connector.getSourcePlatformCode());
         if (keywords.isEmpty()) {
             keywords = categoryKeywordRepository.findActiveByCategoryCode(category.getCode());
+        }
+
+        if (keywords.isEmpty()) {
+            log.warn(
+                    "Creator trend connector run has no keywords runId={} connector={} targetPlatform={} category={} country={}",
+                    run.getId(),
+                    connector.getCode(),
+                    combination.getPlatformCode(),
+                    category.getCode(),
+                    countryCode
+            );
         }
 
         int maxAttempts = Math.max(1, safeInt(connector.getRetryCount()) + 1);
@@ -186,6 +242,14 @@ public class SourceConnectorOrchestrationService {
         run.setErrorCode("RATE_LIMITED");
         run.setErrorMessage("Connector call was skipped because configured rate limit was reached.");
         connectorRunRepository.save(run);
+        log.warn(
+                "Creator trend connector run rate limited runId={} connector={} targetPlatform={} category={} country={}",
+                run.getId(),
+                run.getConnectorCode(),
+                run.getTargetPlatformCode(),
+                run.getCategoryCode(),
+                run.getCountryCode()
+        );
     }
 
     private void persistSuccessfulRun(
@@ -208,7 +272,7 @@ public class SourceConnectorOrchestrationService {
         run.setStructuredPayload(safeMap(result.structuredPayload()));
         connectorRunRepository.save(run);
 
-        trendDumpRepository.save(CreatorTrendDump.builder()
+        CreatorTrendDump trendDump = trendDumpRepository.save(CreatorTrendDump.builder()
                 .platformCode(combination.getPlatformCode())
                 .categoryCode(category.getCode())
                 .countryCode(countryCode)
@@ -244,6 +308,22 @@ public class SourceConnectorOrchestrationService {
                 .missingCount(0)
                 .diffPayload(ConnectorClientDiffPayloads.payload(newKeys, duplicateKeys))
                 .build());
+
+        log.info(
+                "Creator trend signals persisted runId={} dumpId={} connector={} sourcePlatform={} targetPlatform={} category={} country={} httpStatus={} requests={} incomingSignals={} newSignals={} duplicateSignals={}",
+                run.getId(),
+                trendDump.getId(),
+                connector.getCode(),
+                connector.getSourcePlatformCode(),
+                combination.getPlatformCode(),
+                category.getCode(),
+                countryCode,
+                result.httpStatus(),
+                result.requestCount(),
+                result.signals().size(),
+                newKeys.size(),
+                duplicateKeys.size()
+        );
     }
 
     private boolean saveSignal(
@@ -300,6 +380,19 @@ public class SourceConnectorOrchestrationService {
             connector.setEnabled(false);
             sourceConnectorRepository.save(connector);
         }
+
+        log.error(
+                "Creator trend connector run failed runId={} connector={} targetPlatform={} category={} country={} attempts={} errorCode={} errorMessage={}",
+                run.getId(),
+                run.getConnectorCode(),
+                run.getTargetPlatformCode(),
+                run.getCategoryCode(),
+                run.getCountryCode(),
+                attemptCount,
+                run.getErrorCode(),
+                run.getErrorMessage(),
+                failure
+        );
     }
 
     private void sleepBeforeRetry(CreatorSourceConnector connector) {
@@ -319,11 +412,13 @@ public class SourceConnectorOrchestrationService {
         return value == null ? 0 : value;
     }
 
-    private String normalizeCountry(String value) {
-        if (value == null || value.isBlank()) {
-            return "IN";
+    private String schedulerCountryCode() {
+        String configured = properties.getTrends().getScheduler().getCountryCode();
+        if (configured == null || configured.isBlank()) {
+            return INDIA_COUNTRY_CODE;
         }
-        return value.trim().toUpperCase(Locale.ROOT);
+        // Creator trend ingestion is intentionally India-only for now.
+        return INDIA_COUNTRY_CODE;
     }
 
     private Map<String, Object> safeMap(Map<String, Object> value) {

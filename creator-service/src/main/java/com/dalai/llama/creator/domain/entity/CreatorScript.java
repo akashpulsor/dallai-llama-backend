@@ -69,6 +69,24 @@ public class CreatorScript {
     @Column(name = "duration_seconds", nullable = false)
     private Integer durationSeconds;
 
+    @Column(name = "format_tier", length = 40)
+    private String formatTier;
+
+    @Column(name = "act_structure", length = 64)
+    private String actStructure;
+
+    @Column(name = "budget_tier", length = 40)
+    private String budgetTier;
+
+    @Column(name = "total_shots")
+    private Integer totalShots;
+
+    @Column(name = "scene_count")
+    private Integer sceneCount;
+
+    @Column(name = "sequence_count")
+    private Integer sequenceCount;
+
     /** Dialogue output language requested for generated spoken lines and overlays. */
     @Column(name = "dialogue_language", length = 64)
     private String dialogueLanguage;

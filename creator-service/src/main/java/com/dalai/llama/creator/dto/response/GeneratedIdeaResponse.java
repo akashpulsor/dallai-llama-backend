@@ -8,6 +8,7 @@ import java.util.UUID;
 public record GeneratedIdeaResponse(
         UUID id,
         UUID lockedIdeaId,
+        UUID projectId,
         String title,
         String description,
         String source,

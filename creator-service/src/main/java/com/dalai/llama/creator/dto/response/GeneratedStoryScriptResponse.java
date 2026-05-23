@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Getter
@@ -18,10 +19,12 @@ import java.util.UUID;
 public class GeneratedStoryScriptResponse {
     private UUID ideaId;
     private UUID lockedIdeaId;
+    private UUID projectId;
     private UUID promptRunId;
     private String title;
     private String scriptText;
     private StoryScript scriptJson;
+    private Map<String, Object> rawPromptResponse;
     private Integer durationSeconds;
     private String status;
     private OffsetDateTime generatedAt;

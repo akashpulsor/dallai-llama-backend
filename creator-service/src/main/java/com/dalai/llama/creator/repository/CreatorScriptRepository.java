@@ -8,4 +8,10 @@ import java.util.UUID;
 
 public interface CreatorScriptRepository extends JpaRepository<CreatorScript, UUID> {
     Optional<CreatorScript> findByIdAndTenantIdAndUserId(UUID id, String tenantId, String userId);
+
+    Optional<CreatorScript> findTopByProjectIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID projectId, String tenantId, String userId);
+
+    Optional<CreatorScript> findTopByStoryIdeaIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID storyIdeaId, String tenantId, String userId);
+
+    Optional<CreatorScript> findTopByLockedIdeaIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID lockedIdeaId, String tenantId, String userId);
 }

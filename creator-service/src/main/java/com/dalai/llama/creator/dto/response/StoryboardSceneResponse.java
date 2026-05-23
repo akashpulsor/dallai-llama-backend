@@ -1,5 +1,6 @@
 package com.dalai.llama.creator.dto.response;
 
+import java.util.Map;
 import java.util.UUID;
 
 public record StoryboardSceneResponse(
@@ -17,6 +18,18 @@ public record StoryboardSceneResponse(
         Integer fps,
         String objectKey,
         String signedUrl,
-        String sketchPrompt
+        String sketchPrompt,
+        UUID lightingImageAssetId,
+        String lightingObjectKey,
+        String lightingImageUrl,
+        UUID cameraPlanImageAssetId,
+        String cameraPlanObjectKey,
+        String cameraPlanImageUrl,
+        String screenType,
+        Integer renderWidth,
+        Integer renderHeight,
+        Map<String, Object> storyboardTag,
+        Map<String, Object> lightingBuildSheetTag,
+        Map<String, Object> cameraPlanSheetTag
 ) {
 }

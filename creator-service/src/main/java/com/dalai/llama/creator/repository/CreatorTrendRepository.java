@@ -23,7 +23,7 @@ public interface CreatorTrendRepository extends JpaRepository<CreatorTrend, UUID
                       and (:platform is null or t.platform_code = :platform)
                       and (:country is null or t.country_code = :country)
                       and (:category is null or t.category_code = :category or c.code = :category)
-                      and (:since is null or t.last_seen_at >= :since)
+                      and (cast(:since as timestamptz) is null or t.last_seen_at >= cast(:since as timestamptz))
                     order by t.score desc, t.velocity desc, t.last_seen_at desc
                     """,
             countQuery = """
@@ -35,7 +35,7 @@ public interface CreatorTrendRepository extends JpaRepository<CreatorTrend, UUID
                       and (:platform is null or t.platform_code = :platform)
                       and (:country is null or t.country_code = :country)
                       and (:category is null or t.category_code = :category or c.code = :category)
-                      and (:since is null or t.last_seen_at >= :since)
+                      and (cast(:since as timestamptz) is null or t.last_seen_at >= cast(:since as timestamptz))
                     """,
             nativeQuery = true
     )
