@@ -107,7 +107,7 @@ creator:
     gemini-api-key: ${GEMINI_API_KEY:${CREATOR_GEMINI_API_KEY:}}
     gemini-base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
     gemini-model: ${GEMINI_MODEL:${CREATOR_GEMINI_MODEL:gemini-2.5-flash}}
-    gemini-image-model: ${GEMINI_IMAGE_MODEL:imagen-3.0-generate-001}
+    gemini-image-model: ${GEMINI_IMAGE_MODEL:gemini-3.1-flash-image-preview}
     storyboard-image-generation-enabled: ${CREATOR_STORYBOARD_IMAGE_GENERATION_ENABLED:true}
     timeout-ms: ${CREATOR_AI_TIMEOUT_MS:60000}
     max-output-tokens: ${CREATOR_AI_MAX_OUTPUT_TOKENS:32768}

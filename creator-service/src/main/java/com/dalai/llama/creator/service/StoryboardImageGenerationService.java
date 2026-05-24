@@ -5,6 +5,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.Base64;
@@ -14,6 +15,9 @@ import java.util.Map;
 
 @Service
 public class StoryboardImageGenerationService {
+
+    private static final String DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+    private static final String DEFAULT_IMAGE_MIME_TYPE = "image/png";
 
     private final CreatorProperties properties;
     private final WebClient.Builder webClientBuilder;
@@ -29,84 +33,83 @@ public class StoryboardImageGenerationService {
             throw new IllegalStateException("Gemini API key is not configured for storyboard image generation.");
         }
 
-        String model = properties.getAi().getGeminiImageModel();
-        Map<String, Object> request = new LinkedHashMap<>();
-        request.put("instances", List.of(Map.of("prompt", prompt)));
-        request.put("parameters", Map.of(
-                "sampleCount", 1,
-                "aspectRatio", "horizontal".equalsIgnoreCase(screenType) ? "16:9" : "9:16",
-                "personGeneration", "allow_adult"
-        ));
-
-        Map<String, Object> response = webClientBuilder
+        String model = stringValue(properties.getAi().getGeminiImageModel(), DEFAULT_GEMINI_IMAGE_MODEL);
+        GenerateContentRequest request = buildRequest(prompt, screenType);
+        WebClient client = webClientBuilder
                 .baseUrl(properties.getAi().getGeminiBaseUrl())
-                .defaultHeader("x-goog-api-key", apiKey)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .build()
-                .post()
-                .uri("/models/{model}:predict", model)
-                .bodyValue(request)
-                .retrieve()
-                .bodyToMono(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {
-                })
+                .build();
+
+        byte[] bytes = requestImageBytes(client, model, apiKey, request)
                 .block(Duration.ofMillis(properties.getAi().getTimeoutMs()));
 
-        return extractImage(response == null ? Map.of() : response, model);
-    }
-
-    @SuppressWarnings("unchecked")
-    private GeneratedImage extractImage(Map<String, Object> response, String model) {
-        Object predictionsValue = response.get("predictions");
-        if (!(predictionsValue instanceof List<?> predictions) || predictions.isEmpty()) {
-            throw new IllegalStateException("Gemini image provider returned no predictions.");
-        }
-
-        Object first = predictions.get(0);
-        if (!(first instanceof Map<?, ?> firstMap)) {
-            throw new IllegalStateException("Gemini image provider returned an invalid image prediction.");
-        }
-        Map<String, Object> prediction = (Map<String, Object>) firstMap;
-        Object imageValue = firstNonNull(
-                prediction.get("bytesBase64Encoded"),
-                prediction.get("imageBytes"),
-                nested(prediction, "image", "imageBytes"),
-                nested(prediction, "image", "bytesBase64Encoded")
-        );
-        if (imageValue == null || String.valueOf(imageValue).isBlank()) {
-            throw new IllegalStateException("Gemini image provider did not return image bytes.");
-        }
-
-        String contentType = stringValue(firstNonNull(
-                prediction.get("mimeType"),
-                prediction.get("mime_type"),
-                nested(prediction, "image", "mimeType")
-        ), "image/png");
-
-        byte[] bytes = Base64.getDecoder().decode(String.valueOf(imageValue));
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("provider", "gemini");
         metadata.put("model", model);
-        metadata.put("rawContentType", contentType);
-        metadata.put("predictionCount", predictions.size());
-        return new GeneratedImage(bytes, contentType, metadata);
+        metadata.put("rawContentType", DEFAULT_IMAGE_MIME_TYPE);
+        metadata.put("responsePath", "candidates[0].content.parts[0].inlineData.data");
+        return new GeneratedImage(bytes == null ? new byte[0] : bytes, DEFAULT_IMAGE_MIME_TYPE, metadata);
     }
 
-    @SuppressWarnings("unchecked")
-    private Object nested(Map<String, Object> source, String parentKey, String childKey) {
-        Object parent = source.get(parentKey);
-        if (parent instanceof Map<?, ?> map) {
-            return ((Map<String, Object>) map).get(childKey);
+    private GenerateContentRequest buildRequest(String prompt, String screenType) {
+        String aspectRatio = "horizontal".equalsIgnoreCase(screenType) ? "16:9" : "9:16";
+        String imagePrompt = """
+                %s
+
+                Generate one production-ready storyboard image. Use aspect ratio %s.
+                Return image data as inlineData in the generateContent response.
+                """.formatted(stringValue(prompt, "Storyboard production image."), aspectRatio).trim();
+
+        return new GenerateContentRequest(
+                List.of(new Content(List.of(new Part(imagePrompt, null)))),
+                new GenerationConfig(List.of("IMAGE"))
+        );
+    }
+
+    private Mono<byte[]> requestImageBytes(
+            WebClient client,
+            String model,
+            String apiKey,
+            GenerateContentRequest request
+    ) {
+        return client
+                .post()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/models/{model}:generateContent")
+                        .queryParam("key", apiKey)
+                        .build(model))
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(GenerateContentResponse.class)
+                .map(response -> {
+                    InlineImage inlineImage = extractInlineImage(response, model);
+                    return Base64.getDecoder().decode(inlineImage.base64Data());
+                });
+    }
+
+    private InlineImage extractInlineImage(GenerateContentResponse response, String model) {
+        if (response == null || response.candidates() == null || response.candidates().isEmpty()) {
+            throw new IllegalStateException("Gemini image provider returned no candidates for model " + model + ".");
         }
-        return null;
-    }
 
-    private Object firstNonNull(Object... values) {
-        for (Object value : values) {
-            if (value != null) {
-                return value;
+        for (Candidate candidate : response.candidates()) {
+            Content content = candidate == null ? null : candidate.content();
+            if (content == null || content.parts() == null || content.parts().isEmpty()) {
+                continue;
+            }
+            for (Part part : content.parts()) {
+                InlineData inlineData = part == null ? null : part.inlineData();
+                if (inlineData == null || inlineData.data() == null || inlineData.data().isBlank()) {
+                    continue;
+                }
+                return new InlineImage(
+                        stringValue(inlineData.mimeType(), DEFAULT_IMAGE_MIME_TYPE),
+                        inlineData.data().trim()
+                );
             }
         }
-        return null;
+
+        throw new IllegalStateException("Gemini image provider did not return candidates[0].content.parts[0].inlineData.data for model " + model + ".");
     }
 
     private String stringValue(Object value, String fallback) {
@@ -114,6 +117,50 @@ public class StoryboardImageGenerationService {
             return fallback;
         }
         return String.valueOf(value);
+    }
+
+    private record GenerateContentRequest(
+            List<Content> contents,
+            GenerationConfig generationConfig
+    ) {
+    }
+
+    private record GenerationConfig(
+            List<String> responseModalities
+    ) {
+    }
+
+    private record GenerateContentResponse(
+            List<Candidate> candidates
+    ) {
+    }
+
+    private record Candidate(
+            Content content
+    ) {
+    }
+
+    private record Content(
+            List<Part> parts
+    ) {
+    }
+
+    private record Part(
+            String text,
+            InlineData inlineData
+    ) {
+    }
+
+    private record InlineData(
+            String mimeType,
+            String data
+    ) {
+    }
+
+    private record InlineImage(
+            String mimeType,
+            String base64Data
+    ) {
     }
 
     public record GeneratedImage(

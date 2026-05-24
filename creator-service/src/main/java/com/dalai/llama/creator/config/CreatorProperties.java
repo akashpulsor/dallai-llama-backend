@@ -56,7 +56,7 @@ public class CreatorProperties {
         private String geminiApiKey = "";
         private String geminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
         private String geminiModel = "gemini-2.5-flash";
-        private String geminiImageModel = "imagen-3.0-generate-001";
+        private String geminiImageModel = "gemini-3.1-flash-image-preview";
         private boolean storyboardImageGenerationEnabled = true;
         private long timeoutMs = 60000;
         private Integer maxOutputTokens = 32768;
