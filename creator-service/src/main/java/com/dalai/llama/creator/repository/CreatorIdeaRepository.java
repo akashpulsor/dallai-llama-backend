@@ -17,7 +17,31 @@ public interface CreatorIdeaRepository extends JpaRepository<CreatorIdea, UUID> 
 
     List<CreatorIdea> findTop20ByProjectIdAndTenantIdAndUserIdOrderByUpdatedAtDesc(UUID projectId, String tenantId, String userId);
 
+    List<CreatorIdea> findByTenantIdAndUserIdOrderByUpdatedAtDesc(String tenantId, String userId, Pageable pageable);
+
+    List<CreatorIdea> findByIdInAndTenantIdAndUserId(List<UUID> ids, String tenantId, String userId);
+
     Optional<CreatorIdea> findByIdAndTenantIdAndUserId(UUID id, String tenantId, String userId);
+
+    @Query(
+            value = """
+                    select *
+                    from creator_ideas
+                    where tenant_id = :tenantId
+                      and user_id = :userId
+                      and (
+                        coalesce(script, '') <> ''
+                        or jsonb_exists(selection_context, 'storyScript')
+                      )
+                    order by updated_at desc
+                    """,
+            nativeQuery = true
+    )
+    List<CreatorIdea> findStorylineHistory(
+            @Param("tenantId") String tenantId,
+            @Param("userId") String userId,
+            Pageable pageable
+    );
 
     @Query(
             value = """

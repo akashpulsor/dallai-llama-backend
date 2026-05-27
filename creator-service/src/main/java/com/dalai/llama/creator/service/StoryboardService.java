@@ -10,6 +10,7 @@ import com.dalai.llama.creator.domain.entity.CreatorScriptShotPlan;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboard;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboardScene;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
+import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
 import com.dalai.llama.creator.dto.response.StoryboardResponse;
 import com.dalai.llama.creator.dto.response.StoryboardSceneResponse;
 import com.dalai.llama.creator.repository.CreatorAssetRepository;
@@ -169,20 +170,18 @@ public class StoryboardService {
         RenderSize renderSize = prepared.renderSize();
         String screenType = prepared.screenType();
 
-        CreatorStoryboardScene scene = sceneRepository
-                .findByStoryboardIdAndShotNumber(storyboard.getId(), shotNumber)
-                .orElseGet(() -> sceneRepository.save(toScene(
-                        storyboard.getId(),
-                        null,
-                        null,
-                        null,
-                        shot,
-                        plan,
-                        shotNumber,
-                        "",
-                        screenType,
-                        renderSize
-                )));
+        CreatorStoryboardScene scene = upsertScene(toScene(
+                storyboard.getId(),
+                null,
+                null,
+                null,
+                shot,
+                plan,
+                shotNumber,
+                "",
+                screenType,
+                renderSize
+        ));
 
         CreatorAsset storyboardAsset = findAsset(scene.getImageAssetId());
         CreatorAsset lightingAsset = findAsset(uuidValue(scene.getMetadata().get("lightingImageAssetId")));
@@ -192,7 +191,7 @@ public class StoryboardService {
         String cameraPlanSignedUrl = cameraPlanAsset == null ? null : cameraPlanAsset.getPublicUrl();
 
         if ("storyboard".equals(normalizedKind)) {
-            String prompt = buildStoryboardPrompt(script.getScriptPayload(), shot, sourceTag, screenType, renderSize);
+            String prompt = buildStoryboardPrompt(script.getScriptPayload(), shot, sourceTag, plan.getLightingBuildSheetTag(), plan.getCameraPlanSheetTag(), screenType, renderSize);
             GeneratedAsset generatedAsset = generateStoryboardAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt);
             storyboardAsset = generatedAsset.asset();
             storyboardSignedUrl = generatedAsset.signedUrl();
@@ -234,6 +233,39 @@ public class StoryboardService {
         return toResponse(scene, storyboardAsset, storyboardSignedUrl, lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan);
     }
 
+    @Transactional(readOnly = true)
+    public List<ShotImageUrlResponse> listShotImageUrls(UUID scriptId, String tenantId, String userId) {
+        CreatorScript script = scriptRepository
+                .findByIdAndTenantIdAndUserId(
+                        scriptId,
+                        defaultString(tenantId, "unknown"),
+                        defaultString(userId, "anonymous")
+                )
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Creator script was not found."));
+
+        Map<Integer, ShotImageAssets> imagesByShot = new LinkedHashMap<>();
+        for (CreatorAsset asset : assetRepository.findShotImageAssetsForScript(script.getId(), script.getTenantId(), script.getUserId())) {
+            Integer shotNumber = intValue(asset.getMetadata().get("shotNumber"), null);
+            if (shotNumber == null) {
+                continue;
+            }
+            ShotImageAssets imageAssets = imagesByShot.computeIfAbsent(shotNumber, ignored -> new ShotImageAssets());
+            String kind = assetKeyType(defaultString(stringValue(asset.getMetadata().get("imageKind")), asset.getAssetType()));
+            if ("lighting".equals(kind) && imageAssets.lighting == null) {
+                imageAssets.lighting = asset;
+            } else if ("dp".equals(kind) && imageAssets.cameraPlan == null) {
+                imageAssets.cameraPlan = asset;
+            } else if (imageAssets.storyboard == null) {
+                imageAssets.storyboard = asset;
+            }
+        }
+
+        return imagesByShot.entrySet()
+                .stream()
+                .map(entry -> toShotImageUrlResponse(script, entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
     private StoryboardResponse runPreparedStoryboardGeneration(PreparedStoryboardGeneration prepared, UUID generationJobId) {
         CreatorScript script = prepared.script();
         List<Map<String, Object>> shots = prepared.shots();
@@ -246,7 +278,7 @@ public class StoryboardService {
                 productionPlanTagService.generateTagsForScript(script, script.getScriptPayload(), shots, ProductionPlanTagService.DEFAULT_STYLE_KEY);
                 planByShotNumber = loadPlanByShotNumber(script.getId());
             }
-            CreatorStoryboard storyboard = storyboardRepository.save(CreatorStoryboard.builder()
+            CreatorStoryboard storyboard = storyboardRepository.saveAndFlush(CreatorStoryboard.builder()
                     .tenantId(script.getTenantId())
                     .userId(script.getUserId())
                     .projectId(script.getProjectId())
@@ -272,7 +304,15 @@ public class StoryboardService {
                 int shotNumber = intValue(shot.get("shotNumber"), index + 1);
                 String shotId = defaultString(shotIdByNumber.get(shotNumber), "shot-%04d".formatted(shotNumber));
                 CreatorScriptShotPlan plan = planByShotNumber.get(shotNumber);
-                String prompt = buildStoryboardPrompt(script.getScriptPayload(), shot, plan == null ? Map.of() : plan.getStoryboardTag(), screenType, renderSize);
+                String prompt = buildStoryboardPrompt(
+                        script.getScriptPayload(),
+                        shot,
+                        plan == null ? Map.of() : plan.getStoryboardTag(),
+                        plan == null ? Map.of() : plan.getLightingBuildSheetTag(),
+                        plan == null ? Map.of() : plan.getCameraPlanSheetTag(),
+                        screenType,
+                        renderSize
+                );
                 GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
                 byte[] imageBytes = generatedImage.bytes();
                 String objectKey = objectKey(script, storyboard.getId(), shotId, "storyboard");
@@ -284,7 +324,7 @@ public class StoryboardService {
                         signedUrlTtl
                 );
 
-                CreatorAsset asset = assetRepository.save(CreatorAsset.builder()
+                CreatorAsset asset = upsertAsset(CreatorAsset.builder()
                         .tenantId(script.getTenantId())
                         .userId(script.getUserId())
                         .projectId(script.getProjectId())
@@ -298,7 +338,7 @@ public class StoryboardService {
                         .metadata(assetMetadata(script, storyboard.getId(), shotId, shotNumber, "storyboard", screenType, renderSize, signedUrlTtl, generatedImage.metadata()))
                         .build());
 
-                CreatorStoryboardScene scene = sceneRepository.save(toScene(
+                CreatorStoryboardScene scene = upsertScene(toScene(
                         storyboard.getId(),
                         asset.getId(),
                         null,
@@ -466,7 +506,7 @@ public class StoryboardService {
                 return existing.get();
             }
         }
-        CreatorStoryboard storyboard = storyboardRepository.save(CreatorStoryboard.builder()
+        CreatorStoryboard storyboard = storyboardRepository.saveAndFlush(CreatorStoryboard.builder()
                 .tenantId(script.getTenantId())
                 .userId(script.getUserId())
                 .projectId(script.getProjectId())
@@ -520,8 +560,8 @@ public class StoryboardService {
             metadata.put("storyboardTag", plan.getStoryboardTag());
             metadata.put("lightingBuildSheetTag", plan.getLightingBuildSheetTag());
             metadata.put("cameraPlanSheetTag", plan.getCameraPlanSheetTag());
-            metadata.put("lightingImageAssetId", lightingAssetId == null ? null : lightingAssetId.toString());
-            metadata.put("cameraPlanImageAssetId", cameraPlanAssetId == null ? null : cameraPlanAssetId.toString());
+            putIfPresent(metadata, "lightingImageAssetId", lightingAssetId == null ? null : lightingAssetId.toString());
+            putIfPresent(metadata, "cameraPlanImageAssetId", cameraPlanAssetId == null ? null : cameraPlanAssetId.toString());
         }
 
         return CreatorStoryboardScene.builder()
@@ -564,6 +604,134 @@ public class StoryboardService {
                 .build();
     }
 
+    private CreatorStoryboardScene upsertScene(CreatorStoryboardScene scene) {
+        UUID sceneId = jdbcTemplate.queryForObject(
+                """
+                insert into creator_storyboard_scenes (
+                    id,
+                    storyboard_id,
+                    image_asset_id,
+                    shot_number,
+                    start_time,
+                    end_time,
+                    duration_seconds,
+                    title,
+                    purpose,
+                    shot_type,
+                    camera_angle,
+                    camera_movement,
+                    lens_suggestion,
+                    fps,
+                    composition,
+                    expression,
+                    emotion,
+                    body_language,
+                    lighting,
+                    environment,
+                    action,
+                    voice_over,
+                    dialogue,
+                    text_overlay,
+                    transition,
+                    sound_design,
+                    editing_notes,
+                    retention_goal,
+                    creator_direction,
+                    subtitle_position,
+                    mobile_focus_area,
+                    safe_zone_notes,
+                    execution_difficulty,
+                    cinematic_execution,
+                    rookie_friendly_guide,
+                    sketch_prompt,
+                    metadata,
+                    created_at,
+                    updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as jsonb), cast(? as jsonb), cast(? as jsonb), ?, ?, ?, ?, cast(? as jsonb), ?, ?, cast(? as jsonb), cast(? as jsonb), ?, cast(? as jsonb), ?, ?, ?, cast(? as jsonb), cast(? as jsonb), cast(? as jsonb), ?, cast(? as jsonb), now(), now())
+                on conflict (storyboard_id, shot_number) do update set
+                    image_asset_id = coalesce(excluded.image_asset_id, creator_storyboard_scenes.image_asset_id),
+                    start_time = excluded.start_time,
+                    end_time = excluded.end_time,
+                    duration_seconds = excluded.duration_seconds,
+                    title = excluded.title,
+                    purpose = excluded.purpose,
+                    shot_type = excluded.shot_type,
+                    camera_angle = excluded.camera_angle,
+                    camera_movement = excluded.camera_movement,
+                    lens_suggestion = excluded.lens_suggestion,
+                    fps = excluded.fps,
+                    composition = excluded.composition,
+                    expression = excluded.expression,
+                    emotion = excluded.emotion,
+                    body_language = excluded.body_language,
+                    lighting = excluded.lighting,
+                    environment = excluded.environment,
+                    action = excluded.action,
+                    voice_over = excluded.voice_over,
+                    dialogue = excluded.dialogue,
+                    text_overlay = excluded.text_overlay,
+                    transition = excluded.transition,
+                    sound_design = excluded.sound_design,
+                    editing_notes = excluded.editing_notes,
+                    retention_goal = excluded.retention_goal,
+                    creator_direction = excluded.creator_direction,
+                    subtitle_position = excluded.subtitle_position,
+                    mobile_focus_area = excluded.mobile_focus_area,
+                    safe_zone_notes = excluded.safe_zone_notes,
+                    execution_difficulty = excluded.execution_difficulty,
+                    cinematic_execution = excluded.cinematic_execution,
+                    rookie_friendly_guide = excluded.rookie_friendly_guide,
+                    sketch_prompt = case
+                        when excluded.sketch_prompt is null or excluded.sketch_prompt = '' then creator_storyboard_scenes.sketch_prompt
+                        else excluded.sketch_prompt
+                    end,
+                    metadata = creator_storyboard_scenes.metadata || excluded.metadata,
+                    updated_at = now()
+                returning id
+                """,
+                UUID.class,
+                UUID.randomUUID(),
+                scene.getStoryboardId(),
+                scene.getImageAssetId(),
+                scene.getShotNumber(),
+                scene.getStartTime(),
+                scene.getEndTime(),
+                scene.getDurationSeconds(),
+                defaultString(scene.getTitle(), "Storyboard Shot " + defaultInt(scene.getShotNumber(), 1)),
+                scene.getPurpose(),
+                scene.getShotType(),
+                scene.getCameraAngle(),
+                scene.getCameraMovement(),
+                scene.getLensSuggestion(),
+                scene.getFps(),
+                scene.getComposition(),
+                toJson(scene.getExpression() == null ? Map.of() : scene.getExpression()),
+                toJson(scene.getEmotion() == null ? List.of() : scene.getEmotion()),
+                toJson(scene.getBodyLanguage() == null ? Map.of() : scene.getBodyLanguage()),
+                scene.getLighting(),
+                scene.getEnvironment(),
+                scene.getAction(),
+                scene.getVoiceOver(),
+                toJson(scene.getDialogue() == null ? Map.of() : scene.getDialogue()),
+                scene.getTextOverlay(),
+                scene.getTransition(),
+                toJson(scene.getSoundDesign() == null ? List.of() : scene.getSoundDesign()),
+                toJson(scene.getEditingNotes() == null ? List.of() : scene.getEditingNotes()),
+                scene.getRetentionGoal(),
+                toJson(scene.getCreatorDirection() == null ? Map.of() : scene.getCreatorDirection()),
+                scene.getSubtitlePosition(),
+                scene.getMobileFocusArea(),
+                scene.getSafeZoneNotes(),
+                toJson(scene.getExecutionDifficulty() == null ? Map.of() : scene.getExecutionDifficulty()),
+                toJson(scene.getCinematicExecution() == null ? Map.of() : scene.getCinematicExecution()),
+                toJson(scene.getRookieFriendlyGuide() == null ? Map.of() : scene.getRookieFriendlyGuide()),
+                scene.getSketchPrompt(),
+                toJson(scene.getMetadata() == null ? Map.of() : scene.getMetadata())
+        );
+        return sceneRepository.findById(sceneId)
+                .orElseThrow(() -> new IllegalStateException("Saved storyboard scene was not found: " + sceneId));
+    }
+
     private StoryboardSceneResponse toResponse(
             CreatorStoryboardScene scene,
             CreatorAsset asset,
@@ -603,6 +771,67 @@ public class StoryboardService {
                 plan == null ? Map.of() : plan.getLightingBuildSheetTag(),
                 plan == null ? Map.of() : plan.getCameraPlanSheetTag()
         );
+    }
+
+    private ShotImageUrlResponse toShotImageUrlResponse(CreatorScript script, Integer shotNumber, ShotImageAssets assets) {
+        CreatorAsset source = firstAsset(assets.storyboard, assets.lighting, assets.cameraPlan);
+        Map<String, Object> metadata = source == null ? Map.of() : source.getMetadata();
+        return new ShotImageUrlResponse(
+                script.getId(),
+                uuidValue(metadata.get("storyboardId")),
+                script.getProjectId(),
+                script.getStoryIdeaId(),
+                shotNumber,
+                assets.storyboard == null ? null : assets.storyboard.getId(),
+                assets.storyboard == null ? null : assets.storyboard.getObjectKey(),
+                signedUrlFor(assets.storyboard),
+                assets.lighting == null ? null : assets.lighting.getId(),
+                assets.lighting == null ? null : assets.lighting.getObjectKey(),
+                signedUrlFor(assets.lighting),
+                assets.cameraPlan == null ? null : assets.cameraPlan.getId(),
+                assets.cameraPlan == null ? null : assets.cameraPlan.getObjectKey(),
+                signedUrlFor(assets.cameraPlan),
+                defaultString(stringValue(metadata.get("screenType")), script.getScreenType()),
+                intValue(metadata.get("renderWidth"), null),
+                intValue(metadata.get("renderHeight"), null),
+                maxCreatedAt(assets.storyboard, assets.lighting, assets.cameraPlan)
+        );
+    }
+
+    private CreatorAsset firstAsset(CreatorAsset... assets) {
+        for (CreatorAsset asset : assets) {
+            if (asset != null) {
+                return asset;
+            }
+        }
+        return null;
+    }
+
+    private OffsetDateTime maxCreatedAt(CreatorAsset... assets) {
+        OffsetDateTime latest = null;
+        for (CreatorAsset asset : assets) {
+            if (asset == null || asset.getCreatedAt() == null) {
+                continue;
+            }
+            if (latest == null || asset.getCreatedAt().isAfter(latest)) {
+                latest = asset.getCreatedAt();
+            }
+        }
+        return latest;
+    }
+
+    private String signedUrlFor(CreatorAsset asset) {
+        if (asset == null) {
+            return null;
+        }
+        if (asset.getBucket() == null || asset.getBucket().isBlank() || asset.getObjectKey() == null || asset.getObjectKey().isBlank()) {
+            return asset.getPublicUrl();
+        }
+        try {
+            return assetStorageService.signedUrl(asset.getBucket(), asset.getObjectKey(), signedUrlTtl(null));
+        } catch (RuntimeException ex) {
+            return asset.getPublicUrl();
+        }
     }
 
     private Map<Integer, CreatorScriptShotPlan> loadPlanByShotNumber(UUID scriptId) {
@@ -701,7 +930,7 @@ public class StoryboardService {
                 CONTENT_TYPE_JPEG,
                 signedUrlTtl
         );
-        CreatorAsset asset = assetRepository.save(CreatorAsset.builder()
+        CreatorAsset asset = upsertAsset(CreatorAsset.builder()
                 .tenantId(script.getTenantId())
                 .userId(script.getUserId())
                 .projectId(script.getProjectId())
@@ -730,7 +959,7 @@ public class StoryboardService {
             String assetType,
             Map<String, Object> tag
     ) {
-        String prompt = buildProductionSheetPrompt(imageKind, tag, screenType, renderSize);
+        String prompt = buildProductionSheetPrompt(imageKind, shot, script.getScriptPayload(), tag, screenType, renderSize);
         GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
         String objectKey = objectKey(script, storyboardId, shotId, imageKind);
         AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
@@ -742,7 +971,7 @@ public class StoryboardService {
         Map<String, Object> metadata = assetMetadata(script, storyboardId, shotId, shotNumber, imageKind, screenType, renderSize, signedUrlTtl, generatedImage.metadata());
         metadata.put("imageKind", imageKind);
         metadata.put("sourceTag", tag == null ? Map.of() : tag);
-        CreatorAsset asset = assetRepository.save(CreatorAsset.builder()
+        CreatorAsset asset = upsertAsset(CreatorAsset.builder()
                 .tenantId(script.getTenantId())
                 .userId(script.getUserId())
                 .projectId(script.getProjectId())
@@ -758,6 +987,53 @@ public class StoryboardService {
         return new GeneratedAsset(asset, storedObject.signedUrl());
     }
 
+    private CreatorAsset upsertAsset(CreatorAsset asset) {
+        UUID assetId = jdbcTemplate.queryForObject(
+                """
+                insert into creator_assets (
+                    id,
+                    tenant_id,
+                    user_id,
+                    project_id,
+                    storyboard_id,
+                    asset_type,
+                    bucket,
+                    object_key,
+                    content_type,
+                    size_bytes,
+                    public_url,
+                    metadata,
+                    created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as jsonb), now())
+                on conflict (bucket, object_key) do update set
+                    tenant_id = excluded.tenant_id,
+                    user_id = excluded.user_id,
+                    project_id = excluded.project_id,
+                    storyboard_id = excluded.storyboard_id,
+                    asset_type = excluded.asset_type,
+                    content_type = excluded.content_type,
+                    size_bytes = excluded.size_bytes,
+                    public_url = excluded.public_url,
+                    metadata = excluded.metadata
+                returning id
+                """,
+                UUID.class,
+                UUID.randomUUID(),
+                asset.getTenantId(),
+                asset.getUserId(),
+                asset.getProjectId(),
+                asset.getStoryboardId(),
+                asset.getAssetType(),
+                asset.getBucket(),
+                asset.getObjectKey(),
+                asset.getContentType(),
+                asset.getSizeBytes(),
+                asset.getPublicUrl(),
+                toJson(asset.getMetadata() == null ? Map.of() : asset.getMetadata())
+        );
+        return assetRepository.findById(assetId)
+                .orElseThrow(() -> new IllegalStateException("Saved creator asset was not found: " + assetId));
+    }
     private GeneratedStoryboardImage generateStoryboardImage(Map<String, Object> shot, String screenType, RenderSize size, String prompt) {
         if (!properties.getAi().isStoryboardImageGenerationEnabled()) {
             return new GeneratedStoryboardImage(
@@ -1112,6 +1388,8 @@ public class StoryboardService {
             Map<String, Object> screenplayJson,
             Map<String, Object> shot,
             Map<String, Object> storyboardTag,
+            Map<String, Object> lightingBuildSheetTag,
+            Map<String, Object> cameraPlanSheetTag,
             String screenType,
             RenderSize size
     ) {
@@ -1119,76 +1397,326 @@ public class StoryboardService {
         if (!override.isBlank()) {
             return override;
         }
-        int shotNumber = intValue(shot.get("shotNumber"), 1);
-        String title = defaultString(shot.get("title"), "Storyboard Shot");
-        String timestamp = defaultString(shot.get("startTime"), "0:00") + " - " + defaultString(shot.get("endTime"), "0:00");
-        String movement = defaultString(firstNonNull(shot.get("cameraMovement"), nested(shot, "cinematicExecution", "cameraStyle")), "STATIC");
-        String action = defaultString(shot.get("action"), defaultString(shot.get("primaryActorAction"), "Perform the planned action naturally."));
-        String dialogue = dialogueLine(shot);
-        String tagJson = storyboardTag == null || storyboardTag.isEmpty() ? "" : "\nStoryboardTag JSON to honor exactly:\n" + toJson(storyboardTag);
-        String screenplayContextJson = screenplayJson == null || screenplayJson.isEmpty() ? "" : "\nComplete screenplay JSON context for continuity and style:\n" + toJson(screenplayJson);
+
+        Map<String, Object> screenplay = screenplayJson == null ? Map.of() : screenplayJson;
+        Map<String, Object> tag = storyboardTag == null ? Map.of() : storyboardTag;
+        Map<String, Object> lightingTag = lightingBuildSheetTag == null ? Map.of() : lightingBuildSheetTag;
+        Map<String, Object> cameraTag = cameraPlanSheetTag == null ? Map.of() : cameraPlanSheetTag;
+        Map<String, Object> shotJson = shot == null ? Map.of() : shot;
+        Map<String, Object> primaryCharacter = firstMapValue(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters")));
+
+        boolean horizontal = "horizontal".equals(screenType);
+        String aspectRatio = horizontal ? "16:9" : "9:16";
+        String composition = horizontal ? "16:9 horizontal composition" : "9:16 vertical composition";
+        int shotNumber = intValue(firstNonNull(tag.get("shotNumber"), shotJson.get("shotNumber")), 1);
+        String projectTitle = defaultString(storyboardValue(tag, shotJson, "projectTitle", "projectName"), defaultString(screenplay.get("projectTitle"), "PROJECT"));
+        String title = defaultString(storyboardValue(tag, shotJson, "shotTitle", "title", "description"), "Storyboard Shot " + shotNumber);
+        String sceneLocation = defaultString(storyboardValue(tag, shotJson, "sceneLocation", "environment", "setDesign"), "creator shooting space");
+        String narrativeBeat = defaultString(storyboardValue(tag, shotJson, "narrativeBeatSummary", "beatTitle", "purpose"), title);
+        String shotTypeFullName = defaultString(storyboardValue(tag, shotJson, "shotTypeFullName"), defaultString(storyboardValue(tag, shotJson, "shotType"), "Shot"));
+        String cameraAngle = defaultString(storyboardValue(tag, shotJson, "cameraAngle"), "Eye Level");
+        String movement = defaultString(storyboardValue(tag, shotJson, "cameraMovement"), defaultString(nested(shotJson, "cinematicExecution", "cameraStyle"), "Static"));
+        String lens = defaultString(storyboardValue(tag, shotJson, "lensSuggestion"), "Mobile 1x Wide");
+        String compositionSummary = defaultString(storyboardValue(tag, shotJson, "compositionSummary", "composition"), "center-safe framing");
+        String environment = defaultString(storyboardValue(tag, shotJson, "environment", "setDesign", "sceneLocation"), sceneLocation);
+        String keyLight = defaultString(firstNonBlank(tag.get("keyLightSourceLabel"), lightingTag.get("keyLight"), nested(lightingTag, "floorPlan", "keyLight")), "motivated practical key");
+        String expression = defaultString(storyboardValue(tag, shotJson, "expression"), "natural performance");
+        String emotion = defaultString(storyboardValue(tag, shotJson, "emotion"), "clear intent");
+        String emotionIntensity = defaultString(storyboardValue(tag, shotJson, "emotionIntensity"), "0");
+        String bodyLanguage = defaultString(storyboardValue(tag, shotJson, "bodyLanguage"), "natural posture");
+        String headroom = defaultString(storyboardValue(tag, shotJson, "headroomNote"), "clean headroom");
+        String frameLeft = defaultString(storyboardValue(tag, shotJson, "frameLeftNote"), "visible left-frame anchor from shot");
+        String frameRight = defaultString(storyboardValue(tag, shotJson, "frameRightNote"), "visible right-frame anchor from shot");
+        String target = defaultString(storyboardValue(tag, shotJson, "targetFocalPoint", "retentionGoal"), "TARGET: primary face/action");
+        String lightingAtmosphere = defaultString(storyboardValue(tag, shotJson, "lightingAtmosphericDescription", "lighting"), "soft practical light");
+        String cinematicIntent = defaultString(firstNonBlank(lightingTag.get("cinematicIntent"), lightingAtmosphere), "clear emotional lighting intent");
+        String inferredTone = defaultString(firstNonBlank(tag.get("inferredTone"), shotJson.get("inferredTone"), screenplay.get("inferredTone"), screenplay.get("emotionalArc")), "cinematic creator tone");
+        String primaryCharacters = defaultString(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters"), firstCharacterDescription(tag, shotJson)), "Primary visible character from the shot JSON.");
+        String sideCharacters = defaultString(firstNonBlank(tag.get("sideCharacters"), shotJson.get("sideCharacters")), "none");
+        String wardrobe = defaultString(firstNonBlank(primaryCharacter.get("wardrobeThisShot"), primaryCharacter.get("wardrobe"), shotJson.get("wardrobeThisShot"), shotJson.get("characterContinuity")), "match character continuity");
+        String blockingNotes = defaultString(firstNonBlank(shotJson.get("blockingNotes"), cameraTag.get("blockingMap"), tag.get("directorNote"), storyboardValue(tag, shotJson, "action", "primaryActorAction", "visualDirection", "description")), "show the planned actor blocking clearly");
+        String setDesign = defaultString(storyboardValue(tag, shotJson, "setDesign", "environment"), environment);
+        String keyProps = defaultString(firstNonBlank(shotJson.get("keyProps"), shotJson.get("props"), nested(cameraTag, "blockingMap", "keyProps"), shotJson.get("resourceRequirements")), "only props specified by the shot");
+        String culturalReferences = defaultString(firstNonBlank(tag.get("culturalReferences"), shotJson.get("culturalReferences")), "none");
+        String textOverlay = frameOverlayText(tag, shotJson);
+        String dialogueLanguage = defaultString(firstNonBlank(tag.get("dialogueLanguage"), shotJson.get("dialogueLanguage"), screenplay.get("dialogueLanguage")), "English");
+        String dialogueBox = dialogueBoxText(shotJson, tag);
+        String ambient = defaultString(storyboardValue(tag, shotJson, "ambientBedDescription"), storyboardSoundNote(shotJson));
+        String sync = defaultString(storyboardValue(tag, shotJson, "syncHitDescription"), "natural sync hit from action");
+        String music = backgroundMusicNote(shotJson);
+        String musicCue = "none".equalsIgnoreCase(music) ? defaultString(screenplay.get("backgroundMusicPlan"), "none") : music;
+        String directorTip = defaultString(storyboardValue(tag, shotJson, "directorNote", "creatorTip"), beginnerTip(shotJson));
+        String creatorGuides = compactPromptParts(
+                promptLabel("director", directorTip),
+                promptLabel("creator guide", shotJson.get("rookieFriendlyGuide")),
+                promptLabel("resources", firstNonBlank(screenplay.get("resourceRequirements"), shotJson.get("resourceRequirements"))),
+                promptLabel("post", firstNonBlank(shotJson.get("postProductionNotes"), screenplay.get("postProductionNotes")))
+        );
+        String textPromptEssence = defaultString(firstNonBlank(textOverlay, narrativeBeat, blockingNotes), title);
+
         return """
-                Professional monochrome pencil storyboard sketch, single cinematic shot only, %s composition, exact %sx%s output.
-                Style: grayscale director storyboard, readable production-planning annotations inside the frame, rough hand-drawn sketch, not glossy art, not poster, not collage.
-                Header text inside image: SHOT %02d, %s, %s.
-                Camera annotations inside image: CAM %s, SHOT TYPE %s, %s FPS, MOVE %s, LENS %s.
-                Performance annotations inside image: EXPRESSION %s, EMOTION %s, BODY %s, LIGHT %s, TRANSITION %s.
-                Composition note: %s. Environment: %s.
-                Main sketch action: %s.
-                Subtitle/dialogue inside frame: %s.
-                Text overlay inside frame: %s.
-                Sound note: %s. Music cue: %s. Beginner tip: %s.
-                Draw motion arrows for camera or eye/body movement where useful. Keep all labels mobile-readable.
-                %s
-                %s
+                Generate a multi-panel, highly technical production planning storyboard diagram.
+
+                STYLE:
+                Indian creator technical layout, hand-drawn pencil + fine line-art ink, sharp engineering blueprint aesthetic, textured storyboard paper, monochrome, completely clean background without photorealistic gradients. Exact %sx%s output, %s, aspect ratio %s.
+
+                [STRICT MULTI-PANEL GRID STRUCTURE]
+                You must structure the image as a professional multi-cell technical sheet using clean black borders:
+                1. HEADER BAND (Top 10%%): Clearly divide into blocks displaying:
+                   - Project: %s | Format: %s
+                   - Shot %s: %s | Scene/Location: %s
+                   - Beat: %s
+                2. LEFT METADATA BAR (20%% Width): Stacked data cards containing crisp, readable text for:
+                   - CAMERA SETUP: %s, %s, %s, %s
+                   - COMPOSITION: %s
+                   - ENVIRONMENT: %s
+                   - LIGHTING: %s
+                3. RIGHT METADATA BAR (20%% Width): Stacked data cards containing crisp, readable text for:
+                   - PERFORMANCE: Expression: %s (Intensity: %s), Action: %s
+                   - FRAME NOTES: %s | Left: %s | Right: %s
+                   - TARGET: %s
+                4. CENTRAL PRODUCTION HUB (60%% Width, Large Center Panel):
+                   - Render a high-contrast cinematic line-art sketch depicting the scene: %s.
+                   - Character visual profile: %s. Side cast: %s. Wardrobe: %s.
+                   - Set details: %s with key elements: %s. Include cultural references only if present: %s.
+                   - Tone/Lighting execution: %s, applying %s matching the goal: %s.
+
+                [TEXT OVERLAY & AUDIO CALLOUTS]
+                - In the lower section of the central panel, overlay a bold, stylized, high-contrast banner with sparkle/starburst marks reading: %s
+                - Directly beneath the central illustration, render a clean text card block displaying the primary character's current actions and dialogue delivery notes in %s: %s
+
+                [FOOTER BAND (Bottom 10%%)]
+                - Split into technical parameter blocks for audio routing and staging:
+                  - Left Panel: SOUND & AMBIENT NOTES: ambient bed %s; sync hit %s
+                  - Center Panel: MUSIC CUES: %s
+                  - Right Panel: DIRECTOR & CREATOR SETUP GUIDES: %s
+                - Very bottom baseline: Include a standardized mapping legend explaining directional action lines: "--> = Eye / Body movement" and "---> = Glance / Attention shift".
+
+                [CRITICAL IMAGE EXECUTION RULES]
+                - All label text must be clean, human-legible print font inside boxes. Do not let text bleed, overlap, or truncate over borders.
+                - Ensure distinct foreground, midground, and background separation within the central scene window.
+                - Keep the output looking like an exhaustive, hand-drafted, multi-view technical script template sheet rather than an empty cinematic film capture frame.
+                - Do not create a plain single-frame still. Do not create poster art. Do not use glossy color grading, photorealistic gradients, UI chrome, watermarks, or markdown.
+                - Use only the characters, wardrobe, props, setting, camera notes, dialogue, and cultural references supplied below. Do not invent extra people, props, logos, or locations.
+                - The source JSON below is for continuity only; never render raw JSON syntax in the image.
+
+                [SOURCE JSON / CONTINUITY GUARDRAILS]
+                StoryboardTag JSON: %s
+                LightingBuildSheetTag JSON: %s
+                CameraPlanSheetTag JSON: %s
+                Shot JSON: %s
+                Screenplay context JSON: %s
                 """.formatted(
-                "horizontal".equals(screenType) ? "16:9 horizontal" : "9:16 vertical",
                 size.width(),
                 size.height(),
+                composition,
+                aspectRatio,
+                truncatePromptText(projectTitle, 80),
+                truncatePromptText(screenType, 30),
                 shotNumber,
-                truncatePromptText(title, 70),
-                truncatePromptText(timestamp, 40),
-                truncatePromptText(defaultString(shot.get("cameraAngle"), "planned angle"), 60),
-                truncatePromptText(defaultString(shot.get("shotType"), "storyboard shot"), 45),
-                truncatePromptText(defaultString(firstNonNull(shot.get("fps"), nested(shot, "cinematicExecution", "recommendedFPS")), "30"), 10),
-                truncatePromptText(movement, 35),
-                truncatePromptText(defaultString(shot.get("lensSuggestion"), "phone wide"), 35),
-                truncatePromptText(defaultString(shot.get("expression"), "natural"), 45),
-                truncatePromptText(defaultString(shot.get("emotion"), "clear intent"), 45),
-                truncatePromptText(defaultString(shot.get("bodyLanguage"), "natural posture"), 55),
-                truncatePromptText(defaultString(shot.get("lighting"), "soft available light"), 55),
-                truncatePromptText(defaultString(shot.get("transition"), "hard cut"), 35),
-                truncatePromptText(defaultString(shot.get("composition"), "center-safe"), 65),
-                truncatePromptText(defaultString(firstNonNull(shot.get("environment"), shot.get("setDesign")), "creator shooting space"), 65),
-                truncatePromptText(action, 150),
-                truncatePromptText(defaultString(dialogue, "none"), 100),
-                truncatePromptText(defaultString(shot.get("textOverlay"), "none"), 55),
-                truncatePromptText(storyboardSoundNote(shot), 90),
-                truncatePromptText(backgroundMusicNote(shot), 70),
-                truncatePromptText(beginnerTip(shot), 75),
-                tagJson,
-                screenplayContextJson
+                truncatePromptText(title, 80),
+                truncatePromptText(sceneLocation, 90),
+                truncatePromptText(narrativeBeat, 110),
+                truncatePromptText(shotTypeFullName, 50),
+                truncatePromptText(cameraAngle, 50),
+                truncatePromptText(movement, 50),
+                truncatePromptText(lens, 50),
+                truncatePromptText(compositionSummary, 120),
+                truncatePromptText(environment, 120),
+                truncatePromptText(keyLight, 120),
+                truncatePromptText(expression, 80),
+                truncatePromptText(emotionIntensity, 20),
+                truncatePromptText(bodyLanguage, 95),
+                truncatePromptText(headroom, 70),
+                truncatePromptText(frameLeft, 90),
+                truncatePromptText(frameRight, 90),
+                truncatePromptText(target, 110),
+                truncatePromptText(blockingNotes, 280),
+                truncatePromptText(primaryCharacters, 320),
+                truncatePromptText(sideCharacters, 160),
+                truncatePromptText(wardrobe, 160),
+                truncatePromptText(setDesign, 220),
+                truncatePromptText(keyProps, 220),
+                truncatePromptText(culturalReferences, 160),
+                truncatePromptText(inferredTone, 90),
+                truncatePromptText(lightingAtmosphere, 160),
+                truncatePromptText(cinematicIntent, 180),
+                truncatePromptText(textPromptEssence, 90),
+                truncatePromptText(dialogueLanguage, 40),
+                truncatePromptText(dialogueBox, 180),
+                truncatePromptText(ambient, 110),
+                truncatePromptText(sync, 110),
+                truncatePromptText(musicCue, 120),
+                truncatePromptText(creatorGuides, 180),
+                toJson(tag),
+                toJson(lightingTag),
+                toJson(cameraTag),
+                toJson(shotJson),
+                toJson(screenplay)
+        );
+    }
+    private String storyboardValue(Map<String, Object> storyboardTag, Map<String, Object> shot, String... keys) {
+        for (String key : keys) {
+            String value = promptText(storyboardTag == null ? null : storyboardTag.get(key));
+            if (!value.isBlank()) {
+                return value;
+            }
+            value = promptText(shot == null ? null : shot.get(key));
+            if (!value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private String firstCharacterDescription(Map<String, Object> storyboardTag, Map<String, Object> shot) {
+        Map<String, Object> character = firstMapValue(storyboardTag == null ? null : storyboardTag.get("primaryCharacters"));
+        if (character.isEmpty()) {
+            character = firstMapValue(shot == null ? null : firstNonNull(shot.get("primaryCharacters"), shot.get("characters")));
+        }
+        if (character.isEmpty()) {
+            return defaultString(storyboardValue(storyboardTag, shot, "character", "characterContinuity", "cast", "creatorDirection"), "Primary visible character from the shot JSON.");
+        }
+        Map<String, Object> hair = mapValue(character.get("hair"));
+        return compactPromptParts(
+                promptLabel("name", firstNonBlank(character.get("storyCharacterName"), character.get("characterName"), character.get("assignedActorName"))),
+                promptLabel("archetype", character.get("archetypeLabel")),
+                promptLabel("age", character.get("age")),
+                promptLabel("gender", character.get("gender")),
+                promptLabel("ethnicity", character.get("ethnicity")),
+                promptLabel("hair", compactPromptParts(hair.get("style"), hair.get("length"), hair.get("color"))),
+                promptLabel("wardrobe", firstNonBlank(character.get("wardrobeThisShot"), character.get("wardrobe"))),
+                promptLabel("features", character.get("distinguishingFeatures")),
+                promptLabel("visual profile", character.get("assignedActorVisualProfile")),
+                promptLabel("posture", character.get("postureBaseline"))
         );
     }
 
-    private String buildProductionSheetPrompt(String imageKind, Map<String, Object> tag, String screenType, RenderSize size) {
+    private String propsAndSetDetails(Map<String, Object> shot, Map<String, Object> storyboardTag) {
+        return compactPromptParts(
+                promptLabel("set", firstNonBlank(storyboardTag.get("setDesign"), shot.get("setDesign"), storyboardTag.get("environment"), shot.get("environment"))),
+                promptLabel("visible cultural references", firstNonBlank(storyboardTag.get("culturalReferences"), shot.get("culturalReferences"))),
+                promptLabel("props", firstNonBlank(shot.get("props"), shot.get("keyProps"), shot.get("resourceRequirements"), shot.get("continuityProps"))),
+                promptLabel("screen/UI details", firstNonBlank(shot.get("screenContent"), shot.get("laptopScreen"), shot.get("phoneScreen"), shot.get("uiDetails"), shot.get("textOverlay"))),
+                promptLabel("continuity notes", firstNonBlank(shot.get("continuityNotes"), shot.get("blockingNotes"), storyboardTag.get("headroomNote")))
+        );
+    }
+
+    private String dialogueBoxText(Map<String, Object> shot, Map<String, Object> storyboardTag) {
+        Map<String, Object> primaryDialogue = mapValue(storyboardTag == null ? null : storyboardTag.get("primaryDialogue"));
+        String line = promptText(primaryDialogue.get("line"));
+        if (line.isBlank()) {
+            String fallback = dialogueLine(shot);
+            return fallback.isBlank() ? "No dialogue in this shot." : fallback;
+        }
+        String speaker = defaultString(firstNonBlank(primaryDialogue.get("characterName"), primaryDialogue.get("archetypeLabel")), "Speaker");
+        String subtext = promptText(primaryDialogue.get("subtext"));
+        if (!subtext.isBlank()) {
+            return "%s: \"%s\" (%s).".formatted(speaker, line, subtext);
+        }
+        return "%s: \"%s\".".formatted(speaker, line);
+    }
+
+    private String frameOverlayText(Map<String, Object> storyboardTag, Map<String, Object> shot) {
+        String overlay = defaultString(storyboardValue(storyboardTag, shot, "textOverlay"), "");
+        String emoji = defaultString(storyboardValue(storyboardTag, shot, "textOverlayEmoji"), "");
+        if (!emoji.isBlank() && !overlay.startsWith(emoji)) {
+            return emoji + " " + overlay;
+        }
+        return overlay.isBlank() ? "No overlay text" : overlay;
+    }
+
+    private String storyboardTiming(Map<String, Object> storyboardTag, Map<String, Object> shot) {
+        String start = defaultString(firstNonBlank(storyboardTag.get("startTimeSeconds"), shot.get("startTimeSeconds"), shot.get("startTime")), "0.0");
+        String end = defaultString(firstNonBlank(storyboardTag.get("endTimeSeconds"), shot.get("endTimeSeconds"), shot.get("endTime")), "0.0");
+        return start + " - " + end;
+    }
+
+    private Object firstNonBlank(Object... values) {
+        for (Object value : values) {
+            String text = promptText(value);
+            if (!text.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private Map<String, Object> firstMapValue(Object value) {
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                Map<String, Object> map = mapValue(item);
+                if (!map.isEmpty()) {
+                    return map;
+                }
+            }
+        }
+        return mapValue(value);
+    }
+
+    private String promptLabel(String label, Object value) {
+        String text = promptText(value);
+        return text.isBlank() ? "" : label + ": " + text;
+    }
+
+    private String compactPromptParts(Object... parts) {
+        List<String> values = new ArrayList<>();
+        for (Object part : parts) {
+            String text = promptText(part);
+            if (!text.isBlank()) {
+                values.add(text);
+            }
+        }
+        return String.join("; ", values);
+    }
+
+    private String promptText(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof Map<?, ?> || value instanceof List<?>) {
+            String json = toJson(value);
+            return "{}".equals(json) || "[]".equals(json) ? "" : json;
+        }
+        return String.valueOf(value).replaceAll("\\s+", " ").trim();
+    }
+
+    private String buildProductionSheetPrompt(
+            String imageKind,
+            Map<String, Object> shot,
+            Map<String, Object> screenplayJson,
+            Map<String, Object> tag,
+            String screenType,
+            RenderSize size
+    ) {
         String override = stringValue(tag == null ? null : tag.get("imageGenerationPromptOverride"));
         if (!override.isBlank()) {
             return override;
         }
         String title = "lighting".equals(imageKind) ? "rookie-executable lighting build sheet" : "shoot-ready camera plan sheet";
+        String sheetFocus = "lighting".equals(imageKind)
+                ? "show exact light placement, subject position, phone position, practical/window sources, shadows, and quick setup steps"
+                : "show exact camera body position, lens choice, framing box, movement path, subject blocking, and safe-frame notes";
         return """
                 Professional monochrome production planning sheet, %s, exact %sx%s output, %s composition.
+                This is for one specific screenplay shot, not a generic film diagram. %s.
                 Render as a clear storyboard-adjacent technical diagram with readable labels, top-down map, perspective sketch, numbered cards, and checklist steps.
                 Keep all text large enough for mobile review. Use the supplied JSON exactly; do not invent missing values.
-                Source JSON:
+                Shot JSON to match:
+                %s
+                Source production-plan JSON:
+                %s
+                Complete screenplay JSON for continuity:
                 %s
                 """.formatted(
                 title,
                 size.width(),
                 size.height(),
                 "horizontal".equals(screenType) ? "16:9 horizontal" : "9:16 vertical",
-                toJson(tag == null ? Map.of() : tag)
+                sheetFocus,
+                toJson(shot == null ? Map.of() : shot),
+                toJson(tag == null ? Map.of() : tag),
+                toJson(screenplayJson == null ? Map.of() : screenplayJson)
         );
     }
 
@@ -1550,5 +2078,11 @@ public class StoryboardService {
     }
 
     private record GeneratedAsset(CreatorAsset asset, String signedUrl) {
+    }
+
+    private static class ShotImageAssets {
+        private CreatorAsset storyboard;
+        private CreatorAsset lighting;
+        private CreatorAsset cameraPlan;
     }
 }

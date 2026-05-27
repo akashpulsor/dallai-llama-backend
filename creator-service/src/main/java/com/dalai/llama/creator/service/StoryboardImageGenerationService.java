@@ -1,9 +1,12 @@
 package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.config.CreatorProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -16,8 +19,10 @@ import java.util.Map;
 @Service
 public class StoryboardImageGenerationService {
 
+    private static final Logger log = LoggerFactory.getLogger(StoryboardImageGenerationService.class);
     private static final String DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
     private static final String DEFAULT_IMAGE_MIME_TYPE = "image/png";
+    private static final int IMAGE_RESPONSE_MAX_IN_MEMORY_BYTES = 32 * 1024 * 1024;
 
     private final CreatorProperties properties;
     private final WebClient.Builder webClientBuilder;
@@ -34,13 +39,19 @@ public class StoryboardImageGenerationService {
         }
 
         String model = stringValue(properties.getAi().getGeminiImageModel(), DEFAULT_GEMINI_IMAGE_MODEL);
-        GenerateContentRequest request = buildRequest(prompt, screenType);
+        String imagePrompt = buildImagePrompt(prompt, screenType);
+        log.info("Gemini storyboard image generation prompt model={} screenType={} prompt={}", model, screenType, imagePrompt);
+        GenerateContentRequest request = buildRequest(imagePrompt);
         WebClient client = webClientBuilder
                 .baseUrl(properties.getAi().getGeminiBaseUrl())
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(IMAGE_RESPONSE_MAX_IN_MEMORY_BYTES))
+                        .build())
+                .defaultHeader("x-goog-api-key", apiKey)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build();
 
-        byte[] bytes = requestImageBytes(client, model, apiKey, request)
+        byte[] bytes = requestImageBytes(client, model, request)
                 .block(Duration.ofMillis(properties.getAi().getTimeoutMs()));
 
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -51,15 +62,17 @@ public class StoryboardImageGenerationService {
         return new GeneratedImage(bytes == null ? new byte[0] : bytes, DEFAULT_IMAGE_MIME_TYPE, metadata);
     }
 
-    private GenerateContentRequest buildRequest(String prompt, String screenType) {
+    private String buildImagePrompt(String prompt, String screenType) {
         String aspectRatio = "horizontal".equalsIgnoreCase(screenType) ? "16:9" : "9:16";
-        String imagePrompt = """
+        return """
                 %s
 
-                Generate one production-ready storyboard image. Use aspect ratio %s.
+                Use aspect ratio %s.
                 Return image data as inlineData in the generateContent response.
                 """.formatted(stringValue(prompt, "Storyboard production image."), aspectRatio).trim();
+    }
 
+    private GenerateContentRequest buildRequest(String imagePrompt) {
         return new GenerateContentRequest(
                 List.of(new Content(List.of(new Part(imagePrompt, null)))),
                 new GenerationConfig(List.of("IMAGE"))
@@ -69,15 +82,11 @@ public class StoryboardImageGenerationService {
     private Mono<byte[]> requestImageBytes(
             WebClient client,
             String model,
-            String apiKey,
             GenerateContentRequest request
     ) {
         return client
                 .post()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/models/{model}:generateContent")
-                        .queryParam("key", apiKey)
-                        .build(model))
+                .uri("/models/{model}:generateContent", model)
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(GenerateContentResponse.class)

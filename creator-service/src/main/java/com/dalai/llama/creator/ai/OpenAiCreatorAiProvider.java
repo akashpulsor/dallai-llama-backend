@@ -97,7 +97,22 @@ public class OpenAiCreatorAiProvider implements CreatorAiProvider {
         parsed.putIfAbsent("model", properties.getAi().getModel());
         parsed.putIfAbsent("promptType", promptType);
         parsed.putIfAbsent("responseId", response.get("id"));
+        parsed.putIfAbsent("responseStatus", response.getOrDefault("status", "completed"));
         parsed.putIfAbsent("status", response.getOrDefault("status", "completed"));
+        parsed.putIfAbsent("rawTextPreview", truncate(outputText, 4000));
+        parsed.putIfAbsent("rawTextLength", outputText == null ? 0 : outputText.length());
+        parsed.putIfAbsent("configuredMaxOutputTokens", properties.getAi().getMaxOutputTokens());
+        parsed.putIfAbsent("timeoutMs", properties.getAi().getTimeoutMs());
+
+        List<String> finishReasons = finishReasons(response);
+        if (!finishReasons.isEmpty()) {
+            parsed.putIfAbsent("finishReasons", finishReasons);
+            parsed.putIfAbsent("finishReason", finishReasons.get(0));
+        }
+        Object incompleteDetails = response.get("incomplete_details");
+        if (incompleteDetails != null) {
+            parsed.putIfAbsent("incompleteDetails", incompleteDetails);
+        }
 
         Map<String, Object> usage = mapValue(response.get("usage"));
         if (!usage.isEmpty()) {
@@ -109,6 +124,53 @@ public class OpenAiCreatorAiProvider implements CreatorAiProvider {
             parsed.put("tokenUsage", tokenUsage);
         }
         return parsed;
+    }
+
+    private List<String> finishReasons(Map<String, Object> response) {
+        List<String> reasons = new ArrayList<>();
+        Map<String, Object> incompleteDetails = mapValue(response.get("incomplete_details"));
+        addReason(reasons, incompleteDetails.get("reason"));
+
+        Object output = response.get("output");
+        if (output instanceof List<?> outputItems) {
+            for (Object outputItem : outputItems) {
+                Map<String, Object> item = mapValue(outputItem);
+                addReason(reasons, item.get("finish_reason"));
+                addReason(reasons, item.get("finishReason"));
+                Object itemStatus = item.get("status");
+                if (itemStatus != null && !"completed".equalsIgnoreCase(String.valueOf(itemStatus))) {
+                    addReason(reasons, "output_status:" + itemStatus);
+                }
+            }
+        }
+
+        Object choices = response.get("choices");
+        if (choices instanceof List<?> choiceItems) {
+            for (Object choiceItem : choiceItems) {
+                Map<String, Object> choice = mapValue(choiceItem);
+                addReason(reasons, choice.get("finish_reason"));
+                addReason(reasons, choice.get("finishReason"));
+            }
+        }
+
+        Object responseStatus = response.get("status");
+        if (reasons.isEmpty() && responseStatus != null && !"completed".equalsIgnoreCase(String.valueOf(responseStatus))) {
+            addReason(reasons, "response_status:" + responseStatus);
+        }
+        return reasons.stream().distinct().toList();
+    }
+
+    private void addReason(List<String> reasons, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) {
+            reasons.add(String.valueOf(value));
+        }
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, Math.max(0, maxLength)) + "...";
     }
 
     private Map<String, Object> parseJsonObject(String outputText) {

@@ -1631,6 +1631,12 @@ public class IdeaService {
         payload.remove("promptFeedback");
         payload.remove("finishReason");
         payload.remove("finishReasons");
+        payload.remove("rawTextPreview");
+        payload.remove("rawTextLength");
+        payload.remove("responseStatus");
+        payload.remove("configuredMaxOutputTokens");
+        payload.remove("timeoutMs");
+        payload.remove("incompleteDetails");
         return payload;
     }
 

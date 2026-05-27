@@ -98,6 +98,10 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
         parsed.putIfAbsent("model", properties.getAi().getGeminiModel());
         parsed.putIfAbsent("promptType", promptType);
         parsed.putIfAbsent("status", "completed");
+        parsed.putIfAbsent("rawTextPreview", truncate(outputText, 4000));
+        parsed.putIfAbsent("rawTextLength", outputText == null ? 0 : outputText.length());
+        parsed.putIfAbsent("configuredMaxOutputTokens", properties.getAi().getMaxOutputTokens());
+        parsed.putIfAbsent("timeoutMs", properties.getAi().getTimeoutMs());
 
         Map<String, Object> usage = mapValue(response.get("usageMetadata"));
         if (!usage.isEmpty()) {
@@ -194,6 +198,13 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
             }
         }
         return "";
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, Math.max(0, maxLength)) + "...";
     }
 
     private String stripJsonFence(String value) {

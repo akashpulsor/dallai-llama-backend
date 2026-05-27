@@ -4,6 +4,7 @@ import com.dalai.llama.creator.dto.request.GenerateProductionPlanRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
 import com.dalai.llama.creator.dto.response.GenerationJobResponse;
 import com.dalai.llama.creator.dto.response.ShotProductionPlanTagResponse;
+import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
 import com.dalai.llama.creator.dto.response.StoryboardResponse;
 import com.dalai.llama.creator.service.CreatorProductionPlanAsyncService;
 import com.dalai.llama.creator.service.CreatorStoryboardAsyncService;
@@ -57,6 +58,16 @@ public class CreatorStoryboardController {
     ) {
         String userId = authentication == null ? "anonymous" : authentication.getName();
         return ResponseEntity.ok(productionPlanTagService.listTagsForScript(scriptId, tenantId, userId));
+    }
+
+    @GetMapping("/scripts/{scriptId}/shots/images")
+    public ResponseEntity<List<ShotImageUrlResponse>> listShotImageUrls(
+            @PathVariable UUID scriptId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(storyboardService.listShotImageUrls(scriptId, tenantId, userId));
     }
 
     @PostMapping("/scripts/{scriptId}/plans/generate-async")

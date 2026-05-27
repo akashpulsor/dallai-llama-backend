@@ -395,6 +395,7 @@ public class ProductionPlanTagService {
                     promptType,
                     rootKey,
                     providerOutput,
+                    aiResponse.tokenMetadata(),
                     schemaReference,
                     script,
                     shotNumber
@@ -652,6 +653,14 @@ public class ProductionPlanTagService {
         result.remove("tokenUsage");
         result.remove("promptFeedback");
         result.remove("rawText");
+        result.remove("rawTextPreview");
+        result.remove("rawTextLength");
+        result.remove("responseStatus");
+        result.remove("finishReason");
+        result.remove("finishReasons");
+        result.remove("configuredMaxOutputTokens");
+        result.remove("timeoutMs");
+        result.remove("incompleteDetails");
         if (result.size() > 3) {
             result.put("_usedAiOutput", true);
             return result;
@@ -663,6 +672,7 @@ public class ProductionPlanTagService {
             String promptType,
             String rootKey,
             Map<String, Object> providerOutput,
+            Map<String, Object> tokenMetadata,
             Map<String, Object> schemaReference,
             CreatorScript script,
             int shotNumber
@@ -671,20 +681,41 @@ public class ProductionPlanTagService {
         boolean usedAiOutput = Boolean.TRUE.equals(tag.get("_usedAiOutput"));
         tag.remove("_usedAiOutput");
         if (!usedAiOutput || tag.isEmpty()) {
+            List<String> schemaIssues = List.of(rootKey);
+            Map<String, Object> debugPayload = rawPromptDebugPayload(
+                    promptType,
+                    rootKey,
+                    providerOutput,
+                    "NO_PARSEABLE_TAG_JSON",
+                    schemaIssues,
+                    tokenMetadata,
+                    tag
+            );
+            logAiOutputValidationFailure(promptType, rootKey, script, shotNumber, debugPayload);
             throw new CreatorAiOutputException(
                     HttpStatus.BAD_GATEWAY,
-                    productionPlanFailureMessage(rootKey, script, shotNumber, List.of(rootKey), "AI returned no parseable " + rootKey + " JSON object."),
-                    rawPromptDebugPayload(promptType, rootKey, providerOutput, "NO_PARSEABLE_TAG_JSON", List.of(rootKey))
+                    productionPlanFailureMessage(rootKey, script, shotNumber, schemaIssues, "AI returned no parseable " + rootKey + " JSON object."),
+                    debugPayload
             );
         }
 
         List<String> missing = missingSchemaKeys(tag, schemaReference, "");
         missing.addAll(tagBusinessRuleViolations(rootKey, tag));
         if (!missing.isEmpty()) {
+            Map<String, Object> debugPayload = rawPromptDebugPayload(
+                    promptType,
+                    rootKey,
+                    providerOutput,
+                    "INCOMPLETE_TAG_JSON",
+                    missing,
+                    tokenMetadata,
+                    tag
+            );
+            logAiOutputValidationFailure(promptType, rootKey, script, shotNumber, debugPayload);
             throw new CreatorAiOutputException(
                     HttpStatus.BAD_GATEWAY,
                     productionPlanFailureMessage(rootKey, script, shotNumber, missing, "AI returned incomplete " + promptType + " JSON."),
-                    rawPromptDebugPayload(promptType, rootKey, providerOutput, "INCOMPLETE_TAG_JSON", missing)
+                    debugPayload
             );
         }
         return new LinkedHashMap<>(tag);
@@ -841,11 +872,27 @@ public class ProductionPlanTagService {
             String failureReason,
             List<String> schemaIssues
     ) {
-        Map<String, Object> diagnostics = new LinkedHashMap<>();
-        diagnostics.put("rootKey", defaultString(rootKey, ""));
-        diagnostics.put("failureReason", defaultString(failureReason, ""));
-        diagnostics.put("schemaIssues", schemaIssues == null ? List.of() : schemaIssues);
-        diagnostics.put("providerKeys", providerOutput == null ? List.of() : providerOutput.keySet().stream().toList());
+        return rawPromptDebugPayload(promptType, rootKey, providerOutput, failureReason, schemaIssues, Map.of(), Map.of());
+    }
+
+    private Map<String, Object> rawPromptDebugPayload(
+            String promptType,
+            String rootKey,
+            Map<String, Object> providerOutput,
+            String failureReason,
+            List<String> schemaIssues,
+            Map<String, Object> tokenMetadata,
+            Map<String, Object> extractedPayload
+    ) {
+        Map<String, Object> diagnostics = aiOutputDiagnostics(
+                promptType,
+                rootKey,
+                providerOutput,
+                failureReason,
+                schemaIssues,
+                tokenMetadata,
+                extractedPayload
+        );
 
         Map<String, Object> rawPromptResponse = new LinkedHashMap<>();
         rawPromptResponse.put("promptType", defaultString(promptType, ""));
@@ -857,6 +904,169 @@ public class ProductionPlanTagService {
         Map<String, Object> debug = new LinkedHashMap<>();
         debug.put("rawPromptResponse", rawPromptResponse);
         return debug;
+    }
+
+    private Map<String, Object> aiOutputDiagnostics(
+            String promptType,
+            String rootKey,
+            Map<String, Object> providerOutput,
+            String failureReason,
+            List<String> schemaIssues,
+            Map<String, Object> tokenMetadata,
+            Map<String, Object> extractedPayload
+    ) {
+        Map<String, Object> safeProviderOutput = providerOutput == null ? new LinkedHashMap<>() : new LinkedHashMap<>(providerOutput);
+        Map<String, Object> safeTokenMetadata = tokenMetadata == null ? new LinkedHashMap<>() : new LinkedHashMap<>(tokenMetadata);
+        Map<String, Object> safePayload = extractedPayload == null ? new LinkedHashMap<>() : new LinkedHashMap<>(extractedPayload);
+
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        diagnostics.put("promptType", defaultString(promptType, ""));
+        diagnostics.put("rootKey", defaultString(rootKey, ""));
+        diagnostics.put("failureReason", defaultString(failureReason, ""));
+        diagnostics.put("likelyCause", likelyAiOutputFailureCause(safeProviderOutput, safePayload, schemaIssues));
+        diagnostics.put("schemaIssues", schemaIssues == null ? List.of() : schemaIssues);
+        diagnostics.put("provider", creatorAiService.providerName());
+        diagnostics.put("model", creatorAiService.modelName());
+        diagnostics.put("providerKeys", safeProviderOutput.keySet().stream().toList());
+        diagnostics.put("providerStatus", stringValue(safeProviderOutput.get("status")));
+        diagnostics.put("responseStatus", stringValue(safeProviderOutput.get("responseStatus")));
+        diagnostics.put("responseId", stringValue(safeProviderOutput.get("responseId")));
+        diagnostics.put("finishReason", stringValue(safeProviderOutput.get("finishReason")));
+        diagnostics.put("finishReasons", stringList(safeProviderOutput.get("finishReasons")));
+        diagnostics.put("tokenUsage", mapValue(safeProviderOutput.get("tokenUsage")));
+        diagnostics.put("tokenMetadata", safeTokenMetadata);
+        diagnostics.put("maxOutputTokens", firstNonNull(safeProviderOutput.get("configuredMaxOutputTokens"), safeTokenMetadata.get("maxOutputTokens")));
+        diagnostics.put("timeoutMs", safeProviderOutput.get("timeoutMs"));
+        diagnostics.put("hasRawText", safeProviderOutput.get("rawText") != null);
+        diagnostics.put("rawTextLength", rawTextLength(safeProviderOutput));
+        diagnostics.put("rawTextPreview", rawTextPreview(safeProviderOutput));
+        diagnostics.put("providerOutputPreview", truncate(toJson(safeProviderOutput), 4000));
+        diagnostics.put("extractedPayloadKeys", safePayload.keySet().stream().toList());
+        diagnostics.put("fieldCounts", tagFieldCounts(rootKey, safePayload));
+        return diagnostics;
+    }
+
+    private void logAiOutputValidationFailure(
+            String promptType,
+            String rootKey,
+            CreatorScript script,
+            int shotNumber,
+            Map<String, Object> debugPayload
+    ) {
+        Map<String, Object> rawPromptResponse = mapValue(debugPayload == null ? null : debugPayload.get("rawPromptResponse"));
+        Map<String, Object> diagnostics = mapValue(rawPromptResponse.get("diagnostics"));
+        log.warn(
+                "Creator production plan AI output validation failed promptType={} rootKey={} scriptId={} shotNumber={} failureReason={} likelyCause={} finishReason={} tokenMetadata={} tokenUsage={} maxOutputTokens={} providerKeys={} extractedPayloadKeys={} fieldCounts={} schemaIssues={} rawTextLength={} rawTextPreview={} providerOutputPreview={}",
+                promptType,
+                rootKey,
+                script == null ? null : script.getId(),
+                shotNumber,
+                diagnostics.get("failureReason"),
+                diagnostics.get("likelyCause"),
+                diagnostics.get("finishReason"),
+                diagnostics.get("tokenMetadata"),
+                diagnostics.get("tokenUsage"),
+                diagnostics.get("maxOutputTokens"),
+                diagnostics.get("providerKeys"),
+                diagnostics.get("extractedPayloadKeys"),
+                diagnostics.get("fieldCounts"),
+                diagnostics.get("schemaIssues"),
+                diagnostics.get("rawTextLength"),
+                truncate(stringValue(diagnostics.get("rawTextPreview")), 1000),
+                truncate(stringValue(diagnostics.get("providerOutputPreview")), 2000)
+        );
+    }
+
+    private String likelyAiOutputFailureCause(Map<String, Object> providerOutput, Map<String, Object> extractedPayload, List<String> schemaIssues) {
+        if (isMaxTokensFinish(providerOutput)) {
+            return "MODEL_OUTPUT_TRUNCATED_BY_MAX_OUTPUT_TOKENS";
+        }
+        if ((extractedPayload == null || extractedPayload.isEmpty()) && providerOutput != null && providerOutput.get("rawText") != null) {
+            return "RAW_TEXT_JSON_PARSE_FAILED";
+        }
+        List<String> issues = schemaIssues == null ? List.of() : schemaIssues;
+        if (issues.stream().anyMatch(issue -> issue.contains("gearCards") || issue.contains("buildSteps") || issue.contains("executionSteps"))) {
+            return "MODEL_OMITTED_REQUIRED_ARRAY_ITEMS";
+        }
+        if (!issues.isEmpty()) {
+            return "MODEL_OMITTED_REQUIRED_FIELDS";
+        }
+        return "UNKNOWN_AI_OUTPUT_VALIDATION_FAILURE";
+    }
+
+    private boolean isMaxTokensFinish(Map<String, Object> providerOutput) {
+        String reason = stringValue(providerOutput == null ? null : providerOutput.get("finishReason")).toUpperCase(Locale.ROOT);
+        if (reason.contains("MAX_TOKEN") || reason.contains("MAX_OUTPUT")) {
+            return true;
+        }
+        for (String item : stringList(providerOutput == null ? null : providerOutput.get("finishReasons"))) {
+            String text = item.toUpperCase(Locale.ROOT);
+            if (text.contains("MAX_TOKEN") || text.contains("MAX_OUTPUT")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<String, Object> tagFieldCounts(String rootKey, Map<String, Object> tag) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        Map<String, Object> safeTag = tag == null ? Map.of() : tag;
+        if ("lightingBuildSheetTag".equals(rootKey)) {
+            putListDiagnostics(counts, safeTag, "gearCards");
+            putListDiagnostics(counts, safeTag, "buildSteps");
+            putListDiagnostics(counts, safeTag, "safetyFlags");
+        } else if ("cameraPlanSheetTag".equals(rootKey)) {
+            putListDiagnostics(counts, safeTag, "executionSteps");
+            putListDiagnostics(counts, safeTag, "safetyFlags");
+            putListDiagnostics(counts, safeTag, "coverageSpec.companionShots");
+        } else if ("storyboardTag".equals(rootKey)) {
+            putListDiagnostics(counts, safeTag, "primaryCharacters");
+            putListDiagnostics(counts, safeTag, "sideCharacters");
+            putListDiagnostics(counts, safeTag, "culturalReferences");
+        }
+        return counts;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void putListDiagnostics(Map<String, Object> counts, Map<String, Object> source, String path) {
+        Object value = valueAtPath(source, path);
+        String key = path.replace('.', '_');
+        counts.put(key + "Items", listSize(value));
+        counts.put(key + "ObjectItems", value instanceof List<?> ? mapList(value).size() : 0);
+        counts.put(key + "Type", value == null ? "missing" : value.getClass().getSimpleName());
+    }
+
+    private int listSize(Object value) {
+        return value instanceof List<?> list ? list.size() : 0;
+    }
+
+    private int rawTextLength(Map<String, Object> providerOutput) {
+        if (providerOutput == null || providerOutput.isEmpty()) {
+            return 0;
+        }
+        Object explicitLength = providerOutput.get("rawTextLength");
+        if (explicitLength != null) {
+            return intValue(explicitLength, 0);
+        }
+        return stringValue(providerOutput.get("rawText")).length();
+    }
+
+    private String rawTextPreview(Map<String, Object> providerOutput) {
+        if (providerOutput == null || providerOutput.isEmpty()) {
+            return "";
+        }
+        String preview = stringValue(providerOutput.get("rawTextPreview"));
+        if (!preview.isBlank()) {
+            return preview;
+        }
+        return truncate(stringValue(providerOutput.get("rawText")), 4000);
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, Math.max(0, maxLength)) + "...";
     }
 
     private Map<String, Object> buildInputPayload(CreatorScript script, Map<String, Object> projectContext, Map<String, Object> shot, String styleKey) {

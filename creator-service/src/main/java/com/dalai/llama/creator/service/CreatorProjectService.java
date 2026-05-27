@@ -64,7 +64,7 @@ public class CreatorProjectService {
                         PageRequest.of(0, normalizedLimit)
                 )
                 .stream()
-                .map(this::toResponse)
+                .map(this::toSummaryResponse)
                 .toList();
     }
 
@@ -202,6 +202,48 @@ public class CreatorProjectService {
         Map<String, Object> preferences = copyMap(project.getPreferences());
         Map<String, Object> memory = copyMap(project.getMemorySnapshot());
         enrichProjectMemory(project, memory);
+        String title = firstNonBlank(
+                stringValue(preferences.get("title")),
+                stringValue(preferences.get("briefTitle")),
+                titleFromMemory(memory),
+                "Creator project"
+        );
+        return new CreatorProjectResponse(
+                project.getId(),
+                project.getId() == null ? null : project.getId().toString(),
+                title,
+                project.getStatus(),
+                project.getSelectedPlatformCode(),
+                project.getSelectedCategoryCode(),
+                project.getTimeframe(),
+                project.getCountryCode(),
+                project.getDurationSeconds(),
+                project.getSelectedTrendId(),
+                project.getSelectedAudienceId(),
+                project.getSelectedProfileId(),
+                project.getSelectedIdeaId(),
+                project.getSelectedStoryboardId(),
+                preferences,
+                memory,
+                project.getCreatedAt(),
+                project.getUpdatedAt()
+        );
+    }
+
+    public CreatorProjectResponse toSummaryResponse(CreatorProject project) {
+        Map<String, Object> preferences = copyMap(project.getPreferences());
+        Map<String, Object> memory = copyMap(project.getMemorySnapshot());
+        if (project.getId() != null) {
+            memory.put("projectId", project.getId().toString());
+        }
+        if (!memory.containsKey("workflowSummary")) {
+            Map<String, Object> workflowSummary = new LinkedHashMap<>();
+            workflowSummary.put("selectedIdeaId", project.getSelectedIdeaId() == null ? "" : project.getSelectedIdeaId().toString());
+            workflowSummary.put("selectedStoryboardId", project.getSelectedStoryboardId() == null ? "" : project.getSelectedStoryboardId().toString());
+            workflowSummary.put("status", project.getStatus());
+            workflowSummary.put("updatedAt", project.getUpdatedAt() == null ? "" : project.getUpdatedAt().toString());
+            memory.put("workflowSummary", workflowSummary);
+        }
         String title = firstNonBlank(
                 stringValue(preferences.get("title")),
                 stringValue(preferences.get("briefTitle")),

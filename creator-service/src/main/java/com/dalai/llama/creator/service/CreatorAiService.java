@@ -61,6 +61,11 @@ public class CreatorAiService {
         tokenMetadata.put("outputTokens", tokenUsage.outputTokens());
         tokenMetadata.put("totalTokens", tokenUsage.totalTokens());
         tokenMetadata.put("source", tokenUsage.source());
+        tokenMetadata.put("provider", providerName());
+        tokenMetadata.put("model", modelName());
+        tokenMetadata.put("maxOutputTokens", properties.getAi().getMaxOutputTokens());
+        tokenMetadata.put("finishReason", stringValue(output == null ? null : output.get("finishReason")));
+        tokenMetadata.put("finishReasons", output == null ? List.of() : stringList(output.get("finishReasons")));
 
         Map<String, Object> costMetadata = new LinkedHashMap<>();
         costMetadata.put("eventId", eventId.toString());
@@ -259,6 +264,21 @@ public class CreatorAiService {
             }
         }
         return 0;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private List<String> stringList(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(this::stringValue)
+                    .filter(item -> !item.isBlank())
+                    .toList();
+        }
+        String text = stringValue(value);
+        return text.isBlank() ? List.of() : List.of(text);
     }
 
     private UUID parseUuid(String value) {
