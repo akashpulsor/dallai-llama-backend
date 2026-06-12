@@ -28,12 +28,76 @@ public class MockCreatorAiProvider implements CreatorAiProvider {
         if ("IDEA_GENERATE".equals(promptType)) {
             return generateIdeaCandidates(promptType, input);
         }
+        if ("WEEKLY_IDEA_TAGS".equals(promptType)) {
+            return generateWeeklyIdeaTags(promptType, input);
+        }
+        if ("SHOT_JSON_EDIT".equals(promptType)) {
+            return generateShotJsonEdit(promptType, input);
+        }
 
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("provider", providerName());
         output.put("promptType", promptType);
         output.put("inputHash", Integer.toHexString(input.hashCode()));
         output.put("status", "deterministic_mock_ready");
+        return output;
+    }
+
+    private Map<String, Object> generateShotJsonEdit(String promptType, Map<String, Object> input) {
+        Map<String, Object> originalShot = mapValue(input.get("shot"));
+        Map<String, Object> shot = new LinkedHashMap<>(originalShot);
+        String instruction = defaultString(input.get("instruction"), "Apply a concise AI shot edit.");
+        int shotNumber = intValue(shot.get("shotNumber"), 1);
+        shot.put("shotNumber", shotNumber);
+        shot.put("title", defaultString(shot.get("title"), "Shot " + shotNumber) + " (Edited)");
+        shot.put("action", defaultString(shot.get("action"), "Updated action.") + " AI edit: " + instruction);
+        shot.put("sketchPrompt", defaultString(shot.get("sketchPrompt"), defaultString(shot.get("action"), "Storyboard shot")) + " Edited instruction: " + instruction);
+        shot.put("editingNotes", List.of("Mock AI edit applied: " + instruction));
+
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("inputHash", Integer.toHexString(input.hashCode()));
+        output.put("status", "deterministic_mock_ready");
+        output.put("shot", shot);
+        return output;
+    }
+
+    private Map<String, Object> generateWeeklyIdeaTags(String promptType, Map<String, Object> input) {
+        Map<String, List<String>> topics = new LinkedHashMap<>();
+        topics.put("history", List.of("Partition memory", "Forgotten queens", "Ancient India tech", "Freedom fighters", "Lost forts", "History myths"));
+        topics.put("politics", List.of("Election promise check", "Youth voter mood", "Policy explainer", "Parliament moment", "Campaign strategy"));
+        topics.put("sports", List.of("Cricket comeback", "Olympic prep", "Football derby", "Kabaddi grit", "Fitness challenge", "Underdog athlete"));
+        topics.put("entertainment", List.of("Reality show moment", "Creator roast", "OTT twist", "Standup clip", "Meme comeback", "Award night"));
+        topics.put("bollywood", List.of("Trailer decode", "Star workout", "Old song remake", "Box office clash", "Actor transformation", "Behind the scene", "Dialog trend"));
+
+        List<Map<String, Object>> categories = new ArrayList<>();
+        topics.forEach((category, titles) -> {
+            List<Map<String, Object>> ideas = new ArrayList<>();
+            for (String title : titles) {
+                ideas.add(Map.of(
+                        "title", title,
+                        "prompt", "Create a short creator video about " + title + " with a sharp hook and one useful insight.",
+                        "why", "Mock weekly forecast for " + category + " creator ideation.",
+                        "expectedWindow", "next 7 days",
+                        "confidence", "medium",
+                        "sourceHint", "mock provider"
+                ));
+            }
+            categories.add(Map.of(
+                    "category", category,
+                    "label", category.equals("bollywood") ? "Bollywood" : category.substring(0, 1).toUpperCase() + category.substring(1),
+                    "ideas", ideas
+            ));
+        });
+
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("inputHash", Integer.toHexString(input.hashCode()));
+        output.put("status", "deterministic_mock_ready");
+        output.put("summary", "Mock weekly creator idea tags.");
+        output.put("categories", categories);
         return output;
     }
 

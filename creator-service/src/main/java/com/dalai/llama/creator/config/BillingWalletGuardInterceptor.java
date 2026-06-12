@@ -41,6 +41,9 @@ public class BillingWalletGuardInterceptor implements HandlerInterceptor {
         if (!properties.getBilling().isWalletGuardEnabled() || HttpMethod.OPTIONS.matches(request.getMethod())) {
             return true;
         }
+        if (!isModelExecutionRequest(request)) {
+            return true;
+        }
 
         UUID tenantId = parseTenantId(request.getHeader(TENANT_HEADER));
         if (tenantId == null) {
@@ -78,6 +81,51 @@ public class BillingWalletGuardInterceptor implements HandlerInterceptor {
             );
             return false;
         }
+    }
+
+    private boolean isModelExecutionRequest(HttpServletRequest request) {
+        String path = request.getRequestURI() == null ? "" : request.getRequestURI();
+        String method = request.getMethod();
+
+        if (HttpMethod.GET.matches(method)) {
+            return path.matches(".*/api/v1/creator/trends/[^/]+/insight$");
+        }
+        if (!HttpMethod.POST.matches(method) && !HttpMethod.PUT.matches(method) && !HttpMethod.PATCH.matches(method)) {
+            return false;
+        }
+
+        if (path.endsWith("/weekly-idea-tags/refresh") || path.endsWith("/trends/predict")) {
+            return true;
+        }
+
+        if (path.contains("/api/v1/creator/locked-ideas/")) {
+            return path.endsWith("/ideas/generate")
+                    || path.endsWith("/ideas/generate-async")
+                    || path.endsWith("/script/generate")
+                    || path.endsWith("/screenplay/generate")
+                    || path.endsWith("/screenplay/generate-async");
+        }
+
+        if (path.contains("/api/v1/creator/storyboards/scripts/")) {
+            return path.endsWith("/plans/generate-async")
+                    || path.endsWith("/generate")
+                    || path.endsWith("/generate-async")
+                    || path.endsWith("/shots/insert")
+                    || path.endsWith("/studio-polish-async")
+                    || path.endsWith("/enhance-all-async")
+                    || (path.contains("/shots/") && path.contains("/images/"))
+                    || (path.contains("/shots/") && path.endsWith("/ai-edit"));
+        }
+
+        if (path.contains("/api/v1/creator/storyboards/shots/takes/")) {
+            return path.endsWith("/sound-generate-async")
+                    || path.endsWith("/review-async")
+                    || path.endsWith("/enhance-preview-async")
+                    || path.endsWith("/studio-polish-async")
+                    || path.endsWith("/enhance-audio-async");
+        }
+
+        return false;
     }
 
     private UUID parseTenantId(String value) {

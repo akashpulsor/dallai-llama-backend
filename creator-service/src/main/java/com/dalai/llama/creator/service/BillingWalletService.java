@@ -23,6 +23,11 @@ public class BillingWalletService {
     }
 
     public BigDecimal getWalletBalance(UUID tenantId) {
+        WalletBalanceResponse response = getWalletBalanceDetails(tenantId);
+        return response.balance() == null ? BigDecimal.ZERO : response.balance();
+    }
+
+    public WalletBalanceResponse getWalletBalanceDetails(UUID tenantId) {
         try {
             WalletBalanceResponse response = webClient.get()
                     .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
@@ -30,11 +35,11 @@ public class BillingWalletService {
                     .bodyToMono(WalletBalanceResponse.class)
                     .block(Duration.ofMillis(properties.getBilling().getWalletCheckTimeoutMs()));
             if (response == null || response.balance() == null) {
-                return BigDecimal.ZERO;
+                return new WalletBalanceResponse(BigDecimal.ZERO, null);
             }
-            return response.balance();
+            return response;
         } catch (WebClientResponseException.NotFound ex) {
-            return BigDecimal.ZERO;
+            return new WalletBalanceResponse(BigDecimal.ZERO, null);
         } catch (RuntimeException ex) {
             throw new WalletBalanceCheckException("Unable to verify wallet balance", ex);
         }

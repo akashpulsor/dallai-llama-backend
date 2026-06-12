@@ -12,6 +12,7 @@ import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.UsageService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class UsageServiceImpl implements UsageService {
 
@@ -33,9 +35,6 @@ public class UsageServiceImpl implements UsageService {
     private final WalletService walletService;
     private final BillingStateService billingStateService;
     private final TransactionService transactionService;
-
-    @Value("${billing.currency.usage-margin-percent:80}")
-    private BigDecimal usageMarginPercent;
 
     @Value("${billing.currency.conversion-rates:INR_INR=1}")
     private String conversionRatesConfig;
@@ -58,13 +57,10 @@ public class UsageServiceImpl implements UsageService {
                 .orElseThrow(() -> new WalletNotFoundException(request.tenantId()));
         String tenantCurrency = normalizeCurrency(wallet.getCurrency());
         String sourceCurrency = normalizeCurrency(request.currency() == null ? tenantCurrency : request.currency());
-        BigDecimal billedTotalCost = applyUsageMargin(
-                convertCurrency(defaultAmount(request.totalCost()), sourceCurrency, tenantCurrency, 4),
-                4
-        );
+        BigDecimal billedTotalCost = convertCurrency(defaultAmount(request.totalCost()), sourceCurrency, tenantCurrency, 4);
         BigDecimal billedUnitCost = request.unitCost() == null
                 ? null
-                : applyUsageMargin(convertCurrency(request.unitCost(), sourceCurrency, tenantCurrency, 6), 6);
+                : convertCurrency(request.unitCost(), sourceCurrency, tenantCurrency, 6);
 
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
@@ -88,6 +84,20 @@ public class UsageServiceImpl implements UsageService {
                     record.getTotalCost(),
                     usageReference(request),
                     request.subscriptionId(),
+                    request.idempotencyKey()
+            );
+            log.info(
+                    "Debited wallet for billable usage tenantId={} metric={} quantity={} sourceType={} sourceId={} sourceCurrency={} walletCurrency={} rawCost={} billedCost={} billingMarginPercent={} idempotencyKey={}",
+                    request.tenantId(),
+                    request.metric(),
+                    record.getQuantity(),
+                    request.sourceType(),
+                    request.sourceId(),
+                    sourceCurrency,
+                    tenantCurrency,
+                    defaultAmount(request.totalCost()).setScale(4, RoundingMode.HALF_UP),
+                    record.getTotalCost(),
+                    BigDecimal.ZERO,
                     request.idempotencyKey()
             );
             billingStateService.evaluateState(request.tenantId());
@@ -129,12 +139,6 @@ public class UsageServiceImpl implements UsageService {
             );
         }
         return amount.multiply(rate).setScale(scale, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal applyUsageMargin(BigDecimal amount, int scale) {
-        BigDecimal marginPercent = usageMarginPercent == null ? BigDecimal.ZERO : usageMarginPercent.max(BigDecimal.ZERO);
-        BigDecimal multiplier = BigDecimal.ONE.add(marginPercent.divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
-        return amount.multiply(multiplier).setScale(scale, RoundingMode.HALF_UP);
     }
 
     private Map<String, BigDecimal> conversionRates() {

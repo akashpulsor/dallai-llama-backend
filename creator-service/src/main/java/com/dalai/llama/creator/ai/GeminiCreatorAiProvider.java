@@ -4,10 +4,9 @@ import com.dalai.llama.creator.config.CreatorProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -18,18 +17,26 @@ import java.util.Map;
 @Component
 public class GeminiCreatorAiProvider implements CreatorAiProvider {
 
+    private static final Logger log = LoggerFactory.getLogger(GeminiCreatorAiProvider.class);
+
     private final CreatorProperties properties;
     private final ObjectMapper objectMapper;
-    private final WebClient.Builder webClientBuilder;
+    private final GeminiUsageMetadataParser usageMetadataParser;
+    private final GoogleGenAiClientFactory googleGenAiClientFactory;
+    private final GeminiRateLimitGuard geminiRateLimitGuard;
 
     public GeminiCreatorAiProvider(
             CreatorProperties properties,
             ObjectMapper objectMapper,
-            WebClient.Builder webClientBuilder
+            GeminiUsageMetadataParser usageMetadataParser,
+            GoogleGenAiClientFactory googleGenAiClientFactory,
+            GeminiRateLimitGuard geminiRateLimitGuard
     ) {
         this.properties = properties;
         this.objectMapper = objectMapper;
-        this.webClientBuilder = webClientBuilder;
+        this.usageMetadataParser = usageMetadataParser;
+        this.googleGenAiClientFactory = googleGenAiClientFactory;
+        this.geminiRateLimitGuard = geminiRateLimitGuard;
     }
 
     @Override
@@ -39,11 +46,6 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
 
     @Override
     public Map<String, Object> generate(String promptType, Map<String, Object> input) {
-        String apiKey = properties.getAi().getGeminiApiKey();
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Gemini API key is not configured for creator-service.");
-        }
-
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("systemInstruction", Map.of(
                 "parts", List.of(Map.of("text", "Return only a valid JSON object. Do not wrap it in markdown."))
@@ -52,25 +54,30 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
                 "role", "user",
                 "parts", List.of(Map.of("text", promptText(input)))
         )));
+        boolean useGoogleSearch = Boolean.TRUE.equals(input.get("useGoogleSearch")) || Boolean.TRUE.equals(input.get("useWebSearch"));
+        if (useGoogleSearch) {
+            request.put("tools", List.of(Map.of("google_search", Map.of())));
+        }
         Map<String, Object> generationConfig = new LinkedHashMap<>();
-        generationConfig.put("responseMimeType", "application/json");
+        if (!useGoogleSearch) {
+            generationConfig.put("responseMimeType", "application/json");
+        }
         if (properties.getAi().getMaxOutputTokens() != null && properties.getAi().getMaxOutputTokens() > 0) {
             generationConfig.put("maxOutputTokens", properties.getAi().getMaxOutputTokens());
         }
         request.put("generationConfig", generationConfig);
 
-        Map<String, Object> response = webClientBuilder
-                .baseUrl(properties.getAi().getGeminiBaseUrl())
-                .defaultHeader("x-goog-api-key", apiKey)
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .build()
-                .post()
-                .uri("/models/{model}:generateContent", properties.getAi().getGeminiModel())
-                .bodyValue(request)
-                .retrieve()
-                .bodyToMono(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {
-                })
-                .block(Duration.ofMillis(properties.getAi().getTimeoutMs()));
+        String model = properties.getAi().getGeminiModel();
+        Map<String, Object> response = geminiRateLimitGuard.execute(promptType, model, () ->
+                googleGenAiClientFactory.client(16 * 1024 * 1024)
+                        .post()
+                        .uri(googleGenAiClientFactory.generateContentUri(model))
+                        .bodyValue(request)
+                        .retrieve()
+                        .bodyToMono(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {
+                        })
+                        .block(Duration.ofMillis(properties.getAi().getTimeoutMs()))
+        );
 
         return normalizeResponse(promptType, response == null ? Map.of() : response);
     }
@@ -93,9 +100,13 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
         if (parsed.isEmpty()) {
             parsed.put("rawText", outputText);
         }
+        if (shouldRetainRawText(promptType)) {
+            parsed.put("rawText", outputText);
+        }
 
         parsed.putIfAbsent("provider", providerName());
         parsed.putIfAbsent("model", properties.getAi().getGeminiModel());
+        parsed.putIfAbsent("googleGenaiBackend", googleGenAiClientFactory.backend());
         parsed.putIfAbsent("promptType", promptType);
         parsed.putIfAbsent("status", "completed");
         parsed.putIfAbsent("rawTextPreview", truncate(outputText, 4000));
@@ -105,12 +116,7 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
 
         Map<String, Object> usage = mapValue(response.get("usageMetadata"));
         if (!usage.isEmpty()) {
-            Map<String, Object> tokenUsage = new LinkedHashMap<>();
-            tokenUsage.put("inputTokens", usage.get("promptTokenCount"));
-            tokenUsage.put("outputTokens", usage.get("candidatesTokenCount"));
-            tokenUsage.put("totalTokens", usage.get("totalTokenCount"));
-            tokenUsage.put("raw", usage);
-            parsed.put("tokenUsage", tokenUsage);
+            parsed.put("tokenUsage", usageMetadataParser.parse(usage));
         }
 
         List<String> finishReasons = finishReasons(response);
@@ -123,7 +129,52 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
         if (promptFeedback != null) {
             parsed.put("promptFeedback", promptFeedback);
         }
+        if (shouldLogRawText(promptType)) {
+            log.info(
+                    "Gemini raw response promptType={} model={} backend={} rawTextLength={} rawText={}",
+                    promptType,
+                    properties.getAi().getGeminiModel(),
+                    googleGenAiClientFactory.backend(),
+                    outputText == null ? 0 : outputText.length(),
+                    outputText
+            );
+        }
+        List<Map<String, Object>> groundingMetadata = groundingMetadata(response);
+        if (!groundingMetadata.isEmpty()) {
+            parsed.put("groundingMetadata", groundingMetadata);
+            parsed.put("groundedWithGoogleSearch", true);
+        }
         return parsed;
+    }
+
+    private boolean shouldRetainRawText(String promptType) {
+        String normalized = String.valueOf(promptType == null ? "" : promptType).toUpperCase();
+        return normalized.equals("SCRIPT_GENERATE")
+                || normalized.equals("STORYBOARD_TAG_GENERATE")
+                || normalized.equals("LIGHTING_BUILD_SHEET_TAG_GENERATE")
+                || normalized.equals("CAMERA_PLAN_SHEET_TAG_GENERATE")
+                || normalized.equals("SHOT_JSON_EDIT");
+    }
+
+    private boolean shouldLogRawText(String promptType) {
+        String normalized = String.valueOf(promptType == null ? "" : promptType);
+        return "SCRIPT_GENERATE".equalsIgnoreCase(normalized)
+                || "SHOT_JSON_EDIT".equalsIgnoreCase(normalized);
+    }
+
+    private List<Map<String, Object>> groundingMetadata(Map<String, Object> response) {
+        List<Map<String, Object>> metadata = new ArrayList<>();
+        Object candidates = response.get("candidates");
+        if (candidates instanceof List<?> candidateItems) {
+            for (Object candidateItem : candidateItems) {
+                Map<String, Object> candidate = mapValue(candidateItem);
+                Map<String, Object> grounding = mapValue(candidate.get("groundingMetadata"));
+                if (!grounding.isEmpty()) {
+                    metadata.add(grounding);
+                }
+            }
+        }
+        return metadata;
     }
 
     private List<String> finishReasons(Map<String, Object> response) {
@@ -244,4 +295,5 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
         }
         return Map.of();
     }
+
 }

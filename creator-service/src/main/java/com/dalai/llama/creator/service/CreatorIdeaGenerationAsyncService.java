@@ -33,6 +33,9 @@ public class CreatorIdeaGenerationAsyncService {
             Pageable pageable
     ) {
         CreatorGenerationJob job = ideaService.startGenerateIdeasForLockedBriefJob(lockedIdeaId, tenantId, userId, pageable);
+        if (isTerminalStatus(job.getStatus())) {
+            return job;
+        }
         taskExecutor.execute(() -> {
             try {
                 ideaService.runGenerateIdeasForLockedBriefJob(job.getId(), lockedIdeaId, tenantId, userId, pageable);
@@ -50,5 +53,9 @@ public class CreatorIdeaGenerationAsyncService {
             }
         });
         return job;
+    }
+
+    private boolean isTerminalStatus(String status) {
+        return "COMPLETED".equalsIgnoreCase(status) || "FAILED".equalsIgnoreCase(status) || "CANCELLED".equalsIgnoreCase(status);
     }
 }

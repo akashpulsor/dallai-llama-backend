@@ -14,6 +14,8 @@ public record SaveGeneratedScriptRequest(
         @Min(15) @Max(10800) Integer durationSeconds,
         @Size(max = 64) String dialogueLanguage,
         @Size(max = 32) String screenType,
+        @Size(max = 64) String storytellingType,
+        @Size(max = 64) String hookLens,
         @Valid GeneratedScriptResponse.CinematicScript scriptJson,
         @Valid List<GeneratedScriptResponse.CinematicShot> scenes
 ) {

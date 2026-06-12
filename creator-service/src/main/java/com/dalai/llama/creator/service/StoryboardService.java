@@ -4,16 +4,20 @@ import com.dalai.llama.creator.config.CreatorProperties;
 import com.dalai.llama.creator.domain.PromptTemplateType;
 import com.dalai.llama.creator.domain.entity.CreatorAsset;
 import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
+import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
 import com.dalai.llama.creator.domain.entity.CreatorScriptShot;
 import com.dalai.llama.creator.domain.entity.CreatorScriptShotPlan;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboard;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboardScene;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
+import com.dalai.llama.creator.dto.request.ShotAiEditRequest;
+import com.dalai.llama.creator.dto.request.ShotTimelineInsertRequest;
 import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
 import com.dalai.llama.creator.dto.response.StoryboardResponse;
 import com.dalai.llama.creator.dto.response.StoryboardSceneResponse;
 import com.dalai.llama.creator.repository.CreatorAssetRepository;
+import com.dalai.llama.creator.repository.CreatorPromptRunRepository;
 import com.dalai.llama.creator.repository.CreatorScriptRepository;
 import com.dalai.llama.creator.repository.CreatorScriptShotRepository;
 import com.dalai.llama.creator.repository.CreatorScriptShotPlanRepository;
@@ -21,6 +25,8 @@ import com.dalai.llama.creator.repository.CreatorStoryboardRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardSceneRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -50,6 +56,8 @@ import java.util.UUID;
 @Service
 public class StoryboardService {
 
+    private static final Logger log = LoggerFactory.getLogger(StoryboardService.class);
+
     private static final String CONTENT_TYPE_JPEG = "image/jpeg";
     private static final String ASSET_TYPE_STORYBOARD_IMAGE = "STORYBOARD_IMAGE";
     private static final String ASSET_TYPE_LIGHTING_BUILD_SHEET_IMAGE = "LIGHTING_BUILD_SHEET_IMAGE";
@@ -57,6 +65,7 @@ public class StoryboardService {
 
     private final CreatorScriptRepository scriptRepository;
     private final CreatorScriptShotRepository scriptShotRepository;
+    private final CreatorPromptRunRepository promptRunRepository;
     private final CreatorScriptShotPlanRepository shotPlanRepository;
     private final CreatorStoryboardRepository storyboardRepository;
     private final CreatorStoryboardSceneRepository sceneRepository;
@@ -64,7 +73,9 @@ public class StoryboardService {
     private final AssetStorageService assetStorageService;
     private final StoryboardImageGenerationService storyboardImageGenerationService;
     private final ProductionPlanTagService productionPlanTagService;
+    private final ScriptStructureService scriptStructureService;
     private final GenerationJobService generationJobService;
+    private final CreatorAiService creatorAiService;
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -72,6 +83,7 @@ public class StoryboardService {
     public StoryboardService(
             CreatorScriptRepository scriptRepository,
             CreatorScriptShotRepository scriptShotRepository,
+            CreatorPromptRunRepository promptRunRepository,
             CreatorScriptShotPlanRepository shotPlanRepository,
             CreatorStoryboardRepository storyboardRepository,
             CreatorStoryboardSceneRepository sceneRepository,
@@ -79,13 +91,16 @@ public class StoryboardService {
             AssetStorageService assetStorageService,
             StoryboardImageGenerationService storyboardImageGenerationService,
             ProductionPlanTagService productionPlanTagService,
+            ScriptStructureService scriptStructureService,
             GenerationJobService generationJobService,
+            CreatorAiService creatorAiService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper
     ) {
         this.scriptRepository = scriptRepository;
         this.scriptShotRepository = scriptShotRepository;
+        this.promptRunRepository = promptRunRepository;
         this.shotPlanRepository = shotPlanRepository;
         this.storyboardRepository = storyboardRepository;
         this.sceneRepository = sceneRepository;
@@ -93,7 +108,9 @@ public class StoryboardService {
         this.assetStorageService = assetStorageService;
         this.storyboardImageGenerationService = storyboardImageGenerationService;
         this.productionPlanTagService = productionPlanTagService;
+        this.scriptStructureService = scriptStructureService;
         this.generationJobService = generationJobService;
+        this.creatorAiService = creatorAiService;
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -193,6 +210,14 @@ public class StoryboardService {
         if ("storyboard".equals(normalizedKind)) {
             String prompt = buildStoryboardPrompt(script.getScriptPayload(), shot, sourceTag, plan.getLightingBuildSheetTag(), plan.getCameraPlanSheetTag(), screenType, renderSize);
             GeneratedAsset generatedAsset = generateStoryboardAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt);
+            collectImageUsage(
+                    "STORYBOARD_IMAGE_GENERATE",
+                    mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
+                    script,
+                    null,
+                    null,
+                    "Generated storyboard image for shot " + shotNumber
+            );
             storyboardAsset = generatedAsset.asset();
             storyboardSignedUrl = generatedAsset.signedUrl();
             scene.setImageAssetId(storyboardAsset.getId());
@@ -214,6 +239,18 @@ public class StoryboardService {
                     assetType,
                     sourceTag
             );
+            collectImageUsage(
+                    "lighting".equals(normalizedKind)
+                            ? "LIGHTING_BUILD_SHEET_IMAGE_GENERATE"
+                            : "CAMERA_PLAN_SHEET_IMAGE_GENERATE",
+                    mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
+                    script,
+                    null,
+                    null,
+                    ("lighting".equals(normalizedKind)
+                            ? "Generated lighting build sheet for shot "
+                            : "Generated DP camera plan sheet for shot ") + shotNumber
+            );
             if ("lighting".equals(normalizedKind)) {
                 lightingAsset = generatedAsset.asset();
                 lightingSignedUrl = generatedAsset.signedUrl();
@@ -231,6 +268,225 @@ public class StoryboardService {
         scene = sceneRepository.save(scene);
         linkProjectSelectedStoryboard(storyboard);
         return toResponse(scene, storyboardAsset, storyboardSignedUrl, lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan);
+    }
+
+    @Transactional
+    public StoryboardSceneResponse editShotWithAi(
+            UUID scriptId,
+            int shotNumber,
+            ShotAiEditRequest request,
+            String tenantId,
+            String userId
+    ) {
+        if (request == null || request.instruction() == null || request.instruction().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tell AI what to change in this shot.");
+        }
+        String normalizedKind = assetKeyType(request.imageKind());
+        if (!"storyboard".equals(normalizedKind)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI shot edits currently regenerate the storyboard shot image only.");
+        }
+
+        PreparedStoryboardGeneration prepared = prepareStoryboardGeneration(
+                scriptId,
+                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds()),
+                tenantId,
+                userId
+        );
+        CreatorScript script = prepared.script();
+        CreatorStoryboard storyboard = findOrCreateStoryboard(script, prepared.shots(), prepared.screenType(), prepared.renderSize());
+        Map<String, Object> shot = shotByNumber(prepared.shots(), shotNumber);
+        CreatorStoryboardScene existingScene = sceneRepository.findByStoryboardIdAndShotNumber(storyboard.getId(), shotNumber).orElse(null);
+        if (shot.isEmpty() && existingScene != null) {
+            shot = sceneToShotMap(existingScene);
+        }
+        if (shot.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Shot " + shotNumber + " was not found in the screenplay or storyboard timeline.");
+        }
+
+        CreatorScriptShotPlan plan = shotPlanRepository
+                .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, ProductionPlanTagService.DEFAULT_STYLE_KEY)
+                .orElse(null);
+        Map<Integer, String> shotIdByNumber = loadShotIdByNumber(script.getId());
+        String shotId = defaultString(shotIdByNumber.get(shotNumber), shotIdFromScene(existingScene, shotNumber));
+        Map<Integer, CreatorScriptShotPlan> planByShotNumber = loadPlanByShotNumber(script.getId());
+        Map<String, Object> continuityContext = shotContinuityContext(prepared.shots(), planByShotNumber, shotNumber);
+        addStoryboardSceneContinuity(continuityContext, storyboard.getId(), shotNumber);
+
+        Map<String, Object> editedShot = generateEditedShotJson(
+                script,
+                shot,
+                plan,
+                request.instruction().trim(),
+                continuityContext
+        );
+        script = persistEditedShotJson(script, editedShot, shotNumber);
+        productionPlanTagService.generateTagsForScript(
+                script,
+                script.getScriptPayload(),
+                List.of(editedShot),
+                ProductionPlanTagService.DEFAULT_STYLE_KEY
+        );
+        plan = shotPlanRepository
+                .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, ProductionPlanTagService.DEFAULT_STYLE_KEY)
+                .orElse(null);
+
+        CreatorStoryboardScene scene = upsertScene(toScene(
+                storyboard.getId(),
+                null,
+                null,
+                null,
+                editedShot,
+                plan,
+                shotNumber,
+                "",
+                prepared.screenType(),
+                prepared.renderSize()
+        ));
+
+        Map<String, Object> storyboardTag = plan == null ? Map.of() : plan.getStoryboardTag();
+        String basePrompt = buildStoryboardPrompt(
+                script.getScriptPayload(),
+                editedShot,
+                storyboardTag,
+                plan == null ? Map.of() : plan.getLightingBuildSheetTag(),
+                plan == null ? Map.of() : plan.getCameraPlanSheetTag(),
+                prepared.screenType(),
+                prepared.renderSize()
+        );
+        String prompt = buildAiShotEditPrompt(basePrompt, "edit_existing_shot", request.instruction(), continuityContext);
+        GeneratedAsset generatedAsset = generateStoryboardAsset(
+                script,
+                storyboard.getId(),
+                editedShot,
+                shotNumber,
+                shotId,
+                prepared.screenType(),
+                prepared.renderSize(),
+                prepared.signedUrlTtl(),
+                prompt
+        );
+        collectImageUsage(
+                "SHOT_STORYBOARD_IMAGE_EDIT_GENERATE",
+                mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
+                script,
+                null,
+                null,
+                "Generated edited storyboard image for shot " + shotNumber
+        );
+
+        scene.setImageAssetId(generatedAsset.asset().getId());
+        scene.setSketchPrompt(prompt);
+        scene.getMetadata().put("storyboardTag", storyboardTag);
+        scene.getMetadata().put("lightingBuildSheetTag", plan == null ? Map.of() : plan.getLightingBuildSheetTag());
+        scene.getMetadata().put("cameraPlanSheetTag", plan == null ? Map.of() : plan.getCameraPlanSheetTag());
+        scene.getMetadata().put("rawShot", editedShot);
+        scene.getMetadata().put("aiShotEdit", aiEditMetadata("edit_existing_shot", request.instruction(), continuityContext));
+        scene = sceneRepository.save(scene);
+        linkProjectSelectedStoryboard(storyboard);
+
+        CreatorAsset lightingAsset = findAsset(uuidValue(scene.getMetadata().get("lightingImageAssetId")));
+        CreatorAsset cameraPlanAsset = findAsset(uuidValue(scene.getMetadata().get("cameraPlanImageAssetId")));
+        return toResponse(
+                scene,
+                generatedAsset.asset(),
+                generatedAsset.signedUrl(),
+                lightingAsset,
+                signedUrlFor(lightingAsset),
+                cameraPlanAsset,
+                signedUrlFor(cameraPlanAsset),
+                plan
+        );
+    }
+
+    @Transactional
+    public StoryboardSceneResponse insertTimelineShot(
+            UUID scriptId,
+            ShotTimelineInsertRequest request,
+            String tenantId,
+            String userId
+    ) {
+        if (request == null || request.instruction() == null || request.instruction().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Describe the timeline shot you want to add.");
+        }
+        PreparedStoryboardGeneration prepared = prepareStoryboardGeneration(
+                scriptId,
+                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds()),
+                tenantId,
+                userId
+        );
+        CreatorScript script = prepared.script();
+        CreatorStoryboard storyboard = findOrCreateStoryboard(script, prepared.shots(), prepared.screenType(), prepared.renderSize());
+        int maxKnownShotNumber = Math.max(maxShotNumber(prepared.shots()), maxStoryboardShotNumber(storyboard.getId()));
+        int afterShotNumber = Math.max(0, Math.min(defaultInt(request.afterShotNumber(), maxKnownShotNumber), maxKnownShotNumber));
+        int insertShotNumber = afterShotNumber + 1;
+        Map<Integer, CreatorScriptShotPlan> planByShotNumber = loadPlanByShotNumber(script.getId());
+        Map<String, Object> continuityContext = timelineContinuityContext(
+                prepared.shots(),
+                planByShotNumber,
+                afterShotNumber,
+                0,
+                insertShotNumber
+        );
+        addStoryboardSceneContinuity(continuityContext, storyboard.getId(), insertShotNumber);
+        Map<String, Object> insertedShot = buildInsertedTimelineShot(request, prepared.shots(), afterShotNumber, insertShotNumber);
+        Map<String, Object> insertedStoryboardTag = buildInsertedStoryboardTag(insertedShot, request.instruction(), continuityContext);
+
+        shiftStoryboardScenesForInsert(storyboard.getId(), insertShotNumber);
+
+        String shotId = "inserted-shot-%04d-%s".formatted(insertShotNumber, UUID.randomUUID().toString().substring(0, 8));
+        String basePrompt = buildStoryboardPrompt(
+                script.getScriptPayload(),
+                insertedShot,
+                insertedStoryboardTag,
+                Map.of(),
+                Map.of(),
+                prepared.screenType(),
+                prepared.renderSize()
+        );
+        String prompt = buildAiShotEditPrompt(basePrompt, "insert_timeline_shot", request.instruction(), continuityContext);
+        GeneratedAsset generatedAsset = generateStoryboardAsset(
+                script,
+                storyboard.getId(),
+                insertedShot,
+                insertShotNumber,
+                shotId,
+                prepared.screenType(),
+                prepared.renderSize(),
+                prepared.signedUrlTtl(),
+                prompt
+        );
+        collectImageUsage(
+                "SHOT_TIMELINE_IMAGE_GENERATE",
+                mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
+                script,
+                null,
+                null,
+                "Generated inserted timeline storyboard image for shot " + insertShotNumber
+        );
+        CreatorStoryboardScene scene = toScene(
+                storyboard.getId(),
+                generatedAsset.asset().getId(),
+                null,
+                null,
+                insertedShot,
+                null,
+                insertShotNumber,
+                prompt,
+                prepared.screenType(),
+                prepared.renderSize()
+        );
+        scene.getMetadata().put("insertedTimelineShot", true);
+        scene.getMetadata().put("storyboardTag", insertedStoryboardTag);
+        scene.getMetadata().put("lightingBuildSheetTag", Map.of());
+        scene.getMetadata().put("cameraPlanSheetTag", Map.of());
+        scene.getMetadata().put("aiShotEdit", aiEditMetadata("insert_timeline_shot", request.instruction(), continuityContext));
+        scene = upsertScene(scene);
+
+        storyboard.setTotalShots(Math.max(defaultInt(storyboard.getTotalShots(), 0), maxStoryboardShotNumber(storyboard.getId())));
+        storyboard.setStatus("GENERATED");
+        storyboardRepository.save(storyboard);
+        linkProjectSelectedStoryboard(storyboard);
+        return toResponse(scene, generatedAsset.asset(), generatedAsset.signedUrl(), null, null, null, null, null);
     }
 
     @Transactional(readOnly = true)
@@ -272,6 +528,16 @@ public class StoryboardService {
         String screenType = prepared.screenType();
         RenderSize renderSize = prepared.renderSize();
         Duration signedUrlTtl = prepared.signedUrlTtl();
+        if (generationJobId != null && !generationJobService.claimGenerationJobExecution(generationJobId, "storyboard-generation")) {
+            log.info(
+                    "Skipping duplicate storyboard execution jobId={} scriptId={} tenantId={} userId={}",
+                    generationJobId,
+                    script == null ? null : script.getId(),
+                    script == null ? null : script.getTenantId(),
+                    script == null ? null : script.getUserId()
+            );
+            return null;
+        }
         try {
             Map<Integer, CreatorScriptShotPlan> planByShotNumber = loadPlanByShotNumber(script.getId());
             if (planByShotNumber.size() < shots.size()) {
@@ -298,6 +564,7 @@ public class StoryboardService {
 
             Map<Integer, String> shotIdByNumber = loadShotIdByNumber(script.getId());
             List<StoryboardSceneResponse> sceneResponses = new ArrayList<>();
+            List<Map<String, Object>> imageCostMetadataItems = new ArrayList<>();
             publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, 8, "Storyboard pack created");
             for (int index = 0; index < shots.size(); index++) {
                 Map<String, Object> shot = shots.get(index);
@@ -313,7 +580,16 @@ public class StoryboardService {
                         screenType,
                         renderSize
                 );
+                publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, Math.max(9, progressFor(index, shots.size(), 0)), "Generating storyboard image for shot " + shotNumber);
                 GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
+                collectImageUsage(
+                        "STORYBOARD_IMAGE_GENERATE",
+                        generatedImage.metadata(),
+                        script,
+                        generationJobId,
+                        imageCostMetadataItems,
+                        "Generated storyboard image for shot " + shotNumber
+                );
                 byte[] imageBytes = generatedImage.bytes();
                 String objectKey = objectKey(script, storyboard.getId(), shotId, "storyboard");
 
@@ -358,6 +634,7 @@ public class StoryboardService {
                 sceneResponses.add(sceneResponse);
                 publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, progressFor(index, shots.size(), 1), "Storyboard image ready for shot " + shotNumber);
                 if (plan != null) {
+                    publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, progressFor(index, shots.size(), 1), "Generating lighting sheet for shot " + shotNumber);
                     GeneratedAsset lightingGenerated = generateSheetAsset(
                             script,
                             storyboard.getId(),
@@ -373,11 +650,20 @@ public class StoryboardService {
                     );
                     lightingAsset = lightingGenerated.asset();
                     lightingSignedUrl = lightingGenerated.signedUrl();
+                    collectImageUsage(
+                            "LIGHTING_BUILD_SHEET_IMAGE_GENERATE",
+                            mapValue(lightingAsset.getMetadata().get("imageGeneration")),
+                            script,
+                            generationJobId,
+                            imageCostMetadataItems,
+                            "Generated lighting build sheet for shot " + shotNumber
+                    );
                     putIfPresent(scene.getMetadata(), "lightingImageAssetId", lightingAsset.getId().toString());
                     scene = sceneRepository.save(scene);
                     replaceSceneResponse(sceneResponses, toResponse(scene, asset, storedObject.signedUrl(), lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan));
                     publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, progressFor(index, shots.size(), 2), "Lighting sheet ready for shot " + shotNumber);
 
+                    publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, progressFor(index, shots.size(), 2), "Generating DP camera plan for shot " + shotNumber);
                     GeneratedAsset cameraGenerated = generateSheetAsset(
                             script,
                             storyboard.getId(),
@@ -393,6 +679,14 @@ public class StoryboardService {
                     );
                     cameraPlanAsset = cameraGenerated.asset();
                     cameraPlanSignedUrl = cameraGenerated.signedUrl();
+                    collectImageUsage(
+                            "CAMERA_PLAN_SHEET_IMAGE_GENERATE",
+                            mapValue(cameraPlanAsset.getMetadata().get("imageGeneration")),
+                            script,
+                            generationJobId,
+                            imageCostMetadataItems,
+                            "Generated DP camera plan sheet for shot " + shotNumber
+                    );
                     putIfPresent(scene.getMetadata(), "cameraPlanImageAssetId", cameraPlanAsset.getId().toString());
                     scene = sceneRepository.save(scene);
                     replaceSceneResponse(sceneResponses, toResponse(scene, asset, storedObject.signedUrl(), lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan));
@@ -426,6 +720,11 @@ public class StoryboardService {
             jobOutput.put("renderHeight", renderSize.height());
             jobOutput.put("imageProvider", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini" : "local");
             jobOutput.put("imageModel", properties.getAi().isStoryboardImageGenerationEnabled() ? properties.getAi().getGeminiImageModel() : "local_storyboard_sketch_v1");
+            jobOutput.put("steps", storyboardGenerationSteps(100, "Storyboard generation complete", sceneResponses, storyboard.getTotalShots()));
+            Map<String, Object> aggregateImageCostMetadata = aggregateImageCostMetadata(imageCostMetadataItems);
+            if (!aggregateImageCostMetadata.isEmpty()) {
+                jobOutput.put("costMetadata", aggregateImageCostMetadata);
+            }
             jobOutput.put("storyboard", toMap(response));
             generationJobService.completeGenerationJob(generationJobId, jobOutput);
 
@@ -536,6 +835,227 @@ public class StoryboardService {
             }
         }
         return Map.of();
+    }
+
+    private Map<String, Object> generateEditedShotJson(
+            CreatorScript script,
+            Map<String, Object> originalShot,
+            CreatorScriptShotPlan plan,
+            String instruction,
+            Map<String, Object> continuityContext
+    ) {
+        String renderedPrompt = buildShotJsonEditPrompt(script, originalShot, plan, instruction, continuityContext);
+        Map<String, Object> providerInput = new LinkedHashMap<>();
+        providerInput.put("scriptId", script.getId().toString());
+        providerInput.put("projectId", script.getProjectId() == null ? null : script.getProjectId().toString());
+        providerInput.put("storyIdeaId", script.getStoryIdeaId() == null ? null : script.getStoryIdeaId().toString());
+        providerInput.put("instruction", instruction);
+        providerInput.put("shot", originalShot);
+        providerInput.put("scriptContext", compactScriptContext(script));
+        providerInput.put("storyboardTag", plan == null ? Map.of() : plan.getStoryboardTag());
+        providerInput.put("lightingBuildSheetTag", plan == null ? Map.of() : plan.getLightingBuildSheetTag());
+        providerInput.put("cameraPlanSheetTag", plan == null ? Map.of() : plan.getCameraPlanSheetTag());
+        providerInput.put("continuityContext", continuityContext == null ? Map.of() : continuityContext);
+        providerInput.put("renderedPrompt", renderedPrompt);
+
+        CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                script.getTenantId(),
+                script.getUserId(),
+                script.getProjectId(),
+                null,
+                null
+        );
+        CreatorAiService.MeteredAiResponse aiResponse = creatorAiService.generateMetered(
+                PromptTemplateType.SHOT_JSON_EDIT.name(),
+                providerInput,
+                usageContext
+        );
+        Map<String, Object> providerOutput = aiResponse.output() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(aiResponse.output());
+        log.info(
+                "AI shot JSON edit raw response scriptId={} shotNumber={} output={}",
+                script.getId(),
+                intValue(originalShot.get("shotNumber"), null),
+                providerOutput
+        );
+        Map<String, Object> editedShot = resolveEditedShotPayload(providerOutput, originalShot);
+        CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
+                .tenantId(script.getTenantId())
+                .userId(script.getUserId())
+                .projectId(script.getProjectId())
+                .promptTemplateKey(PromptTemplateType.SHOT_JSON_EDIT.name())
+                .promptTemplateVersion(1)
+                .renderedPrompt(renderedPrompt)
+                .inputSnapshot(providerInput)
+                .provider(creatorAiService.providerName())
+                .model(creatorAiService.modelName())
+                .outputPayload(providerOutput)
+                .tokenMetadata(aiResponse.tokenMetadata())
+                .costMetadata(aiResponse.costMetadata())
+                .status("COMPLETED")
+                .completedAt(OffsetDateTime.now())
+                .build());
+        creatorAiService.publishBillingDebit(
+                PromptTemplateType.SHOT_JSON_EDIT.name(),
+                aiResponse,
+                usageContext.withPromptRunId(promptRun.getId())
+        );
+        editedShot.put("_aiShotEdit", Map.of(
+                "promptRunId", promptRun.getId().toString(),
+                "instruction", instruction,
+                "editedAt", OffsetDateTime.now().toString()
+        ));
+        return editedShot;
+    }
+
+    private String buildShotJsonEditPrompt(
+            CreatorScript script,
+            Map<String, Object> originalShot,
+            CreatorScriptShotPlan plan,
+            String instruction,
+            Map<String, Object> continuityContext
+    ) {
+        return """
+                You are editing one shot inside an existing creator screenplay.
+
+                Return exactly one valid JSON object in this shape:
+                {
+                  "shot": { ...the full updated shot JSON... }
+                }
+
+                Rules:
+                - Apply the user's edit instruction to the shot JSON itself, not only to image prompt wording.
+                - Preserve shotNumber, startTime, endTime, durationSeconds, beatNumber, sequenceNumber, and sceneNumber unless the instruction explicitly requests timing or ordering changes.
+                - Keep all important existing keys from the original shot. Update action, title, composition, camera, lighting, blocking, textOverlay, dialogue, sound, production, safety, and sketchPrompt fields when relevant.
+                - Use arrays for array fields like editingNotes, safetyFlags, soundDesign, captionTrack, primaryCharacters, sideCharacters, primaryActors, and sideActors.
+                - Use objects for object fields like dialogue, backgroundMusicCue, resourceRequirements, and postProductionNotes.
+                - Do not add markdown, prose, comments, or raw JSON strings. Return parseable JSON only.
+
+                User edit instruction:
+                %s
+
+                Screenplay context:
+                %s
+
+                Original shot JSON:
+                %s
+
+                Existing production plan tags for continuity:
+                %s
+
+                Adjacent-shot continuity context:
+                %s
+                """.formatted(
+                truncatePromptText(instruction, 1200),
+                toJson(compactScriptContext(script)),
+                toJson(originalShot == null ? Map.of() : originalShot),
+                toJson(Map.of(
+                        "storyboardTag", plan == null || plan.getStoryboardTag() == null ? Map.of() : plan.getStoryboardTag(),
+                        "lightingBuildSheetTag", plan == null || plan.getLightingBuildSheetTag() == null ? Map.of() : plan.getLightingBuildSheetTag(),
+                        "cameraPlanSheetTag", plan == null || plan.getCameraPlanSheetTag() == null ? Map.of() : plan.getCameraPlanSheetTag()
+                )),
+                toJson(continuityContext == null ? Map.of() : continuityContext)
+        );
+    }
+
+    private Map<String, Object> compactScriptContext(CreatorScript script) {
+        Map<String, Object> payload = script.getScriptPayload() == null ? Map.of() : script.getScriptPayload();
+        Map<String, Object> context = new LinkedHashMap<>();
+        putIfPresent(context, "projectTitle", firstNonBlank(payload.get("projectTitle"), script.getTitle()));
+        putIfPresent(context, "duration", firstNonBlank(payload.get("duration"), script.getDurationSeconds()));
+        putIfPresent(context, "durationSeconds", script.getDurationSeconds());
+        putIfPresent(context, "screenType", firstNonBlank(payload.get("screenType"), script.getScreenType()));
+        putIfPresent(context, "dialogueLanguage", firstNonBlank(payload.get("dialogueLanguage"), script.getDialogueLanguage()));
+        putIfPresent(context, "category", firstNonBlank(payload.get("category"), script.getCategoryCode()));
+        putIfPresent(context, "inferredTone", payload.get("inferredTone"));
+        putIfPresent(context, "continuityBible", payload.get("continuityBible"));
+        putIfPresent(context, "characterVoiceProfiles", payload.get("characterVoiceProfiles"));
+        putIfPresent(context, "dialogueCallbacks", payload.get("dialogueCallbacks"));
+        putIfPresent(context, "backgroundMusicPlan", payload.get("backgroundMusicPlan"));
+        putIfPresent(context, "soundDesignPlan", payload.get("soundDesignPlan"));
+        return context;
+    }
+
+    private Map<String, Object> resolveEditedShotPayload(Map<String, Object> providerOutput, Map<String, Object> originalShot) {
+        Map<String, Object> edited = mapValue(providerOutput == null ? null : providerOutput.get("shot"));
+        if (edited.isEmpty()) {
+            edited = mapValue(providerOutput == null ? null : providerOutput.get("updatedShot"));
+        }
+        if (edited.isEmpty() && providerOutput != null && !providerOutput.isEmpty() && providerOutput.get("shotNumber") != null) {
+            edited = mapValue(providerOutput);
+        }
+        if (edited.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI shot edit response did not contain a usable shot JSON object.");
+        }
+        Map<String, Object> original = originalShot == null ? Map.of() : originalShot;
+        Map<String, Object> merged = new LinkedHashMap<>(original);
+        merged.putAll(edited);
+        preserveShotIdentityValue(merged, original, "shotNumber");
+        preserveShotIdentityValue(merged, original, "startTime");
+        preserveShotIdentityValue(merged, original, "endTime");
+        preserveShotIdentityValue(merged, original, "durationSeconds");
+        preserveShotIdentityValue(merged, original, "beatNumber");
+        preserveShotIdentityValue(merged, original, "sequenceNumber");
+        preserveShotIdentityValue(merged, original, "sceneNumber");
+        if (stringList(merged.get("editingNotes")).isEmpty()) {
+            merged.put("editingNotes", List.of("AI edit applied to shot JSON."));
+        }
+        return merged;
+    }
+
+    private void preserveShotIdentityValue(Map<String, Object> target, Map<String, Object> source, String key) {
+        if (target == null || source == null || key == null || !source.containsKey(key)) {
+            return;
+        }
+        target.put(key, source.get(key));
+    }
+
+    private CreatorScript persistEditedShotJson(CreatorScript script, Map<String, Object> editedShot, int shotNumber) {
+        List<Map<String, Object>> updatedShots = replaceShotByNumber(scriptShots(script), editedShot, shotNumber);
+        Map<String, Object> payload = new LinkedHashMap<>(script.getScriptPayload() == null ? Map.of() : script.getScriptPayload());
+        payload.put("shots", updatedShots);
+        payload.put("totalShots", updatedShots.size());
+        payload.putIfAbsent("duration", script.getDurationSeconds());
+        payload.put("lastShotJsonEdit", Map.of(
+                "shotNumber", shotNumber,
+                "editedAt", OffsetDateTime.now().toString(),
+                "source", "ai-edit"
+        ));
+        script.setScriptPayload(payload);
+        script.setShots(updatedShots);
+        script.setTotalShots(updatedShots.size());
+        script.setStatus("EDITED");
+        script.setUpdatedAt(OffsetDateTime.now());
+        CreatorScript savedScript = scriptRepository.saveAndFlush(script);
+        scriptStructureService.syncScreenplayShots(savedScript, payload, updatedShots);
+        return savedScript;
+    }
+
+    private List<Map<String, Object>> replaceShotByNumber(List<Map<String, Object>> shots, Map<String, Object> replacement, int shotNumber) {
+        List<Map<String, Object>> updated = new ArrayList<>();
+        boolean replaced = false;
+        List<Map<String, Object>> source = shots == null ? List.of() : shots;
+        for (int index = 0; index < source.size(); index++) {
+            Map<String, Object> current = source.get(index);
+            int currentShotNumber = intValue(current == null ? null : current.get("shotNumber"), index + 1);
+            if (currentShotNumber == shotNumber) {
+                Map<String, Object> shot = new LinkedHashMap<>(replacement == null ? Map.of() : replacement);
+                shot.put("shotNumber", shotNumber);
+                updated.add(shot);
+                replaced = true;
+            } else {
+                updated.add(current == null ? new LinkedHashMap<>() : new LinkedHashMap<>(current));
+            }
+        }
+        if (!replaced) {
+            Map<String, Object> shot = new LinkedHashMap<>(replacement == null ? Map.of() : replacement);
+            shot.put("shotNumber", shotNumber);
+            updated.add(shot);
+        }
+        updated.sort((left, right) -> Integer.compare(
+                intValue(left.get("shotNumber"), 0),
+                intValue(right.get("shotNumber"), 0)
+        ));
+        return updated;
     }
 
     private CreatorStoryboardScene toScene(
@@ -742,6 +1262,7 @@ public class StoryboardService {
             String cameraPlanSignedUrl,
             CreatorScriptShotPlan plan
     ) {
+        Map<String, Object> metadata = scene.getMetadata() == null ? Map.of() : scene.getMetadata();
         return new StoryboardSceneResponse(
                 scene.getId(),
                 asset == null ? null : asset.getId(),
@@ -764,12 +1285,13 @@ public class StoryboardService {
                 cameraPlanAsset == null ? null : cameraPlanAsset.getId(),
                 cameraPlanAsset == null ? null : cameraPlanAsset.getObjectKey(),
                 cameraPlanSignedUrl,
-                stringValue(scene.getMetadata().get("screenType")),
-                intValue(scene.getMetadata().get("renderWidth"), null),
-                intValue(scene.getMetadata().get("renderHeight"), null),
-                plan == null ? Map.of() : plan.getStoryboardTag(),
-                plan == null ? Map.of() : plan.getLightingBuildSheetTag(),
-                plan == null ? Map.of() : plan.getCameraPlanSheetTag()
+                stringValue(metadata.get("screenType")),
+                intValue(metadata.get("renderWidth"), null),
+                intValue(metadata.get("renderHeight"), null),
+                plan == null ? mapValue(metadata.get("storyboardTag")) : plan.getStoryboardTag(),
+                plan == null ? mapValue(metadata.get("lightingBuildSheetTag")) : plan.getLightingBuildSheetTag(),
+                plan == null ? mapValue(metadata.get("cameraPlanSheetTag")) : plan.getCameraPlanSheetTag(),
+                mapValue(metadata.get("rawShot"))
         );
     }
 
@@ -908,7 +1430,46 @@ public class StoryboardService {
         output.put("renderHeight", renderSize.height());
         output.put("sceneCount", partial.scenes().size());
         output.put("storyboard", toMap(partial));
+        output.put("steps", storyboardGenerationSteps(progress, message, sceneResponses, storyboard.getTotalShots()));
         generationJobService.updateGenerationJobProgress(generationJobId, progress, message, output);
+    }
+
+    private List<Map<String, Object>> storyboardGenerationSteps(
+            int progress,
+            String message,
+            List<StoryboardSceneResponse> sceneResponses,
+            int totalShots
+    ) {
+        List<StoryboardSceneResponse> scenes = sceneResponses == null ? List.of() : sceneResponses;
+        int expected = Math.max(0, totalShots);
+        int storyboardReady = scenes.size();
+        int lightingReady = (int) scenes.stream()
+                .filter(scene -> scene != null && scene.lightingImageUrl() != null && !scene.lightingImageUrl().isBlank())
+                .count();
+        int cameraReady = (int) scenes.stream()
+                .filter(scene -> scene != null && scene.cameraPlanImageUrl() != null && !scene.cameraPlanImageUrl().isBlank())
+                .count();
+        String lowerMessage = defaultString(message, "").toLowerCase(Locale.ROOT);
+        return List.of(
+                generationStep("Create storyboard pack", progress > 8 || storyboardReady > 0, lowerMessage.contains("pack")),
+                generationStep("Render storyboard images", expected > 0 && storyboardReady >= expected, lowerMessage.contains("storyboard image"), storyboardReady, expected),
+                generationStep("Render lighting sheets", expected > 0 && lightingReady >= expected, lowerMessage.contains("lighting"), lightingReady, expected),
+                generationStep("Render DP camera sheets", progress >= 100 || (expected > 0 && cameraReady >= expected), lowerMessage.contains("dp camera") || lowerMessage.contains("camera plan"), cameraReady, expected)
+        );
+    }
+
+    private Map<String, Object> generationStep(String label, boolean completed, boolean running) {
+        return generationStep(label, completed, running, null, null);
+    }
+
+    private Map<String, Object> generationStep(String label, boolean completed, boolean running, Integer completedCount, Integer totalCount) {
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("label", label);
+        step.put("status", completed ? "completed" : running ? "running" : "pending");
+        if (completedCount != null && totalCount != null && totalCount > 0) {
+            step.put("detail", Math.min(completedCount, totalCount) + "/" + totalCount + " shots");
+        }
+        return step;
     }
 
     private GeneratedAsset generateStoryboardAsset(
@@ -1458,7 +2019,7 @@ public class StoryboardService {
                 Generate a multi-panel, highly technical production planning storyboard diagram.
 
                 STYLE:
-                Indian creator technical layout, hand-drawn pencil + fine line-art ink, sharp engineering blueprint aesthetic, textured storyboard paper, monochrome, completely clean background without photorealistic gradients. Exact %sx%s output, %s, aspect ratio %s.
+                Indian creator production storyboard sketch sheet, hand-drawn animatic linework, loose pencil construction marks, clean ink outlines, selective muted marker color accents, readable planning labels, visible wardrobe/set cues, clear practical lighting notes, production-board texture. Exact %sx%s output, %s, aspect ratio %s.
 
                 [STRICT MULTI-PANEL GRID STRUCTURE]
                 You must structure the image as a professional multi-cell technical sheet using clean black borders:
@@ -1476,7 +2037,7 @@ public class StoryboardService {
                    - FRAME NOTES: %s | Left: %s | Right: %s
                    - TARGET: %s
                 4. CENTRAL PRODUCTION HUB (60%% Width, Large Center Panel):
-                   - Render a high-contrast cinematic line-art sketch depicting the scene: %s.
+                   - Render a storyboard sketch panel depicting the scene: %s. It must read as a drawn planning frame, not a generated photo or final cinematic still.
                    - Character visual profile: %s. Side cast: %s. Wardrobe: %s.
                    - Set details: %s with key elements: %s. Include cultural references only if present: %s.
                    - Tone/Lighting execution: %s, applying %s matching the goal: %s.
@@ -1495,8 +2056,8 @@ public class StoryboardService {
                 [CRITICAL IMAGE EXECUTION RULES]
                 - All label text must be clean, human-legible print font inside boxes. Do not let text bleed, overlap, or truncate over borders.
                 - Ensure distinct foreground, midground, and background separation within the central scene window.
-                - Keep the output looking like an exhaustive, hand-drafted, multi-view technical script template sheet rather than an empty cinematic film capture frame.
-                - Do not create a plain single-frame still. Do not create poster art. Do not use glossy color grading, photorealistic gradients, UI chrome, watermarks, or markdown.
+                - Keep the output looking like an exhaustive production storyboard sketch sheet with the central frame readable as the intended shot, not an empty cinematic film capture frame.
+                - Do not create a plain single-frame still. Do not create poster art. Do not generate a black-and-white/grayscale photo, monochrome cinematic render, glossy color-graded still, photorealistic gradient render, UI chrome, watermark, or markdown. The central visual must keep storyboard sketch linework, rough planning strokes, and selective muted color accents.
                 - Use only the characters, wardrobe, props, setting, camera notes, dialogue, and cultural references supplied below. Do not invent extra people, props, logos, or locations.
                 - The source JSON below is for continuity only; never render raw JSON syntax in the image.
 
@@ -1698,7 +2259,7 @@ public class StoryboardService {
                 ? "show exact light placement, subject position, phone position, practical/window sources, shadows, and quick setup steps"
                 : "show exact camera body position, lens choice, framing box, movement path, subject blocking, and safe-frame notes";
         return """
-                Professional monochrome production planning sheet, %s, exact %sx%s output, %s composition.
+                Professional color production planning sheet, %s, exact %sx%s output, %s composition.
                 This is for one specific screenplay shot, not a generic film diagram. %s.
                 Render as a clear storyboard-adjacent technical diagram with readable labels, top-down map, perspective sketch, numbered cards, and checklist steps.
                 Keep all text large enough for mobile review. Use the supplied JSON exactly; do not invent missing values.
@@ -1718,6 +2279,353 @@ public class StoryboardService {
                 toJson(tag == null ? Map.of() : tag),
                 toJson(screenplayJson == null ? Map.of() : screenplayJson)
         );
+    }
+
+    private String buildAiShotEditPrompt(
+            String basePrompt,
+            String mode,
+            String instruction,
+            Map<String, Object> continuityContext
+    ) {
+        return """
+                %s
+
+                [USER AI SHOT CHANGE]
+                Mode: %s
+                Requested change: %s
+
+                [CONTINUITY LOCK]
+                Apply the requested change only to this shot. Keep character identity, wardrobe, eyeline, actor blocking, timeline order, dialogue meaning, screen direction, color palette, set geography, and camera language consistent with adjacent shots unless the user explicitly asks to change them.
+                Use the previous and next shot context below to keep the new frame synchronized with the sequence.
+                Continuity context JSON: %s
+                """.formatted(
+                basePrompt,
+                defaultString(mode, "edit_existing_shot"),
+                truncatePromptText(instruction, 1200),
+                toJson(continuityContext == null ? Map.of() : continuityContext)
+        );
+    }
+
+    private Map<String, Object> aiEditMetadata(String mode, String instruction, Map<String, Object> continuityContext) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("mode", defaultString(mode, "edit_existing_shot"));
+        metadata.put("instruction", truncatePromptText(instruction, 1200));
+        metadata.put("continuityContext", continuityContext == null ? Map.of() : continuityContext);
+        metadata.put("editedAt", OffsetDateTime.now().toString());
+        metadata.put("provider", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini" : "local");
+        metadata.put("model", properties.getAi().isStoryboardImageGenerationEnabled() ? properties.getAi().getGeminiImageModel() : "local_storyboard_sketch_v1");
+        return metadata;
+    }
+
+    private Map<String, Object> shotContinuityContext(
+            List<Map<String, Object>> shots,
+            Map<Integer, CreatorScriptShotPlan> planByShotNumber,
+            int shotNumber
+    ) {
+        return timelineContinuityContext(shots, planByShotNumber, shotNumber - 1, shotNumber, shotNumber + 1);
+    }
+
+    private Map<String, Object> timelineContinuityContext(
+            List<Map<String, Object>> shots,
+            Map<Integer, CreatorScriptShotPlan> planByShotNumber,
+            int previousShotNumber,
+            int currentShotNumber,
+            int nextShotNumber
+    ) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("previousShotNumber", previousShotNumber);
+        context.put("currentShotNumber", currentShotNumber);
+        context.put("nextShotNumber", nextShotNumber);
+        Map<String, Object> previous = compactShotContext(shotByNumber(shots, previousShotNumber), planByShotNumber.get(previousShotNumber));
+        Map<String, Object> current = compactShotContext(shotByNumber(shots, currentShotNumber), planByShotNumber.get(currentShotNumber));
+        Map<String, Object> next = compactShotContext(shotByNumber(shots, nextShotNumber), planByShotNumber.get(nextShotNumber));
+        if (!previous.isEmpty()) {
+            context.put("previousShot", previous);
+        }
+        if (!current.isEmpty()) {
+            context.put("currentShot", current);
+        }
+        if (!next.isEmpty()) {
+            context.put("nextShot", next);
+        }
+        context.put("guardrails", List.of(
+                "do not change actor identity or wardrobe continuity unless requested",
+                "keep timeline logic and screen direction consistent",
+                "keep dialogue meaning and performance intent aligned",
+                "match set geography, lighting motivation, and camera language around this shot"
+        ));
+        return context;
+    }
+
+    private Map<String, Object> compactShotContext(Map<String, Object> shot, CreatorScriptShotPlan plan) {
+        if ((shot == null || shot.isEmpty()) && plan == null) {
+            return Map.of();
+        }
+        Map<String, Object> context = new LinkedHashMap<>();
+        if (shot != null && !shot.isEmpty()) {
+            putPromptValue(context, "shotNumber", shot.get("shotNumber"));
+            putPromptValue(context, "title", firstNonBlank(shot.get("title"), shot.get("description")));
+            putPromptValue(context, "time", compactPromptParts(shot.get("startTime"), shot.get("endTime")));
+            putPromptValue(context, "action", firstNonBlank(shot.get("action"), shot.get("primaryActorAction"), shot.get("visualDirection"), shot.get("description")));
+            putPromptValue(context, "environment", firstNonBlank(shot.get("environment"), shot.get("setDesign")));
+            putPromptValue(context, "cameraAngle", shot.get("cameraAngle"));
+            putPromptValue(context, "cameraMovement", firstNonBlank(shot.get("cameraMovement"), nested(shot, "cinematicExecution", "cameraStyle")));
+            putPromptValue(context, "shotType", shot.get("shotType"));
+            putPromptValue(context, "lensSuggestion", shot.get("lensSuggestion"));
+            putPromptValue(context, "composition", shot.get("composition"));
+            putPromptValue(context, "dialogue", firstNonBlank(shot.get("dialogue"), shot.get("voiceOver")));
+            putPromptValue(context, "textOverlay", shot.get("textOverlay"));
+            putPromptValue(context, "sound", firstNonBlank(shot.get("ambientBedDescription"), shot.get("syncHitDescription"), shot.get("soundDesign")));
+            putPromptValue(context, "characters", firstNonBlank(shot.get("primaryCharacters"), shot.get("characters"), shot.get("characterContinuity")));
+            putPromptValue(context, "wardrobe", firstNonBlank(shot.get("wardrobeThisShot"), shot.get("wardrobe"), shot.get("characterContinuity")));
+        }
+        Map<String, Object> planContext = compactPlanContext(plan);
+        if (!planContext.isEmpty()) {
+            context.put("productionPlan", planContext);
+        }
+        return context;
+    }
+
+    private Map<String, Object> compactPlanContext(CreatorScriptShotPlan plan) {
+        if (plan == null) {
+            return Map.of();
+        }
+        Map<String, Object> context = new LinkedHashMap<>();
+        Map<String, Object> storyboardTag = plan.getStoryboardTag() == null ? Map.of() : plan.getStoryboardTag();
+        Map<String, Object> lightingTag = plan.getLightingBuildSheetTag() == null ? Map.of() : plan.getLightingBuildSheetTag();
+        Map<String, Object> cameraTag = plan.getCameraPlanSheetTag() == null ? Map.of() : plan.getCameraPlanSheetTag();
+        putPromptValue(context, "storyBeat", firstNonBlank(storyboardTag.get("shotTitle"), storyboardTag.get("narrativeBeatSummary")));
+        putPromptValue(context, "setDesign", firstNonBlank(storyboardTag.get("setDesign"), storyboardTag.get("environment"), storyboardTag.get("sceneLocation")));
+        putPromptValue(context, "performance", firstNonBlank(storyboardTag.get("expression"), storyboardTag.get("bodyLanguage"), storyboardTag.get("directorNote")));
+        putPromptValue(context, "lighting", firstNonBlank(storyboardTag.get("lightingAtmosphericDescription"), lightingTag.get("cinematicIntent"), lightingTag.get("keyLight")));
+        putPromptValue(context, "camera", firstNonBlank(storyboardTag.get("cameraAngle"), storyboardTag.get("cameraMovement"), cameraTag.get("cameraRig"), cameraTag.get("movementSpec")));
+        putPromptValue(context, "frame", firstNonBlank(storyboardTag.get("compositionSummary"), cameraTag.get("framePreview")));
+        putPromptValue(context, "audio", firstNonBlank(storyboardTag.get("ambientBedDescription"), storyboardTag.get("syncHitDescription"), storyboardTag.get("soundDesign")));
+        return context;
+    }
+
+    private void addStoryboardSceneContinuity(Map<String, Object> context, UUID storyboardId, int shotNumber) {
+        if (context == null || storyboardId == null || shotNumber <= 0) {
+            return;
+        }
+        Map<String, Object> previous = compactStoryboardSceneContext(storyboardId, shotNumber - 1);
+        Map<String, Object> current = compactStoryboardSceneContext(storyboardId, shotNumber);
+        Map<String, Object> next = compactStoryboardSceneContext(storyboardId, shotNumber + 1);
+        if (!previous.isEmpty()) {
+            context.put("persistedPreviousStoryboardScene", previous);
+        }
+        if (!current.isEmpty()) {
+            context.put("persistedCurrentStoryboardScene", current);
+        }
+        if (!next.isEmpty()) {
+            context.put("persistedNextStoryboardScene", next);
+        }
+    }
+
+    private Map<String, Object> compactStoryboardSceneContext(UUID storyboardId, int shotNumber) {
+        if (shotNumber <= 0) {
+            return Map.of();
+        }
+        return sceneRepository.findByStoryboardIdAndShotNumber(storyboardId, shotNumber)
+                .map(this::compactStoryboardSceneContext)
+                .orElse(Map.of());
+    }
+
+    private Map<String, Object> compactStoryboardSceneContext(CreatorStoryboardScene scene) {
+        if (scene == null) {
+            return Map.of();
+        }
+        Map<String, Object> context = new LinkedHashMap<>();
+        putPromptValue(context, "shotNumber", scene.getShotNumber());
+        putPromptValue(context, "title", scene.getTitle());
+        putPromptValue(context, "time", compactPromptParts(scene.getStartTime(), scene.getEndTime()));
+        putPromptValue(context, "action", scene.getAction());
+        putPromptValue(context, "environment", scene.getEnvironment());
+        putPromptValue(context, "cameraAngle", scene.getCameraAngle());
+        putPromptValue(context, "cameraMovement", scene.getCameraMovement());
+        putPromptValue(context, "shotType", scene.getShotType());
+        putPromptValue(context, "lensSuggestion", scene.getLensSuggestion());
+        putPromptValue(context, "composition", scene.getComposition());
+        putPromptValue(context, "dialogue", scene.getDialogue());
+        putPromptValue(context, "textOverlay", scene.getTextOverlay());
+        putPromptValue(context, "soundDesign", scene.getSoundDesign());
+        Map<String, Object> metadata = scene.getMetadata() == null ? Map.of() : scene.getMetadata();
+        putPromptValue(context, "storyboardTag", metadata.get("storyboardTag"));
+        putPromptValue(context, "aiShotEdit", metadata.get("aiShotEdit"));
+        return context;
+    }
+
+    private Map<String, Object> sceneToShotMap(CreatorStoryboardScene scene) {
+        if (scene == null) {
+            return Map.of();
+        }
+        Map<String, Object> shot = new LinkedHashMap<>();
+        Map<String, Object> metadata = scene.getMetadata() == null ? Map.of() : scene.getMetadata();
+        Map<String, Object> rawShot = mapValue(metadata.get("rawShot"));
+        if (!rawShot.isEmpty()) {
+            shot.putAll(rawShot);
+        }
+        shot.put("shotNumber", scene.getShotNumber());
+        putPromptValue(shot, "startTime", scene.getStartTime());
+        putPromptValue(shot, "endTime", scene.getEndTime());
+        putPromptValue(shot, "durationSeconds", scene.getDurationSeconds());
+        putPromptValue(shot, "title", scene.getTitle());
+        putPromptValue(shot, "purpose", scene.getPurpose());
+        putPromptValue(shot, "shotType", scene.getShotType());
+        putPromptValue(shot, "cameraAngle", scene.getCameraAngle());
+        putPromptValue(shot, "cameraMovement", scene.getCameraMovement());
+        putPromptValue(shot, "lensSuggestion", scene.getLensSuggestion());
+        putPromptValue(shot, "fps", scene.getFps());
+        putPromptValue(shot, "composition", scene.getComposition());
+        putPromptValue(shot, "expression", scene.getExpression());
+        putPromptValue(shot, "emotion", scene.getEmotion());
+        putPromptValue(shot, "bodyLanguage", scene.getBodyLanguage());
+        putPromptValue(shot, "lighting", scene.getLighting());
+        putPromptValue(shot, "environment", scene.getEnvironment());
+        putPromptValue(shot, "action", scene.getAction());
+        putPromptValue(shot, "voiceOver", scene.getVoiceOver());
+        putPromptValue(shot, "dialogue", scene.getDialogue());
+        putPromptValue(shot, "textOverlay", scene.getTextOverlay());
+        putPromptValue(shot, "transition", scene.getTransition());
+        putPromptValue(shot, "soundDesign", scene.getSoundDesign());
+        putPromptValue(shot, "editingNotes", scene.getEditingNotes());
+        putPromptValue(shot, "retentionGoal", scene.getRetentionGoal());
+        putPromptValue(shot, "creatorDirection", scene.getCreatorDirection());
+        putPromptValue(shot, "subtitlePosition", scene.getSubtitlePosition());
+        putPromptValue(shot, "mobileFocusArea", scene.getMobileFocusArea());
+        putPromptValue(shot, "safeZoneNotes", scene.getSafeZoneNotes());
+        putPromptValue(shot, "executionDifficulty", scene.getExecutionDifficulty());
+        putPromptValue(shot, "cinematicExecution", scene.getCinematicExecution());
+        putPromptValue(shot, "rookieFriendlyGuide", scene.getRookieFriendlyGuide());
+        return shot;
+    }
+
+    private String shotIdFromScene(CreatorStoryboardScene scene, int shotNumber) {
+        if (scene != null) {
+            CreatorAsset asset = findAsset(scene.getImageAssetId());
+            String shotId = stringValue(asset == null || asset.getMetadata() == null ? null : asset.getMetadata().get("shotId"));
+            if (!shotId.isBlank()) {
+                return shotId;
+            }
+        }
+        return "shot-%04d".formatted(shotNumber);
+    }
+
+    private Map<String, Object> buildInsertedTimelineShot(
+            ShotTimelineInsertRequest request,
+            List<Map<String, Object>> shots,
+            int afterShotNumber,
+            int insertShotNumber
+    ) {
+        Map<String, Object> previous = shotByNumber(shots, afterShotNumber);
+        Map<String, Object> next = shotByNumber(shots, insertShotNumber);
+        Map<String, Object> shot = new LinkedHashMap<>();
+        shot.put("shotNumber", insertShotNumber);
+        shot.put("title", defaultString(request.title(), "AI Inserted Shot " + insertShotNumber));
+        shot.put("purpose", "AI inserted bridge shot: " + request.instruction());
+        shot.put("action", request.instruction());
+        shot.put("durationSeconds", defaultInt(request.durationSeconds(), defaultInt(intValue(previous.get("durationSeconds"), null), 3)));
+        putPromptValue(shot, "startTime", firstNonBlank(previous.get("endTime"), previous.get("startTime")));
+        putPromptValue(shot, "endTime", firstNonBlank(next.get("startTime"), next.get("endTime")));
+        putPromptValue(shot, "shotType", firstNonBlank(previous.get("shotType"), next.get("shotType"), "Bridge Shot"));
+        putPromptValue(shot, "cameraAngle", firstNonBlank(previous.get("cameraAngle"), next.get("cameraAngle"), "Eye Level"));
+        putPromptValue(shot, "cameraMovement", firstNonBlank(previous.get("cameraMovement"), next.get("cameraMovement"), "Static"));
+        putPromptValue(shot, "lensSuggestion", firstNonBlank(previous.get("lensSuggestion"), next.get("lensSuggestion"), "Mobile 1x Wide"));
+        putPromptValue(shot, "fps", firstNonBlank(previous.get("fps"), next.get("fps"), nested(previous, "cinematicExecution", "recommendedFPS"), nested(next, "cinematicExecution", "recommendedFPS")));
+        putPromptValue(shot, "composition", firstNonBlank(previous.get("composition"), next.get("composition"), "center-safe insert that bridges the surrounding shots"));
+        putPromptValue(shot, "environment", firstNonBlank(previous.get("environment"), previous.get("setDesign"), next.get("environment"), next.get("setDesign")));
+        putPromptValue(shot, "lighting", firstNonBlank(previous.get("lighting"), next.get("lighting")));
+        putPromptValue(shot, "textOverlay", firstNonBlank(previous.get("textOverlay"), next.get("textOverlay")));
+        putPromptValue(shot, "transition", firstNonBlank(previous.get("transition"), next.get("transition"), "clean cut"));
+        putPromptValue(shot, "creatorDirection", firstNonBlank(previous.get("creatorDirection"), next.get("creatorDirection"), "Perform naturally and keep continuity with adjacent shots."));
+        putPromptValue(shot, "retentionGoal", "make the inserted beat feel seamless in the existing sequence");
+        putPromptValue(shot, "dialogue", "No new dialogue unless the user requested it. Preserve continuity with adjacent dialogue.");
+        Map<String, Object> guide = new LinkedHashMap<>();
+        guide.put("howToShoot", List.of("Match wardrobe, eyeline, distance, and lighting motivation from the adjacent shots.", request.instruction()));
+        guide.put("whyThisWorks", "Adds a timeline beat while preserving continuity.");
+        shot.put("rookieFriendlyGuide", guide);
+        return shot;
+    }
+
+    private Map<String, Object> buildInsertedStoryboardTag(
+            Map<String, Object> insertedShot,
+            String instruction,
+            Map<String, Object> continuityContext
+    ) {
+        Map<String, Object> tag = new LinkedHashMap<>();
+        putPromptValue(tag, "shotNumber", insertedShot.get("shotNumber"));
+        putPromptValue(tag, "shotTitle", insertedShot.get("title"));
+        putPromptValue(tag, "narrativeBeatSummary", instruction);
+        putPromptValue(tag, "action", instruction);
+        putPromptValue(tag, "compositionSummary", insertedShot.get("composition"));
+        putPromptValue(tag, "environment", insertedShot.get("environment"));
+        putPromptValue(tag, "setDesign", insertedShot.get("environment"));
+        putPromptValue(tag, "cameraAngle", insertedShot.get("cameraAngle"));
+        putPromptValue(tag, "cameraMovement", insertedShot.get("cameraMovement"));
+        putPromptValue(tag, "shotType", insertedShot.get("shotType"));
+        putPromptValue(tag, "lensSuggestion", insertedShot.get("lensSuggestion"));
+        putPromptValue(tag, "directorNote", "AI inserted shot. Match adjacent continuity exactly: " + truncatePromptText(toJson(continuityContext), 700));
+        putPromptValue(tag, "targetFocalPoint", "seamless timeline insert");
+        return tag;
+    }
+
+    private void shiftStoryboardScenesForInsert(UUID storyboardId, int firstShotNumber) {
+        if (storyboardId == null || firstShotNumber <= 0) {
+            return;
+        }
+        jdbcTemplate.update(
+                """
+                update creator_storyboard_scenes
+                   set shot_number = shot_number + 1000,
+                       metadata = metadata || jsonb_build_object('timelineShiftedAt', now()::text),
+                       updated_at = now()
+                 where storyboard_id = ?
+                   and shot_number >= ?
+                """,
+                storyboardId,
+                firstShotNumber
+        );
+        jdbcTemplate.update(
+                """
+                update creator_storyboard_scenes
+                   set shot_number = shot_number - 999,
+                       updated_at = now()
+                 where storyboard_id = ?
+                   and shot_number >= ?
+                """,
+                storyboardId,
+                firstShotNumber + 1000
+        );
+    }
+
+    private int maxShotNumber(List<Map<String, Object>> shots) {
+        int max = 0;
+        for (int index = 0; index < (shots == null ? 0 : shots.size()); index++) {
+            max = Math.max(max, intValue(shots.get(index).get("shotNumber"), index + 1));
+        }
+        return max;
+    }
+
+    private int maxStoryboardShotNumber(UUID storyboardId) {
+        if (storyboardId == null) {
+            return 0;
+        }
+        Integer value = jdbcTemplate.queryForObject(
+                "select coalesce(max(shot_number), 0) from creator_storyboard_scenes where storyboard_id = ?",
+                Integer.class,
+                storyboardId
+        );
+        return defaultInt(value, 0);
+    }
+
+    private void putPromptValue(Map<String, Object> target, String key, Object value) {
+        if (target == null || key == null || key.isBlank()) {
+            return;
+        }
+        String text = promptText(value);
+        if (!text.isBlank()) {
+            target.put(key, value);
+        }
     }
 
     private List<Map<String, Object>> scriptShots(CreatorScript script) {
@@ -1773,6 +2681,85 @@ public class StoryboardService {
         metadata.put("signedUrlGeneratedAt", OffsetDateTime.now().toString());
         metadata.put("imageGeneration", imageMetadata == null ? Map.of() : imageMetadata);
         return metadata;
+    }
+
+    private void collectImageUsage(
+            String promptType,
+            Map<String, Object> imageMetadata,
+            CreatorScript script,
+            UUID generationJobId,
+            List<Map<String, Object>> costMetadataItems,
+            String description
+    ) {
+        Map<String, Object> costMetadata = mapValue(imageMetadata == null ? null : imageMetadata.get("costMetadata"));
+        if (costMetadata.isEmpty()) {
+            return;
+        }
+        String provider = defaultString(firstNonBlank(costMetadata.get("provider"), imageMetadata.get("provider")), promptType);
+        String model = defaultString(firstNonBlank(costMetadata.get("model"), imageMetadata.get("model")), "");
+        creatorAiService.publishProviderUsageDebit(
+                promptType,
+                provider,
+                model,
+                costMetadata,
+                new CreatorAiService.AiUsageContext(
+                        script.getTenantId(),
+                        script.getUserId(),
+                        script.getProjectId(),
+                        generationJobId,
+                        null
+                ),
+                description
+        );
+        if (costMetadataItems != null) {
+            Map<String, Object> item = new LinkedHashMap<>(costMetadata);
+            item.putIfAbsent("promptType", promptType);
+            costMetadataItems.add(item);
+        }
+    }
+
+    private Map<String, Object> aggregateImageCostMetadata(List<Map<String, Object>> costMetadataItems) {
+        if (costMetadataItems == null || costMetadataItems.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        double totalCost = 0.0;
+        double billableTotalCost = 0.0;
+        String currency = "";
+        String provider = "";
+        String model = "";
+        for (Map<String, Object> item : costMetadataItems) {
+            if (item == null || item.isEmpty()) {
+                continue;
+            }
+            totalCost += doubleValue(item.get("totalCost"), 0.0);
+            billableTotalCost += doubleValue(firstNonNull(
+                    item.get("billableTotalCost"),
+                    firstNonNull(item.get("customerTotalCost"), item.get("totalCost"))
+            ), 0.0);
+            if (currency.isBlank()) {
+                currency = defaultString(item.get("currency"), "");
+            }
+            if (provider.isBlank()) {
+                provider = defaultString(item.get("provider"), "");
+            }
+            if (model.isBlank()) {
+                model = defaultString(item.get("model"), "");
+            }
+        }
+        if (totalCost <= 0.0) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> aggregate = new LinkedHashMap<>();
+        aggregate.put("totalCost", totalCost);
+        aggregate.put("actualTotalCost", totalCost);
+        aggregate.put("billableTotalCost", billableTotalCost > 0.0 ? billableTotalCost : totalCost);
+        aggregate.put("customerTotalCost", billableTotalCost > 0.0 ? billableTotalCost : totalCost);
+        aggregate.put("currency", currency);
+        aggregate.put("provider", provider);
+        aggregate.put("model", model);
+        aggregate.put("rateUnit", "AGGREGATED_IMAGE_PROVIDER_USAGE");
+        aggregate.put("items", costMetadataItems);
+        return aggregate;
     }
 
     private void linkProjectSelectedStoryboard(CreatorStoryboard storyboard) {
@@ -2031,6 +3018,20 @@ public class StoryboardService {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private double doubleValue(Object value, double fallback) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null || String.valueOf(value).isBlank()) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value));
         } catch (NumberFormatException ex) {
             return fallback;
         }

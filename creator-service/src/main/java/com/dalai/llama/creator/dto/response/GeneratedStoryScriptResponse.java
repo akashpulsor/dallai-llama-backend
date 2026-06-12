@@ -40,6 +40,12 @@ public class GeneratedStoryScriptResponse {
         private String category;
         private String dialogueLanguage;
         private String screenType;
+        private String storytellingType;
+        private Map<String, Object> storytellingGuidance;
+        private String hookLens;
+        private Map<String, Object> hookLensGuidance;
+        private Map<String, Object> hookBridge;
+        private Map<String, Object> factualityNotes;
         private String logline;
         private String centralConflict;
         private String storyline;

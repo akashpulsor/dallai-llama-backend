@@ -27,6 +27,7 @@ import com.dalai.llama.creator.repository.CreatorScriptRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -51,8 +52,9 @@ public class IdeaService {
 
     private static final Logger log = LoggerFactory.getLogger(IdeaService.class);
 
-    private static final int GENERATED_IDEA_COUNT = 20;
-    private static final int GENERATED_IDEA_AI_BATCH_SIZE = 5;
+    private static final int MAX_GENERATED_IDEA_COUNT = 20;
+    private static final int GENERATED_IDEA_AI_BATCH_SIZE = MAX_GENERATED_IDEA_COUNT;
+    private static final int GENERATED_IDEA_AI_ATTEMPTS = 1;
     private static final int DEFAULT_PAGE_SIZE = 5;
 
     private static final List<String> IDEA_ANGLES = List.of(
@@ -156,29 +158,71 @@ public class IdeaService {
                 creatorAiService.modelName()
         );
 
-        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea);
+        Pageable normalizedPageable = normalizePageable(pageable);
+        String idempotencyKey = ideaGenerationIdempotencyKey(lockedIdea, normalizedPageable);
+        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea, normalizedPageable, idempotencyKey);
+        if (hasGeneratedIdeasThroughPage(lockedIdea, normalizedPageable)) {
+            log.info(
+                    "Creator idea generation reused existing generated ideas lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
+        }
+        CreatorGenerationJob activeJob = generationJobService
+                .findActiveGenerationJobByIdempotencyKey(lockedIdea.getTenantId(), lockedIdea.getUserId(), PromptTemplateType.IDEA_GENERATE.name(), idempotencyKey)
+                .orElse(null);
+        if (activeJob != null) {
+            log.info(
+                    "Creator idea generation skipped duplicate direct execution activeJobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    activeJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
+        }
 
-        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
-                PromptTemplateType.IDEA_GENERATE.name(),
-                lockedIdea.getTenantId(),
-                lockedIdea.getUserId(),
-                lockedIdea.getProjectId(),
-                jobInput
-        );
+        CreatorGenerationJob generationJob;
+        try {
+            generationJob = generationJobService.startGenerationJob(
+                    PromptTemplateType.IDEA_GENERATE.name(),
+                    lockedIdea.getTenantId(),
+                    lockedIdea.getUserId(),
+                    lockedIdea.getProjectId(),
+                    jobInput
+            );
+        } catch (DataIntegrityViolationException ex) {
+            log.info(
+                    "Creator idea generation duplicate direct request recovered lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
+        }
         log.info(
-                "Creator idea generation job created jobId={} lockedIdeaId={} tenantId={} userId={}",
+                "Creator idea generation job created jobId={} lockedIdeaId={} tenantId={} userId={} idempotencyKey={}",
                 generationJob.getId(),
                 lockedIdeaId,
                 safeTenantId,
-                safeUserId
+                safeUserId,
+                idempotencyKey
         );
 
         try {
-            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJob.getId());
-            Pageable normalizedPageable = normalizePageable(pageable);
-            Page<GeneratedIdeaResponse> response = ideaRepository
-                    .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
-                    .map(this::toResponse);
+            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJob.getId(), normalizedPageable);
+            Page<GeneratedIdeaResponse> response = generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
 
             Map<String, Object> jobOutput = buildIdeaGenerationJobOutput(lockedIdeaId, generationResult, response);
             generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
@@ -234,24 +278,108 @@ public class IdeaService {
         }
         lockedIdea = ensureProjectOnLockedIdea(lockedIdea);
 
-        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea);
-        jobInput.put("page", pageable == null ? 0 : pageable.getPageNumber());
-        jobInput.put("size", pageable == null ? DEFAULT_PAGE_SIZE : pageable.getPageSize());
-        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
-                PromptTemplateType.IDEA_GENERATE.name(),
-                lockedIdea.getTenantId(),
-                lockedIdea.getUserId(),
-                lockedIdea.getProjectId(),
-                jobInput
-        );
+        Pageable normalizedPageable = normalizePageable(pageable);
+        String idempotencyKey = ideaGenerationIdempotencyKey(lockedIdea, normalizedPageable);
+        Map<String, Object> jobInput = buildIdeaGenerationJobInput(lockedIdea, normalizedPageable, idempotencyKey);
+        CreatorGenerationJob activeJob = generationJobService
+                .findActiveGenerationJobByIdempotencyKey(lockedIdea.getTenantId(), lockedIdea.getUserId(), PromptTemplateType.IDEA_GENERATE.name(), idempotencyKey)
+                .orElse(null);
+        if (activeJob != null) {
+            log.info(
+                    "Creator async idea generation reused active job jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    activeJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return activeJob;
+        }
+        CreatorGenerationJob completedJob = generationJobService
+                .findCompletedGenerationJobByIdempotencyKey(lockedIdea.getTenantId(), lockedIdea.getUserId(), PromptTemplateType.IDEA_GENERATE.name(), idempotencyKey)
+                .orElse(null);
+        if (completedJob != null && hasGeneratedIdeasThroughPage(lockedIdea, normalizedPageable)) {
+            log.info(
+                    "Creator async idea generation reused completed job jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    completedJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return completedJob;
+        }
+        if (hasGeneratedIdeasThroughPage(lockedIdea, normalizedPageable)) {
+            CreatorGenerationJob cacheJob = generationJobService.startGenerationJob(
+                    PromptTemplateType.IDEA_GENERATE.name(),
+                    lockedIdea.getTenantId(),
+                    lockedIdea.getUserId(),
+                    lockedIdea.getProjectId(),
+                    jobInput
+            );
+            Page<GeneratedIdeaResponse> response = generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
+            CreatorGenerationJob completedCacheJob = generationJobService.completeGenerationJob(
+                    cacheJob.getId(),
+                    buildIdeaGenerationJobOutput(lockedIdeaId, new IdeaGenerationResult(0, List.of(), List.of()), response)
+            );
+            log.info(
+                    "Creator async idea generation created cache-hit completed job jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                    completedCacheJob.getId(),
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId,
+                    normalizedPageable.getPageNumber(),
+                    normalizedPageable.getPageSize(),
+                    idempotencyKey
+            );
+            return completedCacheJob;
+        }
+        CreatorGenerationJob generationJob;
+        try {
+            generationJob = generationJobService.startGenerationJob(
+                    PromptTemplateType.IDEA_GENERATE.name(),
+                    lockedIdea.getTenantId(),
+                    lockedIdea.getUserId(),
+                    lockedIdea.getProjectId(),
+                    jobInput
+            );
+        } catch (DataIntegrityViolationException ex) {
+            CreatorGenerationJob recoveredJob = generationJobService
+                    .findActiveGenerationJobByIdempotencyKey(lockedIdea.getTenantId(), lockedIdea.getUserId(), PromptTemplateType.IDEA_GENERATE.name(), idempotencyKey)
+                    .orElse(null);
+            if (recoveredJob == null) {
+                recoveredJob = generationJobService
+                        .findCompletedGenerationJobByIdempotencyKey(lockedIdea.getTenantId(), lockedIdea.getUserId(), PromptTemplateType.IDEA_GENERATE.name(), idempotencyKey)
+                        .orElse(null);
+            }
+            if (recoveredJob != null) {
+                log.info(
+                        "Creator async idea generation duplicate recovered jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
+                        recoveredJob.getId(),
+                        lockedIdeaId,
+                        safeTenantId,
+                        safeUserId,
+                        normalizedPageable.getPageNumber(),
+                        normalizedPageable.getPageSize(),
+                        idempotencyKey
+                );
+                return recoveredJob;
+            }
+            throw ex;
+        }
         log.info(
-                "Creator async idea generation job accepted jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={}",
+                "Creator async idea generation job accepted jobId={} lockedIdeaId={} tenantId={} userId={} page={} size={} idempotencyKey={}",
                 generationJob.getId(),
                 lockedIdeaId,
                 safeTenantId,
                 safeUserId,
-                pageable == null ? null : pageable.getPageNumber(),
-                pageable == null ? null : pageable.getPageSize()
+                normalizedPageable.getPageNumber(),
+                normalizedPageable.getPageSize(),
+                idempotencyKey
         );
         return generationJob;
     }
@@ -266,6 +394,16 @@ public class IdeaService {
     ) {
         String safeTenantId = defaultString(tenantId, "unknown");
         String safeUserId = defaultString(userId, "anonymous");
+        if (generationJobId != null && !generationJobService.claimGenerationJobExecution(generationJobId, "idea-generation")) {
+            log.info(
+                    "Skipping duplicate creator idea generation execution jobId={} lockedIdeaId={} tenantId={} userId={}",
+                    generationJobId,
+                    lockedIdeaId,
+                    safeTenantId,
+                    safeUserId
+            );
+            return;
+        }
         try {
             CreatorIdea lockedIdea = ideaRepository.findById(lockedIdeaId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Locked idea was not found."));
@@ -277,14 +415,12 @@ public class IdeaService {
             }
             lockedIdea = ensureProjectOnLockedIdea(lockedIdea);
 
+            Pageable normalizedPageable = normalizePageable(pageable);
             generationJobService.updateGenerationJobProgress(generationJobId, 15, "Generating story ideas with AI");
-            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJobId);
+            IdeaGenerationResult generationResult = ensureGeneratedIdeas(lockedIdea, generationJobId, normalizedPageable);
             generationJobService.updateGenerationJobProgress(generationJobId, 82, "Preparing generated story ideas");
 
-            Pageable normalizedPageable = normalizePageable(pageable);
-            Page<GeneratedIdeaResponse> response = ideaRepository
-                    .findGeneratedIdeasForLockedBrief(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable)
-                    .map(this::toResponse);
+            Page<GeneratedIdeaResponse> response = generatedIdeasPage(lockedIdeaId, safeTenantId, safeUserId, normalizedPageable);
 
             Map<String, Object> jobOutput = buildIdeaGenerationJobOutput(lockedIdeaId, generationResult, response);
             jobOutput.put("message", "Story ideas generated");
@@ -315,7 +451,7 @@ public class IdeaService {
         }
     }
 
-    private Map<String, Object> buildIdeaGenerationJobInput(CreatorIdea lockedIdea) {
+    private Map<String, Object> buildIdeaGenerationJobInput(CreatorIdea lockedIdea, Pageable pageable, String idempotencyKey) {
         Map<String, Object> jobInput = new LinkedHashMap<>();
         jobInput.put("lockedIdeaId", lockedIdea.getId().toString());
         if (lockedIdea.getProjectId() != null) {
@@ -325,7 +461,44 @@ public class IdeaService {
         jobInput.put("durationSeconds", lockedIdea.getDurationSeconds());
         jobInput.put("source", lockedIdea.getSource());
         jobInput.put("selectionContext", lockedIdea.getSelectionContext());
+        jobInput.put("page", pageable == null ? 0 : pageable.getPageNumber());
+        jobInput.put("size", pageable == null ? DEFAULT_PAGE_SIZE : pageable.getPageSize());
+        jobInput.put("targetGeneratedIdeaCount", targetGeneratedIdeaCount(pageable));
+        jobInput.put("idempotencyKey", idempotencyKey);
         return jobInput;
+    }
+
+    private boolean hasGeneratedIdeasThroughPage(CreatorIdea lockedIdea, Pageable pageable) {
+        int targetTotal = targetGeneratedIdeaCount(pageable);
+        Page<CreatorIdea> existing = ideaRepository.findGeneratedIdeasForLockedBrief(
+                lockedIdea.getId(),
+                lockedIdea.getTenantId(),
+                lockedIdea.getUserId(),
+                PageRequest.of(0, 1)
+        );
+        return existing.getTotalElements() >= targetTotal;
+    }
+
+    private Page<GeneratedIdeaResponse> generatedIdeasPage(UUID lockedIdeaId, String tenantId, String userId, Pageable pageable) {
+        Pageable normalizedPageable = normalizePageable(pageable);
+        return ideaRepository
+                .findGeneratedIdeasForLockedBrief(lockedIdeaId, tenantId, userId, normalizedPageable)
+                .map(this::toResponse);
+    }
+
+    private int targetGeneratedIdeaCount(Pageable pageable) {
+        return MAX_GENERATED_IDEA_COUNT;
+    }
+
+    private String ideaGenerationIdempotencyKey(CreatorIdea lockedIdea, Pageable pageable) {
+        return "idea-generate:%s:count:%d".formatted(lockedIdea.getId(), MAX_GENERATED_IDEA_COUNT);
+    }
+
+    private void lockGeneratedIdeasForBrief(UUID lockedIdeaId) {
+        jdbcTemplate.queryForList(
+                "select pg_advisory_xact_lock(hashtext(?))",
+                "creator-ideas:" + lockedIdeaId
+        );
     }
 
     private Map<String, Object> buildIdeaGenerationJobOutput(
@@ -414,6 +587,10 @@ public class IdeaService {
         String categoryCode = resolveStoryScriptCategory(request == null ? null : request.categoryCode(), storyIdea, ideaText);
         String dialogueLanguage = normalizeDialogueLanguage(request == null ? null : request.dialogueLanguage());
         String screenType = normalizeScreenType(request == null ? null : request.screenType());
+        String storytellingType = normalizeStorytellingType(request == null ? null : request.storytellingType());
+        Map<String, Object> storytellingGuidance = storytellingGuidanceFor(storytellingType);
+        String hookLens = normalizeHookLens(request == null ? null : request.hookLens());
+        Map<String, Object> hookLensGuidance = hookLensGuidanceFor(hookLens);
         String inferredTone = inferTone(ideaText, categoryCode);
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.STORY_SCRIPT_GENERATE.name());
@@ -423,6 +600,10 @@ public class IdeaService {
         inputSnapshot.put("category", categoryCode);
         inputSnapshot.put("dialogueLanguage", dialogueLanguage);
         inputSnapshot.put("screenType", screenType);
+        inputSnapshot.put("storytellingType", storytellingType);
+        inputSnapshot.put("storytellingGuidance", storytellingGuidance);
+        inputSnapshot.put("hookLens", hookLens);
+        inputSnapshot.put("hookLensGuidance", hookLensGuidance);
         inputSnapshot.put("tone", inferredTone);
         inputSnapshot.put("lockedIdeaId", lockedIdeaId);
         inputSnapshot.put("storyIdeaId", storyIdeaId);
@@ -463,6 +644,10 @@ public class IdeaService {
                     inferredTone,
                     dialogueLanguage,
                     screenType,
+                    storytellingType,
+                    storytellingGuidance,
+                    hookLens,
+                    hookLensGuidance,
                     aiOutputDiagnostics
             );
             Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
@@ -501,7 +686,7 @@ public class IdeaService {
             );
 
             String scriptText = buildStoryScriptText(storyScript);
-            CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRun.getId(), generationJob.getId(), durationSeconds, dialogueLanguage, screenType);
+            CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRun.getId(), generationJob.getId(), durationSeconds, dialogueLanguage, screenType, storytellingType, hookLens);
             linkProjectSelectedIdea(savedIdea);
 
             Map<String, Object> jobOutput = new LinkedHashMap<>(promptOutputPayload);
@@ -541,22 +726,32 @@ public class IdeaService {
                     inferCategory(storyIdea),
                     inferTone(storyIdea.getTitle() + " " + defaultString(storyIdea.getSummary(), ""), inferCategory(storyIdea)),
                     normalizeDialogueLanguage(request == null ? null : request.dialogueLanguage()),
-                    normalizeScreenType(request == null ? null : request.screenType())
+                    normalizeScreenType(request == null ? null : request.screenType()),
+                    normalizeStorytellingType(request == null ? null : request.storytellingType()),
+                    normalizeHookLens(request == null ? null : request.hookLens())
             );
         }
 
         int durationSeconds = normalizeDuration(request == null ? null : request.durationSeconds(), storyScript.getDuration());
         String dialogueLanguage = normalizeDialogueLanguage(defaultString(request == null ? null : request.dialogueLanguage(), storyScript.getDialogueLanguage()));
         String screenType = normalizeScreenType(defaultString(request == null ? null : request.screenType(), storyScript.getScreenType()));
+        String storytellingType = normalizeStorytellingType(defaultString(request == null ? null : request.storytellingType(), storyScript.getStorytellingType()));
+        String hookLens = normalizeHookLens(defaultString(request == null ? null : request.hookLens(), storyScript.getHookLens()));
         String title = defaultString(request == null ? null : request.title(), defaultString(storyScript.getProjectTitle(), storyIdea.getTitle()));
         storyScript.setProjectTitle(title);
         storyScript.setDuration(durationSeconds);
         storyScript.setDialogueLanguage(dialogueLanguage);
         storyScript.setScreenType(screenType);
+        storyScript.setStorytellingType(storytellingType);
+        storyScript.setStorytellingGuidance(nonEmptyMap(storyScript.getStorytellingGuidance(), storytellingGuidanceFor(storytellingType)));
+        storyScript.setHookLens(hookLens);
+        storyScript.setHookLensGuidance(nonEmptyMap(storyScript.getHookLensGuidance(), hookLensGuidanceFor(hookLens)));
+        storyScript.setHookBridge(nonEmptyMap(storyScript.getHookBridge(), defaultHookBridgeFor(hookLens)));
+        storyScript.setFactualityNotes(nonEmptyMap(storyScript.getFactualityNotes(), defaultFactualityNotesFor(hookLens)));
 
         String scriptText = defaultString(request == null ? null : request.scriptText(), buildStoryScriptText(storyScript));
         UUID promptRunId = storyIdea.getPromptRunId();
-        CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, storyIdea.getGenerationJobId(), durationSeconds, dialogueLanguage, screenType);
+        CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, storyIdea.getGenerationJobId(), durationSeconds, dialogueLanguage, screenType, storytellingType, hookLens);
         linkProjectSelectedIdea(savedIdea);
 
         return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRunId, storyScript, scriptText, null);
@@ -569,6 +764,30 @@ public class IdeaService {
             GenerateStoryIdeaScriptRequest request,
             String tenantId,
             String userId
+    ) {
+        return generateScriptForStoryIdeaInternal(lockedIdeaId, storyIdeaId, request, tenantId, userId, null, true);
+    }
+
+    @Transactional
+    public GeneratedScriptResponse generateScriptForStoryIdeaForJob(
+            UUID lockedIdeaId,
+            UUID storyIdeaId,
+            GenerateStoryIdeaScriptRequest request,
+            String tenantId,
+            String userId,
+            UUID generationJobId
+    ) {
+        return generateScriptForStoryIdeaInternal(lockedIdeaId, storyIdeaId, request, tenantId, userId, generationJobId, false);
+    }
+
+    private GeneratedScriptResponse generateScriptForStoryIdeaInternal(
+            UUID lockedIdeaId,
+            UUID storyIdeaId,
+            GenerateStoryIdeaScriptRequest request,
+            String tenantId,
+            String userId,
+            UUID externalGenerationJobId,
+            boolean manageGenerationJob
     ) {
         CreatorIdea storyIdea = getStoryIdeaForLockedBrief(lockedIdeaId, storyIdeaId, tenantId, userId);
         if (!storyIdea.isSaved() && !"SELECTED".equalsIgnoreCase(storyIdea.getStatus())) {
@@ -619,6 +838,21 @@ public class IdeaService {
                 request == null ? null : toGenericMap(request.creatorContext()),
                 nonEmptyMap(mapValue(requestContext.get("creatorContext")), mapValue(lockedPackageContext.get("creatorContext")))
         );
+        String storytellingType = resolveScreenplayStorytellingType(request, requestContext, lockedPackageContext, creatorContext, storyScript);
+        Map<String, Object> storytellingGuidance = storytellingGuidanceFor(storytellingType);
+        String hookLens = resolveScreenplayHookLens(request, requestContext, lockedPackageContext, creatorContext, storyScript);
+        Map<String, Object> hookLensGuidance = hookLensGuidanceFor(hookLens);
+        storyScript.setStorytellingType(storytellingType);
+        storyScript.setStorytellingGuidance(nonEmptyMap(storyScript.getStorytellingGuidance(), storytellingGuidance));
+        storyScript.setHookLens(hookLens);
+        storyScript.setHookLensGuidance(nonEmptyMap(storyScript.getHookLensGuidance(), hookLensGuidance));
+        storyScript.setHookBridge(nonEmptyMap(storyScript.getHookBridge(), defaultHookBridgeFor(hookLens)));
+        storyScript.setFactualityNotes(nonEmptyMap(storyScript.getFactualityNotes(), defaultFactualityNotesFor(hookLens)));
+        creatorContext = new LinkedHashMap<>(creatorContext);
+        creatorContext.putIfAbsent("storytellingType", storytellingType);
+        creatorContext.putIfAbsent("storytellingGuidance", storytellingGuidance);
+        creatorContext.putIfAbsent("hookLens", hookLens);
+        creatorContext.putIfAbsent("hookLensGuidance", hookLensGuidance);
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.SCRIPT_GENERATE.name());
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
@@ -627,6 +861,10 @@ public class IdeaService {
         inputSnapshot.put("category", categoryCode);
         inputSnapshot.put("dialogueLanguage", dialogueLanguage);
         inputSnapshot.put("screenType", screenType);
+        inputSnapshot.put("storytellingType", storytellingType);
+        inputSnapshot.put("storytellingGuidance", storytellingGuidance);
+        inputSnapshot.put("hookLens", hookLens);
+        inputSnapshot.put("hookLensGuidance", hookLensGuidance);
         inputSnapshot.put("tone", inferredTone);
         inputSnapshot.put("budgetTier", budgetTier);
         inputSnapshot.put("lockedIdeaId", lockedIdeaId);
@@ -645,13 +883,16 @@ public class IdeaService {
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
-        CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
-                PromptTemplateType.SCRIPT_GENERATE.name(),
-                storyIdea.getTenantId(),
-                storyIdea.getUserId(),
-                storyIdea.getProjectId(),
-                providerInput
-        );
+        CreatorGenerationJob generationJob = externalGenerationJobId == null
+                ? generationJobService.startGenerationJob(
+                        PromptTemplateType.SCRIPT_GENERATE.name(),
+                        storyIdea.getTenantId(),
+                        storyIdea.getUserId(),
+                        storyIdea.getProjectId(),
+                        providerInput
+                )
+                : generationJobService.findGenerationJob(externalGenerationJobId)
+                        .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + externalGenerationJobId));
 
         Map<String, Object> providerOutputForDebug = new LinkedHashMap<>();
         Map<String, Object> aiOutputDiagnostics = new LinkedHashMap<>();
@@ -670,7 +911,7 @@ public class IdeaService {
 
             GeneratedScriptResponse.CinematicScript scriptPayload;
             try {
-                scriptPayload = resolveCinematicScriptPayload(providerOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, aiOutputDiagnostics);
+                scriptPayload = resolveCinematicScriptPayload(providerOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance, aiOutputDiagnostics);
             } catch (CreatorAiOutputException ex) {
                 if (!shouldRetryScreenplayGeneration(aiOutputDiagnostics)) {
                     throw ex;
@@ -684,7 +925,7 @@ public class IdeaService {
                         creatorAiService.generateMetered(PromptTemplateType.SCRIPT_GENERATE.name(), retryProviderInput, usageContext);
                 Map<String, Object> retryProviderOutput = retryResponse.output();
                 try {
-                    scriptPayload = resolveCinematicScriptPayload(retryProviderOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, retryDiagnostics);
+                    scriptPayload = resolveCinematicScriptPayload(retryProviderOutput, storyIdea, storyScript, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance, retryDiagnostics);
                 } catch (CreatorAiOutputException retryEx) {
                     retryDiagnostics.put("retryAttempt", 1);
                     retryDiagnostics.put("retryOfFailureReason", firstAttemptDiagnostics.getOrDefault("failureReason", ""));
@@ -800,6 +1041,8 @@ public class IdeaService {
             context.put("scriptDurationSeconds", durationSeconds);
             context.put("scriptDialogueLanguage", dialogueLanguage);
             context.put("scriptScreenType", screenType);
+            context.put("scriptStorytellingType", storytellingType);
+            context.put("scriptHookLens", hookLens);
             context.put("productionPlanTagCount", productionPlanTags.size());
             context.put("productionPlanStatus", productionPlanResult.status());
             if (!productionPlanResult.error().isBlank()) {
@@ -831,7 +1074,9 @@ public class IdeaService {
             if (!productionPlanResult.debug().isEmpty()) {
                 jobOutput.put("productionPlanDebug", productionPlanResult.debug());
             }
-            generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+            if (manageGenerationJob) {
+                generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
+            }
 
             return GeneratedScriptResponse.builder()
                     .scriptId(creatorScript.getId())
@@ -853,11 +1098,13 @@ public class IdeaService {
                     .generatedAt(savedIdea.getUpdatedAt())
                     .build();
         } catch (RuntimeException ex) {
-            generationJobService.failGenerationJob(
-                    generationJob.getId(),
-                    defaultString(ex.getMessage(), ex.getClass().getSimpleName()),
-                    rawPromptFailureOutput(ex, PromptTemplateType.SCRIPT_GENERATE.name(), providerOutputForDebug, aiOutputDiagnostics)
-            );
+            if (manageGenerationJob) {
+                generationJobService.failGenerationJob(
+                        generationJob.getId(),
+                        defaultString(ex.getMessage(), ex.getClass().getSimpleName()),
+                        rawPromptFailureOutput(ex, PromptTemplateType.SCRIPT_GENERATE.name(), providerOutputForDebug, aiOutputDiagnostics)
+                );
+            }
             throw ex;
         }
     }
@@ -901,6 +1148,16 @@ public class IdeaService {
         String screenType = normalizeScreenType(defaultString(request == null ? null : request.screenType(), defaultString(scriptJson.getScreenType(), creatorScript.getScreenType())));
         scriptJson.setDialogueLanguage(dialogueLanguage);
         scriptJson.setScreenType(screenType);
+        String storytellingType = normalizeStorytellingType(defaultString(request == null ? null : request.storytellingType(), scriptJson.getStorytellingType()));
+        scriptJson.setStorytellingType(storytellingType);
+        scriptJson.setStorytellingGuidance(nonEmptyMap(scriptJson.getStorytellingGuidance(), storytellingGuidanceFor(storytellingType)));
+        scriptJson.setShotMixPlan(nonEmptyMap(scriptJson.getShotMixPlan(), shotMixPlanFor(storytellingType)));
+        String hookLens = normalizeHookLens(defaultString(request == null ? null : request.hookLens(), scriptJson.getHookLens()));
+        scriptJson.setHookLens(hookLens);
+        scriptJson.setHookLensGuidance(nonEmptyMap(scriptJson.getHookLensGuidance(), hookLensGuidanceFor(hookLens)));
+        scriptJson.setHookBridge(nonEmptyMap(scriptJson.getHookBridge(), defaultHookBridgeFor(hookLens)));
+        scriptJson.setFactualityNotes(nonEmptyMap(scriptJson.getFactualityNotes(), defaultFactualityNotesFor(hookLens)));
+        applyShotStorytellingDefaults(shots, storytellingType);
         stripEmbeddedProductionPlanTags(scriptJson);
 
         String title = defaultString(request == null ? null : request.title(), defaultString(scriptJson.getProjectTitle(), storyIdea.getTitle()));
@@ -911,6 +1168,14 @@ public class IdeaService {
         enrichAudioAndMusicDesign(scriptJson, categoryCode, inferredTone);
         Map<String, Object> scriptPayloadMap = toMap(scriptJson);
         GeneratedStoryScriptResponse.StoryScript storyScript = readStoryScriptFromIdea(storyIdea);
+        if (storyScript != null) {
+            storyScript.setStorytellingType(storytellingType);
+            storyScript.setStorytellingGuidance(nonEmptyMap(storyScript.getStorytellingGuidance(), scriptJson.getStorytellingGuidance()));
+            storyScript.setHookLens(hookLens);
+            storyScript.setHookLensGuidance(nonEmptyMap(storyScript.getHookLensGuidance(), scriptJson.getHookLensGuidance()));
+            storyScript.setHookBridge(nonEmptyMap(storyScript.getHookBridge(), scriptJson.getHookBridge()));
+            storyScript.setFactualityNotes(nonEmptyMap(storyScript.getFactualityNotes(), scriptJson.getFactualityNotes()));
+        }
         putStoryStructure(scriptPayloadMap, storyScript);
         List<Map<String, Object>> shotPayloads = toMapList(shots);
 
@@ -951,6 +1216,8 @@ public class IdeaService {
         context.put("scriptDurationSeconds", durationSeconds);
         context.put("scriptDialogueLanguage", dialogueLanguage);
         context.put("scriptScreenType", screenType);
+        context.put("scriptStorytellingType", storytellingType);
+        context.put("scriptHookLens", hookLens);
         context.put("productionPlanTagCount", productionPlanTags.size());
         context.put("productionPlanStatus", productionPlanResult.status());
         if (!productionPlanResult.error().isBlank()) {
@@ -1010,26 +1277,29 @@ public class IdeaService {
         return storyIdea;
     }
 
-    private IdeaGenerationResult ensureGeneratedIdeas(CreatorIdea lockedIdea, UUID generationJobId) {
+    private IdeaGenerationResult ensureGeneratedIdeas(CreatorIdea lockedIdea, UUID generationJobId, Pageable pageable) {
+        Pageable normalizedPageable = normalizePageable(pageable);
+        int targetTotal = targetGeneratedIdeaCount(normalizedPageable);
+        lockGeneratedIdeasForBrief(lockedIdea.getId());
         Page<CreatorIdea> existing = ideaRepository.findGeneratedIdeasForLockedBrief(
                 lockedIdea.getId(),
                 lockedIdea.getTenantId(),
                 lockedIdea.getUserId(),
-                PageRequest.of(0, GENERATED_IDEA_COUNT)
+                PageRequest.of(0, targetTotal)
         );
         int existingCount = (int) existing.getTotalElements();
-        if (existingCount >= GENERATED_IDEA_COUNT) {
+        if (existingCount >= targetTotal) {
             return new IdeaGenerationResult(0, List.of(), List.of());
         }
 
-        int targetCount = GENERATED_IDEA_COUNT - existingCount;
+        int targetCount = targetTotal - existingCount;
         Map<String, Object> sourceBrief = buildSourceBrief(lockedIdea);
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.IDEA_GENERATE.name());
 
         List<GeneratedIdeaCandidate> generatedCandidates = new ArrayList<>();
         List<UUID> promptRunIds = new ArrayList<>();
         List<Map<String, Object>> providerOutputs = new ArrayList<>();
-        int maxAttempts = Math.max(4, ((targetCount + GENERATED_IDEA_AI_BATCH_SIZE - 1) / GENERATED_IDEA_AI_BATCH_SIZE) + 2);
+        int maxAttempts = GENERATED_IDEA_AI_ATTEMPTS;
 
         for (int attempt = 0; generatedCandidates.size() < targetCount && attempt < maxAttempts; attempt++) {
             int batchSize = Math.min(GENERATED_IDEA_AI_BATCH_SIZE, targetCount - generatedCandidates.size());
@@ -1040,6 +1310,7 @@ public class IdeaService {
                     sourceBrief,
                     existingCount,
                     generatedCandidates.size(),
+                    targetTotal,
                     batchSize
             );
             if (batchResult.promptRunId() != null) {
@@ -1101,13 +1372,14 @@ public class IdeaService {
             Map<String, Object> sourceBrief,
             int existingCount,
             int alreadyGeneratedCount,
+            int targetTotal,
             int candidateCount
     ) {
         List<String> batchAngles = ideaAnglesForBatch(existingCount + alreadyGeneratedCount, candidateCount);
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("lockedIdeaId", lockedIdea.getId().toString());
         inputSnapshot.put("candidateCount", candidateCount);
-        inputSnapshot.put("totalCandidateTarget", GENERATED_IDEA_COUNT);
+        inputSnapshot.put("totalCandidateTarget", targetTotal);
         inputSnapshot.put("existingCandidateCount", existingCount + alreadyGeneratedCount);
         inputSnapshot.put("durationSeconds", lockedIdea.getDurationSeconds() == null ? 30 : lockedIdea.getDurationSeconds());
         inputSnapshot.put("lockedBrief", sourceBrief);
@@ -1304,9 +1576,13 @@ public class IdeaService {
             String categoryCode,
             String inferredTone,
             String dialogueLanguage,
-            String screenType
+            String screenType,
+            String storytellingType,
+            String hookLens
     ) {
         String title = cleanBaseTitle(storyIdea.getTitle());
+        String normalizedStorytellingType = normalizeStorytellingType(storytellingType);
+        String normalizedHookLens = normalizeHookLens(hookLens);
         List<GeneratedStoryScriptResponse.CharacterProfile> characters = characterProfilesFor(storyIdea, categoryCode, inferredTone, dialogueLanguage);
         return GeneratedStoryScriptResponse.StoryScript.builder()
                 .projectTitle(title)
@@ -1314,6 +1590,12 @@ public class IdeaService {
                 .category(categoryCode)
                 .dialogueLanguage(dialogueLanguage)
                 .screenType(screenType)
+                .storytellingType(normalizedStorytellingType)
+                .storytellingGuidance(storytellingGuidanceFor(normalizedStorytellingType))
+                .hookLens(normalizedHookLens)
+                .hookLensGuidance(hookLensGuidanceFor(normalizedHookLens))
+                .hookBridge(defaultHookBridgeFor(normalizedHookLens))
+                .factualityNotes(defaultFactualityNotesFor(normalizedHookLens))
                 .logline("A beginner-friendly short about " + title + " where one small decision changes the emotional direction of the moment.")
                 .centralConflict("The main character wants the payoff of the idea, but hesitation, social pressure, or a familiar excuse blocks the first step.")
                 .storyline("The story opens at the exact decision point, introduces the creator's internal block through a relatable character moment, adds a small external nudge, then resolves with one achievable action that creates a visible emotional shift.")
@@ -1335,6 +1617,10 @@ public class IdeaService {
             String inferredTone,
             String dialogueLanguage,
             String screenType,
+            String storytellingType,
+            Map<String, Object> storytellingGuidance,
+            String hookLens,
+            Map<String, Object> hookLensGuidance,
             Map<String, Object> diagnostics
     ) {
         GeneratedStoryScriptResponse.StoryScript fallback = buildStoryScriptPayload(
@@ -1343,7 +1629,9 @@ public class IdeaService {
                 categoryCode,
                 inferredTone,
                 dialogueLanguage,
-                screenType
+                screenType,
+                storytellingType,
+                hookLens
         );
         populateAiOutputDiagnostics(diagnostics, PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerOutput);
         Map<String, Object> payload = extractStructuredProviderPayload(providerOutput, "scriptJson", "storyScript", "script", "story");
@@ -1356,7 +1644,7 @@ public class IdeaService {
                         objectMapper.convertValue(retainedPayload, GeneratedStoryScriptResponse.StoryScript.class);
                 String validationReason = storyScriptValidationReason(storyScript);
                 if (validationReason.isBlank()) {
-                    applyStoryScriptDefaults(storyScript, fallback, storyIdea, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+                    applyStoryScriptDefaults(storyScript, fallback, storyIdea, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance);
                     diagnostics.put("usedAiOutput", true);
                     diagnostics.put("fallbackUsed", false);
                     log.info("Creator story script AI output accepted storyIdeaId={} payloadKeys={}",
@@ -1429,13 +1717,25 @@ public class IdeaService {
             String categoryCode,
             String inferredTone,
             String dialogueLanguage,
-            String screenType
+            String screenType,
+            String storytellingType,
+            Map<String, Object> storytellingGuidance,
+            String hookLens,
+            Map<String, Object> hookLensGuidance
     ) {
         storyScript.setProjectTitle(defaultString(storyScript.getProjectTitle(), fallback.getProjectTitle()));
         storyScript.setDuration(storyScript.getDuration() == null || storyScript.getDuration() <= 0 ? durationSeconds : storyScript.getDuration());
         storyScript.setCategory(defaultString(storyScript.getCategory(), categoryCode));
         storyScript.setDialogueLanguage(defaultString(storyScript.getDialogueLanguage(), dialogueLanguage));
         storyScript.setScreenType(normalizeScreenType(defaultString(storyScript.getScreenType(), screenType)));
+        String normalizedStorytellingType = normalizeStorytellingType(defaultString(storyScript.getStorytellingType(), storytellingType));
+        storyScript.setStorytellingType(normalizedStorytellingType);
+        storyScript.setStorytellingGuidance(nonEmptyMap(storyScript.getStorytellingGuidance(), nonEmptyMap(storytellingGuidance, fallback.getStorytellingGuidance())));
+        String normalizedHookLens = normalizeHookLens(defaultString(storyScript.getHookLens(), hookLens));
+        storyScript.setHookLens(normalizedHookLens);
+        storyScript.setHookLensGuidance(nonEmptyMap(storyScript.getHookLensGuidance(), nonEmptyMap(hookLensGuidance, fallback.getHookLensGuidance())));
+        storyScript.setHookBridge(nonEmptyMap(storyScript.getHookBridge(), nonEmptyMap(fallback.getHookBridge(), defaultHookBridgeFor(normalizedHookLens))));
+        storyScript.setFactualityNotes(nonEmptyMap(storyScript.getFactualityNotes(), nonEmptyMap(fallback.getFactualityNotes(), defaultFactualityNotesFor(normalizedHookLens))));
         storyScript.setLogline(defaultString(storyScript.getLogline(), fallback.getLogline()));
         storyScript.setCentralConflict(defaultString(storyScript.getCentralConflict(), fallback.getCentralConflict()));
         storyScript.setStoryline(defaultString(storyScript.getStoryline(), fallback.getStoryline()));
@@ -1461,6 +1761,10 @@ public class IdeaService {
             String inferredTone,
             String dialogueLanguage,
             String screenType,
+            String storytellingType,
+            Map<String, Object> storytellingGuidance,
+            String hookLens,
+            Map<String, Object> hookLensGuidance,
             Map<String, Object> diagnostics
     ) {
         GeneratedScriptResponse.CinematicScript fallback = buildCinematicScriptPayload(
@@ -1470,7 +1774,11 @@ public class IdeaService {
                 categoryCode,
                 inferredTone,
                 dialogueLanguage,
-                screenType
+                screenType,
+                storytellingType,
+                storytellingGuidance,
+                hookLens,
+                hookLensGuidance
         );
         populateAiOutputDiagnostics(diagnostics, PromptTemplateType.SCRIPT_GENERATE.name(), providerOutput);
         Map<String, Object> payload = extractStructuredProviderPayload(providerOutput, "scriptJson", "screenplay", "cinematicScript", "script");
@@ -1485,7 +1793,7 @@ public class IdeaService {
                     scriptPayload.setShots(flattenCinematicShots(retainedPayload));
                 }
                 if (scriptPayload != null && scriptPayload.getShots() != null && !scriptPayload.getShots().isEmpty()) {
-                    applyCinematicScriptDefaults(scriptPayload, fallback, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType);
+                    applyCinematicScriptDefaults(scriptPayload, fallback, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance);
                     diagnostics.put("usedAiOutput", true);
                     diagnostics.put("fallbackUsed", false);
                     log.info("Creator screenplay AI output accepted storyIdeaId={} payloadKeys={}",
@@ -1535,7 +1843,11 @@ public class IdeaService {
             String categoryCode,
             String inferredTone,
             String dialogueLanguage,
-            String screenType
+            String screenType,
+            String storytellingType,
+            Map<String, Object> storytellingGuidance,
+            String hookLens,
+            Map<String, Object> hookLensGuidance
     ) {
         scriptPayload.setProjectTitle(defaultString(scriptPayload.getProjectTitle(), fallback.getProjectTitle()));
         scriptPayload.setDuration(scriptPayload.getDuration() == null || scriptPayload.getDuration() <= 0 ? durationSeconds : scriptPayload.getDuration());
@@ -1557,6 +1869,50 @@ public class IdeaService {
         scriptPayload.setInferredTone(defaultString(scriptPayload.getInferredTone(), inferredTone));
         scriptPayload.setDialogueLanguage(defaultString(scriptPayload.getDialogueLanguage(), dialogueLanguage));
         scriptPayload.setScreenType(normalizeScreenType(defaultString(scriptPayload.getScreenType(), screenType)));
+        String normalizedStorytellingType = normalizeStorytellingType(defaultString(scriptPayload.getStorytellingType(), storytellingType));
+        scriptPayload.setStorytellingType(normalizedStorytellingType);
+        scriptPayload.setStorytellingGuidance(nonEmptyMap(scriptPayload.getStorytellingGuidance(), nonEmptyMap(storytellingGuidance, fallback.getStorytellingGuidance())));
+        String normalizedHookLens = normalizeHookLens(defaultString(scriptPayload.getHookLens(), hookLens));
+        scriptPayload.setHookLens(normalizedHookLens);
+        scriptPayload.setHookLensGuidance(nonEmptyMap(scriptPayload.getHookLensGuidance(), nonEmptyMap(hookLensGuidance, fallback.getHookLensGuidance())));
+        scriptPayload.setHookBridge(nonEmptyMap(scriptPayload.getHookBridge(), nonEmptyMap(fallback.getHookBridge(), defaultHookBridgeFor(normalizedHookLens))));
+        scriptPayload.setFactualityNotes(nonEmptyMap(scriptPayload.getFactualityNotes(), nonEmptyMap(fallback.getFactualityNotes(), defaultFactualityNotesFor(normalizedHookLens))));
+        scriptPayload.setShotMixPlan(nonEmptyMap(scriptPayload.getShotMixPlan(), fallback.getShotMixPlan()));
+        applyShotStorytellingDefaults(scriptPayload.getShots(), normalizedStorytellingType);
+    }
+
+    private void applyShotStorytellingDefaults(List<GeneratedScriptResponse.CinematicShot> shots, String storytellingType) {
+        if (shots == null || shots.isEmpty()) {
+            return;
+        }
+        for (int index = 0; index < shots.size(); index++) {
+            GeneratedScriptResponse.CinematicShot shot = shots.get(index);
+            if (shot == null) {
+                continue;
+            }
+            int shotNumber = shot.getShotNumber() == null || shot.getShotNumber() <= 0 ? index + 1 : shot.getShotNumber();
+            String role = defaultString(shot.getStorytellingRole(), storytellingRoleFor(shotNumber, storytellingType));
+            shot.setStorytellingRole(role);
+            shot.setAssetCaptureMode(defaultString(shot.getAssetCaptureMode(), assetCaptureModeFor(role)));
+            shot.setAssetGenerationPrompt(defaultString(
+                    shot.getAssetGenerationPrompt(),
+                    assetGenerationPromptFor(role, defaultString(shot.getTitle(), "creator story"), shotPhase(shotNumber, shots.size()), defaultString(shot.getAction(), ""), "vertical")
+            ));
+            if ("related_visual".equals(role)) {
+                if (shot.getDialogue() == null) {
+                    shot.setDialogue(Map.of());
+                }
+                if (shot.getPrimaryActors() == null) {
+                    shot.setPrimaryActors(List.of());
+                }
+                if (shot.getSideActors() == null) {
+                    shot.setSideActors(List.of());
+                }
+                if (shot.getPeopleInFrame() == null) {
+                    shot.setPeopleInFrame(0);
+                }
+            }
+        }
     }
 
     private List<GeneratedScriptResponse.CinematicShot> flattenCinematicShots(Map<String, Object> payload) {
@@ -1712,6 +2068,12 @@ public class IdeaService {
                 "category",
                 "dialogueLanguage",
                 "screenType",
+                "storytellingType",
+                "storytellingGuidance",
+                "hookLens",
+                "hookLensGuidance",
+                "hookBridge",
+                "factualityNotes",
                 "logline",
                 "centralConflict",
                 "storyline",
@@ -2067,7 +2429,9 @@ public class IdeaService {
             UUID generationJobId,
             int durationSeconds,
             String dialogueLanguage,
-            String screenType
+            String screenType,
+            String storytellingType,
+            String hookLens
     ) {
         Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
         context.put("storyScript", toStoryScriptMap(storyScript));
@@ -2077,6 +2441,8 @@ public class IdeaService {
         context.put("storyScriptDurationSeconds", durationSeconds);
         context.put("storyScriptDialogueLanguage", dialogueLanguage);
         context.put("storyScriptScreenType", screenType);
+        context.put("storyScriptStorytellingType", storytellingType);
+        context.put("storyScriptHookLens", hookLens);
 
         storyIdea.setTitle(storyScript.getProjectTitle());
         storyIdea.setScript(scriptText);
@@ -2134,6 +2500,9 @@ public class IdeaService {
         builder.append("Duration: ").append(storyScript.getDuration()).append("s\n");
         builder.append("Language: ").append(defaultString(storyScript.getDialogueLanguage(), "English")).append("\n");
         builder.append("Screen: ").append(defaultString(storyScript.getScreenType(), "vertical")).append("\n\n");
+        builder.append("Storytelling Type: ").append(defaultString(storyScript.getStorytellingType(), "narrator_visual_mix")).append("\n\n");
+        builder.append("Hook Lens: ").append(defaultString(storyScript.getHookLens(), "direct")).append("\n");
+        builder.append("Hook Bridge: ").append(toJson(storyScript.getHookBridge() == null ? Map.of() : storyScript.getHookBridge())).append("\n\n");
         builder.append("Logline:\n").append(defaultString(storyScript.getLogline(), "")).append("\n\n");
         builder.append("Storyline:\n").append(defaultString(storyScript.getStoryline(), "")).append("\n\n");
         builder.append("Central Conflict:\n").append(defaultString(storyScript.getCentralConflict(), "")).append("\n\n");
@@ -2178,9 +2547,15 @@ public class IdeaService {
             String categoryCode,
             String inferredTone,
             String dialogueLanguage,
-            String screenType
+            String screenType,
+            String storytellingType,
+            Map<String, Object> storytellingGuidance,
+            String hookLens,
+            Map<String, Object> hookLensGuidance
     ) {
         int totalShots = shotCountForDuration(durationSeconds);
+        String normalizedStorytellingType = normalizeStorytellingType(storytellingType);
+        String normalizedHookLens = normalizeHookLens(defaultString(hookLens, storyScript == null ? null : storyScript.getHookLens()));
         List<GeneratedStoryScriptResponse.CharacterProfile> characters =
                 storyScript != null && storyScript.getCharacters() != null && !storyScript.getCharacters().isEmpty()
                         ? storyScript.getCharacters()
@@ -2192,7 +2567,7 @@ public class IdeaService {
             if (index == totalShots - 1) {
                 end = durationSeconds;
             }
-            shots.add(buildCinematicShot(storyIdea, categoryCode, inferredTone, dialogueLanguage, screenType, characters, index + 1, start, end, totalShots));
+            shots.add(buildCinematicShot(storyIdea, categoryCode, inferredTone, dialogueLanguage, screenType, normalizedStorytellingType, characters, index + 1, start, end, totalShots));
         }
 
         return GeneratedScriptResponse.CinematicScript.builder()
@@ -2211,6 +2586,13 @@ public class IdeaService {
                 .inferredTone(inferredTone)
                 .dialogueLanguage(dialogueLanguage)
                 .screenType(screenType)
+                .storytellingType(normalizedStorytellingType)
+                .storytellingGuidance(nonEmptyMap(storytellingGuidance, storytellingGuidanceFor(normalizedStorytellingType)))
+                .hookLens(normalizedHookLens)
+                .hookLensGuidance(nonEmptyMap(hookLensGuidance, nonEmptyMap(storyScript == null ? null : storyScript.getHookLensGuidance(), hookLensGuidanceFor(normalizedHookLens))))
+                .hookBridge(nonEmptyMap(storyScript == null ? null : storyScript.getHookBridge(), defaultHookBridgeFor(normalizedHookLens)))
+                .factualityNotes(nonEmptyMap(storyScript == null ? null : storyScript.getFactualityNotes(), defaultFactualityNotesFor(normalizedHookLens)))
+                .shotMixPlan(shotMixPlanFor(normalizedStorytellingType))
                 .shots(shots)
                 .build();
     }
@@ -2221,6 +2603,7 @@ public class IdeaService {
             String inferredTone,
             String dialogueLanguage,
             String screenType,
+            String storytellingType,
             List<GeneratedStoryScriptResponse.CharacterProfile> characters,
             int shotNumber,
             int startSecond,
@@ -2235,6 +2618,8 @@ public class IdeaService {
         int fps = fpsFor(shotNumber, phase);
         String expression = expressionFor(phase, inferredTone);
         String action = actionFor(phase, title);
+        String storytellingRole = storytellingRoleFor(shotNumber, storytellingType);
+        boolean relatedVisual = "related_visual".equals(storytellingRole);
 
         return GeneratedScriptResponse.CinematicShot.builder()
                 .shotNumber(shotNumber)
@@ -2250,11 +2635,11 @@ public class IdeaService {
                 .fps(fps)
                 .composition(compositionFor(phase, screenType))
                 .setDesign(setDesignFor(categoryCode, phase, screenType))
-                .peopleInFrame(peopleInFrameFor(phase))
-                .primaryActors(primaryActorsFor(phase, dialogueLanguage, characters))
-                .sideActors(sideActorsFor(phase, inferredTone, dialogueLanguage, characters))
-                .primaryActorAction(primaryActorActionFor(phase, title))
-                .sideActorAction(sideActorActionFor(phase, inferredTone))
+                .peopleInFrame(relatedVisual ? 0 : peopleInFrameFor(phase))
+                .primaryActors(relatedVisual ? List.of() : primaryActorsFor(phase, dialogueLanguage, characters))
+                .sideActors(relatedVisual ? List.of() : sideActorsFor(phase, inferredTone, dialogueLanguage, characters))
+                .primaryActorAction(relatedVisual ? "No actor required; show the related visual clearly." : primaryActorActionFor(phase, title))
+                .sideActorAction(relatedVisual ? "No side actor required in this shot." : sideActorActionFor(phase, inferredTone))
                 .expression(expression)
                 .emotion(emotionFor(phase, inferredTone))
                 .bodyLanguage(bodyLanguageFor(phase))
@@ -2262,13 +2647,16 @@ public class IdeaService {
                 .environment(environmentFor(categoryCode))
                 .action(action)
                 .voiceOver(voiceOverFor(phase, dialogueLanguage))
-                .dialogue(dialogueMapForPhase(phase, dialogueLanguage))
+                .dialogue(relatedVisual ? Map.of() : dialogueMapForPhase(phase, dialogueLanguage))
                 .textOverlay(textOverlayFor(phase, dialogueLanguage))
                 .transition(transitionFor(phase))
+                .storytellingRole(storytellingRole)
+                .assetCaptureMode(assetCaptureModeFor(storytellingRole))
+                .assetGenerationPrompt(assetGenerationPromptFor(storytellingRole, title, phase, action, screenType))
                 .soundDesign(new ArrayList<Object>(soundDesignFor(phase)))
                 .editingNotes(new ArrayList<Object>(editingNotesFor(phase)))
                 .retentionGoal(retentionGoalFor(phase))
-                .creatorDirection(creatorDirectionFor(phase))
+                .creatorDirection(relatedVisual ? "Use this as recordable B-roll or generate it from the asset prompt." : creatorDirectionFor(phase))
                 .subtitlePosition("lower-middle")
                 .mobileFocusArea(mobileFocusAreaFor(screenType))
                 .safeZoneNotes(safeZoneNotesFor(screenType))
@@ -2322,6 +2710,9 @@ public class IdeaService {
             builder.append("Visual: ").append(scene.getAction()).append("\n");
             builder.append("Dialogue: ").append(dialogueText(scene.getDialogue())).append("\n");
             builder.append("Screen Text: ").append(scene.getTextOverlay()).append("\n");
+            builder.append("Story Role: ").append(defaultString(scene.getStorytellingRole(), "")).append("\n");
+            builder.append("Asset Mode: ").append(defaultString(scene.getAssetCaptureMode(), "")).append("\n");
+            builder.append("Asset Prompt: ").append(defaultString(scene.getAssetGenerationPrompt(), "")).append("\n");
             builder.append("Set Design: ").append(defaultString(scene.getSetDesign(), "")).append("\n");
             builder.append("People In Frame: ").append(scene.getPeopleInFrame() == null ? 1 : scene.getPeopleInFrame()).append("\n");
             builder.append("Primary Actors: ").append(listText(scene.getPrimaryActors())).append("\n");
@@ -2706,6 +3097,12 @@ public class IdeaService {
         scriptPayloadMap.put("logline", storyScript.getLogline());
         scriptPayloadMap.put("centralConflict", storyScript.getCentralConflict());
         scriptPayloadMap.put("endingPayoff", storyScript.getEndingPayoff());
+        scriptPayloadMap.put("storytellingType", defaultString(storyScript.getStorytellingType(), "narrator_visual_mix"));
+        scriptPayloadMap.put("storytellingGuidance", storyScript.getStorytellingGuidance() == null ? Map.of() : storyScript.getStorytellingGuidance());
+        scriptPayloadMap.put("hookLens", defaultString(storyScript.getHookLens(), "direct"));
+        scriptPayloadMap.put("hookLensGuidance", storyScript.getHookLensGuidance() == null ? Map.of() : storyScript.getHookLensGuidance());
+        scriptPayloadMap.put("hookBridge", storyScript.getHookBridge() == null ? Map.of() : storyScript.getHookBridge());
+        scriptPayloadMap.put("factualityNotes", storyScript.getFactualityNotes() == null ? Map.of() : storyScript.getFactualityNotes());
     }
 
     private void putScreenplayPlanningContext(
@@ -3024,6 +3421,204 @@ public class IdeaService {
             return "cinemascope";
         }
         return "vertical";
+    }
+
+    private String normalizeStorytellingType(String requestedStorytellingType) {
+        String storytellingType = defaultString(requestedStorytellingType, "narrator_visual_mix")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (storytellingType) {
+            case "talking_head", "talking_head_explainer" -> "talking_head_explainer";
+            case "visual_voiceover", "visual_vo", "broll_voiceover" -> "visual_voiceover";
+            case "dialogue_scene", "acted_dialogue", "character_dialogue" -> "dialogue_scene";
+            case "dramatic_scene", "drama", "cinematic_drama" -> "dramatic_scene";
+            default -> "narrator_visual_mix";
+        };
+    }
+
+    private String resolveScreenplayStorytellingType(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext,
+            GeneratedStoryScriptResponse.StoryScript storyScript
+    ) {
+        String requested = request == null ? null : request.storytellingType();
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(requestContext == null ? null : requestContext.get("storytellingType"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("storytellingType"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(creatorContext == null ? null : creatorContext.get("storytellingType"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = storyScript == null ? null : storyScript.getStorytellingType();
+        }
+        return normalizeStorytellingType(requested);
+    }
+
+    private String normalizeHookLens(String requestedHookLens) {
+        String hookLens = defaultString(requestedHookLens, "direct")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (hookLens) {
+            case "historical", "history_hook", "from_history" -> "history";
+            case "geo", "place", "location", "geography_hook", "from_geography" -> "geography";
+            case "philosophical", "philosophy_hook", "from_philosophy" -> "philosophy";
+            case "scientific", "science_hook", "from_science" -> "science";
+            case "cultural", "culture_hook", "from_culture" -> "culture";
+            case "psychological", "psychology_hook", "from_psychology" -> "psychology";
+            case "economic", "economics_hook", "from_economics", "business" -> "economics";
+            case "history", "geography", "philosophy", "science", "culture", "psychology", "economics" -> hookLens;
+            default -> "direct";
+        };
+    }
+
+    private String resolveScreenplayHookLens(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext,
+            GeneratedStoryScriptResponse.StoryScript storyScript
+    ) {
+        String requested = request == null ? null : request.hookLens();
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(requestContext == null ? null : requestContext.get("hookLens"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("hookLens"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = stringValue(creatorContext == null ? null : creatorContext.get("hookLens"));
+        }
+        if (defaultString(requested, "").isBlank()) {
+            requested = storyScript == null ? null : storyScript.getHookLens();
+        }
+        return normalizeHookLens(requested);
+    }
+
+    private Map<String, Object> hookLensGuidanceFor(String hookLens) {
+        String normalized = normalizeHookLens(hookLens);
+        Map<String, Object> guidance = new LinkedHashMap<>();
+        guidance.put("hookLens", normalized);
+        guidance.put("useExternalBridge", !"direct".equals(normalized));
+        guidance.put("allowedLenses", List.of("direct", "history", "geography", "philosophy", "science", "culture", "psychology", "economics"));
+        guidance.put("factualityRule", "Use only reliable, commonly known facts. Do not invent dates, places, people, events, causes, quotes, or links.");
+        guidance.put("fallbackRule", "If no accurate bridge exists, start directly with the original story and set hookBridge.relationConfidence to none.");
+        guidance.put("bridgeStyle", "direct".equals(normalized)
+                ? "Start directly with the original story, conflict, or premise."
+                : "Open with a factual " + normalized + " reference only when it truthfully relates to the original story. The bridge may be an analogy, context, or transition, but not a fabricated causal link.");
+        guidance.put("mustAvoid", List.of(
+                "false historical or scientific claims",
+                "made-up dates, locations, people, events, or quotes",
+                "forced analogies presented as fact",
+                "causal links that are not supported by the story or common knowledge"
+        ));
+        return guidance;
+    }
+
+    private Map<String, Object> defaultHookBridgeFor(String hookLens) {
+        String normalized = normalizeHookLens(hookLens);
+        Map<String, Object> bridge = new LinkedHashMap<>();
+        bridge.put("hookLens", normalized);
+        bridge.put("factualHook", "");
+        bridge.put("bridgeLine", "");
+        bridge.put("relationConfidence", "direct".equals(normalized) ? "not_applicable" : "none");
+        bridge.put("noFalseLinkReason", "direct".equals(normalized)
+                ? "Direct hook selected."
+                : "No external factual bridge has been verified. Use a direct opening unless a reliable relation can be stated without inventing facts.");
+        return bridge;
+    }
+
+    private Map<String, Object> defaultFactualityNotesFor(String hookLens) {
+        String normalized = normalizeHookLens(hookLens);
+        Map<String, Object> notes = new LinkedHashMap<>();
+        notes.put("hookLens", normalized);
+        notes.put("verifiedFacts", List.of());
+        notes.put("avoidedClaims", "direct".equals(normalized)
+                ? List.of()
+                : List.of("No unverified external facts or forced links were added by fallback generation."));
+        notes.put("requiresHumanFactCheck", !"direct".equals(normalized));
+        return notes;
+    }
+
+    private Map<String, Object> storytellingGuidanceFor(String storytellingType) {
+        String normalized = normalizeStorytellingType(storytellingType);
+        Map<String, Object> guidance = new LinkedHashMap<>();
+        guidance.put("storytellingType", normalized);
+        guidance.put("recordOrGenerateVisuals", "narrator_visual_mix".equals(normalized) || "visual_voiceover".equals(normalized));
+        switch (normalized) {
+            case "talking_head_explainer" -> {
+                guidance.put("primaryMode", "narrator_face");
+                guidance.put("narratorFacePercent", 80);
+                guidance.put("relatedVisualPercent", 20);
+                guidance.put("dialogueStyle", "simple direct narration with light supporting dialogue only when natural");
+            }
+            case "visual_voiceover" -> {
+                guidance.put("primaryMode", "related_visual");
+                guidance.put("narratorFacePercent", 10);
+                guidance.put("relatedVisualPercent", 90);
+                guidance.put("dialogueStyle", "voice over carries the story; on-camera dialogue can be minimal or empty");
+            }
+            case "dialogue_scene" -> {
+                guidance.put("primaryMode", "acted_dialogue");
+                guidance.put("narratorFacePercent", 10);
+                guidance.put("relatedVisualPercent", 20);
+                guidance.put("dialogueStyle", "natural character dialogue with simple, engaging lines");
+            }
+            case "dramatic_scene" -> {
+                guidance.put("primaryMode", "dramatic_scene");
+                guidance.put("narratorFacePercent", 0);
+                guidance.put("relatedVisualPercent", 20);
+                guidance.put("dialogueStyle", "cinematic acted scene with emotional but concise dialogue");
+            }
+            default -> {
+                guidance.put("primaryMode", "narrator_visual_mix");
+                guidance.put("narratorFacePercent", 40);
+                guidance.put("relatedVisualPercent", 60);
+                guidance.put("dialogueStyle", "simple narration with engaging dialogue; alternate narrator face and related visuals");
+            }
+        }
+        return guidance;
+    }
+
+    private Map<String, Object> shotMixPlanFor(String storytellingType) {
+        Map<String, Object> guidance = storytellingGuidanceFor(storytellingType);
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("narratorFacePercent", guidance.getOrDefault("narratorFacePercent", 40));
+        plan.put("relatedVisualPercent", guidance.getOrDefault("relatedVisualPercent", 60));
+        plan.put("recordOrGenerateVisualsNote", Boolean.TRUE.equals(guidance.get("recordOrGenerateVisuals"))
+                ? "Related visual shots may be recorded by the user or generated from assetGenerationPrompt."
+                : "");
+        return plan;
+    }
+
+    private String storytellingRoleFor(int shotNumber, String storytellingType) {
+        String normalized = normalizeStorytellingType(storytellingType);
+        return switch (normalized) {
+            case "talking_head_explainer" -> shotNumber % 5 == 3 ? "related_visual" : "narrator_face";
+            case "visual_voiceover" -> shotNumber == 1 ? "narrator_face" : "related_visual";
+            case "dialogue_scene", "dramatic_scene" -> "acted_dialogue";
+            default -> shotNumber % 3 == 1 ? "narrator_face" : "related_visual";
+        };
+    }
+
+    private String assetCaptureModeFor(String storytellingRole) {
+        return "related_visual".equals(defaultString(storytellingRole, "")) ? "record_or_generate" : "record";
+    }
+
+    private String assetGenerationPromptFor(String storytellingRole, String title, String phase, String action, String screenType) {
+        if (!"related_visual".equals(defaultString(storytellingRole, ""))) {
+            return "";
+        }
+        return "Create a clean %s related visual or B-roll image for \"%s\" during the %s beat: %s"
+                .formatted(normalizeScreenType(screenType), defaultString(title, "creator story"), defaultString(phase, "story"), defaultString(action, "show the idea clearly"));
     }
 
     private String formatTierFor(int durationSeconds) {
@@ -3658,11 +4253,11 @@ public class IdeaService {
 
     private String sketchPromptFor(String shotType, String cameraAngle, String expression, String categoryCode, String action, String screenType) {
         String composition = "horizontal".equals(screenType) ? "horizontal 16:9 composition" : "vertical 9:16 composition";
-        return "Monochrome cinematic storyboard sketch, " + shotType + ", " + cameraAngle
+        return "Professional storyboard sketch panel, hand-drawn animatic linework, loose pencil construction marks, clean ink outlines, selective muted marker color accents, " + shotType + ", " + cameraAngle
                 + ", creator with " + expression
                 + ", " + environmentFor(categoryCode)
-                + ", natural soft lighting, action: " + action
-                + ", filmmaking previsualization style, grayscale pencil storyboard aesthetic, " + composition;
+                + ", natural soft lighting notes, action: " + action
+                + ", drawn planning-frame style, visible wardrobe and set cues, not a black-and-white photo or glossy cinematic still, " + composition;
     }
 
     private String formatTime(int seconds) {

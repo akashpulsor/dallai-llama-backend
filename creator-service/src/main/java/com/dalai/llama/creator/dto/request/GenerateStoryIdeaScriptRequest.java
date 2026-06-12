@@ -16,6 +16,8 @@ public record GenerateStoryIdeaScriptRequest(
         @Size(max = 4000) String idea,
         @Size(max = 64) String dialogueLanguage,
         @Size(max = 32) String screenType,
+        @Size(max = 64) String storytellingType,
+        @Size(max = 64) String hookLens,
         @Size(max = 32) String budgetTier,
         List<@Valid CharacterCastMappingContext> characterCastMappings,
         List<@Valid ActorContext> availableActors,
@@ -113,6 +115,8 @@ public record GenerateStoryIdeaScriptRequest(
             @Min(15) @Max(10800) Integer durationSeconds,
             @Size(max = 64) String dialogueLanguage,
             @Size(max = 32) String screenType,
+            @Size(max = 64) String storytellingType,
+            @Size(max = 64) String hookLens,
             JsonNode metadata
     ) {
     }
@@ -122,6 +126,8 @@ public record GenerateStoryIdeaScriptRequest(
             @Valid AiProviderContext aiProvider,
             @Size(max = 64) String workflowLockedAt,
             @Valid ScreenplayProductionPackage lockedPackage,
+            @Size(max = 64) String storytellingType,
+            @Size(max = 64) String hookLens,
             JsonNode metadata
     ) {
     }
@@ -144,7 +150,9 @@ public record GenerateStoryIdeaScriptRequest(
             List<@Valid ActorContext> availableActors,
             @Valid AudienceDecisionContext audienceDecision,
             @Valid BrandContext brandContext,
-            @Valid CreatorContext creatorContext
+            @Valid CreatorContext creatorContext,
+            @Size(max = 64) String storytellingType,
+            @Size(max = 64) String hookLens
     ) {
     }
 }

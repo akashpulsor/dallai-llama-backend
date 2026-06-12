@@ -209,7 +209,7 @@ public class SourceConnectorOrchestrationService {
             } catch (RuntimeException ex) {
                 lastFailure = ex;
                 if (attempt < maxAttempts) {
-                    sleepBeforeRetry(connector);
+                    sleepBeforeRetry(connector, attempt);
                 }
             }
         }
@@ -395,11 +395,21 @@ public class SourceConnectorOrchestrationService {
         );
     }
 
-    private void sleepBeforeRetry(CreatorSourceConnector connector) {
-        long backoff = Math.max(0, safeInt(connector.getRetryBackoffMs()));
+    private void sleepBeforeRetry(CreatorSourceConnector connector, int failedAttempt) {
+        long baseBackoff = Math.max(0, safeInt(connector.getRetryBackoffMs()));
+        long multiplier = Math.max(1, failedAttempt);
+        long backoff = baseBackoff > Long.MAX_VALUE / multiplier
+                ? Long.MAX_VALUE
+                : baseBackoff * multiplier;
         if (backoff == 0) {
             return;
         }
+        log.warn(
+                "Creator trend connector retry scheduled connector={} failedAttempt={} retryDelayMs={}",
+                connector.getCode(),
+                failedAttempt,
+                backoff
+        );
         try {
             Thread.sleep(backoff);
         } catch (InterruptedException ex) {

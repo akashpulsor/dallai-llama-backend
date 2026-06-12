@@ -30,6 +30,7 @@ public record StoryboardSceneResponse(
         Integer renderHeight,
         Map<String, Object> storyboardTag,
         Map<String, Object> lightingBuildSheetTag,
-        Map<String, Object> cameraPlanSheetTag
+        Map<String, Object> cameraPlanSheetTag,
+        Map<String, Object> rawShot
 ) {
 }

@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +33,16 @@ public class AssetStorageService {
 
     public S3Client s3Client() {
         return s3Client;
+    }
+
+    public void downloadObjectToPath(String bucket, String objectKey, Path targetPath) {
+        s3Client.getObject(
+                GetObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(objectKey)
+                        .build(),
+                targetPath
+        );
     }
 
     public String creatorAssetsBucket() {

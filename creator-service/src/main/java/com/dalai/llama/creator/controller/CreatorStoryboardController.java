@@ -2,9 +2,12 @@ package com.dalai.llama.creator.controller;
 
 import com.dalai.llama.creator.dto.request.GenerateProductionPlanRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
+import com.dalai.llama.creator.dto.request.ShotAiEditRequest;
+import com.dalai.llama.creator.dto.request.ShotTimelineInsertRequest;
 import com.dalai.llama.creator.dto.response.GenerationJobResponse;
 import com.dalai.llama.creator.dto.response.ShotProductionPlanTagResponse;
 import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
+import com.dalai.llama.creator.dto.response.StoryboardSceneResponse;
 import com.dalai.llama.creator.dto.response.StoryboardResponse;
 import com.dalai.llama.creator.service.CreatorProductionPlanAsyncService;
 import com.dalai.llama.creator.service.CreatorStoryboardAsyncService;
@@ -84,6 +87,7 @@ public class CreatorStoryboardController {
                         scriptId,
                         request == null ? null : request.styleKey(),
                         request == null ? null : request.focusedShotNumber(),
+                        request != null && Boolean.TRUE.equals(request.forceRegenerate()),
                         tenantId,
                         userId
                 )));
@@ -116,7 +120,7 @@ public class CreatorStoryboardController {
     }
 
     @PostMapping("/scripts/{scriptId}/shots/{shotNumber}/images/{imageKind}")
-    public ResponseEntity<com.dalai.llama.creator.dto.response.StoryboardSceneResponse> generateShotImage(
+    public ResponseEntity<StoryboardSceneResponse> generateShotImage(
             @PathVariable UUID scriptId,
             @PathVariable Integer shotNumber,
             @PathVariable String imageKind,
@@ -128,5 +132,32 @@ public class CreatorStoryboardController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(storyboardService.generateShotImage(scriptId, shotNumber == null ? 1 : shotNumber, imageKind, request, tenantId, userId));
+    }
+
+    @PostMapping("/scripts/{scriptId}/shots/{shotNumber}/ai-edit")
+    public ResponseEntity<StoryboardSceneResponse> editShotWithAi(
+            @PathVariable UUID scriptId,
+            @PathVariable Integer shotNumber,
+            @Valid @RequestBody ShotAiEditRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(storyboardService.editShotWithAi(scriptId, shotNumber == null ? 1 : shotNumber, request, tenantId, userId));
+    }
+
+    @PostMapping("/scripts/{scriptId}/shots/insert")
+    public ResponseEntity<StoryboardSceneResponse> insertTimelineShot(
+            @PathVariable UUID scriptId,
+            @Valid @RequestBody ShotTimelineInsertRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(storyboardService.insertTimelineShot(scriptId, request, tenantId, userId));
     }
 }

@@ -14,6 +14,7 @@ import com.dalai.llama.creator.repository.CreatorScriptShotPlanRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -25,9 +26,13 @@ import org.springframework.web.reactive.function.client.WebClientRequestExceptio
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +44,7 @@ public class ProductionPlanTagService {
 
     private static final Logger log = LoggerFactory.getLogger(ProductionPlanTagService.class);
     private static final int AI_TRANSIENT_MAX_ATTEMPTS = 3;
+    private static final String PRODUCTION_PLAN_JOB_TYPE = "SHOT_PRODUCTION_PLAN_GENERATE";
     public static final String DEFAULT_STYLE_KEY = "indian_creator_pencil";
 
     private final CreatorScriptShotPlanRepository shotPlanRepository;
@@ -83,15 +89,16 @@ public class ProductionPlanTagService {
             return List.of();
         }
 
-        CreatorGenerationJob job = startProductionPlanJob(script, shots, shots, normalizedStyleKey, null);
-        return generateTagsForScriptWithJob(script, scriptPayload, shots, normalizedStyleKey, job.getId(), null);
+        ProductionPlanJobStart jobStart = startProductionPlanJob(script, shots, shots, normalizedStyleKey, null, true);
+        return generateTagsForScriptWithJob(script, scriptPayload, shots, normalizedStyleKey, jobStart.job().getId(), null, true);
     }
 
     @Transactional
-    public CreatorGenerationJob startGenerateTagsForScriptJob(
+    public ProductionPlanJobStart startGenerateTagsForScriptJob(
             UUID scriptId,
             String styleKey,
             Integer focusedShotNumber,
+            boolean forceRegenerate,
             String tenantId,
             String userId
     ) {
@@ -102,7 +109,7 @@ public class ProductionPlanTagService {
         }
         String normalizedStyleKey = normalizeStyleKey(styleKey);
         List<Map<String, Object>> targetShots = focusedShots(shots, focusedShotNumber);
-        return startProductionPlanJob(script, shots, targetShots, normalizedStyleKey, focusedShotNumber);
+        return startProductionPlanJob(script, shots, targetShots, normalizedStyleKey, focusedShotNumber, forceRegenerate);
     }
 
     @Transactional
@@ -111,6 +118,7 @@ public class ProductionPlanTagService {
             UUID scriptId,
             String styleKey,
             Integer focusedShotNumber,
+            boolean forceRegenerate,
             String tenantId,
             String userId
     ) {
@@ -119,7 +127,7 @@ public class ProductionPlanTagService {
         if (shots.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Screenplay has no shots for shot plan generation.");
         }
-        return generateTagsForScriptWithJob(script, script.getScriptPayload(), shots, normalizeStyleKey(styleKey), generationJobId, focusedShotNumber);
+        return generateTagsForScriptWithJob(script, script.getScriptPayload(), shots, normalizeStyleKey(styleKey), generationJobId, focusedShotNumber, forceRegenerate);
     }
 
     private List<ShotProductionPlanTagResponse> generateTagsForScriptWithJob(
@@ -128,17 +136,40 @@ public class ProductionPlanTagService {
             List<Map<String, Object>> shots,
             String normalizedStyleKey,
             UUID generationJobId,
-            Integer focusedShotNumber
+            Integer focusedShotNumber,
+            boolean forceRegenerate
     ) {
+        if (generationJobId != null && !generationJobService.claimGenerationJobExecution(generationJobId, "production-plan-tags")) {
+            log.info(
+                    "Skipping duplicate production plan execution jobId={} scriptId={} focusedShotNumber={} styleKey={}",
+                    generationJobId,
+                    script == null ? null : script.getId(),
+                    focusedShotNumber,
+                    normalizedStyleKey
+            );
+            return script == null ? List.of() : listTagsForScript(script.getId());
+        }
         Map<String, Object> projectContext = buildProjectContext(script, scriptPayload, normalizedStyleKey);
         List<Map<String, Object>> targetShots = focusedShots(shots, focusedShotNumber);
         try {
             List<ShotProductionPlanTagResponse> responses = new ArrayList<>();
+            List<Map<String, Object>> aiUsageSummaries = new ArrayList<>();
+            publishProductionPlanProgress(generationJobId, 7, "Preparing shot production plan context", 0, targetShots.size());
             for (int index = 0; index < targetShots.size(); index++) {
                 Map<String, Object> shot = targetShots.get(index);
                 int shotNumber = intValue(shot.get("shotNumber"), index + 1);
                 Map<String, Object> inputPayload = buildInputPayload(script, projectContext, shot, normalizedStyleKey);
+                if (!forceRegenerate) {
+                    CreatorScriptShotPlan existingPlan = completePlanForInput(script, projectContext, shot, normalizedStyleKey);
+                    if (existingPlan != null) {
+                        responses.add(toResponse(existingPlan));
+                        int progress = 10 + (int) Math.round(((index + 1) * 80.0d) / Math.max(1, targetShots.size()));
+                        publishProductionPlanProgress(generationJobId, progress, "Reused existing production plan JSON for shot " + shotNumber, index + 1, targetShots.size());
+                        continue;
+                    }
+                }
 
+                publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 0), "Generating storyboard tag JSON for shot " + shotNumber, index, targetShots.size());
                 GeneratedTag storyboardTag = generateTag(
                         PromptTemplateType.STORYBOARD_TAG_GENERATE.name(),
                         "storyboardTag",
@@ -148,6 +179,7 @@ public class ProductionPlanTagService {
                         storyboardTagSchemaReference(script, projectContext, shot),
                         shotNumber
                 );
+                publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 1), "Generating lighting tag JSON for shot " + shotNumber, index, targetShots.size());
                 GeneratedTag lightingTag = generateTag(
                         PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(),
                         "lightingBuildSheetTag",
@@ -157,6 +189,7 @@ public class ProductionPlanTagService {
                         lightingBuildSheetTagSchemaReference(script, projectContext, shot),
                         shotNumber
                 );
+                publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 2), "Generating DP camera tag JSON for shot " + shotNumber, index, targetShots.size());
                 GeneratedTag cameraTag = generateTag(
                         PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(),
                         "cameraPlanSheetTag",
@@ -166,6 +199,9 @@ public class ProductionPlanTagService {
                         cameraPlanSheetTagSchemaReference(script, projectContext, shot),
                         shotNumber
                 );
+                appendUsageSummary(aiUsageSummaries, PromptTemplateType.STORYBOARD_TAG_GENERATE.name(), shotNumber, storyboardTag);
+                appendUsageSummary(aiUsageSummaries, PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(), shotNumber, lightingTag);
+                appendUsageSummary(aiUsageSummaries, PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(), shotNumber, cameraTag);
 
                 Map<String, Object> promptRunIds = new LinkedHashMap<>();
                 putIfPresent(promptRunIds, "storyboardTagPromptRunId", storyboardTag.promptRunId());
@@ -186,7 +222,7 @@ public class ProductionPlanTagService {
                 responses.add(toResponse(savedPlan));
 
                 int progress = 10 + (int) Math.round(((index + 1) * 80.0d) / Math.max(1, targetShots.size()));
-                generationJobService.updateGenerationJobProgress(generationJobId, progress, "Generated production plan JSON for shot " + shotNumber);
+                publishProductionPlanProgress(generationJobId, progress, "Generated production plan JSON for shot " + shotNumber, index + 1, targetShots.size());
             }
 
             Map<String, Object> output = new LinkedHashMap<>();
@@ -203,6 +239,18 @@ public class ProductionPlanTagService {
                     new TypeReference<List<Map<String, Object>>>() {
                     }
             ));
+            if (!aiUsageSummaries.isEmpty()) {
+                output.put("aiUsage", aiUsageSummaries);
+            }
+            Map<String, Object> tokenMetadata = aggregateTokenMetadata(aiUsageSummaries);
+            if (!tokenMetadata.isEmpty()) {
+                output.put("tokenMetadata", tokenMetadata);
+            }
+            Map<String, Object> costMetadata = aggregateCostMetadata(aiUsageSummaries);
+            if (!costMetadata.isEmpty()) {
+                output.put("costMetadata", costMetadata);
+            }
+            output.put("steps", productionPlanSteps(100, "Production plan JSON complete", targetShots.size(), targetShots.size()));
             generationJobService.completeGenerationJob(generationJobId, output);
             return responses;
         } catch (RuntimeException ex) {
@@ -298,7 +346,16 @@ public class ProductionPlanTagService {
         return target;
     }
 
-    private CreatorGenerationJob startProductionPlanJob(CreatorScript script, List<Map<String, Object>> shots, List<Map<String, Object>> targetShots, String normalizedStyleKey, Integer focusedShotNumber) {
+    private ProductionPlanJobStart startProductionPlanJob(
+            CreatorScript script,
+            List<Map<String, Object>> shots,
+            List<Map<String, Object>> targetShots,
+            String normalizedStyleKey,
+            Integer focusedShotNumber,
+            boolean forceRegenerate
+    ) {
+        Map<String, Object> projectContext = buildProjectContext(script, script.getScriptPayload(), normalizedStyleKey);
+        String idempotencyKey = productionPlanIdempotencyKey(script, projectContext, targetShots, normalizedStyleKey, focusedShotNumber);
         Map<String, Object> jobInput = new LinkedHashMap<>();
         jobInput.put("scriptId", script.getId().toString());
         jobInput.put("screenplayId", script.getId().toString());
@@ -311,14 +368,293 @@ public class ProductionPlanTagService {
             jobInput.put("focusedShotNumber", focusedShotNumber);
         }
         jobInput.put("styleKey", normalizedStyleKey);
+        jobInput.put("shotNumbers", targetShots.stream().map(shot -> intValue(shot.get("shotNumber"), 0)).toList());
+        jobInput.put("forceRegenerate", forceRegenerate);
+        jobInput.put("idempotencyKey", idempotencyKey);
 
-        return generationJobService.startGenerationJob(
-                PromptTemplateType.SHOT_PRODUCTION_PLAN_GENERATE.name(),
-                script.getTenantId(),
-                script.getUserId(),
-                script.getProjectId(),
-                jobInput
+        CreatorGenerationJob activeJob = findActiveProductionPlanJob(script, idempotencyKey);
+        if (activeJob != null) {
+            log.info(
+                    "Production plan idempotency reuse active job jobId={} status={} scriptId={} focusedShotNumber={} styleKey={} forceRegenerate={} idempotencyKey={}",
+                    activeJob.getId(),
+                    activeJob.getStatus(),
+                    script.getId(),
+                    focusedShotNumber,
+                    normalizedStyleKey,
+                    forceRegenerate,
+                    shortText(idempotencyKey, 72)
+            );
+            return new ProductionPlanJobStart(activeJob, false, "ACTIVE_JOB_REUSED");
+        }
+
+        if (!forceRegenerate) {
+            List<ShotProductionPlanTagResponse> existingPlans = completeExistingPlans(script, projectContext, targetShots, normalizedStyleKey);
+            if (!existingPlans.isEmpty() && existingPlans.size() == targetShots.size()) {
+                CreatorGenerationJob completedJob = generationJobService
+                        .findCompletedGenerationJobByIdempotencyKey(script.getTenantId(), script.getUserId(), PRODUCTION_PLAN_JOB_TYPE, idempotencyKey)
+                        .orElse(null);
+                if (completedJob != null) {
+                    log.info(
+                            "Production plan idempotency reuse completed job jobId={} scriptId={} focusedShotNumber={} styleKey={} planCount={} idempotencyKey={}",
+                            completedJob.getId(),
+                            script.getId(),
+                            focusedShotNumber,
+                            normalizedStyleKey,
+                            existingPlans.size(),
+                            shortText(idempotencyKey, 72)
+                    );
+                    return new ProductionPlanJobStart(completedJob, false, "COMPLETED_JOB_REUSED");
+                }
+                CreatorGenerationJob cacheJob;
+                try {
+                    cacheJob = generationJobService.startGenerationJob(
+                            PRODUCTION_PLAN_JOB_TYPE,
+                            script.getTenantId(),
+                            script.getUserId(),
+                            script.getProjectId(),
+                            jobInput
+                    );
+                } catch (DataIntegrityViolationException ex) {
+                    CreatorGenerationJob recoveredActiveJob = findActiveProductionPlanJob(script, idempotencyKey);
+                    if (recoveredActiveJob != null) {
+                        log.info(
+                                "Production plan idempotency cache-hit duplicate recovered active job jobId={} status={} scriptId={} idempotencyKey={}",
+                                recoveredActiveJob.getId(),
+                                recoveredActiveJob.getStatus(),
+                                script.getId(),
+                                shortText(idempotencyKey, 72)
+                        );
+                        return new ProductionPlanJobStart(recoveredActiveJob, false, "ACTIVE_JOB_REUSED");
+                    }
+                    throw ex;
+                }
+                CreatorGenerationJob completedCacheJob = generationJobService.completeGenerationJob(
+                        cacheJob.getId(),
+                        productionPlanJobOutput(script, shots, targetShots, normalizedStyleKey, focusedShotNumber, existingPlans, true)
+                );
+                log.info(
+                        "Production plan idempotency cache hit created completed job jobId={} scriptId={} focusedShotNumber={} styleKey={} planCount={} idempotencyKey={}",
+                        completedCacheJob.getId(),
+                        script.getId(),
+                        focusedShotNumber,
+                        normalizedStyleKey,
+                        existingPlans.size(),
+                        shortText(idempotencyKey, 72)
+                );
+                return new ProductionPlanJobStart(completedCacheJob, false, "EXISTING_PLANS_REUSED");
+            }
+        }
+
+        ProductionPlanJobStart jobStart = startGenerationJobRecoveringDuplicate(script, jobInput, idempotencyKey);
+        log.info(
+                "Production plan job resolved jobId={} scriptId={} focusedShotNumber={} styleKey={} forceRegenerate={} shouldRun={} reason={} idempotencyKey={}",
+                jobStart.job().getId(),
+                script.getId(),
+                focusedShotNumber,
+                normalizedStyleKey,
+                forceRegenerate,
+                jobStart.shouldRun(),
+                jobStart.reason(),
+                shortText(idempotencyKey, 72)
         );
+        return jobStart;
+    }
+
+    private ProductionPlanJobStart startGenerationJobRecoveringDuplicate(
+            CreatorScript script,
+            Map<String, Object> jobInput,
+            String idempotencyKey
+    ) {
+        try {
+            CreatorGenerationJob job = generationJobService.startGenerationJob(
+                        PRODUCTION_PLAN_JOB_TYPE,
+                        script.getTenantId(),
+                        script.getUserId(),
+                        script.getProjectId(),
+                        jobInput
+                );
+            return new ProductionPlanJobStart(job, true, "CREATED");
+        } catch (DataIntegrityViolationException ex) {
+            CreatorGenerationJob activeJob = findActiveProductionPlanJob(script, idempotencyKey);
+            if (activeJob != null) {
+                log.info(
+                        "Production plan idempotency duplicate recovered active job jobId={} status={} scriptId={} idempotencyKey={}",
+                        activeJob.getId(),
+                        activeJob.getStatus(),
+                        script.getId(),
+                        shortText(idempotencyKey, 72)
+                );
+                return new ProductionPlanJobStart(activeJob, false, "ACTIVE_JOB_REUSED");
+            }
+            throw ex;
+        }
+    }
+
+    private CreatorGenerationJob findActiveProductionPlanJob(CreatorScript script, String idempotencyKey) {
+        return generationJobService
+                .findActiveGenerationJobByIdempotencyKey(script.getTenantId(), script.getUserId(), PRODUCTION_PLAN_JOB_TYPE, idempotencyKey)
+                .orElse(null);
+    }
+
+    private List<ShotProductionPlanTagResponse> completeExistingPlans(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            List<Map<String, Object>> targetShots,
+            String normalizedStyleKey
+    ) {
+        List<ShotProductionPlanTagResponse> responses = new ArrayList<>();
+        for (int index = 0; index < (targetShots == null ? 0 : targetShots.size()); index++) {
+            Map<String, Object> shot = targetShots.get(index);
+            CreatorScriptShotPlan plan = completePlanForInput(script, projectContext, shot, normalizedStyleKey);
+            if (plan == null) {
+                return List.of();
+            }
+            responses.add(toResponse(plan));
+        }
+        return responses;
+    }
+
+    private CreatorScriptShotPlan completePlanForInput(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            Map<String, Object> shot,
+            String normalizedStyleKey
+    ) {
+        int shotNumber = intValue(shot == null ? null : shot.get("shotNumber"), 0);
+        CreatorScriptShotPlan plan = shotPlanRepository
+                .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, normalizedStyleKey)
+                .orElse(null);
+        return isCompletePlanForInput(script, projectContext, shot, normalizedStyleKey, plan) ? plan : null;
+    }
+
+    private boolean isCompletePlanForInput(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            Map<String, Object> shot,
+            String normalizedStyleKey,
+            CreatorScriptShotPlan plan
+    ) {
+        if (plan == null) {
+            return false;
+        }
+        if (mapValue(plan.getStoryboardTag()).isEmpty()
+                || mapValue(plan.getLightingBuildSheetTag()).isEmpty()
+                || mapValue(plan.getCameraPlanSheetTag()).isEmpty()) {
+            return false;
+        }
+        Map<String, Object> expectedInput = buildInputPayload(script, projectContext, shot, normalizedStyleKey);
+        return jsonFingerprint(expectedInput).equals(jsonFingerprint(mapValue(plan.getInputPayload())));
+    }
+
+    private Map<String, Object> productionPlanJobOutput(
+            CreatorScript script,
+            List<Map<String, Object>> shots,
+            List<Map<String, Object>> targetShots,
+            String normalizedStyleKey,
+            Integer focusedShotNumber,
+            List<ShotProductionPlanTagResponse> responses,
+            boolean cacheHit
+    ) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("scriptId", script.getId().toString());
+        output.put("shotCount", targetShots == null ? 0 : targetShots.size());
+        output.put("totalScreenplayShots", shots == null ? 0 : shots.size());
+        if (focusedShotNumber != null) {
+            output.put("focusedShotNumber", focusedShotNumber);
+        }
+        output.put("styleKey", normalizedStyleKey);
+        output.put("cacheHit", cacheHit);
+        output.put("message", cacheHit ? "Existing production plans reused" : "Production plan generation completed");
+        output.put("planIds", (responses == null ? List.<ShotProductionPlanTagResponse>of() : responses)
+                .stream()
+                .map(item -> item.planId().toString())
+                .toList());
+        output.put("productionPlanTags", objectMapper.convertValue(
+                responses == null ? List.of() : responses,
+                new TypeReference<List<Map<String, Object>>>() {
+                }
+        ));
+        return output;
+    }
+
+    private String productionPlanIdempotencyKey(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            List<Map<String, Object>> targetShots,
+            String normalizedStyleKey,
+            Integer focusedShotNumber
+    ) {
+        Map<String, Object> canonical = new LinkedHashMap<>();
+        canonical.put("version", 1);
+        canonical.put("jobType", PRODUCTION_PLAN_JOB_TYPE);
+        canonical.put("scriptId", script.getId().toString());
+        canonical.put("styleKey", normalizedStyleKey);
+        canonical.put("focusedShotNumber", focusedShotNumber);
+        canonical.put("shotNumbers", (targetShots == null ? List.<Map<String, Object>>of() : targetShots)
+                .stream()
+                .map(shot -> intValue(shot.get("shotNumber"), 0))
+                .toList());
+        canonical.put("inputs", (targetShots == null ? List.<Map<String, Object>>of() : targetShots)
+                .stream()
+                .map(shot -> buildInputPayload(script, projectContext, shot, normalizedStyleKey))
+                .toList());
+        return "production-plan:" + jsonFingerprint(canonical);
+    }
+
+    private void publishProductionPlanProgress(
+            UUID generationJobId,
+            int progress,
+            String message,
+            int completedShots,
+            int totalShots
+    ) {
+        if (generationJobId == null) {
+            return;
+        }
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("completedShots", Math.max(0, completedShots));
+        output.put("shotCount", Math.max(0, totalShots));
+        output.put("steps", productionPlanSteps(progress, message, completedShots, totalShots));
+        generationJobService.updateGenerationJobProgress(generationJobId, progress, message, output);
+    }
+
+    private int productionPlanProgress(int shotIndex, int totalShots, int phaseStep) {
+        int totalPhases = Math.max(1, totalShots * 3);
+        int completedPhases = Math.max(0, Math.min(totalPhases, (shotIndex * 3) + phaseStep));
+        return 8 + (int) Math.round((completedPhases * 86.0d) / totalPhases);
+    }
+
+    private List<Map<String, Object>> productionPlanSteps(
+            int progress,
+            String message,
+            int completedShots,
+            int totalShots
+    ) {
+        int expected = Math.max(0, totalShots);
+        int completed = Math.max(0, Math.min(completedShots, expected));
+        String lowerMessage = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        boolean allComplete = progress >= 100 || (expected > 0 && completed >= expected);
+        return List.of(
+                generationStep("Read screenplay shots", progress >= 7 || completed > 0, lowerMessage.contains("preparing")),
+                generationStep("Generate storyboard tag JSON", allComplete, lowerMessage.contains("storyboard tag")),
+                generationStep("Generate lighting tag JSON", allComplete, lowerMessage.contains("lighting tag")),
+                generationStep("Generate DP camera tag JSON", allComplete, lowerMessage.contains("dp camera") || lowerMessage.contains("camera tag")),
+                generationStep("Save shot tags", allComplete, lowerMessage.contains("generated production plan") || lowerMessage.contains("reused"), completed, expected)
+        );
+    }
+
+    private Map<String, Object> generationStep(String label, boolean completed, boolean running) {
+        return generationStep(label, completed, running, null, null);
+    }
+
+    private Map<String, Object> generationStep(String label, boolean completed, boolean running, Integer completedCount, Integer totalCount) {
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("label", label);
+        step.put("status", completed ? "completed" : running ? "running" : "pending");
+        if (completedCount != null && totalCount != null && totalCount > 0) {
+            step.put("detail", Math.min(completedCount, totalCount) + "/" + totalCount + " shots");
+        }
+        return step;
     }
 
     @Transactional(readOnly = true)
@@ -425,7 +761,7 @@ public class ProductionPlanTagService {
                     .completedAt(OffsetDateTime.now())
                     .build());
             creatorAiService.publishBillingDebit(promptType, aiResponse, usageContext.withPromptRunId(promptRun.getId()));
-            return new GeneratedTag(tag, promptRun.getId());
+            return new GeneratedTag(tag, promptRun.getId(), aiResponse.tokenMetadata(), aiResponse.costMetadata());
         } catch (RuntimeException ex) {
             log.error("Production plan tag generation failed promptType={} scriptId={} shotNumber={} reason={}",
                     promptType,
@@ -546,7 +882,7 @@ public class ProductionPlanTagService {
                 attempts,
                 reason
         );
-        return new GeneratedTag(fallbackTag, promptRun.getId());
+        return new GeneratedTag(fallbackTag, promptRun.getId(), new LinkedHashMap<>(), new LinkedHashMap<>());
     }
 
     private boolean isTransientProviderFailure(Throwable ex) {
@@ -804,7 +1140,11 @@ public class ProductionPlanTagService {
                     "fps",
                     "framePreview.headroomPercent",
                     "framePreview.leadRoomPercent",
-                    "cameraRig.fps"
+                    "cameraRig.fps",
+                    "gimbalSettings.panSpeed",
+                    "gimbalSettings.tiltSpeed",
+                    "gimbalSettings.deadband",
+                    "gimbalSettings.followDurationSeconds"
             )));
             if (mapList(tag.get("executionSteps")).size() < 5) {
                 violations.add("executionSteps must contain at least 5 steps");
@@ -975,6 +1315,19 @@ public class ProductionPlanTagService {
                 truncate(stringValue(diagnostics.get("rawTextPreview")), 1000),
                 truncate(stringValue(diagnostics.get("providerOutputPreview")), 2000)
         );
+        Map<String, Object> providerOutput = mapValue(rawPromptResponse.get("providerOutput"));
+        String rawText = stringValue(providerOutput.get("rawText"));
+        if (!rawText.isBlank()) {
+            log.warn(
+                    "Creator production plan raw AI response promptType={} rootKey={} scriptId={} shotNumber={} rawTextLength={} rawText={}",
+                    promptType,
+                    rootKey,
+                    script == null ? null : script.getId(),
+                    shotNumber,
+                    rawText.length(),
+                    rawText
+            );
+        }
     }
 
     private String likelyAiOutputFailureCause(Map<String, Object> providerOutput, Map<String, Object> extractedPayload, List<String> schemaIssues) {
@@ -1243,6 +1596,7 @@ public class ProductionPlanTagService {
         tag.put("framePreview", framePreview(shot, context));
         tag.put("cameraRig", cameraRig(budgetTier, shot));
         tag.put("movementSpec", movementSpec(budgetTier, shot));
+        tag.put("gimbalSettings", gimbalSettings(budgetTier, shot));
         tag.put("coverageSpec", coverageSpec(shot));
         tag.put("executionSteps", cameraExecutionSteps(shot));
         List<String> safetyFlags = stringList(shot.get("safetyFlags"));
@@ -1489,7 +1843,81 @@ public class ProductionPlanTagService {
         map.put("stabilizationRequired", !staticMove);
         map.put("stabilizationTool", staticMove ? "none (tripod locked)" : budgetTier.equals("studio") ? "Steadicam" : "handheld with phone gimbal");
         map.put("rigType", cameraRigName(budgetTier));
+        map.put("liveCameraMove", !staticMove);
+        map.put("operatorCue", staticMove ? "Lock frame and hold for the whole beat." : "Start moving 0.5s before dialogue/action cue and settle 0.5s after.");
         return map;
+    }
+
+    private Map<String, Object> gimbalSettings(String budgetTier, Map<String, Object> shot) {
+        String movement = cameraMovement(shot.get("cameraMovement"));
+        boolean staticMove = isStaticMovement(movement);
+        double duration = Math.max(1.0d, timeValue(shot.get("durationSeconds"), 3.0d));
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("enabled", !staticMove);
+        map.put("device", staticMove ? "none" : budgetTier.equals("studio") ? "DJI RS3 / Steadicam equivalent" : "DJI Osmo Mobile / phone gimbal");
+        map.put("mode", staticMove ? "locked_off" : gimbalMode(movement));
+        map.put("axisLock", staticMove ? "pan_tilt_locked" : gimbalAxisLock(movement));
+        map.put("panSpeed", staticMove ? 0.0d : gimbalPanSpeed(movement));
+        map.put("tiltSpeed", staticMove ? 0.0d : gimbalTiltSpeed(movement));
+        map.put("deadband", staticMove ? 0.0d : 0.12d);
+        map.put("followDurationSeconds", staticMove ? 0.0d : duration);
+        map.put("horizonLock", true);
+        map.put("stabilizationStrength", staticMove ? "tripod_locked" : "medium_smooth_no_float");
+        map.put("operatorPath", staticMove ? "no operator move; only actor performs" : gimbalOperatorPath(movement, shot));
+        map.put("rehearsalCue", staticMove ? "Confirm no drift before rolling." : "Rehearse the path twice, keep elbows tucked, walk heel-to-toe, and end on a clean hold.");
+        return map;
+    }
+
+    private String gimbalMode(String movement) {
+        String value = defaultString(movement, "").toLowerCase(Locale.ROOT);
+        if (value.contains("push") || value.contains("dolly") || value.contains("track")) {
+            return "pf_follow_slow_push";
+        }
+        if (value.contains("pan")) {
+            return "pan_follow";
+        }
+        if (value.contains("tilt")) {
+            return "tilt_follow";
+        }
+        if (value.contains("orbit") || value.contains("arc")) {
+            return "pan_follow_orbit";
+        }
+        return "pf_follow_slow";
+    }
+
+    private String gimbalAxisLock(String movement) {
+        String value = defaultString(movement, "").toLowerCase(Locale.ROOT);
+        if (value.contains("tilt")) {
+            return "pan_locked_tilt_follow";
+        }
+        if (value.contains("pan") || value.contains("orbit") || value.contains("arc")) {
+            return "pan_follow_tilt_locked";
+        }
+        return "pan_follow_tilt_locked_roll_locked";
+    }
+
+    private double gimbalPanSpeed(String movement) {
+        String value = defaultString(movement, "").toLowerCase(Locale.ROOT);
+        if (value.contains("whip")) {
+            return 35.0d;
+        }
+        if (value.contains("pan") || value.contains("orbit") || value.contains("arc")) {
+            return 18.0d;
+        }
+        return 8.0d;
+    }
+
+    private double gimbalTiltSpeed(String movement) {
+        String value = defaultString(movement, "").toLowerCase(Locale.ROOT);
+        if (value.contains("tilt")) {
+            return 14.0d;
+        }
+        return 4.0d;
+    }
+
+    private String gimbalOperatorPath(String movement, Map<String, Object> shot) {
+        String action = defaultString(firstString(shot.get("primaryActorAction"), shot.get("action")), "the actor's action");
+        return "Keep subject centered while performing " + defaultString(movement, "the planned move") + "; protect the actor action: " + action + ".";
     }
 
     private Map<String, Object> coverageSpec(Map<String, Object> shot) {
@@ -1893,6 +2321,123 @@ public class ProductionPlanTagService {
         }
     }
 
+    private void appendUsageSummary(List<Map<String, Object>> target, String promptType, int shotNumber, GeneratedTag tag) {
+        if (tag == null) {
+            return;
+        }
+        Map<String, Object> tokenMetadata = objectMap(tag.tokenMetadata());
+        Map<String, Object> costMetadata = objectMap(tag.costMetadata());
+        if (tokenMetadata.isEmpty() && costMetadata.isEmpty()) {
+            return;
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("promptType", promptType);
+        summary.put("shotNumber", shotNumber);
+        putIfPresent(summary, "promptRunId", tag.promptRunId());
+        if (!tokenMetadata.isEmpty()) {
+            summary.put("tokenMetadata", tokenMetadata);
+        }
+        if (!costMetadata.isEmpty()) {
+            summary.put("costMetadata", costMetadata);
+        }
+        target.add(summary);
+    }
+
+    private Map<String, Object> aggregateTokenMetadata(List<Map<String, Object>> usageSummaries) {
+        long inputTokens = 0;
+        long outputTokens = 0;
+        long totalTokens = 0;
+        long billableInputTokens = 0;
+        long billableOutputTokens = 0;
+        long billableTotalTokens = 0;
+        String provider = "";
+        String model = "";
+        for (Map<String, Object> summary : usageSummaries == null ? List.<Map<String, Object>>of() : usageSummaries) {
+            Map<String, Object> tokenMetadata = objectMap(summary.get("tokenMetadata"));
+            if (tokenMetadata.isEmpty()) {
+                continue;
+            }
+            inputTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("inputTokens"), tokenMetadata.get("totalInputTokens")), 0.0));
+            outputTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("outputTokens"), tokenMetadata.get("totalOutputTokens")), 0.0));
+            totalTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("totalTokens"), tokenMetadata.get("totalRequestUsage")), 0.0));
+            billableInputTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("billableInputTokens"), tokenMetadata.get("inputTokens")), 0.0));
+            billableOutputTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("billableOutputTokens"), tokenMetadata.get("outputTokens")), 0.0));
+            billableTotalTokens += Math.round(doubleValue(firstNonNull(tokenMetadata.get("billableTotalTokens"), tokenMetadata.get("totalTokens")), 0.0));
+            if (provider.isBlank()) {
+                provider = firstString(tokenMetadata.get("provider"));
+            }
+            if (model.isBlank()) {
+                model = firstString(tokenMetadata.get("model"));
+            }
+        }
+        if (totalTokens <= 0 && inputTokens <= 0 && outputTokens <= 0) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> aggregate = new LinkedHashMap<>();
+        aggregate.put("inputTokens", inputTokens);
+        aggregate.put("outputTokens", outputTokens);
+        aggregate.put("totalTokens", totalTokens > 0 ? totalTokens : inputTokens + outputTokens);
+        aggregate.put("actualInputTokens", inputTokens);
+        aggregate.put("actualOutputTokens", outputTokens);
+        aggregate.put("actualTotalTokens", totalTokens > 0 ? totalTokens : inputTokens + outputTokens);
+        aggregate.put("billableInputTokens", billableInputTokens);
+        aggregate.put("billableOutputTokens", billableOutputTokens);
+        aggregate.put("billableTotalTokens", billableTotalTokens > 0 ? billableTotalTokens : billableInputTokens + billableOutputTokens);
+        aggregate.put("source", "AGGREGATED_PROMPT_RUNS");
+        aggregate.put("provider", provider);
+        aggregate.put("model", model);
+        return aggregate;
+    }
+
+    private Map<String, Object> aggregateCostMetadata(List<Map<String, Object>> usageSummaries) {
+        double totalCost = 0.0;
+        double billableTotalCost = 0.0;
+        String currency = "";
+        String provider = "";
+        String model = "";
+        for (Map<String, Object> summary : usageSummaries == null ? List.<Map<String, Object>>of() : usageSummaries) {
+            Map<String, Object> costMetadata = objectMap(summary.get("costMetadata"));
+            if (costMetadata.isEmpty()) {
+                continue;
+            }
+            totalCost += doubleValue(costMetadata.get("totalCost"), 0.0);
+            billableTotalCost += doubleValue(firstNonNull(
+                    costMetadata.get("billableTotalCost"),
+                    firstNonNull(costMetadata.get("customerTotalCost"), costMetadata.get("totalCost"))
+            ), 0.0);
+            if (currency.isBlank()) {
+                currency = firstString(costMetadata.get("currency"));
+            }
+            if (provider.isBlank()) {
+                provider = firstString(costMetadata.get("provider"));
+            }
+            if (model.isBlank()) {
+                model = firstString(costMetadata.get("model"));
+            }
+        }
+        if (totalCost <= 0.0) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> aggregate = new LinkedHashMap<>();
+        aggregate.put("totalCost", totalCost);
+        aggregate.put("actualTotalCost", totalCost);
+        aggregate.put("billableTotalCost", billableTotalCost > 0.0 ? billableTotalCost : totalCost);
+        aggregate.put("customerTotalCost", billableTotalCost > 0.0 ? billableTotalCost : totalCost);
+        aggregate.put("currency", currency);
+        aggregate.put("provider", provider);
+        aggregate.put("model", model);
+        aggregate.put("rateUnit", "AGGREGATED_PROMPT_RUNS");
+        return aggregate;
+    }
+
+    private Map<String, Object> objectMap(Object value) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (value instanceof Map<?, ?> rawMap) {
+            rawMap.forEach((key, itemValue) -> map.put(String.valueOf(key), itemValue));
+        }
+        return map;
+    }
+
     private String firstString(Object... values) {
         for (Object value : values) {
             if (value != null && !stringValue(value).isBlank()) {
@@ -1977,6 +2522,42 @@ public class ProductionPlanTagService {
         }
     }
 
+    private String jsonFingerprint(Object value) {
+        return sha256Hex(toJson(canonicalJsonValue(value)));
+    }
+
+    private Object canonicalJsonValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            map.entrySet().stream()
+                    .sorted(Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .forEach(entry -> result.put(String.valueOf(entry.getKey()), canonicalJsonValue(entry.getValue())));
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(this::canonicalJsonValue).toList();
+        }
+        return value;
+    }
+
+    private String sha256Hex(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(defaultString(value, "").getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 digest is not available", ex);
+        }
+    }
+
+    private String shortText(String value, int maxLength) {
+        String text = defaultString(value, "");
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, Math.max(0, maxLength)) + "...";
+    }
+
     private Map<String, Object> rawTextJsonMap(Object rawText) {
         String text = stripJsonFence(stringValue(rawText).trim());
         if (text.isBlank()) {
@@ -2001,6 +2582,18 @@ public class ProductionPlanTagService {
         return text;
     }
 
-    private record GeneratedTag(Map<String, Object> payload, UUID promptRunId) {
+    private record GeneratedTag(
+            Map<String, Object> payload,
+            UUID promptRunId,
+            Map<String, Object> tokenMetadata,
+            Map<String, Object> costMetadata
+    ) {
+    }
+
+    public record ProductionPlanJobStart(
+            CreatorGenerationJob job,
+            boolean shouldRun,
+            String reason
+    ) {
     }
 }

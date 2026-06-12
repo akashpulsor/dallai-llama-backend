@@ -87,8 +87,12 @@ public class CharacterCastMappingService {
         UUID resolvedProjectId = projectId;
         UUID scriptId = request == null ? null : request.scriptId();
         OffsetDateTime now = OffsetDateTime.now();
+        List<CharacterCastMappingRequest.CharacterCastMappingItem> uniqueMappings = dedupeMappingsByCharacterKey(request.mappings());
+        if (uniqueMappings.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Map at least one story character to a cast profile before confirming cast.");
+        }
 
-        List<CreatorCharacterCastMapping> saved = request.mappings().stream()
+        List<CreatorCharacterCastMapping> saved = uniqueMappings.stream()
                 .map(item -> {
                     CreatorProfile profile = item.castProfileId() == null
                             ? null
@@ -127,6 +131,19 @@ public class CharacterCastMappingService {
         attachMappingsToStoryIdea(storyIdea, saved, scriptId);
         linkProjectProfile(projectId, safeTenantId, safeUserId, firstCastProfileId(saved));
         return toResponse(lockedIdeaId, storyIdeaId, projectId, scriptId, saved);
+    }
+
+    private List<CharacterCastMappingRequest.CharacterCastMappingItem> dedupeMappingsByCharacterKey(
+            List<CharacterCastMappingRequest.CharacterCastMappingItem> mappings
+    ) {
+        Map<String, CharacterCastMappingRequest.CharacterCastMappingItem> uniqueMappings = new LinkedHashMap<>();
+        for (CharacterCastMappingRequest.CharacterCastMappingItem mapping : mappings == null ? List.<CharacterCastMappingRequest.CharacterCastMappingItem>of() : mappings) {
+            if (mapping == null || mapping.characterKey() == null || mapping.characterKey().isBlank()) {
+                continue;
+            }
+            uniqueMappings.put(mapping.characterKey(), mapping);
+        }
+        return uniqueMappings.values().stream().toList();
     }
 
     private CreatorIdea validateIdea(UUID ideaId, String tenantId, String userId, String message) {

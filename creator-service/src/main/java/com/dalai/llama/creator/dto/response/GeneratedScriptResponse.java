@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -11,6 +12,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +76,13 @@ public class GeneratedScriptResponse {
         private String inferredTone;
         private String dialogueLanguage;
         private String screenType;
+        private String storytellingType;
+        private Map<String, Object> storytellingGuidance;
+        private String hookLens;
+        private Map<String, Object> hookLensGuidance;
+        private Map<String, Object> hookBridge;
+        private Map<String, Object> factualityNotes;
+        private Map<String, Object> shotMixPlan;
         @JsonProperty("_validationContract")
         private Map<String, Object> validationContract;
         private String provider;
@@ -83,6 +92,31 @@ public class GeneratedScriptResponse {
         private List<Map<String, Object>> sequences;
         @Builder.Default
         private Map<String, Object> extra = new LinkedHashMap<>();
+
+        @JsonSetter("dialogueCallbacks")
+        public void setDialogueCallbacks(Object value) {
+            this.dialogueCallbacks = objectList(value);
+        }
+
+        @JsonSetter("toneAnchors")
+        public void setToneAnchors(Object value) {
+            this.toneAnchors = stringList(value);
+        }
+
+        @JsonSetter("shootingSchedule")
+        public void setShootingSchedule(Object value) {
+            this.shootingSchedule = mapList(value);
+        }
+
+        @JsonSetter("scenes")
+        public void setScenes(Object value) {
+            this.scenes = mapList(value);
+        }
+
+        @JsonSetter("sequences")
+        public void setSequences(Object value) {
+            this.sequences = mapList(value);
+        }
 
         @JsonAnySetter
         public void putExtra(String key, Object value) {
@@ -150,6 +184,9 @@ public class GeneratedScriptResponse {
         private String dialogueCraftNotes;
         private String textOverlay;
         private String transition;
+        private String storytellingRole;
+        private String assetCaptureMode;
+        private String assetGenerationPrompt;
         private List<Object> soundDesign;
         private String ambientBedDescription;
         private String syncHitDescription;
@@ -182,6 +219,56 @@ public class GeneratedScriptResponse {
         private String castReason;
         @Builder.Default
         private Map<String, Object> extra = new LinkedHashMap<>();
+
+        @JsonSetter("primaryCharacters")
+        public void setPrimaryCharacters(Object value) {
+            this.primaryCharacters = stringList(value);
+        }
+
+        @JsonSetter("sideCharacters")
+        public void setSideCharacters(Object value) {
+            this.sideCharacters = stringList(value);
+        }
+
+        @JsonSetter("primaryActors")
+        public void setPrimaryActors(Object value) {
+            this.primaryActors = stringList(value);
+        }
+
+        @JsonSetter("sideActors")
+        public void setSideActors(Object value) {
+            this.sideActors = stringList(value);
+        }
+
+        @JsonSetter("soundDesign")
+        public void setSoundDesign(Object value) {
+            this.soundDesign = objectList(value);
+        }
+
+        @JsonSetter("microNoveltyTriggers")
+        public void setMicroNoveltyTriggers(Object value) {
+            this.microNoveltyTriggers = objectList(value);
+        }
+
+        @JsonSetter("editingNotes")
+        public void setEditingNotes(Object value) {
+            this.editingNotes = objectList(value);
+        }
+
+        @JsonSetter("culturalReferences")
+        public void setCulturalReferences(Object value) {
+            this.culturalReferences = stringList(value);
+        }
+
+        @JsonSetter("safetyFlags")
+        public void setSafetyFlags(Object value) {
+            this.safetyFlags = stringList(value);
+        }
+
+        @JsonSetter("captionTrack")
+        public void setCaptionTrack(Object value) {
+            this.captionTrack = mapList(value);
+        }
 
         @JsonAnySetter
         public void putExtra(String key, Object value) {
@@ -244,5 +331,65 @@ public class GeneratedScriptResponse {
         private String editingTip;
         private List<String> commonMistakes;
         private Boolean phoneOnlyFriendly;
+    }
+
+    private static List<Object> objectList(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        if (value instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        List<Object> items = new ArrayList<>(1);
+        items.add(value);
+        return items;
+    }
+
+    private static List<String> stringList(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        List<String> items = new ArrayList<>();
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    items.add(String.valueOf(item));
+                }
+            }
+            return items;
+        }
+        items.add(String.valueOf(value));
+        return items;
+    }
+
+    private static List<Map<String, Object>> mapList(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        List<Map<String, Object>> items = new ArrayList<>();
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    items.add(mapValue(item));
+                }
+            }
+            return items;
+        }
+        items.add(mapValue(value));
+        return items;
+    }
+
+    private static Map<String, Object> mapValue(Object value) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() != null) {
+                    result.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+            }
+        } else {
+            result.put("value", value);
+        }
+        return result;
     }
 }

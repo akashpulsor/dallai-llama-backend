@@ -12,6 +12,8 @@ public record GenerateStoryScriptRequest(
         @Size(max = 4000) String idea,
         @Size(max = 64) String dialogueLanguage,
         @Size(max = 32) String screenType,
+        @Size(max = 64) String storytellingType,
+        @Size(max = 64) String hookLens,
         Map<String, Object> context
 ) {
 }

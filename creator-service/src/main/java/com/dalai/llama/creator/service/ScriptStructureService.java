@@ -127,6 +127,7 @@ public class ScriptStructureService {
 
     private void saveCharacters(CreatorScript script, List<GeneratedStoryScriptResponse.CharacterProfile> characters, OffsetDateTime now) {
         List<GeneratedStoryScriptResponse.CharacterProfile> safeCharacters = characters == null ? List.of() : characters;
+        Set<String> usedCharacterKeys = new HashSet<>();
         for (int index = 0; index < safeCharacters.size(); index++) {
             GeneratedStoryScriptResponse.CharacterProfile character = safeCharacters.get(index);
             Map<String, Object> payload = toMap(character);
@@ -134,6 +135,7 @@ public class ScriptStructureService {
             if (key == null || key.isBlank()) {
                 key = slugify(defaultString(character.getName(), "character")) + "-" + (index + 1);
             }
+            key = nextAvailableKey(key, usedCharacterKeys);
 
             characterRepository.save(CreatorScriptCharacter.builder()
                     .tenantId(script.getTenantId())
@@ -165,9 +167,11 @@ public class ScriptStructureService {
 
     private void saveBeats(CreatorScript script, List<GeneratedStoryScriptResponse.StoryBeat> beats, OffsetDateTime now) {
         List<GeneratedStoryScriptResponse.StoryBeat> safeBeats = beats == null ? List.of() : beats;
+        Set<Integer> usedBeatNumbers = new HashSet<>();
         for (int index = 0; index < safeBeats.size(); index++) {
             GeneratedStoryScriptResponse.StoryBeat beat = safeBeats.get(index);
-            int beatNumber = beat.getBeatNumber() == null || beat.getBeatNumber() <= 0 ? index + 1 : beat.getBeatNumber();
+            int requestedBeatNumber = beat.getBeatNumber() == null || beat.getBeatNumber() <= 0 ? index + 1 : beat.getBeatNumber();
+            int beatNumber = nextAvailableNumber(requestedBeatNumber, usedBeatNumbers);
             beatRepository.save(CreatorScriptBeat.builder()
                     .tenantId(script.getTenantId())
                     .userId(script.getUserId())
@@ -185,6 +189,27 @@ public class ScriptStructureService {
                     .updatedAt(now)
                     .build());
         }
+    }
+
+    private int nextAvailableNumber(Integer requestedNumber, Set<Integer> usedNumbers) {
+        int number = requestedNumber == null || requestedNumber <= 0 ? 1 : requestedNumber;
+        while (usedNumbers.contains(number)) {
+            number++;
+        }
+        usedNumbers.add(number);
+        return number;
+    }
+
+    private String nextAvailableKey(String requestedKey, Set<String> usedKeys) {
+        String baseKey = defaultString(requestedKey, "character").trim();
+        String key = baseKey;
+        int suffix = 2;
+        while (usedKeys.contains(key)) {
+            key = baseKey + "-" + suffix;
+            suffix++;
+        }
+        usedKeys.add(key);
+        return key;
     }
 
     private Map<String, Object> toMap(Object value) {

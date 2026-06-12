@@ -42,13 +42,34 @@ public class CreatorProductionPlanAsyncService {
             UUID scriptId,
             String styleKey,
             Integer focusedShotNumber,
+            boolean forceRegenerate,
             String tenantId,
             String userId
     ) {
-        CreatorGenerationJob job = productionPlanTagService.startGenerateTagsForScriptJob(scriptId, styleKey, focusedShotNumber, tenantId, userId);
+        ProductionPlanTagService.ProductionPlanJobStart jobStart = productionPlanTagService.startGenerateTagsForScriptJob(
+                scriptId,
+                styleKey,
+                focusedShotNumber,
+                forceRegenerate,
+                tenantId,
+                userId
+        );
+        CreatorGenerationJob job = jobStart.job();
+        if (!jobStart.shouldRun()) {
+            log.info(
+                    "Creator async production plan generation reused existing job jobId={} scriptId={} tenantId={} userId={} status={} reason={}",
+                    job.getId(),
+                    scriptId,
+                    tenantId,
+                    userId,
+                    job.getStatus(),
+                    jobStart.reason()
+            );
+            return job;
+        }
         taskExecutor.execute(() -> {
             try {
-                productionPlanTagService.runGenerateTagsForScriptJob(job.getId(), scriptId, styleKey, focusedShotNumber, tenantId, userId);
+                productionPlanTagService.runGenerateTagsForScriptJob(job.getId(), scriptId, styleKey, focusedShotNumber, forceRegenerate, tenantId, userId);
             } catch (RuntimeException ex) {
                 Map<String, Object> debug = ex instanceof CreatorAiOutputException aiOutputException
                         ? new LinkedHashMap<>(aiOutputException.getDebugPayload())

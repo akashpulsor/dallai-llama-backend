@@ -11,6 +11,8 @@ public record SaveStoryScriptRequest(
         @Min(15) @Max(60) Integer durationSeconds,
         @Size(max = 64) String dialogueLanguage,
         @Size(max = 32) String screenType,
+        @Size(max = 64) String storytellingType,
+        @Size(max = 64) String hookLens,
         @Size(max = 20000) String scriptText,
         @Valid GeneratedStoryScriptResponse.StoryScript scriptJson
 ) {

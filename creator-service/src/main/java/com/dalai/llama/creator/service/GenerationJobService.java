@@ -14,6 +14,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -60,9 +61,88 @@ public class GenerationJobService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public CreatorGenerationJob queueExistingGenerationJob(
+            UUID jobId,
+            String kafkaTopic,
+            String message,
+            Map<String, Object> outputPatch
+    ) {
+        CreatorGenerationJob job = generationJobRepository.findById(jobId)
+                .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        job.setStatus(GenerationJobStatus.PENDING.name());
+        job.setProgress(0);
+        job.setKafkaTopic(defaultString(kafkaTopic, properties.getKafka().getGenerationJobsTopic()));
+        job.setStartedAt(null);
+        Map<String, Object> outputPayload = copyPayload(job.getOutputPayload());
+        if (message != null && !message.isBlank()) {
+            outputPayload.put("message", message);
+        }
+        if (outputPatch != null && !outputPatch.isEmpty()) {
+            outputPayload.putAll(outputPatch);
+        }
+        job.setOutputPayload(outputPayload);
+        return generationJobRepository.save(job);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<CreatorGenerationJob> findGenerationJob(UUID jobId) {
+        return generationJobRepository.findById(jobId);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean claimGenerationJobExecution(UUID jobId, String claimedBy) {
+        if (jobId == null) {
+            return false;
+        }
+        return generationJobRepository.claimExecution(
+                jobId,
+                defaultString(claimedBy, "creator-worker")
+        ) == 1;
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<CreatorGenerationJob> findActiveGenerationJobByIdempotencyKey(
+            String tenantId,
+            String userId,
+            String jobType,
+            String idempotencyKey
+    ) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return Optional.empty();
+        }
+        return generationJobRepository.findActiveByIdempotencyKey(
+                defaultString(tenantId, "unknown"),
+                defaultString(userId, "anonymous"),
+                defaultString(jobType, "GENERATION"),
+                idempotencyKey
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<CreatorGenerationJob> findCompletedGenerationJobByIdempotencyKey(
+            String tenantId,
+            String userId,
+            String jobType,
+            String idempotencyKey
+    ) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return Optional.empty();
+        }
+        return generationJobRepository.findLatestCompletedByIdempotencyKey(
+                defaultString(tenantId, "unknown"),
+                defaultString(userId, "anonymous"),
+                defaultString(jobType, "GENERATION"),
+                idempotencyKey
+        );
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public CreatorGenerationJob completeGenerationJob(UUID jobId, Map<String, Object> outputPayload) {
         CreatorGenerationJob job = generationJobRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        if (isTerminalStatus(job.getStatus())) {
+            return job;
+        }
         job.setStatus(GenerationJobStatus.COMPLETED.name());
         job.setProgress(100);
         job.setOutputPayload(copyPayload(outputPayload));
@@ -79,6 +159,9 @@ public class GenerationJobService {
     public CreatorGenerationJob failGenerationJob(UUID jobId, String errorMessage, Map<String, Object> outputPatch) {
         CreatorGenerationJob job = generationJobRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        if (isTerminalStatus(job.getStatus())) {
+            return job;
+        }
         job.setStatus(GenerationJobStatus.FAILED.name());
         job.setProgress(100);
         job.setErrorMessage(errorMessage);
@@ -103,6 +186,9 @@ public class GenerationJobService {
     public CreatorGenerationJob updateGenerationJobProgress(UUID jobId, int progress, String message, Map<String, Object> outputPatch) {
         CreatorGenerationJob job = generationJobRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Generation job was not found: " + jobId));
+        if (isTerminalStatus(job.getStatus())) {
+            return job;
+        }
         job.setStatus(GenerationJobStatus.RUNNING.name());
         job.setProgress(Math.max(0, Math.min(99, progress)));
         Map<String, Object> outputPayload = copyPayload(job.getOutputPayload());
@@ -188,6 +274,17 @@ public class GenerationJobService {
         return job;
     }
 
+    public void publishExistingGenerationJob(String kafkaTopic, UUID jobId, Map<String, Object> payload) {
+        Map<String, Object> kafkaPayload = copyPayload(payload);
+        kafkaPayload.put("jobId", jobId.toString());
+        if (!kafkaPayload.containsKey("jobType")) {
+            generationJobRepository.findById(jobId)
+                    .map(CreatorGenerationJob::getJobType)
+                    .ifPresent(jobType -> kafkaPayload.put("jobType", jobType));
+        }
+        kafkaTemplate.send(defaultString(kafkaTopic, properties.getKafka().getGenerationJobsTopic()), jobId.toString(), kafkaPayload);
+    }
+
     public void publishGenerationJob(String jobId, Map<String, Object> payload) {
         Map<String, Object> enrichedPayload = copyPayload(payload);
         if (jobId != null && !jobId.isBlank()) {
@@ -259,5 +356,11 @@ public class GenerationJobService {
             return "Generation in progress";
         }
         return "Generation queued";
+    }
+
+    private boolean isTerminalStatus(String status) {
+        return GenerationJobStatus.COMPLETED.name().equalsIgnoreCase(status)
+                || GenerationJobStatus.FAILED.name().equalsIgnoreCase(status)
+                || GenerationJobStatus.CANCELLED.name().equalsIgnoreCase(status);
     }
 }
