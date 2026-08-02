@@ -21,6 +21,7 @@ import com.dalai.llama.creator.repository.CreatorStoryboardChatMessageRepository
 import com.dalai.llama.creator.repository.CreatorStoryboardContextChunkRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardWorkspaceRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardWorkspaceVersionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -91,6 +92,7 @@ public class CreatorStoryboardWorkspaceService {
     private final GenerationJobService generationJobService;
     private final TaskExecutor taskExecutor;
     private final WebClient referenceDownloadClient;
+    private final ObjectMapper objectMapper;
 
     public CreatorStoryboardWorkspaceService(
             CreatorStoryboardWorkspaceRepository workspaceRepository,
@@ -107,7 +109,8 @@ public class CreatorStoryboardWorkspaceService {
             StoryboardClientReviewService storyboardClientReviewService,
             GenerationJobService generationJobService,
             @Qualifier("creatorTaskExecutor") TaskExecutor taskExecutor,
-            WebClient.Builder webClientBuilder
+            WebClient.Builder webClientBuilder,
+            ObjectMapper objectMapper
     ) {
         this.workspaceRepository = workspaceRepository;
         this.versionRepository = versionRepository;
@@ -124,6 +127,7 @@ public class CreatorStoryboardWorkspaceService {
         this.generationJobService = generationJobService;
         this.taskExecutor = taskExecutor;
         this.referenceDownloadClient = webClientBuilder.clone().build();
+        this.objectMapper = objectMapper;
     }
 
     // ------------------------------------------------------------------
@@ -811,24 +815,49 @@ public class CreatorStoryboardWorkspaceService {
         return -1;
     }
 
+    /**
+     * Builds the text a shot is embedded/retrieved by. Deliberately excludes
+     * masterVideoPrompt/seedancePrompt/videoPrompt/negativePrompt - those are
+     * large (the full-screenplay masterVideoPrompt runs ~100KB and is
+     * duplicated identically across every shot in a script by the upstream
+     * screenplay generator) and are provider-facing render prompts, not
+     * narrative/production content the chat brain needs to reason about.
+     */
     private String shotText(Map<String, Object> shot) {
         StringBuilder builder = new StringBuilder();
         builder.append("Shot ").append(intValue(shot.get("shotNumber"), 0)).append(": ");
         appendField(builder, "Title", shot.get("title"));
+        appendField(builder, "Beat", shot.get("beatTitle"));
         appendField(builder, "Action", shot.get("action"));
         appendField(builder, "Dialogue", shot.get("dialogue"));
         appendField(builder, "Voice-over", shot.get("voiceOver"));
+        appendField(builder, "Retention goal", shot.get("retentionGoal"));
         appendField(builder, "Camera angle", shot.get("cameraAngle"));
         appendField(builder, "Camera movement", shot.get("cameraMovement"));
         appendField(builder, "Lighting", shot.get("lighting"));
         appendField(builder, "Environment", shot.get("environment"));
-        return trimToLength(builder.toString(), 1500, "");
+        appendField(builder, "Editing notes", shot.get("editingNotes"));
+        appendField(builder, "Transition", shot.get("transition"));
+        appendField(builder, "Overlay/typography", shot.get("overlayPlan"));
+        appendField(builder, "Sound design", shot.get("soundDesign"));
+        appendField(builder, "Background music", shot.get("backgroundMusicCue"));
+        if (Boolean.TRUE.equals(shot.get("productLed"))) {
+            builder.append("Product-led (no humans in frame). ");
+        }
+        return trimToLength(builder.toString(), 3000, "");
     }
 
+    /**
+     * Shot fields are a mix of plain strings and nested JSON (dialogue,
+     * soundDesign, overlayPlan, editingNotes are objects/arrays in real
+     * data) - stringValue() below JSON-serializes non-scalar values instead
+     * of falling through to Java's Map/List toString(), and this skips the
+     * resulting "{}"/"[]" noise for fields that are empty for a given shot.
+     */
     private void appendField(StringBuilder builder, String label, Object value) {
         String text = stringValue(value);
-        if (text.isBlank()) return;
-        builder.append(label).append(": ").append(trimToLength(text, 300, "")).append(". ");
+        if (text.isBlank() || "{}".equals(text) || "[]".equals(text)) return;
+        builder.append(label).append(": ").append(trimToLength(text, 400, "")).append(". ");
     }
 
     private String shotImageUrl(Map<String, Object> shot) {
@@ -945,8 +974,22 @@ public class CreatorStoryboardWorkspaceService {
         return fallback;
     }
 
+    /**
+     * Plain strings/numbers/booleans pass through as before (every existing
+     * call site relies on that). Maps/Lists - which several shot fields
+     * actually are (dialogue, soundDesign, overlayPlan, editingNotes) - are
+     * JSON-serialized instead of falling through to Java's default
+     * toString(), which would otherwise emit unreadable "{key=value}" dumps.
+     */
     private String stringValue(Object value) {
-        return value == null ? "" : String.valueOf(value);
+        if (value == null) return "";
+        if (value instanceof String str) return str;
+        if (value instanceof Number || value instanceof Boolean) return String.valueOf(value);
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            return String.valueOf(value);
+        }
     }
 
     private String defaultString(String value, String fallback) {
