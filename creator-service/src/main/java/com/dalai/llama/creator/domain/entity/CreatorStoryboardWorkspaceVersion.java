@@ -50,6 +50,7 @@ public class CreatorStoryboardWorkspaceVersion {
      * script at workspace-open time. The live creator_scripts row is never
      * touched until merge.
      */
+    @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "workspace_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> workspacePayload = new LinkedHashMap<>();
@@ -59,6 +60,7 @@ public class CreatorStoryboardWorkspaceVersion {
      * kept for audit/diffing - workspace_payload is always the materialized
      * result, operations are never replayed to reconstruct state.
      */
+    @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "operations", nullable = false, columnDefinition = "jsonb")
     private List<Map<String, Object>> operations = new ArrayList<>();
@@ -67,6 +69,7 @@ public class CreatorStoryboardWorkspaceVersion {
      * Shot numbers touched by this version, so re-embedding and continuity
      * checks can target only what changed.
      */
+    @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "dirty_shots", nullable = false, columnDefinition = "jsonb")
     private List<Integer> dirtyShots = new ArrayList<>();
