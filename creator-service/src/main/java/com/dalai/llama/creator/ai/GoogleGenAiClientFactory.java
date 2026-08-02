@@ -58,6 +58,28 @@ public class GoogleGenAiClientFactory {
         );
     }
 
+    public String embedContentUri(String model) {
+        if (!useVertexAi()) {
+            return "/models/%s:embedContent".formatted(model);
+        }
+        return "/projects/%s/locations/%s/publishers/google/models/%s:predict".formatted(
+                projectId(),
+                location(),
+                model
+        );
+    }
+
+    public String countTokensUri(String model) {
+        if (!useVertexAi()) {
+            return "/models/%s:countTokens".formatted(model);
+        }
+        return "/projects/%s/locations/%s/publishers/google/models/%s:countTokens".formatted(
+                projectId(),
+                location(),
+                model
+        );
+    }
+
     public String predictLongRunningUri(String model) {
         if (!useVertexAi()) {
             return "/models/%s:predictLongRunning".formatted(model);

@@ -2,6 +2,12 @@ spring:
   application:
     name: creator-service
 
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:2GB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:2GB}
+      file-size-threshold: ${SPRING_SERVLET_MULTIPART_FILE_SIZE_THRESHOLD:2MB}
+
   web:
     cors:
       mapping: "/**"
@@ -17,11 +23,16 @@ spring:
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:2}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:10000}
+      validation-timeout: ${SPRING_DATASOURCE_HIKARI_VALIDATION_TIMEOUT:2000}
+      idle-timeout: ${SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT:300000}
+      keepalive-time: ${SPRING_DATASOURCE_HIKARI_KEEPALIVE_TIME:120000}
+      max-lifetime: ${SPRING_DATASOURCE_HIKARI_MAX_LIFETIME:600000}
+      data-source-properties:
+        tcpKeepAlive: true
+        connectTimeout: 10
 
   jpa:
     hibernate:
@@ -57,6 +68,8 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
+        max.poll.records: ${KAFKA_CONSUMER_MAX_POLL_RECORDS:1}
+        max.poll.interval.ms: ${KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS:86400000}
 
   data:
     redis:
@@ -75,6 +88,8 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
+  tomcat:
+    max-swallow-size: ${SERVER_TOMCAT_MAX_SWALLOW_SIZE:-1}
   compression:
     enabled: true
 
@@ -104,11 +119,13 @@ creator:
     model: ${CREATOR_AI_MODEL:${OPENAI_LLM_MODEL:gpt-4o-mini}}
     api-key: ${OPENAI_API_KEY:${CREATOR_OPENAI_API_KEY:}}
     base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-    gemini-api-key: ${GEMINI_API_KEY:${CREATOR_GEMINI_API_KEY:}}
+    gemini-api-key: ${GEMINI_API_KEY:${GOOGLE_API_KEY:${CREATOR_GEMINI_API_KEY:}}}
     gemini-base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
     gemini-model: ${GEMINI_MODEL:${CREATOR_GEMINI_MODEL:gemini-2.5-flash}}
     gemini-image-model: ${GEMINI_IMAGE_MODEL:gemini-2.5-flash-image}
     gemini-video-model: ${GEMINI_VIDEO_MODEL:veo-3.1-generate-preview}
+    gemini-embedding-model: ${GEMINI_EMBEDDING_MODEL:text-embedding-004}
+    gemini-embedding-dimensions: ${GEMINI_EMBEDDING_DIMENSIONS:768}
     studio-polish-video-provider: ${CREATOR_STUDIO_POLISH_VIDEO_PROVIDER:runway}
     studio-polish-prompt-compaction-enabled: ${CREATOR_STUDIO_POLISH_PROMPT_COMPACTION_ENABLED:true}
     studio-polish-prompt-compaction-google-veo-chars: ${CREATOR_STUDIO_POLISH_PROMPT_COMPACTION_GOOGLE_VEO_CHARS:1800}
@@ -140,6 +157,7 @@ creator:
     studio-polish-jobs-topic: ${CREATOR_STUDIO_POLISH_JOBS_TOPIC:creator.studio-polish.jobs}
     studio-polish-consumer-concurrency: ${CREATOR_STUDIO_POLISH_CONSUMER_CONCURRENCY:1}
     studio-polish-topic-partitions: ${CREATOR_STUDIO_POLISH_TOPIC_PARTITIONS:12}
+    shorts-generation-consumer-concurrency: ${CREATOR_SHORTS_GENERATION_CONSUMER_CONCURRENCY:1}
     studio-polish-provider-queue-enabled: ${CREATOR_STUDIO_POLISH_PROVIDER_QUEUE_ENABLED:true}
     studio-polish-provider-queue-max-wait-ms: ${CREATOR_STUDIO_POLISH_PROVIDER_QUEUE_MAX_WAIT_MS:1800000}
     studio-polish-provider-queue-poll-ms: ${CREATOR_STUDIO_POLISH_PROVIDER_QUEUE_POLL_MS:5000}
@@ -155,7 +173,21 @@ creator:
     google-cloud-project-id: ${GOOGLE_CLOUD_PROJECT_ID:${GOOGLE_CLOUD_PROJECT:}}
     google-cloud-location: ${GOOGLE_CLOUD_LOCATION:us-central1}
     lyria-music-generation-enabled: ${LYRIA_MUSIC_GENERATION_ENABLED:true}
-    lyria-music-model: ${LYRIA_MUSIC_MODEL:lyria-3-clip-preview}
+    lyria-music-model: ${LYRIA_MUSIC_MODEL:lyria-3-clip}
+    tts-provider: ${CREATOR_TTS_PROVIDER:google_chirp}
+    google-tts-base-url: ${GOOGLE_TTS_BASE_URL:https://texttospeech.googleapis.com}
+    google-tts-api-key: ${GOOGLE_TTS_API_KEY:}
+    google-tts-voice-name: ${GOOGLE_TTS_VOICE_NAME:en-US-Chirp3-HD-Charon}
+    google-tts-voice-male: ${GOOGLE_TTS_VOICE_MALE:en-US-Chirp3-HD-Charon}
+    google-tts-voice-female: ${GOOGLE_TTS_VOICE_FEMALE:en-US-Chirp3-HD-Aoede}
+    google-tts-language-code: ${GOOGLE_TTS_LANGUAGE_CODE:en-US}
+    google-tts-audio-encoding: ${GOOGLE_TTS_AUDIO_ENCODING:MP3}
+    google-tts-usd-per-million-chars: ${GOOGLE_TTS_USD_PER_MILLION_CHARS:30}
+    eleven-labs-base-url: ${ELEVENLABS_BASE_URL:https://api.elevenlabs.io}
+    eleven-labs-api-key: ${ELEVENLABS_API_KEY:}
+    eleven-labs-voice-id: ${ELEVENLABS_VOICE_ID:}
+    eleven-labs-model: ${ELEVENLABS_MODEL:eleven_multilingual_v2}
+    eleven-labs-usd-per-million-chars: ${ELEVENLABS_USD_PER_MILLION_CHARS:30}
     gemini-video-resolution: ${GEMINI_VIDEO_RESOLUTION:1080p}
     gemini-video-duration-seconds: ${GEMINI_VIDEO_DURATION_SECONDS:8}
     gemini-video-person-generation: ${GEMINI_VIDEO_PERSON_GENERATION:allow_adult}
@@ -186,13 +218,28 @@ creator:
       minimum-charge: ${CREATOR_AI_MINIMUM_CHARGE:0}
       currency: ${CREATOR_AI_BILLING_CURRENCY:INR}
       audio-enhancement-rate-per-minute-usd: ${CREATOR_AUDIO_ENHANCEMENT_RATE_PER_MINUTE_USD:0.02}
-      usage-markup-percent: ${CREATOR_AI_USAGE_MARKUP_PERCENT:80}
+      usage-markup-percent: ${CREATOR_AI_USAGE_MARKUP_PERCENT:85}
+      video-usage-markup-percent: ${CREATOR_VIDEO_USAGE_MARKUP_PERCENT:20}
   billing:
     wallet-guard-enabled: ${CREATOR_WALLET_GUARD_ENABLED:true}
     minimum-wallet-balance: ${CREATOR_MINIMUM_WALLET_BALANCE:100}
     wallet-check-timeout-ms: ${CREATOR_WALLET_CHECK_TIMEOUT_MS:3000}
+  human-work-orders:
+    screenplay-review-fee-inr: ${CREATOR_HUMAN_SCREENPLAY_REVIEW_FEE_INR:999}
+    editing-job-fee-inr: ${CREATOR_HUMAN_EDITING_JOB_FEE_INR:1500}
+    extra-revision-fee-inr: ${CREATOR_HUMAN_EXTRA_REVISION_FEE_INR:499}
+  video-packages:
+    ai-short-starter-price-inr: ${CREATOR_VIDEO_PACKAGE_AI_SHORT_STARTER_PRICE_INR:5999}
+    usd-inr-rate: ${CREATOR_VIDEO_PACKAGE_USD_INR_RATE:95}
   jobs:
     ttl-seconds: ${CREATOR_JOB_TTL_SECONDS:86400}
+  shorts:
+    render:
+      max-candidates: ${CREATOR_SHORTS_RENDER_MAX_CANDIDATES:3}
+      ffmpeg-timeout-minutes: ${CREATOR_SHORTS_RENDER_FFMPEG_TIMEOUT_MINUTES:30}
+    post-render-qa:
+      command-timeout-seconds: ${CREATOR_SHORTS_POST_RENDER_QA_COMMAND_TIMEOUT_SECONDS:90}
+      command-output-max-chars: ${CREATOR_SHORTS_POST_RENDER_QA_COMMAND_OUTPUT_MAX_CHARS:12000}
   kafka:
     generation-jobs-topic: ${CREATOR_KAFKA_GENERATION_JOBS_TOPIC:creator.generation.jobs}
     billing-events-topic: ${CREATOR_KAFKA_BILLING_EVENTS_TOPIC:creator.billing.events}

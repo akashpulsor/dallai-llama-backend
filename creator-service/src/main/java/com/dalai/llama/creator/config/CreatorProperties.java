@@ -63,6 +63,8 @@ public class CreatorProperties {
         private String geminiModel = "gemini-2.5-flash";
         private String geminiImageModel = "gemini-2.5-flash-image";
         private String geminiVideoModel = "veo-3.1-generate-preview";
+        private String geminiEmbeddingModel = "text-embedding-004";
+        private int geminiEmbeddingDimensions = 768;
         private String studioPolishVideoProvider = "runway";
         private boolean studioPolishPromptCompactionEnabled = true;
         private int studioPolishPromptCompactionGoogleVeoChars = 1800;
@@ -109,7 +111,21 @@ public class CreatorProperties {
         private String googleCloudProjectId = "";
         private String googleCloudLocation = "us-central1";
         private boolean lyriaMusicGenerationEnabled = true;
-        private String lyriaMusicModel = "lyria-3-clip-preview";
+        private String lyriaMusicModel = "lyria-3-clip";
+        private String ttsProvider = "google_chirp";
+        private String googleTtsBaseUrl = "https://texttospeech.googleapis.com";
+        private String googleTtsApiKey = "";
+        private String googleTtsVoiceName = "en-US-Chirp3-HD-Charon";
+        private String googleTtsVoiceMale = "en-US-Chirp3-HD-Charon";
+        private String googleTtsVoiceFemale = "en-US-Chirp3-HD-Aoede";
+        private String googleTtsLanguageCode = "en-US";
+        private String googleTtsAudioEncoding = "MP3";
+        private BigDecimal googleTtsUsdPerMillionChars = BigDecimal.valueOf(30);
+        private String elevenLabsBaseUrl = "https://api.elevenlabs.io";
+        private String elevenLabsApiKey = "";
+        private String elevenLabsVoiceId = "";
+        private String elevenLabsModel = "eleven_multilingual_v2";
+        private BigDecimal elevenLabsUsdPerMillionChars = BigDecimal.valueOf(30);
         private String geminiVideoResolution = "1080p";
         private String geminiVideoDurationSeconds = "8";
         private String geminiVideoPersonGeneration = "allow_adult";
@@ -198,6 +214,22 @@ public class CreatorProperties {
 
         public void setGeminiImageModel(String geminiImageModel) {
             this.geminiImageModel = geminiImageModel;
+        }
+
+        public String getGeminiEmbeddingModel() {
+            return geminiEmbeddingModel;
+        }
+
+        public void setGeminiEmbeddingModel(String geminiEmbeddingModel) {
+            this.geminiEmbeddingModel = geminiEmbeddingModel;
+        }
+
+        public int getGeminiEmbeddingDimensions() {
+            return geminiEmbeddingDimensions;
+        }
+
+        public void setGeminiEmbeddingDimensions(int geminiEmbeddingDimensions) {
+            this.geminiEmbeddingDimensions = geminiEmbeddingDimensions;
         }
 
         public String getGeminiVideoModel() {
@@ -584,6 +616,118 @@ public class CreatorProperties {
             this.lyriaMusicModel = lyriaMusicModel;
         }
 
+        public String getTtsProvider() {
+            return ttsProvider;
+        }
+
+        public void setTtsProvider(String ttsProvider) {
+            this.ttsProvider = ttsProvider;
+        }
+
+        public String getGoogleTtsBaseUrl() {
+            return googleTtsBaseUrl;
+        }
+
+        public void setGoogleTtsBaseUrl(String googleTtsBaseUrl) {
+            this.googleTtsBaseUrl = googleTtsBaseUrl;
+        }
+
+        public String getGoogleTtsApiKey() {
+            return googleTtsApiKey;
+        }
+
+        public void setGoogleTtsApiKey(String googleTtsApiKey) {
+            this.googleTtsApiKey = googleTtsApiKey;
+        }
+
+        public String getGoogleTtsVoiceName() {
+            return googleTtsVoiceName;
+        }
+
+        public void setGoogleTtsVoiceName(String googleTtsVoiceName) {
+            this.googleTtsVoiceName = googleTtsVoiceName;
+        }
+
+        public String getGoogleTtsVoiceMale() {
+            return googleTtsVoiceMale;
+        }
+
+        public void setGoogleTtsVoiceMale(String googleTtsVoiceMale) {
+            this.googleTtsVoiceMale = googleTtsVoiceMale;
+        }
+
+        public String getGoogleTtsVoiceFemale() {
+            return googleTtsVoiceFemale;
+        }
+
+        public void setGoogleTtsVoiceFemale(String googleTtsVoiceFemale) {
+            this.googleTtsVoiceFemale = googleTtsVoiceFemale;
+        }
+
+        public String getGoogleTtsLanguageCode() {
+            return googleTtsLanguageCode;
+        }
+
+        public void setGoogleTtsLanguageCode(String googleTtsLanguageCode) {
+            this.googleTtsLanguageCode = googleTtsLanguageCode;
+        }
+
+        public String getGoogleTtsAudioEncoding() {
+            return googleTtsAudioEncoding;
+        }
+
+        public void setGoogleTtsAudioEncoding(String googleTtsAudioEncoding) {
+            this.googleTtsAudioEncoding = googleTtsAudioEncoding;
+        }
+
+        public BigDecimal getGoogleTtsUsdPerMillionChars() {
+            return googleTtsUsdPerMillionChars;
+        }
+
+        public void setGoogleTtsUsdPerMillionChars(BigDecimal googleTtsUsdPerMillionChars) {
+            this.googleTtsUsdPerMillionChars = googleTtsUsdPerMillionChars;
+        }
+
+        public String getElevenLabsBaseUrl() {
+            return elevenLabsBaseUrl;
+        }
+
+        public void setElevenLabsBaseUrl(String elevenLabsBaseUrl) {
+            this.elevenLabsBaseUrl = elevenLabsBaseUrl;
+        }
+
+        public String getElevenLabsApiKey() {
+            return elevenLabsApiKey;
+        }
+
+        public void setElevenLabsApiKey(String elevenLabsApiKey) {
+            this.elevenLabsApiKey = elevenLabsApiKey;
+        }
+
+        public String getElevenLabsVoiceId() {
+            return elevenLabsVoiceId;
+        }
+
+        public void setElevenLabsVoiceId(String elevenLabsVoiceId) {
+            this.elevenLabsVoiceId = elevenLabsVoiceId;
+        }
+
+        public String getElevenLabsModel() {
+            return elevenLabsModel;
+        }
+
+        public void setElevenLabsModel(String elevenLabsModel) {
+            this.elevenLabsModel = elevenLabsModel;
+        }
+
+        public BigDecimal getElevenLabsUsdPerMillionChars() {
+            return elevenLabsUsdPerMillionChars;
+        }
+
+        public void setElevenLabsUsdPerMillionChars(BigDecimal elevenLabsUsdPerMillionChars) {
+            this.elevenLabsUsdPerMillionChars = elevenLabsUsdPerMillionChars;
+        }
+
         public String getGeminiVideoResolution() {
             return geminiVideoResolution;
         }
@@ -787,7 +931,8 @@ public class CreatorProperties {
         private BigDecimal minimumCharge = BigDecimal.ZERO;
         private String currency = "INR";
         private BigDecimal audioEnhancementRatePerMinuteUsd = new BigDecimal("0.02");
-        private BigDecimal usageMarkupPercent = new BigDecimal("80");
+        private BigDecimal usageMarkupPercent = new BigDecimal("85");
+        private BigDecimal videoUsageMarkupPercent = new BigDecimal("20");
 
         public boolean isEnabled() {
             return enabled;
@@ -835,6 +980,14 @@ public class CreatorProperties {
 
         public void setUsageMarkupPercent(BigDecimal usageMarkupPercent) {
             this.usageMarkupPercent = usageMarkupPercent;
+        }
+
+        public BigDecimal getVideoUsageMarkupPercent() {
+            return videoUsageMarkupPercent;
+        }
+
+        public void setVideoUsageMarkupPercent(BigDecimal videoUsageMarkupPercent) {
+            this.videoUsageMarkupPercent = videoUsageMarkupPercent;
         }
     }
 
