@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Mutability;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -106,12 +107,14 @@ public class CreatorScript {
     /** Full cinematic planning JSON. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "script_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> scriptPayload = new LinkedHashMap<>();
 
     /** Shortcut shot array for storyboard rendering. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(nullable = false, columnDefinition = "jsonb")
     private List<Map<String, Object>> shots = new ArrayList<>();
 

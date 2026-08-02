@@ -50,6 +50,28 @@ public class CreatorBillingEventConsumer {
             tokenRate = amount.divide(quantity, 8, RoundingMode.HALF_UP);
         }
 
+        Map<String, Object> costMetadata = event.getCostMetadata();
+        boolean includedInPackage = booleanValue(costMetadata == null ? null : costMetadata.get("includedInPackage"));
+        UUID packageScopeId = uuidValue(costMetadata == null ? null : costMetadata.get("packageScopeId"));
+        String sourceType = includedInPackage && packageScopeId != null
+                ? "CREATOR_VIDEO_PACKAGE_USAGE"
+                : "CREATOR_AI";
+        UUID sourceId = includedInPackage && packageScopeId != null ? packageScopeId : resolveSourceId(event);
+        log.info(
+                "WALLET_DEBIT_AUDIT_REQUEST eventId={} tenantId={} promptType={} provider={} model={} metric={} quantity={} unit={} amount={} currency={} sourceId={}",
+                event.getEventId(),
+                event.getTenantId(),
+                event.getPromptType(),
+                event.getProvider(),
+                event.getModel(),
+                metric,
+                quantity,
+                unit,
+                amount,
+                event.getCurrency(),
+                sourceId
+        );
+
         usageService.recordBillableUsage(new BillableUsageRequest(
                 event.getTenantId(),
                 metric,
@@ -57,8 +79,8 @@ public class CreatorBillingEventConsumer {
                 unit,
                 tokenRate,
                 amount,
-                "CREATOR_AI",
-                resolveSourceId(event),
+                sourceType,
+                sourceId,
                 description(event),
                 null,
                 event.getEventId().toString(),
@@ -83,6 +105,9 @@ public class CreatorBillingEventConsumer {
         if (rateUnit.equals("CLIP") || rateUnit.contains("CLIP")) {
             return UsageMetric.AI_MUSIC_CLIPS;
         }
+        if (rateUnit.contains("CHARACTER") || rateUnit.contains("CHAR")) {
+            return UsageMetric.AI_AUDIO_CHARACTERS;
+        }
         if (promptType.contains("AUDIO") || provider.contains("AUDIO")) {
             return UsageMetric.AI_AUDIO_SECONDS;
         }
@@ -100,6 +125,7 @@ public class CreatorBillingEventConsumer {
             case AI_VIDEO_MILLION_PIXELS -> BillingUnit.MILLION_PIXELS;
             case AI_VIDEO_CREDITS -> BillingUnit.CREDIT;
             case AI_MUSIC_CLIPS -> BillingUnit.CLIP;
+            case AI_AUDIO_CHARACTERS -> BillingUnit.CHARACTER;
             case AI_VIDEO_SECONDS, AI_AUDIO_SECONDS -> BillingUnit.SECOND;
             case AI_LLM_TOKENS -> BillingUnit.TOKEN;
             default -> BillingUnit.COUNT;
@@ -124,6 +150,13 @@ public class CreatorBillingEventConsumer {
             case AI_MUSIC_CLIPS -> firstPositive(
                     decimalValue(usage.get("billableClipUnits")),
                     decimalValue(usage.get("customerBillableClipUnits")),
+                    BigDecimal.ONE
+            );
+            case AI_AUDIO_CHARACTERS -> firstPositive(
+                    decimalValue(usage.get("providerReportedCharacters")),
+                    decimalValue(usage.get("billableCharacters")),
+                    decimalValue(usage.get("characters")),
+                    decimalValue(costMetadata == null ? null : costMetadata.get("providerReportedCharacters")),
                     BigDecimal.ONE
             );
             case AI_VIDEO_SECONDS, AI_AUDIO_SECONDS -> firstPositive(
@@ -205,5 +238,26 @@ public class CreatorBillingEventConsumer {
             }
         }
         return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private boolean booleanValue(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return value != null && Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private UUID uuidValue(Object value) {
+        if (value instanceof UUID uuid) {
+            return uuid;
+        }
+        if (value == null || String.valueOf(value).isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(String.valueOf(value));
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

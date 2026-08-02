@@ -2,14 +2,14 @@ package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.domain.entity.Transaction;
 import com.dalai.llama.billing.domain.entity.Wallet;
-import com.dalai.llama.billing.domain.exception.WalletNotFoundException;
-import com.dalai.llama.billing.dto.mapper.BillingMapper;
 import com.dalai.llama.billing.dto.request.RechargeWalletRequest;
 import com.dalai.llama.billing.dto.response.TransactionResponse;
 import com.dalai.llama.billing.dto.response.WalletResponse;
 import com.dalai.llama.billing.repository.TransactionRepository;
-import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.PaymentService;
+import com.dalai.llama.billing.service.PaymentService.PaymentOrderResult;
+import com.dalai.llama.billing.service.WalletService;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -21,6 +21,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,18 +33,16 @@ import java.util.UUID;
 @Tag(name = "Wallet", description = "Wallet management APIs")
 public class WalletController {
 
-    private final WalletRepository walletRepository;
     private final TransactionRepository transactionRepository;
     private final PaymentService paymentService;
-    private final BillingMapper mapper;
+    private final WalletService walletService;
 
     @GetMapping
     @Operation(summary = "Get wallet details", description = "Retrieve wallet balance and details for a tenant")
     public ResponseEntity<WalletResponse> getWallet(@PathVariable UUID tenantId) {
 
         log.info("Fetching wallet for tenant {}", tenantId);
-        Wallet wallet = walletRepository.findByTenantId(tenantId)
-                .orElseThrow(() -> new WalletNotFoundException(tenantId));
+        Wallet wallet = walletService.getOrCreateWallet(tenantId);
 
         return ResponseEntity.ok(WalletResponse.builder()
                 .walletId(wallet.getId())
@@ -65,7 +65,7 @@ public class WalletController {
             @PathVariable UUID tenantId,
             @Valid @RequestBody RechargeWalletRequest request
     ) {
-        UUID paymentId = paymentService.createPayment(
+        PaymentOrderResult order = paymentService.createPaymentOrder(
                 tenantId,
                 request.getCurrency(),
                 request.getAmount(),
@@ -73,12 +73,33 @@ public class WalletController {
                 request.getSubscriptionId()
         );
 
+        int amountPaise = toPaise(order.amount());
         return ResponseEntity.ok(RechargeResponse.builder()
-                .paymentId(paymentId)
-                .amount(request.getAmount())
-                .status("PENDING")
+                .paymentId(order.paymentId())
+                .gatewayOrderId(order.gatewayOrderId())
+                .orderId(order.gatewayOrderId())
+                .amount(order.amount())
+                .amountPaise(amountPaise)
+                .currency(order.currency())
+                .keyId(order.keyId())
+                .checkoutDetails(CheckoutDetails.builder()
+                        .key(order.keyId())
+                        .keyId(order.keyId())
+                        .orderId(order.gatewayOrderId())
+                        .amount(amountPaise)
+                        .currency(order.currency())
+                        .name("Dalai Llama Platform")
+                        .description("Wallet recharge")
+                        .build())
+                .status(order.status())
                 .message("Payment order created. Complete payment to credit wallet.")
                 .build());
+    }
+
+    private int toPaise(BigDecimal amount) {
+        return amount.multiply(BigDecimal.valueOf(100))
+                .setScale(0, RoundingMode.HALF_UP)
+                .intValueExact();
     }
 
     @GetMapping("/transactions")
@@ -139,8 +160,28 @@ public class WalletController {
     @lombok.Getter
     public static class RechargeResponse {
         private UUID paymentId;
-        private java.math.BigDecimal amount;
+        private String gatewayOrderId;
+        @JsonProperty("order_id")
+        private String orderId;
+        private BigDecimal amount;
+        private Integer amountPaise;
+        private String currency;
+        private String keyId;
+        private CheckoutDetails checkoutDetails;
         private String status;
         private String message;
+    }
+
+    @lombok.Builder
+    @lombok.Getter
+    public static class CheckoutDetails {
+        private String key;
+        private String keyId;
+        @JsonProperty("order_id")
+        private String orderId;
+        private Integer amount;
+        private String currency;
+        private String name;
+        private String description;
     }
 }

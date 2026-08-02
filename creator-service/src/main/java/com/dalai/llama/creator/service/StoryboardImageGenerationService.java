@@ -1,6 +1,7 @@
 package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.config.CreatorProperties;
+import com.dalai.llama.creator.ai.GeminiCreatorAiProvider;
 import com.dalai.llama.creator.ai.GeminiRateLimitGuard;
 import com.dalai.llama.creator.ai.GeminiUsageMetadataParser;
 import com.dalai.llama.creator.ai.GoogleGenAiClientFactory;
@@ -9,7 +10,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -28,25 +31,32 @@ public class StoryboardImageGenerationService {
     private static final String DEFAULT_IMAGE_MIME_TYPE = "image/png";
     private static final List<String> IMAGE_RESPONSE_MODALITIES = List.of("IMAGE");
     private static final int IMAGE_RESPONSE_MAX_IN_MEMORY_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_COMPRESSOR_INPUT_CHARACTERS = 1_500_000;
+    private static final int MAX_PROVIDER_REFERENCE_IMAGES = 3;
+    private static final long MAX_PROVIDER_INPUT_TOKENS = 20_000L;
+    private static final long FALLBACK_TOKENS_PER_REFERENCE_IMAGE = 3_000L;
 
     private final CreatorProperties properties;
     private final CreatorAiPricingService pricingService;
     private final GeminiUsageMetadataParser usageMetadataParser;
     private final GoogleGenAiClientFactory googleGenAiClientFactory;
     private final GeminiRateLimitGuard geminiRateLimitGuard;
+    private final GeminiCreatorAiProvider geminiPromptCompressor;
 
     public StoryboardImageGenerationService(
             CreatorProperties properties,
             CreatorAiPricingService pricingService,
             GeminiUsageMetadataParser usageMetadataParser,
             GoogleGenAiClientFactory googleGenAiClientFactory,
-            GeminiRateLimitGuard geminiRateLimitGuard
+            GeminiRateLimitGuard geminiRateLimitGuard,
+            GeminiCreatorAiProvider geminiPromptCompressor
     ) {
         this.properties = properties;
         this.pricingService = pricingService;
         this.usageMetadataParser = usageMetadataParser;
         this.googleGenAiClientFactory = googleGenAiClientFactory;
         this.geminiRateLimitGuard = geminiRateLimitGuard;
+        this.geminiPromptCompressor = geminiPromptCompressor;
     }
 
     public GeneratedImage generateStoryboardImage(String prompt, String screenType) {
@@ -79,18 +89,52 @@ public class StoryboardImageGenerationService {
         List<ReferenceImageInput> usableReferences = usableReferenceImages(referenceImages);
         String model = stringValue(properties.getAi().getGeminiImageModel(), DEFAULT_GEMINI_IMAGE_MODEL);
         String aspectRatio = imageAspectRatio(screenType);
+        String providerAspectRatio = providerImageAspectRatio(aspectRatio);
         String imagePrompt = buildImagePrompt(prompt, aspectRatio);
-        log.info("Gemini storyboard image generation prompt model={} backend={} baseUrl={} screenType={} prompt={}",
+        int originalPromptCharacters = imagePrompt.length();
+        GenerateContentRequest request = buildRequest(imagePrompt, usableReferences, providerAspectRatio);
+        WebClient client = googleGenAiClientFactory.client(IMAGE_RESPONSE_MAX_IN_MEMORY_BYTES);
+        long originalPreflightInputTokens = countProviderInputTokens(client, model, request, imagePrompt, usableReferences.size());
+        Map<String, Object> compressionMetadata = Map.of();
+        boolean promptCompressed = false;
+        if (originalPreflightInputTokens > MAX_PROVIDER_INPUT_TOKENS) {
+            PromptCompressionResult compression = compressCompleteShotPacket(imagePrompt, originalPreflightInputTokens);
+            imagePrompt = compression.compressedPrompt();
+            compressionMetadata = compression.metadata();
+            promptCompressed = true;
+            request = buildRequest(imagePrompt, usableReferences, providerAspectRatio);
+        }
+        long preflightInputTokens = promptCompressed
+                ? countProviderInputTokens(client, model, request, imagePrompt, usableReferences.size())
+                : originalPreflightInputTokens;
+        if (preflightInputTokens > MAX_PROVIDER_INPUT_TOKENS) {
+            log.warn(
+                    "Gemini storyboard image generation blocked before paid request model={} promptCharacters={} referenceImageCount={} inputTokens={} maximumInputTokens={}",
+                    model,
+                    imagePrompt.length(),
+                    usableReferences.size(),
+                    preflightInputTokens,
+                    MAX_PROVIDER_INPUT_TOKENS
+            );
+            throw new ResponseStatusException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "Image generation was stopped before the paid image request because the complete shot packet remained over budget after semantic compression. No shot detail was silently removed."
+            );
+        }
+        log.info(
+                "Gemini storyboard image generation ready model={} backend={} baseUrl={} screenType={} promptCharacters={} referenceImageCount={} preflightInputTokens={}",
                 model,
                 googleGenAiClientFactory.backend(),
                 googleGenAiClientFactory.baseUrl(),
                 screenType,
-                imagePrompt);
-        GenerateContentRequest request = buildRequest(imagePrompt, usableReferences, aspectRatio);
-        WebClient client = googleGenAiClientFactory.client(IMAGE_RESPONSE_MAX_IN_MEMORY_BYTES);
+                imagePrompt.length(),
+                usableReferences.size(),
+                preflightInputTokens
+        );
 
+        GenerateContentRequest providerRequest = request;
         ProviderImageResult imageResult = geminiRateLimitGuard.execute("STORYBOARD_IMAGE_GENERATE", model, () ->
-                requestProviderImage(client, googleGenAiClientFactory.generateContentUri(model), model, request)
+                requestProviderImage(client, googleGenAiClientFactory.generateContentUri(model), model, providerRequest)
                         .block(Duration.ofMillis(properties.getAi().getTimeoutMs()))
         );
         InlineImage inlineImage = imageResult == null ? null : imageResult.inlineImage();
@@ -107,6 +151,7 @@ public class StoryboardImageGenerationService {
         tokenMetadata.put("totalTokens", Math.max(longValue(providerTokenUsage.get("totalTokens")), inputTokens + longValue(providerTokenUsage.get("outputTokens"))));
         tokenMetadata.put("source", usageSource);
         tokenMetadata.put("fallbackInputTokens", fallbackInputTokens);
+        tokenMetadata.put("preflightInputTokens", preflightInputTokens);
         tokenMetadata.put("outputImages", outputImages);
 
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -117,9 +162,18 @@ public class StoryboardImageGenerationService {
         metadata.put("responsePath", "first candidates[*].content.parts[*].inlineData.data");
         metadata.put("responseModalities", IMAGE_RESPONSE_MODALITIES);
         metadata.put("aspectRatio", aspectRatio);
+        metadata.put("providerAspectRatio", providerAspectRatio == null ? "prompt_only" : providerAspectRatio);
+        metadata.put("providerAspectRatioParameterSent", providerAspectRatio != null);
         metadata.put("referenceImageUsed", !usableReferences.isEmpty());
         metadata.put("referenceImageCount", usableReferences.size());
+        metadata.put("referenceImageLimit", MAX_PROVIDER_REFERENCE_IMAGES);
         metadata.put("referenceImageRoles", usableReferences.stream().map(ReferenceImageInput::role).toList());
+        metadata.put("promptCharacters", imagePrompt.length());
+        metadata.put("originalPromptCharacters", originalPromptCharacters);
+        metadata.put("promptSemanticallyCompressed", !compressionMetadata.isEmpty());
+        if (!compressionMetadata.isEmpty()) {
+            metadata.put("promptCompression", compressionMetadata);
+        }
         metadata.put("tokenMetadata", tokenMetadata);
         metadata.put("costMetadata", pricingService.estimateGeminiImageCall(
                 model,
@@ -137,6 +191,7 @@ public class StoryboardImageGenerationService {
     }
 
     private String buildImagePrompt(String prompt, String aspectRatio) {
+        String productionBrief = completeProviderPrompt(stringValue(prompt, "Storyboard production image."));
         return """
                 Generate exactly one image from the production brief below.
                 Return inline image data only. Do not return separate text, JSON, markdown, captions, or explanation outside the image.
@@ -146,11 +201,16 @@ public class StoryboardImageGenerationService {
                 %s
 
                 Use aspect ratio %s.
-                """.formatted(stringValue(prompt, "Storyboard production image."), aspectRatio).trim();
+                """.formatted(productionBrief, aspectRatio).trim();
     }
 
     private String imageAspectRatio(String screenType) {
         return "horizontal".equalsIgnoreCase(screenType) ? "16:9" : "9:16";
+    }
+
+    private String providerImageAspectRatio(String requestedAspectRatio) {
+        // Gemini image response_format uses provider enum values; keep the human ratio in the prompt/metadata.
+        return null;
     }
 
     private GenerateContentRequest buildRequest(String imagePrompt, List<ReferenceImageInput> referenceImages, String aspectRatio) {
@@ -166,7 +226,7 @@ public class StoryboardImageGenerationService {
                 List.of(new Content(parts)),
                 new GenerationConfig(
                         IMAGE_RESPONSE_MODALITIES,
-                        new ResponseFormat(new ImageResponseFormat(aspectRatio))
+                        aspectRatio == null || aspectRatio.isBlank() ? null : new ResponseFormat(new ImageResponseFormat(aspectRatio))
                 )
         );
     }
@@ -179,7 +239,119 @@ public class StoryboardImageGenerationService {
                 .filter(referenceImage -> referenceImage != null
                         && referenceImage.imageBytes() != null
                         && referenceImage.imageBytes().length > 0)
+                .limit(MAX_PROVIDER_REFERENCE_IMAGES)
                 .toList();
+    }
+
+    static String completeProviderPrompt(String value) {
+        String prompt = value == null ? "" : value.trim();
+        if (prompt.length() > MAX_COMPRESSOR_INPUT_CHARACTERS) {
+            throw new ResponseStatusException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "The selected shot packet is too large even for semantic compression. No prompt content was removed."
+            );
+        }
+        return prompt;
+    }
+
+    private PromptCompressionResult compressCompleteShotPacket(String imagePrompt, long originalInputTokens) {
+        String compressionPrompt = """
+                You are a lossless film-production prompt compiler. Compress the COMPLETE SHOT PACKET below for an image-generation model.
+
+                Return exactly one JSON object:
+                {
+                  "compressedPrompt": "complete compressed production prompt",
+                  "retainedSections": ["..."],
+                  "omittedFacts": []
+                }
+
+                NON-NEGOTIABLE RULES:
+                - Preserve every unique production fact. Remove only duplicated wording and repeated copies of the same fact.
+                - Preserve exact product identity, product/brand names, label copy, packaging geometry, colors, approved claims, and exact-vs-inspiration reference intent.
+                - Preserve the selected shot's complete visual action, director intent, per-second frames, camera body/rig/movement, lens, focus, lighting, exposure, product visibility, sound/edit cues, typography/overlay copy, placement, timing, transitions, and final frame state.
+                - Preserve the previous shot's outgoing boundary state and the next shot's incoming boundary state so continuity remains deterministic.
+                - Preserve every client-confirmed revision and all negative constraints.
+                - Do not generalize numerical values, times, percentages, names, copy, colors, settings, or continuity anchors.
+                - Do not add new creative decisions. Do not return a summary. The result must remain directly executable as the complete image prompt.
+                - Keep every bracketed section heading from the source in compressedPrompt so section retention can be verified mechanically.
+                - omittedFacts must be an empty array. If two statements conflict, retain both and label the conflict instead of dropping either.
+
+                COMPLETE SHOT PACKET:
+                %s
+                """.formatted(imagePrompt).trim();
+        Map<String, Object> response = geminiPromptCompressor.generate(
+                "IMAGE_PROMPT_COMPRESS",
+                Map.of("renderedPrompt", compressionPrompt)
+        );
+        String compressedPrompt = stringValue(response == null ? null : response.get("compressedPrompt"), "").trim();
+        boolean omittedFactsDeclared = response != null && response.containsKey("omittedFacts");
+        List<?> omittedFacts = response != null && response.get("omittedFacts") instanceof List<?> values
+                ? values
+                : List.of();
+        List<String> missingSections = requiredCompressionSections(imagePrompt).stream()
+                .filter(section -> !compressedPrompt.contains(section))
+                .toList();
+        if (compressedPrompt.isBlank() || !omittedFactsDeclared || !omittedFacts.isEmpty() || !missingSections.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "Gemini could not produce a verified lossless shot-packet compression. The paid image request was not sent."
+            );
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("provider", "gemini");
+        metadata.put("model", response.get("model"));
+        metadata.put("originalInputTokens", originalInputTokens);
+        metadata.put("originalCharacters", imagePrompt.length());
+        metadata.put("compressedCharacters", compressedPrompt.length());
+        metadata.put("retainedSections", response.getOrDefault("retainedSections", List.of()));
+        metadata.put("omittedFacts", List.of());
+        metadata.put("verifiedRequiredSections", requiredCompressionSections(imagePrompt));
+        metadata.put("compressionVerified", true);
+        metadata.put("tokenUsage", response.getOrDefault("tokenUsage", Map.of()));
+        return new PromptCompressionResult(completeProviderPrompt(compressedPrompt), metadata);
+    }
+
+    private List<String> requiredCompressionSections(String prompt) {
+        List<String> candidates = List.of(
+                "[GLOBAL CONTINUITY BIBLE]",
+                "[ADJACENT-SHOT EDIT BRIDGE]",
+                "[COMPLETE CURRENT-SHOT DIRECTOR PACKET]",
+                "[CURRENT-SHOT DEPARTMENT PLANS]",
+                "[CLIENT-CONFIRMED FRAME REVISION]",
+                "[CLIENT REFERENCE INTENT: USE EXACTLY]",
+                "[CLIENT REFERENCE INTENT: INSPIRATION ONLY]"
+        );
+        return candidates.stream().filter(section -> prompt != null && prompt.contains(section)).toList();
+    }
+
+    private long countProviderInputTokens(
+            WebClient client,
+            String model,
+            GenerateContentRequest request,
+            String imagePrompt,
+            int referenceImageCount
+    ) {
+        long fallbackTokens = pricingService.estimateTextTokens(imagePrompt)
+                + (Math.max(0, referenceImageCount) * FALLBACK_TOKENS_PER_REFERENCE_IMAGE);
+        try {
+            CountTokensResponse response = client
+                    .post()
+                    .uri(googleGenAiClientFactory.countTokensUri(model))
+                    .bodyValue(new CountTokensRequest(request.contents()))
+                    .retrieve()
+                    .bodyToMono(CountTokensResponse.class)
+                    .block(Duration.ofMillis(properties.getAi().getTimeoutMs()));
+            long providerTokens = response == null ? 0 : response.totalTokens();
+            return providerTokens > 0 ? providerTokens : fallbackTokens;
+        } catch (RuntimeException ex) {
+            log.warn(
+                    "Gemini countTokens preflight unavailable model={} fallbackInputTokens={} errorType={}",
+                    model,
+                    fallbackTokens,
+                    ex.getClass().getSimpleName()
+            );
+            return fallbackTokens;
+        }
     }
 
     private Mono<ProviderImageResult> requestProviderImage(
@@ -337,6 +509,18 @@ public class StoryboardImageGenerationService {
     ) {
     }
 
+    private record CountTokensRequest(
+            List<Content> contents
+    ) {
+    }
+
+    private record CountTokensResponse(
+            @JsonProperty("totalTokens")
+            @JsonAlias("total_tokens")
+            long totalTokens
+    ) {
+    }
+
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record GenerationConfig(
             List<String> responseModalities,
@@ -397,6 +581,12 @@ public class StoryboardImageGenerationService {
             InlineImage inlineImage,
             Map<String, Object> usageMetadata,
             int outputImages
+    ) {
+    }
+
+    private record PromptCompressionResult(
+            String compressedPrompt,
+            Map<String, Object> metadata
     ) {
     }
 

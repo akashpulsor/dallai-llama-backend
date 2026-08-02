@@ -11,12 +11,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -36,6 +35,7 @@ public class CreatorAiService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final CreatorAiPricingService pricingService;
     private final BillingWalletService billingWalletService;
+    private final FalProviderBillingService falProviderBillingService;
 
     public CreatorAiService(
             List<CreatorAiProvider> creatorAiProviders,
@@ -44,7 +44,8 @@ public class CreatorAiService {
             ObjectMapper objectMapper,
             KafkaTemplate<String, Object> kafkaTemplate,
             CreatorAiPricingService pricingService,
-            BillingWalletService billingWalletService
+            BillingWalletService billingWalletService,
+            FalProviderBillingService falProviderBillingService
     ) {
         this.aiProviders = indexProviders(creatorAiProviders);
         this.providerCatalogService = providerCatalogService;
@@ -53,6 +54,7 @@ public class CreatorAiService {
         this.kafkaTemplate = kafkaTemplate;
         this.pricingService = pricingService;
         this.billingWalletService = billingWalletService;
+        this.falProviderBillingService = falProviderBillingService;
     }
 
     public Map<String, Object> generate(String promptType, Map<String, Object> input) {
@@ -191,6 +193,7 @@ public class CreatorAiService {
         }
 
         Map<String, Object> eventCostMetadata = new LinkedHashMap<>(response.costMetadata());
+        addCreatorPackageMetadata(eventCostMetadata, context);
         if (actualAmount != null && actualAmount.signum() > 0) {
             eventCostMetadata.putIfAbsent("actualTotalCost", actualAmount);
         }
@@ -249,16 +252,9 @@ public class CreatorAiService {
                     }
                 });
 
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    publish.run();
-                }
-            });
-        } else {
-            publish.run();
-        }
+        // The provider call has already incurred cost. Publishing must not depend on the
+        // surrounding content transaction committing; an OOM/rollback must not erase usage.
+        publish.run();
     }
 
     public void publishProviderUsageDebit(
@@ -272,18 +268,38 @@ public class CreatorAiService {
         if (!properties.getAi().getBilling().isEnabled()) {
             return;
         }
+        Map<String, Object> resolvedCostMetadata = falProviderBillingService.resolve(provider, model, costMetadata);
+        if (costMetadata != null && resolvedCostMetadata != costMetadata) {
+            try {
+                costMetadata.clear();
+                costMetadata.putAll(resolvedCostMetadata);
+            } catch (UnsupportedOperationException ignored) {
+                // Some call sites intentionally pass immutable metadata; the resolved copy is still billed.
+            }
+        }
+        costMetadata = resolvedCostMetadata;
+        Boolean modelApiInteracted = booleanValue(costMetadata == null ? null : costMetadata.get("modelApiInteracted"));
+        if (Boolean.FALSE.equals(modelApiInteracted)) {
+            log.debug("Skipping provider billing debit for promptType={} provider={} because metadata is preflight-only",
+                    promptType, provider);
+            return;
+        }
         BigDecimal actualAmount = firstBigDecimal(
                 costMetadata == null ? null : costMetadata.get("actualTotalCost"),
                 costMetadata == null ? null : costMetadata.get("totalCost"),
                 costMetadata == null ? null : costMetadata.get("providerCost"),
                 costMetadata == null ? null : costMetadata.get("legacyBillingCost")
         );
+        BigDecimal markupPercent = billingMarkupPercent(costMetadata, promptType, provider);
         BigDecimal amount = firstBigDecimal(
                 costMetadata == null ? null : costMetadata.get("customerTotalCost"),
                 costMetadata == null ? null : costMetadata.get("billableTotalCost")
         );
-        if ((amount == null || amount.signum() <= 0) && actualAmount != null && actualAmount.signum() > 0) {
-            amount = applyUsageMarkup(actualAmount, 6);
+        if (actualAmount != null && actualAmount.signum() > 0) {
+            BigDecimal minimumAmount = applyUsageMarkup(actualAmount, markupPercent, 6);
+            if (amount == null || amount.signum() <= 0 || amount.compareTo(minimumAmount) < 0) {
+                amount = minimumAmount;
+            }
         }
         if (amount == null || amount.signum() <= 0) {
             return;
@@ -299,7 +315,8 @@ public class CreatorAiService {
         }
 
         Map<String, Object> normalizedCostMetadata = new LinkedHashMap<>(costMetadata == null ? Map.of() : costMetadata);
-        UUID eventId = UUID.randomUUID();
+        addCreatorPackageMetadata(normalizedCostMetadata, context);
+        UUID eventId = providerUsageEventId(promptType, provider, model, costMetadata, context);
         normalizedCostMetadata.putIfAbsent("eventId", eventId.toString());
         normalizedCostMetadata.putIfAbsent("billingEnabled", properties.getAi().getBilling().isEnabled());
         normalizedCostMetadata.putIfAbsent("provider", provider);
@@ -311,9 +328,11 @@ public class CreatorAiService {
         }
         normalizedCostMetadata.put("billableTotalCost", amount);
         normalizedCostMetadata.put("customerTotalCost", amount);
-        normalizedCostMetadata.put("billingMarkupPercent", usageMarkupPercent());
-        normalizedCostMetadata.put("billingMarkupMultiplier", usageMarkupMultiplier());
-        normalizedCostMetadata.put("billingMarkupAppliedBy", "creator-service");
+        normalizedCostMetadata.put("billingMarkupPercent", markupPercent);
+        normalizedCostMetadata.put("billingMarkupMultiplier", usageMarkupMultiplier(markupPercent));
+        normalizedCostMetadata.put("billingMarkupAppliedBy", isVideoProviderUsage(promptType, provider)
+                ? "creator-service:video"
+                : "creator-service:general");
         normalizedCostMetadata.put("publishedAmount", amount);
         normalizedCostMetadata.put("publishedAmountType", "CUSTOMER_COST_WITH_CREATOR_MARGIN");
         if (context.generationJobId() != null) {
@@ -327,6 +346,13 @@ public class CreatorAiService {
         tokenMetadata.put("provider", provider);
         tokenMetadata.put("model", model);
         tokenMetadata.put("usage", normalizedCostMetadata.get("usage"));
+        long providerUsageTokens = providerUsageTokens(normalizedCostMetadata);
+        if (providerUsageTokens > 0) {
+            tokenMetadata.put("providerReportedTokens", providerUsageTokens);
+            tokenMetadata.put("actualTotalTokens", providerUsageTokens);
+            tokenMetadata.put("billableTotalTokens", markedUpTokens(providerUsageTokens));
+            tokenMetadata.put("source", "PROVIDER_USAGE_METADATA");
+        }
 
         String currency = stringValue(normalizedCostMetadata.get("currency"));
         if (currency.isBlank()) {
@@ -359,7 +385,7 @@ public class CreatorAiService {
                 .model(model)
                 .inputTokens(0)
                 .outputTokens(0)
-                .totalTokens(0)
+                .totalTokens(providerUsageTokens)
                 .tokenRate(rate)
                 .rateUnit(rateUnit)
                 .amount(amount)
@@ -372,6 +398,20 @@ public class CreatorAiService {
                 .costMetadata(normalizedCostMetadata)
                 .build();
 
+        log.info(
+                "WALLET_DEBIT_AUDIT_REQUEST eventId={} tenantId={} promptType={} provider={} model={} amount={} currency={} markupPercent={} sourceId={} description={}",
+                eventId,
+                tenantId,
+                promptType,
+                provider,
+                model,
+                amount,
+                currency,
+                markupPercent,
+                context.promptRunId() == null ? context.generationJobId() : context.promptRunId(),
+                description
+        );
+
         Runnable publish = () -> kafkaTemplate
                 .send(properties.getKafka().getBillingEventsTopic(), tenantId.toString(), event)
                 .whenComplete((result, ex) -> {
@@ -383,16 +423,58 @@ public class CreatorAiService {
                     }
                 });
 
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    publish.run();
-                }
-            });
-        } else {
-            publish.run();
+        // External provider usage is billable once the provider completed, even when the
+        // later job-state transaction fails. Billing is idempotent by this stable event id.
+        publish.run();
+    }
+
+    private UUID providerUsageEventId(
+            String promptType,
+            String provider,
+            String model,
+            Map<String, Object> costMetadata,
+            AiUsageContext context
+    ) {
+        UUID supplied = parseUuid(stringValue(costMetadata == null ? null : costMetadata.get("eventId")));
+        if (supplied != null) {
+            return supplied;
         }
+        String sourceId = context == null
+                ? ""
+                : context.promptRunId() != null
+                ? context.promptRunId().toString()
+                : context.generationJobId() == null ? "" : context.generationJobId().toString();
+        if (sourceId.isBlank()) {
+            return UUID.randomUUID();
+        }
+        Map<String, Object> usage = mapValue(costMetadata == null ? null : costMetadata.get("usage"));
+        String usageScope = stringValue(usage.get("sceneId"));
+        if (usageScope.isBlank()) usageScope = stringValue(usage.get("sceneNumber"));
+        if (usageScope.isBlank()) usageScope = stringValue(usage.get("assetId"));
+        if (usageScope.isBlank()) {
+            usageScope = stringValue(costMetadata == null ? null : costMetadata.get("operationId"));
+        }
+        if (usageScope.isBlank()) usageScope = "default";
+        String seed = String.join("|",
+                "creator-provider-debit-v1",
+                sourceId,
+                stringValue(promptType),
+                stringValue(provider),
+                stringValue(model),
+                usageScope
+        );
+        return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void addCreatorPackageMetadata(Map<String, Object> costMetadata, AiUsageContext context) {
+        if (costMetadata == null || context == null || context.projectId() == null) {
+            return;
+        }
+        costMetadata.putIfAbsent("packageCode", "AI_SHORT_STARTER_60");
+        costMetadata.putIfAbsent("packageScopeId", context.projectId().toString());
+        costMetadata.putIfAbsent("packagePriceInr", new BigDecimal("5999"));
+        costMetadata.putIfAbsent("includedInPackage", true);
+        costMetadata.putIfAbsent("packagePolicy", "END_TO_END_60_SECOND_VIDEO_WITH_TWO_CLIENT_REVIEWS");
     }
 
     public String providerName() {
@@ -484,17 +566,52 @@ public class CreatorAiService {
     }
 
     private BigDecimal applyUsageMarkup(BigDecimal amount, int scale) {
-        BigDecimal safeAmount = amount == null ? BigDecimal.ZERO : amount;
-        return safeAmount.multiply(usageMarkupMultiplier()).setScale(scale, RoundingMode.HALF_UP);
+        return applyUsageMarkup(amount, usageMarkupPercent(), scale);
+    }
+
+    private BigDecimal applyUsageMarkup(BigDecimal amount, BigDecimal markupPercent, int scale) {
+        BigDecimal safeAmount = amount == null ? BigDecimal.ZERO : amount.max(BigDecimal.ZERO);
+        return safeAmount.multiply(usageMarkupMultiplier(markupPercent)).setScale(scale, RoundingMode.HALF_UP);
     }
 
     private BigDecimal usageMarkupMultiplier() {
-        return BigDecimal.ONE.add(usageMarkupPercent().divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
+        return usageMarkupMultiplier(usageMarkupPercent());
+    }
+
+    private BigDecimal usageMarkupMultiplier(BigDecimal markupPercent) {
+        BigDecimal safePercent = markupPercent == null ? BigDecimal.ZERO : markupPercent.max(BigDecimal.ZERO);
+        return BigDecimal.ONE.add(safePercent.divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
     }
 
     private BigDecimal usageMarkupPercent() {
         BigDecimal percent = properties.getAi().getBilling().getUsageMarkupPercent();
         return percent == null ? BigDecimal.ZERO : percent.max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal videoUsageMarkupPercent() {
+        BigDecimal percent = properties.getAi().getBilling().getVideoUsageMarkupPercent();
+        return percent == null ? BigDecimal.valueOf(20) : percent.max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal billingMarkupPercent(Map<String, Object> costMetadata, String promptType, String provider) {
+        BigDecimal provided = bigDecimalValue(costMetadata == null ? null : costMetadata.get("billingMarkupPercent"));
+        if (provided != null && provided.signum() >= 0) {
+            return provided;
+        }
+        return isVideoProviderUsage(promptType, provider) ? videoUsageMarkupPercent() : usageMarkupPercent();
+    }
+
+    private boolean isVideoProviderUsage(String promptType, String provider) {
+        String normalizedPromptType = stringValue(promptType).trim().toUpperCase(Locale.ROOT);
+        String normalizedProvider = stringValue(provider).trim().toLowerCase(Locale.ROOT);
+        return normalizedPromptType.contains("VIDEO")
+                || normalizedProvider.equals("google_veo")
+                || normalizedProvider.equals("gemini_omni")
+                || normalizedProvider.equals("google_omni")
+                || normalizedProvider.equals("seedance")
+                || normalizedProvider.equals("luma")
+                || normalizedProvider.equals("runway")
+                || normalizedProvider.equals("decart");
     }
 
     private long estimateTokens(Object value) {
@@ -537,6 +654,27 @@ public class CreatorAiService {
         return 0;
     }
 
+    private long providerUsageTokens(Map<String, Object> costMetadata) {
+        if (costMetadata == null || costMetadata.isEmpty()) {
+            return 0;
+        }
+        Map<String, Object> usage = mapValue(costMetadata.get("usage"));
+        Map<String, Object> providerUsage = mapValue(usage.get("providerUsage"));
+        return positiveOrFallback(
+                firstLong(usage, "billableTokens", "billable_tokens", "videoTokens", "video_tokens", "reportedTokens", "totalTokens", "total_tokens"),
+                firstLong(providerUsage, "billableTokens", "billable_tokens", "videoTokens", "video_tokens", "totalTokens", "total_tokens")
+        );
+    }
+
+    private Map<String, Object> mapValue(Object value) {
+        if (value instanceof Map<?, ?> raw) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            raw.forEach((key, mapValue) -> result.put(String.valueOf(key), mapValue));
+            return result;
+        }
+        return Map.of();
+    }
+
     private long positiveOrFallback(long... values) {
         if (values != null) {
             for (long value : values) {
@@ -577,6 +715,16 @@ public class CreatorAiService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    private Boolean booleanValue(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            return Boolean.parseBoolean(text.trim());
+        }
+        return null;
     }
 
     private List<String> stringList(Object value) {

@@ -68,6 +68,12 @@ public class GeneratedScriptResponse {
         private List<String> toneAnchors;
         private Map<String, Object> soundDesignPlan;
         private Map<String, Object> backgroundMusicPlan;
+        private Map<String, Object> videoPacingProfile;
+        private Map<String, Object> seedancePromptStrategy;
+        private Map<String, Object> videoConsistencyBible;
+        private List<Map<String, Object>> srtCues;
+        private Map<String, Object> srtFile;
+        private String srt;
         private List<Map<String, Object>> shootingSchedule;
         private String creatorFitReasoning;
         private String audienceFitReasoning;
@@ -80,6 +86,11 @@ public class GeneratedScriptResponse {
         private Map<String, Object> storytellingGuidance;
         private String hookLens;
         private Map<String, Object> hookLensGuidance;
+        private String productionStyle;
+        private String hybridSceneMode;
+        private String brollStyle;
+        private String captionStyle;
+        private Map<String, Object> productionStyleGuidance;
         private Map<String, Object> hookBridge;
         private Map<String, Object> factualityNotes;
         private Map<String, Object> shotMixPlan;
@@ -106,6 +117,11 @@ public class GeneratedScriptResponse {
         @JsonSetter("shootingSchedule")
         public void setShootingSchedule(Object value) {
             this.shootingSchedule = mapList(value);
+        }
+
+        @JsonSetter("srtCues")
+        public void setSrtCues(Object value) {
+            this.srtCues = mapList(value);
         }
 
         @JsonSetter("scenes")
@@ -185,8 +201,12 @@ public class GeneratedScriptResponse {
         private String textOverlay;
         private String transition;
         private String storytellingRole;
+        private String generationMode;
+        private String targetProvider;
         private String assetCaptureMode;
         private String assetGenerationPrompt;
+        private String brollStyle;
+        private String captionStyle;
         private List<Object> soundDesign;
         private String ambientBedDescription;
         private String syncHitDescription;
@@ -204,6 +224,7 @@ public class GeneratedScriptResponse {
         private List<String> culturalReferences;
         private Object executionDifficulty;
         private Object cinematicExecution;
+        private Map<String, Object> visualTreatment;
         private Object rookieFriendlyGuide;
         private Map<String, Object> resourceRequirements;
         private Integer shootDay;
@@ -213,6 +234,10 @@ public class GeneratedScriptResponse {
         private String complianceNotes;
         private Map<String, Object> postProductionNotes;
         private List<Map<String, Object>> captionTrack;
+        private Map<String, Object> videoContinuity;
+        private String seedancePrompt;
+        private String pacingPrompt;
+        private List<Map<String, Object>> srtCues;
         private String audioDescription;
         private String sketchPrompt;
         private String audienceReason;
@@ -268,6 +293,11 @@ public class GeneratedScriptResponse {
         @JsonSetter("captionTrack")
         public void setCaptionTrack(Object value) {
             this.captionTrack = mapList(value);
+        }
+
+        @JsonSetter("srtCues")
+        public void setShotSrtCues(Object value) {
+            this.srtCues = mapList(value);
         }
 
         @JsonAnySetter

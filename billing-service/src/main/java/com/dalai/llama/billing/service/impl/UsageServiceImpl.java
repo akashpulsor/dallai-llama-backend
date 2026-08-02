@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -36,8 +37,11 @@ public class UsageServiceImpl implements UsageService {
     private final BillingStateService billingStateService;
     private final TransactionService transactionService;
 
-    @Value("${billing.currency.conversion-rates:INR_INR=1}")
+    @Value("${billing.currency.conversion-rates:INR_INR=1,USD_INR=95}")
     private String conversionRatesConfig;
+
+    @Value("${billing.creator-video-package.ai-short-starter-price-inr:5999}")
+    private BigDecimal aiShortStarterPriceInr;
 
     @Override
     @Transactional
@@ -49,18 +53,30 @@ public class UsageServiceImpl implements UsageService {
     @Override
     @Transactional
     public void recordBillableUsage(BillableUsageRequest request) {
-        if (request.idempotencyKey() != null && transactionService.existsByIdempotencyKey(request.idempotencyKey())) {
+        String idempotencyKey = effectiveIdempotencyKey(request);
+        if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
+            log.info("Skipping duplicate billable usage tenantId={} sourceType={} sourceId={} idempotencyKey={}",
+                    request.tenantId(), request.sourceType(), request.sourceId(), idempotencyKey);
             return;
         }
 
-        Wallet wallet = walletRepository.findByTenantId(request.tenantId())
+        boolean packageUsage = isCreatorVideoPackageUsage(request);
+        Wallet wallet = (packageUsage
+                ? walletRepository.findByTenantIdForUpdate(request.tenantId())
+                : walletRepository.findByTenantId(request.tenantId()))
                 .orElseThrow(() -> new WalletNotFoundException(request.tenantId()));
         String tenantCurrency = normalizeCurrency(wallet.getCurrency());
         String sourceCurrency = normalizeCurrency(request.currency() == null ? tenantCurrency : request.currency());
-        BigDecimal billedTotalCost = convertCurrency(defaultAmount(request.totalCost()), sourceCurrency, tenantCurrency, 4);
+        BigDecimal requestedBilledTotalCost = convertCurrency(defaultAmount(request.totalCost()), sourceCurrency, tenantCurrency, 4);
+        BigDecimal billedTotalCost = packageUsage
+                ? capCreatorVideoPackageCharge(request, requestedBilledTotalCost)
+                : requestedBilledTotalCost;
         BigDecimal billedUnitCost = request.unitCost() == null
                 ? null
                 : convertCurrency(request.unitCost(), sourceCurrency, tenantCurrency, 6);
+        if (packageUsage && billedUnitCost != null && defaultAmount(request.quantity()).signum() > 0) {
+            billedUnitCost = billedTotalCost.divide(defaultAmount(request.quantity()), 6, RoundingMode.HALF_UP);
+        }
 
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
@@ -84,7 +100,7 @@ public class UsageServiceImpl implements UsageService {
                     record.getTotalCost(),
                     usageReference(request),
                     request.subscriptionId(),
-                    request.idempotencyKey()
+                    idempotencyKey
             );
             log.info(
                     "Debited wallet for billable usage tenantId={} metric={} quantity={} sourceType={} sourceId={} sourceCurrency={} walletCurrency={} rawCost={} billedCost={} billingMarginPercent={} idempotencyKey={}",
@@ -98,7 +114,7 @@ public class UsageServiceImpl implements UsageService {
                     defaultAmount(request.totalCost()).setScale(4, RoundingMode.HALF_UP),
                     record.getTotalCost(),
                     BigDecimal.ZERO,
-                    request.idempotencyKey()
+                    idempotencyKey
             );
             billingStateService.evaluateState(request.tenantId());
         }
@@ -123,6 +139,44 @@ public class UsageServiceImpl implements UsageService {
 
     private BigDecimal defaultAmount(BigDecimal amount) {
         return amount == null ? BigDecimal.ZERO : amount;
+    }
+
+    private String effectiveIdempotencyKey(BillableUsageRequest request) {
+        String requestedKey = request.idempotencyKey();
+        if (requestedKey != null && !requestedKey.isBlank()) {
+            return requestedKey.trim();
+        }
+        if ("CREATOR_VIDEO_PACKAGE".equalsIgnoreCase(request.sourceType()) && request.sourceId() != null) {
+            return "CREATOR_VIDEO_PACKAGE:" + request.sourceId() + ":AI_SHORT_STARTER_60";
+        }
+        return null;
+    }
+
+    private boolean isCreatorVideoPackageUsage(BillableUsageRequest request) {
+        return request != null
+                && request.sourceId() != null
+                && ("CREATOR_VIDEO_PACKAGE".equalsIgnoreCase(request.sourceType())
+                || "CREATOR_VIDEO_PACKAGE_USAGE".equalsIgnoreCase(request.sourceType()));
+    }
+
+    private BigDecimal capCreatorVideoPackageCharge(BillableUsageRequest request, BigDecimal requestedAmountInr) {
+        BigDecimal packagePrice = defaultAmount(aiShortStarterPriceInr).max(BigDecimal.ZERO)
+                .setScale(4, RoundingMode.HALF_UP);
+        if (packagePrice.signum() <= 0) {
+            return requestedAmountInr;
+        }
+        BigDecimal alreadyBilled = defaultAmount(usageRecordRepository.sumCostByPackageScope(
+                request.tenantId(),
+                request.sourceId(),
+                List.of("CREATOR_VIDEO_PACKAGE_USAGE", "CREATOR_VIDEO_PACKAGE")
+        )).max(BigDecimal.ZERO).setScale(4, RoundingMode.HALF_UP);
+        BigDecimal remaining = packagePrice.subtract(alreadyBilled).max(BigDecimal.ZERO);
+        BigDecimal capped = requestedAmountInr.max(BigDecimal.ZERO).min(remaining).setScale(4, RoundingMode.HALF_UP);
+        log.info(
+                "Creator video package cap tenantId={} packageScopeId={} requested={} alreadyBilled={} packagePrice={} walletDebit={}",
+                request.tenantId(), request.sourceId(), requestedAmountInr, alreadyBilled, packagePrice, capped
+        );
+        return capped;
     }
 
     private BigDecimal convertCurrency(BigDecimal amount, String sourceCurrency, String targetCurrency, int scale) {

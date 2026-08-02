@@ -60,6 +60,12 @@ public class CreatorScreenplayAsyncService {
         input.put("storytellingType", request == null ? null : request.storytellingType());
         input.put("hookLens", request == null ? null : request.hookLens());
         input.put("budgetTier", request == null ? null : request.budgetTier());
+        input.put("productionStyle", request == null ? null : request.productionStyle());
+        input.put("hybridSceneMode", request == null ? null : request.hybridSceneMode());
+        input.put("brollStyle", request == null ? null : request.brollStyle());
+        input.put("captionStyle", request == null ? null : request.captionStyle());
+        input.put("productionStyleGuidance", request == null ? null : request.productionStyleGuidance());
+        input.put("screenplayVideoGenerationPackage", request == null ? null : request.screenplayVideoGenerationPackage());
         input.put("idempotencyKey", screenplayIdempotencyKey(lockedIdeaId, storyIdeaId, request));
 
         String safeTenantId = defaultString(tenantId, "unknown");
@@ -174,6 +180,12 @@ public class CreatorScreenplayAsyncService {
         stableInput.put("storytellingType", request == null ? null : request.storytellingType());
         stableInput.put("hookLens", request == null ? null : request.hookLens());
         stableInput.put("budgetTier", request == null ? null : request.budgetTier());
+        stableInput.put("productionStyle", request == null ? null : request.productionStyle());
+        stableInput.put("hybridSceneMode", request == null ? null : request.hybridSceneMode());
+        stableInput.put("brollStyle", request == null ? null : request.brollStyle());
+        stableInput.put("captionStyle", request == null ? null : request.captionStyle());
+        stableInput.put("productionStyleGuidance", request == null ? null : request.productionStyleGuidance());
+        stableInput.put("screenplayVideoGenerationPackage", request == null ? null : request.screenplayVideoGenerationPackage());
         stableInput.put("characterCastMappings", request == null ? null : request.characterCastMappings());
         stableInput.put("availableActors", request == null ? null : request.availableActors());
         stableInput.put("audienceDecision", request == null ? null : request.audienceDecision());

@@ -4,6 +4,7 @@ import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -25,4 +26,13 @@ public interface UsageRecordRepository extends JpaRepository<UsageRecord, UUID> 
     BigDecimal sumQuantityByTenantIdAndMetricAndPeriod(UUID tenantId, UsageMetric metric, Instant from, Instant to);
 
     long countByTenantIdAndRecordedAtBetween(UUID tenantId, Instant from, Instant to);
+
+    @Query("SELECT COALESCE(SUM(u.totalCost), 0) FROM UsageRecord u " +
+            "WHERE u.tenantId = :tenantId AND u.sourceId = :sourceId " +
+            "AND u.sourceType IN :sourceTypes")
+    BigDecimal sumCostByPackageScope(
+            @Param("tenantId") UUID tenantId,
+            @Param("sourceId") UUID sourceId,
+            @Param("sourceTypes") List<String> sourceTypes
+    );
 }

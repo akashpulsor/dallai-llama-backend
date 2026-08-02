@@ -1,0 +1,3 @@
+FROM akashtripathi/billing-service:5.0.7
+
+COPY billing-service/target/billing-service-0.1.0.jar /app/app.jar

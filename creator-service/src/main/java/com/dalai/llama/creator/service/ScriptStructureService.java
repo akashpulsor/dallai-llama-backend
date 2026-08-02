@@ -50,10 +50,8 @@ public class ScriptStructureService {
         }
 
         UUID scriptId = script.getId();
-        beatRepository.deleteByScriptId(scriptId);
-        characterRepository.deleteByScriptId(scriptId);
-        beatRepository.flush();
-        characterRepository.flush();
+        beatRepository.deleteAllByScriptId(scriptId);
+        characterRepository.deleteAllByScriptId(scriptId);
 
         OffsetDateTime now = OffsetDateTime.now();
         saveCharacters(script, storyScript.getCharacters(), now);
@@ -66,8 +64,7 @@ public class ScriptStructureService {
             return;
         }
         UUID scriptId = script.getId();
-        shotRepository.deleteByScriptId(scriptId);
-        shotRepository.flush();
+        shotRepository.deleteAllByScriptId(scriptId);
         List<Map<String, Object>> safeShots = shots == null || shots.isEmpty() ? extractNestedShots(scriptPayload) : shots;
         OffsetDateTime now = OffsetDateTime.now();
         Set<Integer> usedShotNumbers = new HashSet<>();

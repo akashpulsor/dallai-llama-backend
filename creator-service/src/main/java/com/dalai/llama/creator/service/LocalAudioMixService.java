@@ -69,6 +69,7 @@ public class LocalAudioMixService {
             metadata.put("sourceContentType", sourceContentType);
             metadata.put("snippetLayerCount", snippets.size());
             metadata.put("volumeAutomationCount", automation(mixSettings == null ? null : mixSettings.get("volumeAutomation")).size());
+            metadata.put("audioMixStandards", mixSettings == null ? Map.of() : mixSettings.getOrDefault("audioMixStandards", Map.of()));
             metadata.put("renderedAt", OffsetDateTime.now().toString());
             metadata.put("ffmpegLogTail", tail(log, 1800));
             return new RenderedAudio(
@@ -156,11 +157,14 @@ public class LocalAudioMixService {
             double end = Math.max(start + 0.1, number(firstNonNull(layer.get("endSeconds"), layer.get("endTime")), start + 1.0));
             double duration = Math.max(0.1, end - start);
             double gainDb = number(firstNonNull(layer.get("volumeDb"), layer.get("gainDb")), defaultTrackDb(track, mixSettings));
+            double fadeSeconds = Math.min(duration / 2.0, Math.max(0.0, number(firstNonNull(layer.get("fadeSeconds"), layer.get("fadeDurationSeconds")), number(mixSettings.get("snippetFadeMs"), 120.0) / 1000.0)));
             String label = "a" + (index + 1);
             graph.append(";")
                     .append("[").append(index + 1).append(":a]")
                     .append("atrim=0:").append(format(duration)).append(",")
                     .append("asetpts=PTS-STARTPTS,")
+                    .append("afade=t=in:st=0:d=").append(format(fadeSeconds)).append(",")
+                    .append("afade=t=out:st=").append(format(Math.max(0.0, duration - fadeSeconds))).append(":d=").append(format(fadeSeconds)).append(",")
                     .append("adelay=").append(Math.round(start * 1000)).append("|").append(Math.round(start * 1000)).append(",")
                     .append(volumeFilters(track, gainDb, automation))
                     .append("aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[").append(label).append("]");

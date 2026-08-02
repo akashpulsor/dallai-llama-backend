@@ -1,6 +1,7 @@
 package com.dalai.llama.creator.controller;
 
 import com.dalai.llama.creator.dto.request.CharacterCastMappingRequest;
+import com.dalai.llama.creator.dto.request.CampaignAngleSelectionRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryIdeaScriptRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryScriptRequest;
 import com.dalai.llama.creator.dto.request.LockIdeaSelectionRequest;
@@ -36,6 +37,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -121,6 +123,17 @@ public class CreatorLockedIdeaController {
             );
             throw ex;
         }
+    }
+
+    @PutMapping("/{lockedIdeaId}/campaign-angle")
+    public ResponseEntity<LockedIdeaSelectionResponse> selectCampaignAngle(
+            @PathVariable UUID lockedIdeaId,
+            @Valid @RequestBody CampaignAngleSelectionRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(lockedIdeaSelectionService.selectCampaignAngle(lockedIdeaId, request, tenantId, userId));
     }
 
     @PostMapping("/{lockedIdeaId}/ideas/generate-async")
@@ -239,5 +252,18 @@ public class CreatorLockedIdeaController {
     ) {
         String userId = authentication == null ? "anonymous" : authentication.getName();
         return ResponseEntity.ok(ideaService.saveEditedScript(lockedIdeaId, storyIdeaId, scriptId, request, tenantId, userId));
+    }
+
+    @PostMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/screenplay/{scriptId}/approve")
+    public ResponseEntity<GeneratedScriptResponse> approveScreenplay(
+            @PathVariable UUID lockedIdeaId,
+            @PathVariable UUID storyIdeaId,
+            @PathVariable UUID scriptId,
+            @RequestBody(required = false) Map<String, Object> request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(ideaService.approveScreenplayForVideo(lockedIdeaId, storyIdeaId, scriptId, request, tenantId, userId));
     }
 }

@@ -27,10 +27,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
 
 import javax.imageio.ImageIO;
@@ -44,6 +46,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.URI;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -60,6 +63,7 @@ public class StoryboardService {
 
     private static final String CONTENT_TYPE_JPEG = "image/jpeg";
     private static final String ASSET_TYPE_STORYBOARD_IMAGE = "STORYBOARD_IMAGE";
+    private static final String ASSET_TYPE_PRODUCTION_IMAGE_ANCHOR = "PRODUCT_VISUAL_ANCHOR";
     private static final String ASSET_TYPE_LIGHTING_BUILD_SHEET_IMAGE = "LIGHTING_BUILD_SHEET_IMAGE";
     private static final String ASSET_TYPE_CAMERA_PLAN_SHEET_IMAGE = "CAMERA_PLAN_SHEET_IMAGE";
 
@@ -79,6 +83,7 @@ public class StoryboardService {
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final WebClient webClient;
 
     public StoryboardService(
             CreatorScriptRepository scriptRepository,
@@ -96,7 +101,8 @@ public class StoryboardService {
             CreatorAiService creatorAiService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            WebClient.Builder webClientBuilder
     ) {
         this.scriptRepository = scriptRepository;
         this.scriptShotRepository = scriptShotRepository;
@@ -114,6 +120,9 @@ public class StoryboardService {
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.webClient = webClientBuilder
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                .build();
     }
 
     @Transactional
@@ -201,15 +210,39 @@ public class StoryboardService {
         ));
 
         CreatorAsset storyboardAsset = findAsset(scene.getImageAssetId());
+        CreatorAsset productionImageAsset = findAsset(uuidValue(scene.getMetadata().get("productionImageAssetId")));
         CreatorAsset lightingAsset = findAsset(uuidValue(scene.getMetadata().get("lightingImageAssetId")));
         CreatorAsset cameraPlanAsset = findAsset(uuidValue(scene.getMetadata().get("cameraPlanImageAssetId")));
         String storyboardSignedUrl = storyboardAsset == null ? null : storyboardAsset.getPublicUrl();
+        String productionImageSignedUrl = productionImageAsset == null ? null : productionImageAsset.getPublicUrl();
         String lightingSignedUrl = lightingAsset == null ? null : lightingAsset.getPublicUrl();
         String cameraPlanSignedUrl = cameraPlanAsset == null ? null : cameraPlanAsset.getPublicUrl();
+        String generatedPrompt = "";
 
-        if ("storyboard".equals(normalizedKind)) {
-            String prompt = buildStoryboardPrompt(script.getScriptPayload(), shot, sourceTag, plan.getLightingBuildSheetTag(), plan.getCameraPlanSheetTag(), screenType, renderSize);
-            GeneratedAsset generatedAsset = generateStoryboardAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt);
+        if ("production".equals(normalizedKind)) {
+            String prompt = buildProductionImagePrompt(script.getScriptPayload(), shot, sourceTag, screenType, renderSize, request);
+            generatedPrompt = prompt;
+            GeneratedAsset generatedAsset = generateProductionImageAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt, request);
+            collectImageUsage(
+                    "PRODUCTION_IMAGE_ANCHOR_GENERATE",
+                    mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
+                    script,
+                    null,
+                    null,
+                    "Generated production image anchor for shot " + shotNumber
+            );
+            productionImageAsset = generatedAsset.asset();
+            productionImageSignedUrl = generatedAsset.signedUrl();
+            putIfPresent(scene.getMetadata(), "productionImageAssetId", productionImageAsset.getId().toString());
+            scene.getMetadata().put("productionImagePrompt", prompt);
+        } else if ("storyboard".equals(normalizedKind)) {
+            String basePrompt = buildStoryboardPrompt(script.getScriptPayload(), shot, sourceTag, plan.getLightingBuildSheetTag(), plan.getCameraPlanSheetTag(), screenType, renderSize);
+            String confirmedRevisionPrompt = request == null ? "" : defaultString(request.imagePrompt(), "").trim();
+            String prompt = confirmedRevisionPrompt.isBlank()
+                    ? basePrompt
+                    : basePrompt + "\n\n[CLIENT-CONFIRMED FRAME REVISION]\n" + confirmedRevisionPrompt;
+            generatedPrompt = prompt;
+            GeneratedAsset generatedAsset = generateStoryboardAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt, request);
             collectImageUsage(
                     "STORYBOARD_IMAGE_GENERATE",
                     mapValue(generatedAsset.asset().getMetadata().get("imageGeneration")),
@@ -239,6 +272,7 @@ public class StoryboardService {
                     assetType,
                     sourceTag
             );
+            generatedPrompt = stringValue(sourceTag);
             collectImageUsage(
                     "lighting".equals(normalizedKind)
                             ? "LIGHTING_BUILD_SHEET_IMAGE_GENERATE"
@@ -262,12 +296,33 @@ public class StoryboardService {
             }
         }
 
+        CreatorAsset generatedPlanAsset = switch (normalizedKind) {
+            case "production" -> productionImageAsset;
+            case "lighting" -> lightingAsset;
+            case "dp" -> cameraPlanAsset;
+            default -> storyboardAsset;
+        };
+        String generatedPlanAssetUrl = switch (normalizedKind) {
+            case "production" -> productionImageSignedUrl;
+            case "lighting" -> lightingSignedUrl;
+            case "dp" -> cameraPlanSignedUrl;
+            default -> storyboardSignedUrl;
+        };
+        recordGeneratedPlanAsset(
+                plan,
+                normalizedKind,
+                generatedPlanAsset,
+                generatedPlanAssetUrl,
+                generatedPrompt
+        );
         scene.getMetadata().put("storyboardTag", plan.getStoryboardTag());
         scene.getMetadata().put("lightingBuildSheetTag", plan.getLightingBuildSheetTag());
         scene.getMetadata().put("cameraPlanSheetTag", plan.getCameraPlanSheetTag());
         scene = sceneRepository.save(scene);
         linkProjectSelectedStoryboard(storyboard);
-        return toResponse(scene, storyboardAsset, storyboardSignedUrl, lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan);
+        CreatorAsset responseImageAsset = "production".equals(normalizedKind) ? productionImageAsset : storyboardAsset;
+        String responseImageSignedUrl = "production".equals(normalizedKind) ? productionImageSignedUrl : storyboardSignedUrl;
+        return toResponse(scene, responseImageAsset, responseImageSignedUrl, lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan);
     }
 
     @Transactional
@@ -288,7 +343,7 @@ public class StoryboardService {
 
         PreparedStoryboardGeneration prepared = prepareStoryboardGeneration(
                 scriptId,
-                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds()),
+                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds(), null, null, null, null, null, null, null),
                 tenantId,
                 userId
         );
@@ -363,7 +418,8 @@ public class StoryboardService {
                 prepared.screenType(),
                 prepared.renderSize(),
                 prepared.signedUrlTtl(),
-                prompt
+                prompt,
+                null
         );
         collectImageUsage(
                 "SHOT_STORYBOARD_IMAGE_EDIT_GENERATE",
@@ -410,7 +466,7 @@ public class StoryboardService {
         }
         PreparedStoryboardGeneration prepared = prepareStoryboardGeneration(
                 scriptId,
-                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds()),
+                new GenerateStoryboardRequest(request.screenType(), request.signedUrlTtlSeconds(), null, null, null, null, null, null, null),
                 tenantId,
                 userId
         );
@@ -453,7 +509,8 @@ public class StoryboardService {
                 prepared.screenType(),
                 prepared.renderSize(),
                 prepared.signedUrlTtl(),
-                prompt
+                prompt,
+                null
         );
         collectImageUsage(
                 "SHOT_TIMELINE_IMAGE_GENERATE",
@@ -507,11 +564,13 @@ public class StoryboardService {
             }
             ShotImageAssets imageAssets = imagesByShot.computeIfAbsent(shotNumber, ignored -> new ShotImageAssets());
             String kind = assetKeyType(defaultString(stringValue(asset.getMetadata().get("imageKind")), asset.getAssetType()));
-            if ("lighting".equals(kind) && imageAssets.lighting == null) {
+            if ("production".equals(kind) && imageAssets.production == null) {
+                imageAssets.production = asset;
+            } else if ("lighting".equals(kind) && imageAssets.lighting == null) {
                 imageAssets.lighting = asset;
             } else if ("dp".equals(kind) && imageAssets.cameraPlan == null) {
                 imageAssets.cameraPlan = asset;
-            } else if (imageAssets.storyboard == null) {
+            } else if ("storyboard".equals(kind) && imageAssets.storyboard == null) {
                 imageAssets.storyboard = asset;
             }
         }
@@ -541,7 +600,7 @@ public class StoryboardService {
         try {
             Map<Integer, CreatorScriptShotPlan> planByShotNumber = loadPlanByShotNumber(script.getId());
             if (planByShotNumber.size() < shots.size()) {
-                productionPlanTagService.generateTagsForScript(script, script.getScriptPayload(), shots, ProductionPlanTagService.DEFAULT_STYLE_KEY);
+                productionPlanTagService.generateTagsForScript(script, script.getScriptPayload(), shots, ProductionPlanTagService.DEFAULT_STYLE_KEY, prepared.videoModelCapability());
                 planByShotNumber = loadPlanByShotNumber(script.getId());
             }
             CreatorStoryboard storyboard = storyboardRepository.saveAndFlush(CreatorStoryboard.builder()
@@ -559,7 +618,7 @@ public class StoryboardService {
                     .audienceFitReasoning(stringValue(script.getScriptPayload().get("audienceFitReasoning")))
                     .overallExecutionDifficulty(stringValue(script.getScriptPayload().get("overallExecutionDifficulty")))
                     .status("GENERATED")
-                    .metadata(storyboardMetadata(script, generationJobId, screenType, renderSize))
+                    .metadata(storyboardMetadata(script, generationJobId, screenType, renderSize, prepared.videoModelCapability()))
                     .build());
 
             Map<Integer, String> shotIdByNumber = loadShotIdByNumber(script.getId());
@@ -568,6 +627,12 @@ public class StoryboardService {
             publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, 8, "Storyboard pack created");
             for (int index = 0; index < shots.size(); index++) {
                 Map<String, Object> shot = shots.get(index);
+                List<String> storyboardReferenceUrls = storyboardReferenceImageUrls(script, shot);
+                List<StoryboardImageGenerationService.ReferenceImageInput> storyboardReferences =
+                        downloadStoryboardReferenceImages(
+                                storyboardReferenceUrls,
+                                storyboardReferenceImageAssets(script, shot)
+                        );
                 int shotNumber = intValue(shot.get("shotNumber"), index + 1);
                 String shotId = defaultString(shotIdByNumber.get(shotNumber), "shot-%04d".formatted(shotNumber));
                 CreatorScriptShotPlan plan = planByShotNumber.get(shotNumber);
@@ -581,7 +646,14 @@ public class StoryboardService {
                         renderSize
                 );
                 publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, Math.max(9, progressFor(index, shots.size(), 0)), "Generating storyboard image for shot " + shotNumber);
-                GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
+                GeneratedStoryboardImage generatedImage = generateStoryboardImage(
+                        shot,
+                        screenType,
+                        renderSize,
+                        prompt,
+                        storyboardReferences,
+                        storyboardReferenceUrls
+                );
                 collectImageUsage(
                         "STORYBOARD_IMAGE_GENERATE",
                         generatedImage.metadata(),
@@ -746,7 +818,11 @@ public class StoryboardService {
         CreatorScript script = scriptRepository.findByIdAndTenantIdAndUserId(scriptId, safeTenantId, safeUserId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Final script was not found."));
 
-        List<Map<String, Object>> shots = scriptShots(script);
+        ProductionPlanTagService.VideoModelCapability videoModelCapability = storyboardVideoModelCapability(request);
+        List<Map<String, Object>> baseShots = scriptShots(script);
+        List<Map<String, Object>> shots = hasStoryboardVideoCapability(request)
+                ? storyboardShotsForModelCapability(baseShots, videoModelCapability.maxClipSeconds())
+                : baseShots;
         if (shots.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Final script does not have shots for storyboard generation.");
         }
@@ -757,7 +833,7 @@ public class StoryboardService {
         ));
         RenderSize renderSize = renderSize(screenType);
         Duration signedUrlTtl = signedUrlTtl(request == null ? null : request.signedUrlTtlSeconds());
-        return new PreparedStoryboardGeneration(script, shots, screenType, renderSize, signedUrlTtl);
+        return new PreparedStoryboardGeneration(script, shots, screenType, renderSize, signedUrlTtl, videoModelCapability);
     }
 
     private CreatorGenerationJob startStoryboardGenerationJob(PreparedStoryboardGeneration prepared) {
@@ -771,6 +847,7 @@ public class StoryboardService {
         jobInput.put("renderWidth", prepared.renderSize().width());
         jobInput.put("renderHeight", prepared.renderSize().height());
         jobInput.put("shotCount", prepared.shots().size());
+        jobInput.put("videoModelCapability", videoModelCapabilityMap(prepared.videoModelCapability()));
         jobInput.put("imageProvider", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini" : "local");
         jobInput.put("imageModel", properties.getAi().isStoryboardImageGenerationEnabled() ? properties.getAi().getGeminiImageModel() : "local_storyboard_sketch_v1");
 
@@ -925,9 +1002,9 @@ public class StoryboardService {
                 Rules:
                 - Apply the user's edit instruction to the shot JSON itself, not only to image prompt wording.
                 - Preserve shotNumber, startTime, endTime, durationSeconds, beatNumber, sequenceNumber, and sceneNumber unless the instruction explicitly requests timing or ordering changes.
-                - Keep all important existing keys from the original shot. Update action, title, composition, camera, lighting, blocking, textOverlay, dialogue, sound, production, safety, and sketchPrompt fields when relevant.
+                - Keep all important existing keys from the original shot. Update action, title, composition, camera, lighting, blocking, visualTreatment, textOverlay, dialogue, sound, production, safety, and sketchPrompt fields when relevant.
                 - Use arrays for array fields like editingNotes, safetyFlags, soundDesign, captionTrack, primaryCharacters, sideCharacters, primaryActors, and sideActors.
-                - Use objects for object fields like dialogue, backgroundMusicCue, resourceRequirements, and postProductionNotes.
+                - Use objects for object fields like dialogue, visualTreatment, backgroundMusicCue, resourceRequirements, and postProductionNotes. When visualTreatment is changed, use motionStyle, colorGrade, editorialEffect, and notes.
                 - Do not add markdown, prose, comments, or raw JSON strings. Return parseable JSON only.
 
                 User edit instruction:
@@ -1263,6 +1340,15 @@ public class StoryboardService {
             CreatorScriptShotPlan plan
     ) {
         Map<String, Object> metadata = scene.getMetadata() == null ? Map.of() : scene.getMetadata();
+        String effectiveSignedUrl = defaultString(signedUrlFor(asset), signedUrl);
+        String effectiveLightingSignedUrl = defaultString(signedUrlFor(lightingAsset), lightingSignedUrl);
+        String effectiveCameraPlanSignedUrl = defaultString(signedUrlFor(cameraPlanAsset), cameraPlanSignedUrl);
+        String responseImageKind = asset == null || asset.getMetadata() == null
+                ? ""
+                : assetKeyType(defaultString(stringValue(asset.getMetadata().get("imageKind")), asset.getAssetType()));
+        CreatorAsset productionAsset = "production".equals(responseImageKind)
+                ? asset
+                : findAsset(uuidValue(metadata.get("productionImageAssetId")));
         return new StoryboardSceneResponse(
                 scene.getId(),
                 asset == null ? null : asset.getId(),
@@ -1277,14 +1363,23 @@ public class StoryboardService {
                 scene.getLensSuggestion(),
                 scene.getFps(),
                 asset == null ? null : asset.getObjectKey(),
-                signedUrl,
+                effectiveSignedUrl,
                 scene.getSketchPrompt(),
+                productionAsset == null ? null : productionAsset.getId(),
+                productionAsset == null ? null : productionAsset.getObjectKey(),
+                signedUrlFor(productionAsset),
+                defaultString(
+                        stringValue(metadata.get("productionImagePrompt")),
+                        productionAsset == null || productionAsset.getMetadata() == null
+                                ? null
+                                : stringValue(productionAsset.getMetadata().get("productionImagePrompt"))
+                ),
                 lightingAsset == null ? null : lightingAsset.getId(),
                 lightingAsset == null ? null : lightingAsset.getObjectKey(),
-                lightingSignedUrl,
+                effectiveLightingSignedUrl,
                 cameraPlanAsset == null ? null : cameraPlanAsset.getId(),
                 cameraPlanAsset == null ? null : cameraPlanAsset.getObjectKey(),
-                cameraPlanSignedUrl,
+                effectiveCameraPlanSignedUrl,
                 stringValue(metadata.get("screenType")),
                 intValue(metadata.get("renderWidth"), null),
                 intValue(metadata.get("renderHeight"), null),
@@ -1296,7 +1391,7 @@ public class StoryboardService {
     }
 
     private ShotImageUrlResponse toShotImageUrlResponse(CreatorScript script, Integer shotNumber, ShotImageAssets assets) {
-        CreatorAsset source = firstAsset(assets.storyboard, assets.lighting, assets.cameraPlan);
+        CreatorAsset source = firstAsset(assets.storyboard, assets.production, assets.lighting, assets.cameraPlan);
         Map<String, Object> metadata = source == null ? Map.of() : source.getMetadata();
         return new ShotImageUrlResponse(
                 script.getId(),
@@ -1307,6 +1402,12 @@ public class StoryboardService {
                 assets.storyboard == null ? null : assets.storyboard.getId(),
                 assets.storyboard == null ? null : assets.storyboard.getObjectKey(),
                 signedUrlFor(assets.storyboard),
+                assets.production == null ? null : assets.production.getId(),
+                assets.production == null ? null : assets.production.getObjectKey(),
+                signedUrlFor(assets.production),
+                assets.production == null || assets.production.getMetadata() == null
+                        ? null
+                        : stringValue(assets.production.getMetadata().get("productionImagePrompt")),
                 assets.lighting == null ? null : assets.lighting.getId(),
                 assets.lighting == null ? null : assets.lighting.getObjectKey(),
                 signedUrlFor(assets.lighting),
@@ -1316,7 +1417,7 @@ public class StoryboardService {
                 defaultString(stringValue(metadata.get("screenType")), script.getScreenType()),
                 intValue(metadata.get("renderWidth"), null),
                 intValue(metadata.get("renderHeight"), null),
-                maxCreatedAt(assets.storyboard, assets.lighting, assets.cameraPlan)
+                maxCreatedAt(assets.storyboard, assets.production, assets.lighting, assets.cameraPlan)
         );
     }
 
@@ -1350,7 +1451,12 @@ public class StoryboardService {
             return asset.getPublicUrl();
         }
         try {
-            return assetStorageService.signedUrl(asset.getBucket(), asset.getObjectKey(), signedUrlTtl(null));
+            Integer ttlSeconds = asset.getMetadata() == null ? null : intValue(asset.getMetadata().get("signedUrlTtlSeconds"), null);
+            return assetStorageService.signedUrl(
+                    asset.getBucket(),
+                    asset.getObjectKey(),
+                    signedUrlTtl(ttlSeconds == null ? null : ttlSeconds.longValue())
+            );
         } catch (RuntimeException ex) {
             return asset.getPublicUrl();
         }
@@ -1481,9 +1587,27 @@ public class StoryboardService {
             String screenType,
             RenderSize renderSize,
             Duration signedUrlTtl,
-            String prompt
+            String prompt,
+            GenerateStoryboardRequest request
     ) {
-        GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
+        List<String> storyboardReferenceUrls = new ArrayList<>(storyboardReferenceImageUrls(script, shot));
+        List<Map<String, Object>> storyboardReferenceAssets = storyboardReferenceImageAssets(script, shot);
+        if (request != null && request.productReferenceImageUrls() != null) {
+            request.productReferenceImageUrls().stream()
+                    .filter(url -> url != null && !url.isBlank())
+                    .map(String::trim)
+                    .filter(url -> !storyboardReferenceUrls.contains(url))
+                    .limit(Math.max(0, 9 - storyboardReferenceUrls.size()))
+                    .forEach(storyboardReferenceUrls::add);
+        }
+        GeneratedStoryboardImage generatedImage = generateStoryboardImage(
+                shot,
+                screenType,
+                renderSize,
+                prompt,
+                downloadStoryboardReferenceImages(storyboardReferenceUrls, storyboardReferenceAssets),
+                storyboardReferenceUrls
+        );
         String objectKey = objectKey(script, storyboardId, shotId, "storyboard");
         AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
                 objectKey,
@@ -1503,6 +1627,67 @@ public class StoryboardService {
                 .sizeBytes(storedObject.sizeBytes())
                 .publicUrl(storedObject.signedUrl())
                 .metadata(assetMetadata(script, storyboardId, shotId, shotNumber, "storyboard", screenType, renderSize, signedUrlTtl, generatedImage.metadata()))
+                .build());
+        return new GeneratedAsset(asset, storedObject.signedUrl());
+    }
+
+    private GeneratedAsset generateProductionImageAsset(
+            CreatorScript script,
+            UUID storyboardId,
+            Map<String, Object> shot,
+            int shotNumber,
+            String shotId,
+            String screenType,
+            RenderSize renderSize,
+            Duration signedUrlTtl,
+            String prompt,
+            GenerateStoryboardRequest request
+    ) {
+        if (!properties.getAi().isStoryboardImageGenerationEnabled()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gemini image generation must be enabled to create a production video image anchor.");
+        }
+        List<String> referenceUrls = new ArrayList<>(storyboardReferenceImageUrls(script, shot));
+        List<Map<String, Object>> referenceAssets = storyboardReferenceImageAssets(script, shot);
+        if (request != null && request.productReferenceImageUrls() != null) {
+            request.productReferenceImageUrls().stream()
+                    .filter(url -> url != null && !url.isBlank())
+                    .map(String::trim)
+                    .filter(url -> !referenceUrls.contains(url))
+                    .limit(Math.max(0, 9 - referenceUrls.size()))
+                    .forEach(referenceUrls::add);
+        }
+        GeneratedStoryboardImage generatedImage = generateStoryboardImage(
+                shot,
+                screenType,
+                renderSize,
+                prompt,
+                downloadStoryboardReferenceImages(referenceUrls, referenceAssets),
+                referenceUrls
+        );
+        String objectKey = objectKey(script, storyboardId, shotId, "production");
+        AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
+                objectKey,
+                generatedImage.bytes(),
+                CONTENT_TYPE_JPEG,
+                signedUrlTtl
+        );
+        Map<String, Object> metadata = assetMetadata(script, storyboardId, shotId, shotNumber, "production", screenType, renderSize, signedUrlTtl, generatedImage.metadata());
+        metadata.put("imageKind", "production");
+        metadata.put("referenceRole", "generated_product_scene_frame");
+        metadata.put("sourceProductReferenceCount", referenceUrls.size());
+        metadata.put("productionImagePrompt", prompt);
+        CreatorAsset asset = upsertAsset(CreatorAsset.builder()
+                .tenantId(script.getTenantId())
+                .userId(script.getUserId())
+                .projectId(script.getProjectId())
+                .storyboardId(storyboardId)
+                .assetType(ASSET_TYPE_PRODUCTION_IMAGE_ANCHOR)
+                .bucket(storedObject.bucket())
+                .objectKey(storedObject.objectKey())
+                .contentType(storedObject.contentType())
+                .sizeBytes(storedObject.sizeBytes())
+                .publicUrl(storedObject.signedUrl())
+                .metadata(metadata)
                 .build());
         return new GeneratedAsset(asset, storedObject.signedUrl());
     }
@@ -1596,6 +1781,17 @@ public class StoryboardService {
                 .orElseThrow(() -> new IllegalStateException("Saved creator asset was not found: " + assetId));
     }
     private GeneratedStoryboardImage generateStoryboardImage(Map<String, Object> shot, String screenType, RenderSize size, String prompt) {
+        return generateStoryboardImage(shot, screenType, size, prompt, List.of(), List.of());
+    }
+
+    private GeneratedStoryboardImage generateStoryboardImage(
+            Map<String, Object> shot,
+            String screenType,
+            RenderSize size,
+            String prompt,
+            List<StoryboardImageGenerationService.ReferenceImageInput> referenceImages,
+            List<String> referenceImageUrls
+    ) {
         if (!properties.getAi().isStoryboardImageGenerationEnabled()) {
             return new GeneratedStoryboardImage(
                     renderStoryboardImage(shot, screenType, size, prompt),
@@ -1606,13 +1802,284 @@ public class StoryboardService {
                     )
             );
         }
+        String imagePrompt = appendShotReferenceUsageGuidance(prompt, shot);
+        imagePrompt = appendStoryboardReferenceGuidance(imagePrompt, referenceImageUrls);
 
         StoryboardImageGenerationService.GeneratedImage generatedImage =
-                storyboardImageGenerationService.generateStoryboardImage(prompt, screenType);
+                referenceImages == null || referenceImages.isEmpty()
+                        ? storyboardImageGenerationService.generateStoryboardImage(imagePrompt, screenType)
+                        : storyboardImageGenerationService.generateImageFromReferences(imagePrompt, referenceImages, screenType);
+        Map<String, Object> metadata = new LinkedHashMap<>(generatedImage.metadata() == null ? Map.of() : generatedImage.metadata());
+        if (referenceImageUrls != null && !referenceImageUrls.isEmpty()) {
+            metadata.put("referenceImageMode", "product_brand_reference_for_storyboard_sketch");
+            metadata.put("referenceImageUrls", referenceImageUrls);
+            metadata.put("referenceImageUsed", referenceImages != null && !referenceImages.isEmpty());
+            metadata.put("referenceImageCount", referenceImages == null ? 0 : referenceImages.size());
+        }
         return new GeneratedStoryboardImage(
                 normalizeToRenderSizeJpeg(generatedImage.bytes(), size),
-                generatedImage.metadata()
+                metadata
         );
+    }
+
+    private List<String> storyboardReferenceImageUrls(CreatorScript script) {
+        return script == null ? List.of() : storyboardReferenceImageUrls(script.getScriptPayload());
+    }
+
+    private List<String> storyboardReferenceImageUrls(CreatorScript script, Map<String, Object> shot) {
+        List<String> urls = new ArrayList<>(storyboardReferenceImageUrls(script));
+        Map<String, Object> safeShot = shot == null ? Map.of() : shot;
+        addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImageUrls"));
+        addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImages"));
+        return urls.stream().limit(8).toList();
+    }
+
+    private List<String> storyboardReferenceImageUrls(Map<String, Object> screenplay) {
+        Map<String, Object> safeScreenplay = screenplay == null ? Map.of() : screenplay;
+        Map<String, Object> creatorContext = mapValue(safeScreenplay.get("creatorContext"));
+        Map<String, Object> metadata = mapValue(creatorContext.get("metadata"));
+        Map<String, Object> productBrief = mapValue(creatorContext.get("productIntelligenceBrief"));
+        if (productBrief.isEmpty()) {
+            productBrief = mapValue(safeScreenplay.get("productIntelligenceBrief"));
+        }
+        Map<String, Object> productUnderstanding = mapValue(productBrief.get("productUnderstanding"));
+        List<String> urls = new ArrayList<>();
+        addStoryboardReferenceUrls(urls, metadata.get("referenceImageUrls"));
+        addStoryboardReferenceUrls(urls, creatorContext.get("referenceImageUrls"));
+        addStoryboardReferenceUrls(urls, productBrief.get("referenceImageUrls"));
+        addStoryboardReferenceUrls(urls, productBrief.get("imageUrls"));
+        addStoryboardReferenceUrls(urls, productBrief.get("productImageUrls"));
+        addStoryboardReferenceUrls(urls, productUnderstanding.get("imageUrls"));
+        addDirectProductReferenceImageUrl(urls, productBrief.get("sourceUrl"));
+        addDirectProductReferenceImageUrl(urls, productUnderstanding.get("sourceUrl"));
+        addStoryboardReferenceUrls(urls, safeScreenplay.get("referenceImageUrls"));
+        addStoryboardReferenceUrls(urls, safeScreenplay.get("productImageUrls"));
+        Map<String, Object> productIntelligence = mapValue(safeScreenplay.get("productIntelligence"));
+        addStoryboardReferenceUrls(urls, productIntelligence.get("sourceImages"));
+        addStoryboardReferenceUrls(urls, productIntelligence.get("imageUrls"));
+        addStoryboardReferenceUrls(urls, safeScreenplay.get("generatedAssets"));
+        return urls.stream().limit(4).toList();
+    }
+
+    private void addStoryboardReferenceUrls(List<String> urls, Object value) {
+        if (value instanceof List<?> list) {
+            list.forEach(item -> addStoryboardReferenceUrls(urls, item));
+            return;
+        }
+        if (value instanceof Map<?, ?> map) {
+            addStoryboardReferenceUrls(urls, map.get("publicUrl"));
+            addStoryboardReferenceUrls(urls, map.get("signedUrl"));
+            addStoryboardReferenceUrls(urls, map.get("assetUrl"));
+            addStoryboardReferenceUrls(urls, map.get("imageUrl"));
+            addStoryboardReferenceUrls(urls, map.get("url"));
+            return;
+        }
+        String url = stringValue(value).trim();
+        if ((url.startsWith("https://") || url.startsWith("http://")) && !urls.contains(url)) {
+            urls.add(url);
+        }
+    }
+
+    private void addDirectProductReferenceImageUrl(List<String> urls, Object value) {
+        String url = stringValue(value).trim();
+        if (isProductReferenceImageUrl(url) && !urls.contains(url)) {
+            urls.add(url);
+        }
+    }
+
+    private boolean isProductReferenceImageUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            String path = URI.create(value).getPath();
+            return path != null && path.toLowerCase(Locale.ROOT).matches(".*\\.(avif|gif|jpe?g|png|webp)$");
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+    }
+
+    private List<Map<String, Object>> storyboardReferenceImageAssets(
+            CreatorScript script,
+            Map<String, Object> shot
+    ) {
+        if (script == null || shot == null) return List.of();
+        List<Map<String, Object>> assets = new ArrayList<>();
+        addStoryboardReferenceAssets(assets, shot.get("visualReferenceImages"));
+        return assets.stream().limit(8).toList();
+    }
+
+    private void addStoryboardReferenceAssets(List<Map<String, Object>> assets, Object value) {
+        if (!(value instanceof List<?> list)) return;
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> map)) continue;
+            Map<String, Object> asset = new LinkedHashMap<>();
+            map.forEach((key, fieldValue) -> asset.put(String.valueOf(key), fieldValue));
+            String bucket = stringValue(asset.get("bucket"));
+            String objectKey = stringValue(asset.get("objectKey"));
+            if (!bucket.equals(assetStorageService.creatorAssetsBucket()) || objectKey.isBlank()) continue;
+            if (assets.stream().noneMatch(existing ->
+                    objectKey.equals(stringValue(existing.get("objectKey"))))) {
+                assets.add(asset);
+            }
+            if (assets.size() >= 8) return;
+        }
+    }
+
+    private List<StoryboardImageGenerationService.ReferenceImageInput> downloadStoryboardReferenceImages(List<String> urls) {
+        return downloadStoryboardReferenceImages(urls, List.of());
+    }
+
+    private List<StoryboardImageGenerationService.ReferenceImageInput> downloadStoryboardReferenceImages(
+            List<String> urls,
+            List<Map<String, Object>> managedAssets
+    ) {
+        List<StoryboardImageGenerationService.ReferenceImageInput> references = new ArrayList<>();
+        List<String> managedUrls = new ArrayList<>();
+        for (Map<String, Object> asset : managedAssets == null ? List.<Map<String, Object>>of() : managedAssets) {
+            if (references.size() >= 8) break;
+            String objectKey = stringValue(asset.get("objectKey"));
+            try (AssetStorageService.StreamedObject stored = assetStorageService.openObjectStream(
+                    stringValue(asset.get("bucket")),
+                    objectKey
+            )) {
+                if (stored.sizeBytes() > 15L * 1024L * 1024L) continue;
+                byte[] bytes = stored.inputStream().readNBytes(15 * 1024 * 1024 + 1);
+                if (bytes.length == 0 || bytes.length > 15 * 1024 * 1024) continue;
+                String contentType = defaultString(
+                        stringValue(asset.get("contentType")),
+                        defaultString(stored.contentType(), "image/png")
+                ).toLowerCase(Locale.ROOT);
+                if (!List.of("image/jpeg", "image/jpg", "image/png", "image/webp").contains(contentType)) continue;
+                if ("image/jpg".equals(contentType)) contentType = "image/jpeg";
+                String usageMode = stringValue(firstNonNull(
+                        asset.get("visualReferenceUsageMode"),
+                        asset.get("usageMode")
+                ));
+                references.add(new StoryboardImageGenerationService.ReferenceImageInput(
+                        bytes,
+                        contentType,
+                        ("EXACT_SOURCE".equalsIgnoreCase(usageMode) ? "exact_visual_source_" : "visual_inspiration_only_") + references.size()
+                ));
+                addStoryboardReferenceUrls(managedUrls, asset.get("signedUrl"));
+                addStoryboardReferenceUrls(managedUrls, asset.get("publicUrl"));
+                addStoryboardReferenceUrls(managedUrls, asset.get("assetUrl"));
+            } catch (IOException | RuntimeException ex) {
+                log.warn(
+                        "Storyboard managed reference image download skipped objectKeySuffix={} errorType={}",
+                        objectKey.contains("/") ? objectKey.substring(objectKey.lastIndexOf('/') + 1) : objectKey,
+                        ex.getClass().getSimpleName()
+                );
+            }
+        }
+        for (String url : urls == null ? List.<String>of() : urls.stream().limit(8).toList()) {
+            if (references.size() >= 8) break;
+            if (managedUrls.contains(url)) continue;
+            try {
+                ResponseEntity<byte[]> response = webClient
+                        .get()
+                        .uri(URI.create(url))
+                        .retrieve()
+                        .toEntity(byte[].class)
+                        .block(Duration.ofSeconds(12));
+                if (response == null || response.getBody() == null || response.getBody().length == 0) {
+                    continue;
+                }
+                String contentType = response.getHeaders().getContentType() == null
+                        ? "image/png"
+                        : response.getHeaders().getContentType().toString();
+                if (!contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
+                    continue;
+                }
+                references.add(new StoryboardImageGenerationService.ReferenceImageInput(
+                        response.getBody(),
+                        contentType,
+                        "external_reference_" + (references.size() + 1)
+                ));
+            } catch (RuntimeException ex) {
+                log.warn(
+                        "Storyboard reference image download skipped url={} errorType={} errorMessage={}",
+                        url,
+                        ex.getClass().getSimpleName(),
+                        ex.getMessage()
+                );
+            }
+        }
+        return references;
+    }
+
+    private String appendStoryboardReferenceGuidance(String prompt, Map<String, Object> screenplay) {
+        Map<String, Object> safeScreenplay = screenplay == null ? Map.of() : screenplay;
+        return appendStoryboardReferenceGuidance(prompt, storyboardReferenceImageUrls(safeScreenplay), storyboardReferenceDetails(safeScreenplay));
+    }
+
+    private String appendStoryboardReferenceGuidance(String prompt, List<String> referenceImageUrls) {
+        return appendStoryboardReferenceGuidance(prompt, referenceImageUrls, "");
+    }
+
+    private String appendShotReferenceUsageGuidance(String prompt, Map<String, Object> shot) {
+        List<Map<String, Object>> references = new ArrayList<>();
+        Object rawReferences = shot == null ? null : shot.get("visualReferenceImages");
+        if (rawReferences instanceof List<?> values) {
+            values.stream().map(this::mapValue).filter(value -> !value.isEmpty()).forEach(references::add);
+        }
+        if (references.isEmpty()) return prompt;
+        boolean hasExactSource = references.stream().anyMatch(reference ->
+                "EXACT_SOURCE".equalsIgnoreCase(stringValue(firstNonNull(
+                        reference.get("visualReferenceUsageMode"),
+                        reference.get("usageMode")
+                )))
+        );
+        if (hasExactSource) {
+            return prompt + """
+
+                    [CLIENT REFERENCE INTENT: USE EXACTLY]
+                    - References marked exact_visual_source are approved visual source-of-truth for this shot.
+                    - Preserve their visible product identity, product name, logo, packaging design, label copy, claims, colors, proportions, composition, and distinctive details exactly.
+                    - Do not replace those exact-source details with product information inferred from another reference.
+                    - For a storyboard output, translate only the rendering medium while keeping the exact source identity and composition faithful. For a production frame, keep the exact visual anchor faithful.
+                    """;
+        }
+        return prompt + """
+
+                [CLIENT REFERENCE INTENT: INSPIRATION ONLY]
+                - Use client images only for mood, composition, lighting, texture, palette, and pacing.
+                - Never copy their name, logo, packaging, claims, trademarks, label layout, artwork, or product identity.
+                - The approved project concept and product data remain the only source-of-truth.
+                """;
+    }
+
+    private String appendStoryboardReferenceGuidance(String prompt, List<String> referenceImageUrls, String referenceDetails) {
+        if (referenceImageUrls == null || referenceImageUrls.isEmpty()) {
+            return prompt;
+        }
+        String detailsLine = referenceDetails == null || referenceDetails.isBlank()
+                ? ""
+                : "- User reference notes to preserve in screenplay/storyboard planning: " + truncatePromptText(referenceDetails, 420) + "\n";
+        return prompt + """
+
+                [PRODUCT / BRAND REFERENCE IMAGE GUIDANCE]
+                - Canonical product images, when explicitly supplied by this project, may be used to keep the approved project product consistent.
+                - Client-review images explicitly marked INSPIRATION_ONLY may contribute only broad mood, composition, lighting, texture, palette, and pacing cues.
+                - Client-review images explicitly marked EXACT_SOURCE are approved visual source-of-truth and must retain their visible product and composition details faithfully.
+                - Never copy an INSPIRATION_ONLY image's product name, logo, packaging text, claims, trademark, distinctive artwork, exact label layout, or protected identity.
+                - Preserve the core essence and narrative of this project's approved ad concept.
+                - Unless EXACT_SOURCE is explicitly selected, product name, logo, pack design, visible copy, claims, ingredients, and all other product details must come only from this project's screenplay and approved product data.
+                - If an inspiration image conflicts with approved project data, ignore the inspiration image.
+                %s\
+                - Translate the approved project idea into the requested storyboard or production-frame format while honoring the explicit reference intent.
+                - This is still a client-review planning sketch, not a final advertisement frame. The supplied product images remain separate product visual anchors for later image-led video generation.
+                """.formatted(detailsLine);
+    }
+
+    private String storyboardReferenceDetails(Map<String, Object> screenplay) {
+        Map<String, Object> safeScreenplay = screenplay == null ? Map.of() : screenplay;
+        Map<String, Object> creatorContext = mapValue(safeScreenplay.get("creatorContext"));
+        Map<String, Object> metadata = mapValue(creatorContext.get("metadata"));
+        return defaultString(firstNonNull(
+                firstNonNull(safeScreenplay.get("referenceImageDetails"), safeScreenplay.get("screenplayEnhancementReferenceDetails")),
+                firstNonNull(creatorContext.get("referenceImageDetails"), metadata.get("referenceImageDetails"))
+        ), "");
     }
 
     private byte[] normalizeToRenderSizeJpeg(byte[] sourceBytes, RenderSize size) {
@@ -1945,6 +2412,84 @@ public class StoryboardService {
         g.fillPolygon(head);
     }
 
+    private String buildProductionImagePrompt(
+            Map<String, Object> screenplayJson,
+            Map<String, Object> shot,
+            Map<String, Object> storyboardTag,
+            String screenType,
+            RenderSize size,
+            GenerateStoryboardRequest request
+    ) {
+        Map<String, Object> screenplay = screenplayJson == null ? Map.of() : screenplayJson;
+        Map<String, Object> shotJson = shot == null ? Map.of() : shot;
+        Map<String, Object> product = mapValue(screenplay.get("productIntelligence"));
+        boolean productLed = (request != null && Boolean.TRUE.equals(request.productLed()))
+                || !product.isEmpty()
+                || !mapValue(screenplay.get("productIntelligenceBrief")).isEmpty()
+                || !defaultString(firstNonBlank(screenplay.get("productName"), shotJson.get("productName")), "").isBlank();
+        String productName = defaultString(firstNonBlank(
+                product.get("productName"),
+                product.get("name"),
+                shotJson.get("productName"),
+                screenplay.get("projectTitle")
+        ), "the supplied product");
+        String shotType = defaultString(firstNonBlank(shotJson.get("shotType"), storyboardTag == null ? null : storyboardTag.get("shotType")), "Hero Shot");
+        String requestedPrompt = request == null ? "" : defaultString(request.imagePrompt(), "");
+        String basePrompt = defaultString(firstNonBlank(
+                requestedPrompt,
+                shotJson.get("productImagePrompt"),
+                shotJson.get("productionImagePrompt"),
+                shotJson.get("imagePrompt"),
+                shotJson.get("storyboardImagePrompt"),
+                shotJson.get("visualPrompt"),
+                shotJson.get("visual"),
+                shotJson.get("description")
+        ), "Create a polished commercial " + shotType + " for " + productName + ".");
+        String productionTreatment = productLed
+                ? "Render as premium photoreal CGI product advertising: physically plausible materials, immaculate reflections and shadows, macro surface detail, precise commercial lighting, and a polished global-campaign finish."
+                : "Render as a photoreal production still with cinematic lighting, natural materials, and a finished commercial grade.";
+        String referenceDetails = request == null ? "" : defaultString(request.productReferenceDetails(), "");
+        String negativePrompt = defaultString(firstNonBlank(shotJson.get("negativePrompt"), shotJson.get("negative_prompt")),
+                "no package mutation, no logo drift, no label changes, no warped product, no duplicate product, no unreadable text, no watermark");
+        boolean noHumans = "true".equalsIgnoreCase(stringValue(firstNonNull(shotJson.get("noHumans"), screenplay.get("noHumans"))));
+        String humanRule = noHumans
+                ? "Hard exclusion: no people, faces, hands, arms, bodies, human silhouettes, human reflections, presenters, or crowds."
+                : "Do not introduce a person unless the screenplay explicitly requires one.";
+        String aspectRatio = "horizontal".equals(screenType) ? "16:9" : "9:16";
+        Map<String, Object> safeStoryboardTag = storyboardTag == null ? Map.of() : storyboardTag;
+        Map<String, Object> overlayPlan = mapValue(firstNonNull(
+                safeStoryboardTag.get("overlayPlan"),
+                shotJson.get("overlayPlan")
+        ));
+        Map<String, Object> typographySystem = mapValue(firstNonNull(
+                firstNonNull(safeStoryboardTag.get("typographySystem"), shotJson.get("typographySystem")),
+                screenplay.get("typographySystem")
+        ));
+        String overlayExecution = plannedOverlayInstruction(
+                frameOverlayText(safeStoryboardTag, shotJson),
+                overlayPlan,
+                typographySystem
+        );
+        return """
+                Create one final, production-quality advertising still that will be used as an image-to-video anchor.
+                This must look like a finished cinematic commercial frame, never a storyboard, sketch, contact sheet, grid, diagram, mood board, or frame with production labels.
+
+                Product: %s
+                Shot type: %s
+                Creative brief: %s
+                Production treatment: %s
+                Product reference notes: %s
+
+                Output: exact %sx%s, %s composition. Keep the product as the stable focal subject with clean mobile-safe framing and commercial lighting.
+                Preserve exact identity from canonical project references and any client-review reference explicitly marked EXACT_SOURCE.
+                Obey each client-review image's explicit reference intent: INSPIRATION_ONLY supplies mood, composition, lighting, palette, texture, and pacing without copied branding; EXACT_SOURCE is the approved visual source of truth for that shot.
+                Unless EXACT_SOURCE is selected, the product name, packaging, and visible copy must follow this project's approved screenplay and product data.
+                Planned typography direction: %s
+                Do not invent claims, labels, logos, ingredients, accessories, or unplanned text overlays. Render only the approved overlay above when it is enabled. %s
+                Negative prompt: %s
+                """.formatted(productName, shotType, basePrompt, productionTreatment, referenceDetails, size.width(), size.height(), aspectRatio, overlayExecution, humanRule, negativePrompt).trim();
+    }
+
     private String buildStoryboardPrompt(
             Map<String, Object> screenplayJson,
             Map<String, Object> shot,
@@ -1956,7 +2501,7 @@ public class StoryboardService {
     ) {
         String override = stringValue(storyboardTag == null ? null : storyboardTag.get("imageGenerationPromptOverride"));
         if (!override.isBlank()) {
-            return override;
+            return appendStoryboardReferenceGuidance(override, screenplayJson);
         }
 
         Map<String, Object> screenplay = screenplayJson == null ? Map.of() : screenplayJson;
@@ -1978,6 +2523,13 @@ public class StoryboardService {
         String cameraAngle = defaultString(storyboardValue(tag, shotJson, "cameraAngle"), "Eye Level");
         String movement = defaultString(storyboardValue(tag, shotJson, "cameraMovement"), defaultString(nested(shotJson, "cinematicExecution", "cameraStyle"), "Static"));
         String lens = defaultString(storyboardValue(tag, shotJson, "lensSuggestion"), "Mobile 1x Wide");
+        Map<String, Object> visualTreatment = mapValue(shotJson.get("visualTreatment"));
+        String visualTreatmentSummary = compactPromptParts(
+                promptLabel("motion", firstNonBlank(visualTreatment.get("motionStyle"), nested(shotJson, "cinematicExecution", "captureMode"))),
+                promptLabel("colour", visualTreatment.get("colorGrade")),
+                promptLabel("effect", visualTreatment.get("editorialEffect")),
+                promptLabel("notes", visualTreatment.get("notes"))
+        );
         String compositionSummary = defaultString(storyboardValue(tag, shotJson, "compositionSummary", "composition"), "center-safe framing");
         String environment = defaultString(storyboardValue(tag, shotJson, "environment", "setDesign", "sceneLocation"), sceneLocation);
         String keyLight = defaultString(firstNonBlank(tag.get("keyLightSourceLabel"), lightingTag.get("keyLight"), nested(lightingTag, "floorPlan", "keyLight")), "motivated practical key");
@@ -2000,6 +2552,12 @@ public class StoryboardService {
         String keyProps = defaultString(firstNonBlank(shotJson.get("keyProps"), shotJson.get("props"), nested(cameraTag, "blockingMap", "keyProps"), shotJson.get("resourceRequirements")), "only props specified by the shot");
         String culturalReferences = defaultString(firstNonBlank(tag.get("culturalReferences"), shotJson.get("culturalReferences")), "none");
         String textOverlay = frameOverlayText(tag, shotJson);
+        Map<String, Object> overlayPlan = mapValue(firstNonNull(tag.get("overlayPlan"), shotJson.get("overlayPlan")));
+        Map<String, Object> typographySystem = mapValue(firstNonNull(
+                firstNonNull(tag.get("typographySystem"), shotJson.get("typographySystem")),
+                screenplay.get("typographySystem")
+        ));
+        String overlayExecution = plannedOverlayInstruction(textOverlay, overlayPlan, typographySystem);
         String dialogueLanguage = defaultString(firstNonBlank(tag.get("dialogueLanguage"), shotJson.get("dialogueLanguage"), screenplay.get("dialogueLanguage")), "English");
         String dialogueBox = dialogueBoxText(shotJson, tag);
         String ambient = defaultString(storyboardValue(tag, shotJson, "ambientBedDescription"), storyboardSoundNote(shotJson));
@@ -2009,13 +2567,13 @@ public class StoryboardService {
         String directorTip = defaultString(storyboardValue(tag, shotJson, "directorNote", "creatorTip"), beginnerTip(shotJson));
         String creatorGuides = compactPromptParts(
                 promptLabel("director", directorTip),
+                promptLabel("shot direction", shotJson.get("creatorDirection")),
+                promptLabel("visual treatment", visualTreatmentSummary),
                 promptLabel("creator guide", shotJson.get("rookieFriendlyGuide")),
                 promptLabel("resources", firstNonBlank(screenplay.get("resourceRequirements"), shotJson.get("resourceRequirements"))),
                 promptLabel("post", firstNonBlank(shotJson.get("postProductionNotes"), screenplay.get("postProductionNotes")))
         );
-        String textPromptEssence = defaultString(firstNonBlank(textOverlay, narrativeBeat, blockingNotes), title);
-
-        return """
+        String generatedPrompt = """
                 Generate a multi-panel, highly technical production planning storyboard diagram.
 
                 STYLE:
@@ -2042,8 +2600,8 @@ public class StoryboardService {
                    - Set details: %s with key elements: %s. Include cultural references only if present: %s.
                    - Tone/Lighting execution: %s, applying %s matching the goal: %s.
 
-                [TEXT OVERLAY & AUDIO CALLOUTS]
-                - In the lower section of the central panel, overlay a bold, stylized, high-contrast banner with sparkle/starburst marks reading: %s
+                [PLANNED ON-SCREEN TYPOGRAPHY & AUDIO CALLOUTS]
+                %s
                 - Directly beneath the central illustration, render a clean text card block displaying the primary character's current actions and dialogue delivery notes in %s: %s
 
                 [FOOTER BAND (Bottom 10%%)]
@@ -2059,14 +2617,25 @@ public class StoryboardService {
                 - Keep the output looking like an exhaustive production storyboard sketch sheet with the central frame readable as the intended shot, not an empty cinematic film capture frame.
                 - Do not create a plain single-frame still. Do not create poster art. Do not generate a black-and-white/grayscale photo, monochrome cinematic render, glossy color-graded still, photorealistic gradient render, UI chrome, watermark, or markdown. The central visual must keep storyboard sketch linework, rough planning strokes, and selective muted color accents.
                 - Use only the characters, wardrobe, props, setting, camera notes, dialogue, and cultural references supplied below. Do not invent extra people, props, logos, or locations.
-                - The source JSON below is for continuity only; never render raw JSON syntax in the image.
+                - The shot-scoped continuity summaries below are source facts only; never render their syntax in the image.
 
-                [SOURCE JSON / CONTINUITY GUARDRAILS]
-                StoryboardTag JSON: %s
-                LightingBuildSheetTag JSON: %s
-                CameraPlanSheetTag JSON: %s
-                Shot JSON: %s
-                Screenplay context JSON: %s
+                [GLOBAL CONTINUITY BIBLE]
+                %s
+
+                [ADJACENT-SHOT EDIT BRIDGE]
+                %s
+
+                [COMPLETE CURRENT-SHOT DIRECTOR PACKET]
+                %s
+
+                [CURRENT-SHOT DEPARTMENT PLANS]
+                Storyboard continuity: %s
+                Lighting continuity: %s
+                Camera continuity: %s
+                Current-shot continuity: %s
+
+                Treat all sections above as one coherent specification. Do not discard director, timing, product,
+                camera, lighting, focus, transition, typography, or boundary-state detail merely to shorten the prompt.
                 """.formatted(
                 size.width(),
                 size.height(),
@@ -2102,19 +2671,29 @@ public class StoryboardService {
                 truncatePromptText(inferredTone, 90),
                 truncatePromptText(lightingAtmosphere, 160),
                 truncatePromptText(cinematicIntent, 180),
-                truncatePromptText(textPromptEssence, 90),
+                truncatePromptText(overlayExecution, 520),
                 truncatePromptText(dialogueLanguage, 40),
                 truncatePromptText(dialogueBox, 180),
                 truncatePromptText(ambient, 110),
                 truncatePromptText(sync, 110),
                 truncatePromptText(musicCue, 120),
                 truncatePromptText(creatorGuides, 180),
-                toJson(tag),
-                toJson(lightingTag),
-                toJson(cameraTag),
-                toJson(shotJson),
-                toJson(screenplay)
+                toJson(globalImageContinuityContext(screenplay)),
+                toJson(adjacentShotImageContinuity(screenplay, shotJson, shotNumber)),
+                toJson(currentShotDirectorPacket(screenplay, shotJson, shotNumber)),
+                toJson(compactImageContext(tag,
+                        "shotNumber", "shotTitle", "title", "action", "visualDirection", "compositionSummary",
+                        "environment", "primaryCharacters", "sideCharacters", "wardrobe", "setDesign", "keyProps",
+                        "overlayPlan", "typographySystem", "dialogueLanguage", "dialogue", "directorNote")),
+                toJson(compactImageContext(lightingTag,
+                        "keyLight", "fillLight", "rimLight", "practicals", "lightingAtmosphericDescription",
+                        "cinematicIntent", "colorTemperature", "contrastRatio", "floorPlan")),
+                toJson(compactImageContext(cameraTag,
+                        "shotType", "shotTypeFullName", "cameraAngle", "cameraMovement", "lensSuggestion",
+                        "focusPlan", "blockingMap", "compositionSummary", "targetFocalPoint")),
+                toJson(shotScopedImageContext(shotJson))
         );
+        return appendStoryboardReferenceGuidance(generatedPrompt, screenplay);
     }
     private String storyboardValue(Map<String, Object> storyboardTag, Map<String, Object> shot, String... keys) {
         for (String key : keys) {
@@ -2164,11 +2743,14 @@ public class StoryboardService {
     }
 
     private String dialogueBoxText(Map<String, Object> shot, Map<String, Object> storyboardTag) {
+        String canonicalShotDialogue = dialogueLine(shot);
+        if (!canonicalShotDialogue.isBlank()) {
+            return canonicalShotDialogue;
+        }
         Map<String, Object> primaryDialogue = mapValue(storyboardTag == null ? null : storyboardTag.get("primaryDialogue"));
         String line = promptText(primaryDialogue.get("line"));
         if (line.isBlank()) {
-            String fallback = dialogueLine(shot);
-            return fallback.isBlank() ? "No dialogue in this shot." : fallback;
+            return "No dialogue in this shot.";
         }
         String speaker = defaultString(firstNonBlank(primaryDialogue.get("characterName"), primaryDialogue.get("archetypeLabel")), "Speaker");
         String subtext = promptText(primaryDialogue.get("subtext"));
@@ -2179,12 +2761,54 @@ public class StoryboardService {
     }
 
     private String frameOverlayText(Map<String, Object> storyboardTag, Map<String, Object> shot) {
-        String overlay = defaultString(storyboardValue(storyboardTag, shot, "textOverlay"), "");
-        String emoji = defaultString(storyboardValue(storyboardTag, shot, "textOverlayEmoji"), "");
-        if (!emoji.isBlank() && !overlay.startsWith(emoji)) {
-            return emoji + " " + overlay;
+        Map<String, Object> overlayPlan = mapValue(firstNonNull(
+                storyboardTag.get("overlayPlan"),
+                shot.get("overlayPlan")
+        ));
+        if (Boolean.FALSE.equals(overlayPlan.get("enabled"))) return "";
+        String overlay = defaultString(firstNonBlank(
+                overlayPlan.get("text"),
+                storyboardValue(storyboardTag, shot, "textOverlay")
+        ), "");
+        return overlay
+                .replaceAll("[\\x{1F000}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{FE0F}\\x{200D}]", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+    }
+
+    private String plannedOverlayInstruction(
+            String text,
+            Map<String, Object> overlayPlan,
+            Map<String, Object> typographySystem
+    ) {
+        if (text == null || text.isBlank() || Boolean.FALSE.equals(overlayPlan.get("enabled"))) {
+            return "- No promotional text overlay is enabled for this shot. Do not invent a banner, caption, slogan, product claim, emoji, or decorative lettering. Preserve clean negative space only when the composition plan requests it.";
         }
-        return overlay.isBlank() ? "No overlay text" : overlay;
+        String font = defaultString(firstNonBlank(
+                overlayPlan.get("fontFamily"),
+                typographySystem.get("primaryFont")
+        ), "Inter");
+        String weight = defaultString(firstNonBlank(
+                overlayPlan.get("fontWeight"),
+                typographySystem.get("primaryWeight")
+        ), "800");
+        String position = defaultString(overlayPlan.get("position"), "Lower safe zone");
+        String background = defaultString(firstNonBlank(
+                overlayPlan.get("backgroundStyle"),
+                typographySystem.get("backgroundStyle")
+        ), "No panel");
+        String entrance = defaultString(firstNonBlank(
+                overlayPlan.get("entrance"),
+                typographySystem.get("defaultEntrance")
+        ), "Fade");
+        String speed = defaultString(firstNonBlank(
+                overlayPlan.get("speed"),
+                typographySystem.get("defaultSpeed")
+        ), "Measured");
+        return "- Render the approved on-screen copy exactly as written, with no additional words or emojis: \""
+                + text + "\". Typography: " + font + ", weight " + weight + ", " + background
+                + ", positioned in the " + position + ". Protect the product and faces from overlap. Add a small technical motion callout for post-production: "
+                + entrance + " at " + speed + " pacing. Do not invent claims, ingredients, nutrition values, offers, logos, or product names.";
     }
 
     private String storyboardTiming(Map<String, Object> storyboardTag, Map<String, Object> shot) {
@@ -2643,13 +3267,270 @@ public class StoryboardService {
         return List.of();
     }
 
+    private ProductionPlanTagService.VideoModelCapability storyboardVideoModelCapability(GenerateStoryboardRequest request) {
+        String provider = normalizeVideoProviderForCapability(request == null ? null : request.videoProvider());
+        String model = defaultString(request == null ? null : request.videoModel(), "");
+        int maxClipSeconds = modelCapabilityMaxClipSeconds(provider, model, request == null ? null : request.maxClipSeconds());
+        return new ProductionPlanTagService.VideoModelCapability(provider, model, maxClipSeconds);
+    }
+
+    private boolean hasStoryboardVideoCapability(GenerateStoryboardRequest request) {
+        return request != null
+                && (!defaultString(request.videoProvider(), "").isBlank()
+                || !defaultString(request.videoModel(), "").isBlank()
+                || request.maxClipSeconds() != null);
+    }
+
+    private Map<String, Object> videoModelCapabilityMap(ProductionPlanTagService.VideoModelCapability capability) {
+        ProductionPlanTagService.VideoModelCapability resolved = capability == null
+                ? storyboardVideoModelCapability(null)
+                : new ProductionPlanTagService.VideoModelCapability(
+                        normalizeVideoProviderForCapability(capability.videoProvider()),
+                        defaultString(capability.videoModel(), ""),
+                        modelCapabilityMaxClipSeconds(capability.videoProvider(), capability.videoModel(), capability.maxClipSeconds())
+                );
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("videoProvider", resolved.videoProvider());
+        map.put("videoModel", resolved.videoModel());
+        map.put("maxClipSeconds", resolved.maxClipSeconds());
+        map.put("maxDialogueSecondsPerShot", Math.max(1, resolved.maxClipSeconds() - 1));
+        map.put("dialogueTimingPolicy", dialogueTimingPolicy(resolved.maxClipSeconds()));
+        return map;
+    }
+
+    private int modelCapabilityMaxClipSeconds(String provider, String model, Integer requestedMaxClipSeconds) {
+        String normalizedProvider = normalizeVideoProviderForCapability(provider);
+        int providerMax = defaultMaxClipSecondsForCapability(normalizedProvider, model);
+        int requested = requestedMaxClipSeconds == null ? providerMax : intValue(requestedMaxClipSeconds, providerMax);
+        if (!"google_veo".equals(normalizedProvider) && requested >= 20) {
+            providerMax = Math.max(providerMax, Math.min(requested, 20));
+        }
+        return Math.max(1, Math.min(providerMax, requested));
+    }
+
+    private int defaultMaxClipSecondsForCapability(String provider, String model) {
+        String normalizedProvider = normalizeVideoProviderForCapability(provider);
+        String normalizedModel = defaultString(model, "").toLowerCase(Locale.ROOT).replace('-', '_');
+        if ("google_veo".equals(normalizedProvider)) {
+            return 8;
+        }
+        if (normalizedModel.contains("20") || normalizedModel.contains("twenty") || normalizedModel.contains("long")) {
+            return 20;
+        }
+        if ("gemini_omni".equals(normalizedProvider)) {
+            return 10;
+        }
+        return 15;
+    }
+
+    private String normalizeVideoProviderForCapability(String provider) {
+        String normalized = defaultString(provider, "seedance")
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .trim();
+        if (normalized.equals("gemini_omni")
+                || normalized.equals("google_omni")
+                || normalized.equals("omni_flash")
+                || normalized.equals("omini_flash")
+                || normalized.equals("gemini_omni_flash")
+                || normalized.equals("google_omni_flash")
+                || normalized.equals("gemini_omni_flash_preview")) {
+            return "gemini_omni";
+        }
+        if (normalized.equals("omni") || normalized.equals("omini") || normalized.equals("openai_omni") || normalized.equals("openai_omini")) {
+            return "omini";
+        }
+        if (normalized.equals("veo") || normalized.equals("google_veo") || normalized.equals("google_video") || normalized.equals("vertex_veo")) {
+            return "google_veo";
+        }
+        if (normalized.equals("seed_dance") || normalized.equals("byteplus_seedance") || normalized.equals("volcengine_seedance")) {
+            return "seedance";
+        }
+        return normalized.isBlank() ? "seedance" : normalized;
+    }
+
+    private String dialogueTimingPolicy(int maxClipSeconds) {
+        int dialogueSeconds = Math.max(1, maxClipSeconds - 1);
+        return "Fit complete spoken dialogue inside "
+                + maxClipSeconds
+                + " seconds per storyboard shot; keep spoken line budget near "
+                + dialogueSeconds
+                + " seconds and split longer dialogue into consecutive parts without paraphrasing.";
+    }
+
+    private List<Map<String, Object>> storyboardShotsForModelCapability(List<Map<String, Object>> sourceShots, int maxClipSeconds) {
+        if (sourceShots == null || sourceShots.isEmpty()) {
+            return List.of();
+        }
+        int safeMaxClipSeconds = Math.max(1, maxClipSeconds);
+        int maxWordsPerPart = Math.max(6, (int) Math.floor(Math.max(1, safeMaxClipSeconds - 1) * 2.4d));
+        List<Map<String, Object>> result = new ArrayList<>();
+        int runningStart = 0;
+        for (Map<String, Object> rawShot : sourceShots) {
+            Map<String, Object> shot = rawShot == null ? new LinkedHashMap<>() : new LinkedHashMap<>(rawShot);
+            String dialogue = storyboardDialogueText(shot);
+            List<String> chunks = dialogueChunks(dialogue, maxWordsPerPart);
+            if (chunks.size() <= 1 || estimatedDialogueSeconds(dialogue) <= safeMaxClipSeconds) {
+                Map<String, Object> normalized = storyboardCapabilityShot(shot, result.size() + 1, runningStart, null, 1, 1, safeMaxClipSeconds);
+                result.add(normalized);
+                runningStart += intValue(normalized.get("durationSeconds"), safeMaxClipSeconds);
+                continue;
+            }
+            int sourceShotNumber = intValue(firstNonNull(shot.get("shotNumber"), shot.get("shot_number")), result.size() + 1);
+            for (int index = 0; index < chunks.size(); index++) {
+                Map<String, Object> splitShot = new LinkedHashMap<>(shot);
+                String chunk = chunks.get(index);
+                splitShot.put("voiceOver", chunk);
+                splitShot.put("voiceover", chunk);
+                splitShot.put("dialogueScript", chunk);
+                splitShot.put("exactDialogue", chunk);
+                splitShot.put("dialogue", Map.of("line", chunk));
+                splitShot.put("sourceShotNumber", sourceShotNumber);
+                splitShot.put("dialoguePart", index + 1);
+                splitShot.put("dialoguePartCount", chunks.size());
+                splitShot.put("title", defaultString(shot.get("title"), "Shot " + sourceShotNumber) + " - Part " + (index + 1));
+                splitShot.put("durationSeconds", Math.max(1, Math.min(safeMaxClipSeconds, estimatedDialogueSeconds(chunk))));
+                Map<String, Object> normalized = storyboardCapabilityShot(splitShot, result.size() + 1, runningStart, chunk, index + 1, chunks.size(), safeMaxClipSeconds);
+                result.add(normalized);
+                runningStart += intValue(normalized.get("durationSeconds"), safeMaxClipSeconds);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Object> storyboardCapabilityShot(
+            Map<String, Object> shot,
+            int shotNumber,
+            int runningStart,
+            String dialogueChunk,
+            int dialoguePart,
+            int dialoguePartCount,
+            int maxClipSeconds
+    ) {
+        Map<String, Object> result = new LinkedHashMap<>(shot == null ? Map.of() : shot);
+        int durationSeconds = Math.max(1, Math.min(
+                maxClipSeconds,
+                Math.max(
+                        intValue(firstNonNull(result.get("durationSeconds"), result.get("duration_seconds")), maxClipSeconds),
+                        estimatedDialogueSeconds(defaultString(dialogueChunk, storyboardDialogueText(result)))
+                )
+        ));
+        result.put("shotNumber", shotNumber);
+        result.put("sceneNumber", shotNumber);
+        result.put("durationSeconds", durationSeconds);
+        result.put("startSeconds", runningStart);
+        result.put("endSeconds", runningStart + durationSeconds);
+        result.put("startTime", runningStart);
+        result.put("endTime", runningStart + durationSeconds);
+        result.put("maxClipSeconds", maxClipSeconds);
+        result.put("maxDialogueSecondsPerShot", Math.max(1, maxClipSeconds - 1));
+        result.put("dialogueTimingPolicy", dialogueTimingPolicy(maxClipSeconds));
+        if (dialoguePartCount > 1) {
+            result.put("dialoguePart", dialoguePart);
+            result.put("dialoguePartCount", dialoguePartCount);
+            result.put("storyboardSegmentation", "model_duration_capability");
+        }
+        return result;
+    }
+
+    private String storyboardDialogueText(Map<String, Object> shot) {
+        if (shot == null || shot.isEmpty()) {
+            return "";
+        }
+        String explicit = defaultString(firstNonNull(
+                firstNonNull(shot.get("dialogueScript"), shot.get("exactDialogue")),
+                firstNonNull(shot.get("voiceOver"), shot.get("voiceover"))
+        ), "");
+        if (!explicit.isBlank()) {
+            return normalizeDialogueText(explicit);
+        }
+        String dialogue = normalizeDialogueText(plainDialogueText(shot.get("dialogue")));
+        if (!dialogue.isBlank()) {
+            return dialogue;
+        }
+        return normalizeDialogueText(defaultString(firstNonNull(shot.get("caption"), shot.get("textOverlay")), ""));
+    }
+
+    private String plainDialogueText(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(this::plainDialogueText)
+                    .filter(text -> !text.isBlank())
+                    .reduce((left, right) -> left + " " + right)
+                    .orElse("");
+        }
+        if (value instanceof Map<?, ?> rawMap) {
+            Map<String, Object> map = mapValue(rawMap);
+            String direct = defaultString(firstNonNull(
+                    firstNonNull(map.get("text"), map.get("line")),
+                    firstNonNull(map.get("voiceOver"), map.get("voiceover"))
+            ), "");
+            if (!direct.isBlank()) {
+                return direct;
+            }
+            return map.values().stream()
+                    .map(this::plainDialogueText)
+                    .filter(text -> !text.isBlank())
+                    .reduce((left, right) -> left + " " + right)
+                    .orElse("");
+        }
+        return defaultString(value, "");
+    }
+
+    private List<String> dialogueChunks(String dialogue, int maxWordsPerPart) {
+        String text = normalizeDialogueText(dialogue);
+        if (text.isBlank()) {
+            return List.of();
+        }
+        String[] words = text.split("\\s+");
+        if (words.length <= maxWordsPerPart) {
+            return List.of(text);
+        }
+        List<String> chunks = new ArrayList<>();
+        for (int index = 0; index < words.length; index += maxWordsPerPart) {
+            StringBuilder builder = new StringBuilder();
+            int end = Math.min(words.length, index + maxWordsPerPart);
+            for (int cursor = index; cursor < end; cursor++) {
+                if (!builder.isEmpty()) {
+                    builder.append(' ');
+                }
+                builder.append(words[cursor]);
+            }
+            chunks.add(builder.toString());
+        }
+        return chunks;
+    }
+
+    private String normalizeDialogueText(String value) {
+        return defaultString(value, "").replaceAll("\\s+", " ").trim();
+    }
+
+    private int estimatedDialogueSeconds(String dialogue) {
+        String text = normalizeDialogueText(dialogue);
+        if (text.isBlank()) {
+            return 0;
+        }
+        return Math.max(1, (int) Math.ceil(text.split("\\s+").length / 2.4d) + 1);
+    }
+
     private Map<String, Object> storyboardMetadata(CreatorScript script, UUID generationJobId, String screenType, RenderSize renderSize) {
+        return storyboardMetadata(script, generationJobId, screenType, renderSize, null);
+    }
+
+    private Map<String, Object> storyboardMetadata(
+            CreatorScript script,
+            UUID generationJobId,
+            String screenType,
+            RenderSize renderSize,
+            ProductionPlanTagService.VideoModelCapability videoModelCapability
+    ) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("scriptId", script.getId().toString());
         metadata.put("generationJobId", generationJobId.toString());
         metadata.put("screenType", screenType);
         metadata.put("renderWidth", renderSize.width());
         metadata.put("renderHeight", renderSize.height());
+        metadata.put("videoModelCapability", videoModelCapabilityMap(videoModelCapability));
         metadata.put("imageProvider", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini" : "local");
         metadata.put("imageModel", properties.getAi().isStoryboardImageGenerationEnabled() ? properties.getAi().getGeminiImageModel() : "local_storyboard_sketch_v1");
         metadata.put("renderer", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini_image_model" : "local_storyboard_sketch_v1");
@@ -2803,6 +3684,9 @@ public class StoryboardService {
 
     private String assetKeyType(String imageKind) {
         String value = defaultString(imageKind, "storyboard").toLowerCase(Locale.ROOT);
+        if (value.contains("production") || value.contains("video_anchor") || value.contains("image_anchor")) {
+            return "production";
+        }
         if (value.contains("light")) {
             return "lighting";
         }
@@ -2893,6 +3777,88 @@ public class StoryboardService {
         if (target != null && value != null) {
             target.put(key, value);
         }
+    }
+
+    private void recordGeneratedPlanAsset(
+            CreatorScriptShotPlan plan,
+            String imageKind,
+            CreatorAsset asset,
+            String signedUrl,
+            String generationPrompt
+    ) {
+        if (plan == null || asset == null) return;
+        String completedAt = OffsetDateTime.now().toString();
+        Map<String, Object> generatedAsset = new LinkedHashMap<>();
+        generatedAsset.put("assetId", asset.getId() == null ? "" : asset.getId().toString());
+        generatedAsset.put("assetType", asset.getAssetType());
+        generatedAsset.put("bucket", asset.getBucket());
+        generatedAsset.put("objectKey", asset.getObjectKey());
+        generatedAsset.put("contentType", asset.getContentType());
+        generatedAsset.put("signedUrl", defaultString(signedUrl, asset.getPublicUrl()));
+        generatedAsset.put("generationPrompt", defaultString(generationPrompt, ""));
+        generatedAsset.put("completedAt", completedAt);
+
+        Map<String, Object> input = new LinkedHashMap<>(
+                plan.getInputPayload() == null ? Map.of() : plan.getInputPayload()
+        );
+        Map<String, Object> generatedAssets = new LinkedHashMap<>(mapValue(input.get("generatedPlanningAssets")));
+        generatedAssets.put(imageKind, generatedAsset);
+        input.put("generatedPlanningAssets", generatedAssets);
+        input.put("lastGeneratedImageKind", imageKind);
+        input.put("lastGeneratedAt", completedAt);
+
+        if ("storyboard".equals(imageKind)) {
+            Map<String, Object> storyboard = new LinkedHashMap<>(
+                    plan.getStoryboardTag() == null ? Map.of() : plan.getStoryboardTag()
+            );
+            storyboard.put("generatedImage", generatedAsset);
+            storyboard.put("generatedImageAssetId", generatedAsset.get("assetId"));
+            storyboard.put("generatedImageUrl", generatedAsset.get("signedUrl"));
+            storyboard.put("generatedImagePrompt", generatedAsset.get("generationPrompt"));
+            storyboard.put("storyboardRegenerationRequired", false);
+            storyboard.put("lastRegeneratedAt", completedAt);
+            plan.setStoryboardTag(storyboard);
+            input.put("storyboardRegenerationRequired", false);
+        } else if ("production".equals(imageKind)) {
+            Map<String, Object> storyboard = new LinkedHashMap<>(
+                    plan.getStoryboardTag() == null ? Map.of() : plan.getStoryboardTag()
+            );
+            storyboard.put("generatedProductFrame", generatedAsset);
+            storyboard.put("generatedProductFrameAssetId", generatedAsset.get("assetId"));
+            storyboard.put("generatedProductFrameUrl", generatedAsset.get("signedUrl"));
+            storyboard.put("generatedProductFramePrompt", generatedAsset.get("generationPrompt"));
+            storyboard.put("productFrameRegenerationRequired", false);
+            storyboard.put("lastProductFrameRegeneratedAt", completedAt);
+            plan.setStoryboardTag(storyboard);
+            input.put("productFrameRegenerationRequired", false);
+        } else if ("lighting".equals(imageKind)) {
+            Map<String, Object> lighting = new LinkedHashMap<>(
+                    plan.getLightingBuildSheetTag() == null ? Map.of() : plan.getLightingBuildSheetTag()
+            );
+            lighting.put("generatedImage", generatedAsset);
+            lighting.put("regenerationRequired", false);
+            lighting.put("lastRegeneratedAt", completedAt);
+            plan.setLightingBuildSheetTag(lighting);
+        } else if ("dp".equals(imageKind)) {
+            Map<String, Object> camera = new LinkedHashMap<>(
+                    plan.getCameraPlanSheetTag() == null ? Map.of() : plan.getCameraPlanSheetTag()
+            );
+            camera.put("generatedImage", generatedAsset);
+            camera.put("regenerationRequired", false);
+            camera.put("lastRegeneratedAt", completedAt);
+            plan.setCameraPlanSheetTag(camera);
+        }
+
+        boolean storyboardPending = Boolean.TRUE.equals(input.get("storyboardRegenerationRequired"));
+        boolean productFramePending = Boolean.TRUE.equals(input.get("productFrameRegenerationRequired"));
+        input.put("regenerationRequired", storyboardPending || productFramePending);
+        plan.setInputPayload(input);
+        if (("storyboard".equals(imageKind) || "production".equals(imageKind))
+                && !storyboardPending
+                && !productFramePending) {
+            plan.setStatus("READY");
+        }
+        shotPlanRepository.save(plan);
     }
 
     private String dialogueLine(Map<String, Object> shot) {
@@ -2989,6 +3955,224 @@ public class StoryboardService {
         return text.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
+    private Map<String, Object> compactImageContext(Map<String, Object> source, String... keys) {
+        if (source == null || source.isEmpty() || keys == null || keys.length == 0) {
+            return Map.of();
+        }
+        Map<String, Object> selected = new LinkedHashMap<>();
+        for (String key : keys) {
+            if (key != null && source.containsKey(key) && source.get(key) != null) {
+                selected.put(key, source.get(key));
+            }
+        }
+        return selected;
+    }
+
+    private Map<String, Object> globalImageContinuityContext(Map<String, Object> screenplay) {
+        Map<String, Object> safeScreenplay = screenplay == null ? Map.of() : screenplay;
+        Map<String, Object> context = new LinkedHashMap<>(compactImageContext(
+                safeScreenplay,
+                "projectTitle", "brandName", "productName", "productCategory", "inferredTone", "emotionalArc",
+                "creativeDirection", "dialogueLanguage", "contentRules", "typographySystem", "backgroundMusicPlan"
+        ));
+        Map<String, Object> product = mapValue(firstNonNull(
+                safeScreenplay.get("productIntelligence"),
+                safeScreenplay.get("productIntelligenceBrief")
+        ));
+        if (product.isEmpty()) {
+            Map<String, Object> creatorContext = mapValue(safeScreenplay.get("creatorContext"));
+            product = mapValue(firstNonNull(
+                    creatorContext.get("productIntelligenceBrief"),
+                    creatorContext.get("productIntelligence")
+            ));
+        }
+        Map<String, Object> productIdentity = compactImageContext(
+                product,
+                "brandName", "productName", "name", "title", "category", "variant", "flavour", "flavor",
+                "productDescription", "visualDescription", "packagingDescription", "packagingDetails", "labelCopy",
+                "logoDescription", "approvedClaims", "claims", "ingredients", "colors", "materials", "dimensions",
+                "identityLocks", "negativeConstraints"
+        );
+        Map<String, Object> productUnderstanding = compactImageContext(
+                mapValue(product.get("productUnderstanding")),
+                "brandName", "productName", "name", "variant", "flavour", "flavor", "visualDescription",
+                "packagingDescription", "packagingDetails", "labelCopy", "logoDescription", "approvedClaims",
+                "claims", "colors", "materials", "dimensions", "identityLocks", "negativeConstraints"
+        );
+        if (!productUnderstanding.isEmpty()) {
+            productIdentity = new LinkedHashMap<>(productIdentity);
+            productIdentity.put("productUnderstanding", productUnderstanding);
+        }
+        if (!productIdentity.isEmpty()) {
+            context.put("productIdentity", productIdentity);
+        }
+        Map<String, Object> directorBlueprint = videoDirectorBlueprint(safeScreenplay);
+        Map<String, Object> standards = compactImageContext(
+                directorBlueprint,
+                "mode", "conceptTitle", "directingPrinciple", "openingRule", "revealArc", "productIdentityPolicy",
+                "cameraPhilosophy", "lightingPhilosophy", "masteringResolution", "captureStandard",
+                "cameraDepartmentStandard", "lightingDepartmentStandard", "directionStandard"
+        );
+        if (!standards.isEmpty()) {
+            context.put("directorStandards", standards);
+        }
+        context.put("continuityPolicy", List.of(
+                "Preserve exact approved product and brand identity across every shot.",
+                "A reference marked EXACT_SOURCE is used faithfully; an inspiration reference supplies only visual essence and never replaces product identity.",
+                "Maintain screen direction, product geometry/state, light direction, palette, set geography, typography system, and edit rhythm across shot boundaries."
+        ));
+        return context;
+    }
+
+    private Map<String, Object> adjacentShotImageContinuity(
+            Map<String, Object> screenplay,
+            Map<String, Object> currentShot,
+            int shotNumber
+    ) {
+        List<Map<String, Object>> shots = imageShotList(screenplay == null ? null : screenplay.get("shots"));
+        Map<String, Object> previous = shotByNumber(shots, shotNumber - 1);
+        Map<String, Object> next = shotByNumber(shots, shotNumber + 1);
+        Map<String, Object> bridge = new LinkedHashMap<>();
+        bridge.put("selectedShotNumber", shotNumber);
+        if (!previous.isEmpty()) {
+            bridge.put("previousShotOutgoingState", boundaryShotPacket(screenplay, previous, shotNumber - 1, false));
+        }
+        bridge.put("selectedShotBoundary", compactImageContext(
+                currentShot,
+                "shotNumber", "startTime", "startTimeSeconds", "endTime", "endTimeSeconds", "durationSeconds",
+                "transitionIn", "transitionOut", "continuityAnchor", "productState", "screenDirection"
+        ));
+        if (!next.isEmpty()) {
+            bridge.put("nextShotIncomingState", boundaryShotPacket(screenplay, next, shotNumber + 1, true));
+        }
+        bridge.put("bridgeRule", "Start from the previous outgoing state and finish in the exact state required by the next shot. Use a motivated match through motion, light, texture, shape, focus, reflection, or product position; do not create a continuity reset.");
+        return bridge;
+    }
+
+    private Map<String, Object> boundaryShotPacket(
+            Map<String, Object> screenplay,
+            Map<String, Object> shot,
+            int shotNumber,
+            boolean incoming
+    ) {
+        Map<String, Object> boundary = new LinkedHashMap<>(compactImageContext(
+                shot,
+                "shotNumber", "title", "purpose", "action", "visualDirection", "description", "startTime",
+                "startTimeSeconds", "endTime", "endTimeSeconds", "camera", "cameraMovement", "composition",
+                "lighting", "environment", "productState", "productVisibilityPercent", "screenDirection",
+                "transitionIn", "transitionOut", "continuityAnchor", "textOverlay"
+        ));
+        Map<String, Object> director = resolvedDirectorShot(screenplay, shot, shotNumber);
+        Map<String, Object> directorBoundary = new LinkedHashMap<>(compactImageContext(
+                director,
+                "directorRole", "objective", "openingImage", "endFrame", "visualConcept", "cameraMovement",
+                "lighting", "focusBehavior", "productVisibilityPercent", "transitionIn", "transitionOut",
+                "continuityAnchor"
+        ));
+        List<Map<String, Object>> frames = imageShotList(director.get("perSecondFrames"));
+        if (!frames.isEmpty()) {
+            Map<String, Object> edgeFrame = incoming ? frames.get(0) : frames.get(frames.size() - 1);
+            directorBoundary.put(incoming ? "firstFrame" : "lastFrame", compactDirectorFrame(edgeFrame));
+        }
+        if (!directorBoundary.isEmpty()) {
+            boundary.put("directorBoundary", directorBoundary);
+        }
+        return boundary;
+    }
+
+    private Map<String, Object> currentShotDirectorPacket(
+            Map<String, Object> screenplay,
+            Map<String, Object> shot,
+            int shotNumber
+    ) {
+        Map<String, Object> director = resolvedDirectorShot(screenplay, shot, shotNumber);
+        Map<String, Object> packet = new LinkedHashMap<>(director);
+        packet.remove("masterVideoPrompt");
+        packet.remove("perSecondVideoPrompt");
+        packet.remove("shots");
+        packet.remove("shotByShot");
+        packet.remove("videoDirectorBlueprint");
+        packet.putIfAbsent("shotNumber", shotNumber);
+        if (!packet.containsKey("generationPrompt")) {
+            putPromptValue(packet, "generationPrompt", firstNonBlank(shot.get("videoPrompt"), shot.get("generationPrompt")));
+        }
+        List<Map<String, Object>> frames = imageShotList(firstNonBlank(
+                director.get("perSecondFrames"),
+                shot.get("perSecondFrames")
+        ));
+        if (!frames.isEmpty()) {
+            packet.put("perSecondFrames", frames);
+        }
+        packet.put("executionRule", "Execute every listed field and every per-second beat coherently. Reconcile repeated wording, but do not omit unique direction or invent replacements.");
+        return packet;
+    }
+
+    private Map<String, Object> shotScopedImageContext(Map<String, Object> shot) {
+        if (shot == null || shot.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> packet = new LinkedHashMap<>(shot);
+        packet.remove("masterVideoPrompt");
+        packet.remove("perSecondVideoPrompt");
+        packet.remove("videoDirectorBlueprint");
+        packet.remove("videoDirectorPlan");
+        packet.remove("allShots");
+        packet.remove("shotByShot");
+        packet.remove("clientReview");
+        return packet;
+    }
+
+    private Map<String, Object> compactDirectorFrame(Map<String, Object> frame) {
+        return compactImageContext(
+                frame,
+                "second", "startTimeSeconds", "endTimeSeconds", "frameDescription", "cameraAction",
+                "lightingAction", "focusAction", "directorAction", "transitionAction", "soundAction",
+                "productVisibilityPercent", "overlayAction", "continuityAnchor", "promptSegment"
+        );
+    }
+
+    private Map<String, Object> resolvedDirectorShot(
+            Map<String, Object> screenplay,
+            Map<String, Object> shot,
+            int shotNumber
+    ) {
+        Map<String, Object> embedded = mapValue(shot == null ? null : shot.get("videoDirectorPlan"));
+        if (embedded.containsKey("shots") || embedded.containsKey("shotByShot")) {
+            Map<String, Object> resolved = imageShotByNumber(
+                    firstNonNull(embedded.get("shots"), embedded.get("shotByShot")),
+                    shotNumber
+            );
+            if (!resolved.isEmpty()) return resolved;
+        }
+        if (!embedded.isEmpty()) {
+            return embedded;
+        }
+        Map<String, Object> blueprint = videoDirectorBlueprint(screenplay);
+        return imageShotByNumber(firstNonNull(blueprint.get("shots"), blueprint.get("shotByShot")), shotNumber);
+    }
+
+    private Map<String, Object> videoDirectorBlueprint(Map<String, Object> screenplay) {
+        Map<String, Object> safeScreenplay = screenplay == null ? Map.of() : screenplay;
+        Map<String, Object> blueprint = mapValue(safeScreenplay.get("videoDirectorPlan"));
+        if (!blueprint.isEmpty()) return blueprint;
+        Map<String, Object> review = mapValue(safeScreenplay.get("clientReview"));
+        return mapValue(review.get("videoDirectorPlan"));
+    }
+
+    private Map<String, Object> imageShotByNumber(Object value, int shotNumber) {
+        return shotByNumber(imageShotList(value), shotNumber);
+    }
+
+    private List<Map<String, Object>> imageShotList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .map(this::mapValue)
+                .filter(item -> !item.isEmpty())
+                .toList();
+    }
+
     private String uppercase(String value) {
         return defaultString(value, "").toUpperCase(Locale.ROOT);
     }
@@ -3071,7 +4255,8 @@ public class StoryboardService {
             List<Map<String, Object>> shots,
             String screenType,
             RenderSize renderSize,
-            Duration signedUrlTtl
+            Duration signedUrlTtl,
+            ProductionPlanTagService.VideoModelCapability videoModelCapability
     ) {
     }
 
@@ -3083,6 +4268,7 @@ public class StoryboardService {
 
     private static class ShotImageAssets {
         private CreatorAsset storyboard;
+        private CreatorAsset production;
         private CreatorAsset lighting;
         private CreatorAsset cameraPlan;
     }

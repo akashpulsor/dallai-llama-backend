@@ -4041,12 +4041,19 @@ public class CreatorShotTakeService {
         task.put("userSoundTimeline", editorSoundTimeline);
         task.put("userSoundLayers", userSoundLayers);
         task.put("mixSettings", mixSettings);
+        task.put("audioMixStandards", defaultAudioMixStandards());
         task.put("volumeAutomation", mixSettings.get("volumeAutomation"));
         task.put("snippetAssets", soundSnippetAssets(userSoundLayers));
         task.put("costMetadata", costMetadata);
         task.put("guardrails", List.of(
                 "preserve_original_dialogue_sync",
                 "preserve_original_voice_texture",
+                "keep_dialogue_level_consistent",
+                "duck_background_music_under_speech",
+                "preserve_scene_matched_room_tone",
+                "use_sfx_sparingly",
+                "match_reverb_to_scene",
+                "apply_smooth_audio_fades",
                 "apply_user_timeline_layers_only",
                 "apply_volume_automation",
                 "normalize_loudness_without_changing_performance"
@@ -5107,8 +5114,15 @@ public class CreatorShotTakeService {
         prompt.put("shotTitle", firstText(storyboardTag.get("shotTitle"), storyboardTag.get("title"), "Shot " + shotNumber));
         prompt.put("timelineAllowsOverlap", true);
         prompt.put("layers", soundTimeline);
+        prompt.put("audioMixStandards", defaultAudioMixStandards());
         prompt.put("instructions", List.of(
                 "Keep original actor dialogue intelligible and aligned with the uploaded take.",
+                "Keep dialogue at a consistent speech-first level.",
+                "Duck background music under speech and keep ambience under the dialogue bed.",
+                "Maintain ambient room tone that matches the scene.",
+                "Use small whooshes, clicks, transitions, foley, and sync hits sparingly.",
+                "Match reverb to the physical room or outdoor space.",
+                "Use smooth fades between audio segments.",
                 "Layer ambience, foley, and sync hits around dialogue; do not replace the actor voice unless requested.",
                 "Return final audio cues with startSeconds, endSeconds, layerType, description, volumeLevel, and overlapsAllowed."
         ));
@@ -5330,10 +5344,16 @@ public class CreatorShotTakeService {
                 - Use the audio-enhancement endpoint for recorded dialogue cleanup.
                 - Make it loopable if requested.
                 - Leave headroom for dialogue and obey ducking context.
+                - Assume dialogue is primary and consistent; generated music/ambience/SFX must sit under speech.
+                - Keep ambient room tone subtle and scene-matched.
+                - Use small whooshes, clicks, and transitions sparingly.
+                - Match reverb to the described scene space.
+                - Make clip edges fade cleanly so timeline joins are smooth.
                 - Do not include copyrighted melodies, recognizable songs, artist imitation, or trademarked samples.
 
                 Shot context: %s
                 Existing mix settings: %s
+                Audio mix standards: %s
                 """.formatted(
                 defaultString(request == null ? null : request.prompt(), "Generated sound"),
                 layerType,
@@ -5344,7 +5364,8 @@ public class CreatorShotTakeService {
                 end,
                 end - start,
                 firstText(storyboardTag.get("shotTitle"), storyboardTag.get("title"), "Shot " + take.shotNumber()),
-                writeJson(mixSettings)
+                writeJson(mixSettings),
+                writeJson(defaultAudioMixStandards())
         ).trim();
         String negativePrompt = "vocals, lyrics, singing, spoken dialogue, narration, voiceover, copyrighted melodies, famous songs, artist imitation, trademarked samples";
         String lyriaPrompt = """
@@ -5355,6 +5376,7 @@ public class CreatorShotTakeService {
                 Instrumentation: %s.
                 Rhythm or tempo: %s.
                 Shot context: %s.
+                Audio mix standards: dialogue is primary, music ducks under speech, ambience stays as room tone, SFX are sparse, reverb matches the scene, and clip edges fade smoothly.
                 Keep it clean, original, creator-video friendly, and easy to trim to %.2f seconds.
                 """.formatted(
                 defaultString(request == null ? null : request.prompt(), "Generate clean creator-video music."),
@@ -5381,6 +5403,7 @@ public class CreatorShotTakeService {
         task.put("prompt", prompt);
         task.put("lyriaPrompt", lyriaPrompt);
         task.put("negativePrompt", negativePrompt);
+        task.put("audioMixStandards", defaultAudioMixStandards());
         task.put("userPrompt", defaultString(request == null ? null : request.prompt(), ""));
         task.put("startSeconds", start);
         task.put("endSeconds", end);
@@ -5588,6 +5611,8 @@ public class CreatorShotTakeService {
         mix.put("ambienceBedDb", clampNumber(decimalValue(mix.get("ambienceBedDb"), -22.0), -48.0, 0.0));
         mix.put("backgroundMusicDucksUnderDialogue", Boolean.parseBoolean(stringValue(mix.get("backgroundMusicDucksUnderDialogue"), "true")));
         mix.put("foleyDucksUnderDialogue", Boolean.parseBoolean(stringValue(mix.get("foleyDucksUnderDialogue"), "true")));
+        mix.put("snippetFadeMs", clampNumber(decimalValue(mix.get("snippetFadeMs"), 120.0), 0.0, 2000.0));
+        mix.put("audioMixStandards", audioMixStandards(mix.get("audioMixStandards"), mix.get("audio_mix_standards")));
         mix.put("volumeAutomation", volumeAutomationList(mix.get("volumeAutomation")));
         return mix;
     }
@@ -5628,7 +5653,37 @@ public class CreatorShotTakeService {
         mix.put("ambienceBedDb", -22.0);
         mix.put("backgroundMusicDucksUnderDialogue", true);
         mix.put("foleyDucksUnderDialogue", true);
+        mix.put("snippetFadeMs", 120.0);
+        mix.put("audioMixStandards", defaultAudioMixStandards());
         return mix;
+    }
+
+    private Map<String, Object> audioMixStandards(Object... overrides) {
+        Map<String, Object> standards = defaultAudioMixStandards();
+        if (overrides != null) {
+            for (Object override : overrides) {
+                if (override instanceof Map<?, ?> raw) {
+                    standards.putAll(toStringObjectMap(raw));
+                }
+            }
+        }
+        return standards;
+    }
+
+    private Map<String, Object> defaultAudioMixStandards() {
+        Map<String, Object> standards = new LinkedHashMap<>();
+        standards.put("dialogueLevel", "consistent_speech_first");
+        standards.put("backgroundMusicDucking", "duck_under_speech");
+        standards.put("ambientRoomTone", "maintain_low_scene_matched_room_tone");
+        standards.put("soundEffectsUse", "small_sfx_sparingly_for_whooshes_clicks_transitions");
+        standards.put("reverbMatch", "match_scene_space_and_camera_distance");
+        standards.put("fades", "smooth_fades_between_audio_segments");
+        standards.put("dialogueTargetDb", -3);
+        standards.put("musicBedDb", -18);
+        standards.put("ambienceBedDb", -22);
+        standards.put("sfxPeakDb", -9);
+        standards.put("fadeMs", 120);
+        return standards;
     }
 
     private List<Map<String, Object>> soundSnippetAssets(List<Map<String, Object>> layers) {

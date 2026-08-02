@@ -1,0 +1,11 @@
+.git
+.idea
+.vscode
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/*.pyo
+ai-service/.env
+ai-service/tests
+ai-service/work

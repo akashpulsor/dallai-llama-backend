@@ -4,6 +4,7 @@ import com.dalai.llama.creator.domain.entity.CreatorIdea;
 import com.dalai.llama.creator.domain.entity.CreatorProject;
 import com.dalai.llama.creator.domain.entity.CreatorTrend;
 import com.dalai.llama.creator.dto.request.LockIdeaSelectionRequest;
+import com.dalai.llama.creator.dto.request.CampaignAngleSelectionRequest;
 import com.dalai.llama.creator.dto.response.LockedIdeaSelectionResponse;
 import com.dalai.llama.creator.repository.CreatorIdeaRepository;
 import com.dalai.llama.creator.repository.CreatorTrendRepository;
@@ -100,6 +101,46 @@ public class LockedIdeaSelectionService {
         return toResponse(idea);
     }
 
+    @Transactional
+    public LockedIdeaSelectionResponse selectCampaignAngle(
+            UUID lockedIdeaId,
+            CampaignAngleSelectionRequest request,
+            String tenantId,
+            String userId
+    ) {
+        if (request == null || request.campaignAngle() == null || request.campaignAngle().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A campaign angle is required.");
+        }
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        CreatorIdea lockedIdea = ideaRepository.findByIdAndTenantIdAndUserId(lockedIdeaId, safeTenantId, safeUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Saved brief was not found."));
+        if (!"LOCKED".equalsIgnoreCase(lockedIdea.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Campaign angles can only be selected on a saved brief.");
+        }
+
+        Map<String, Object> angle = new LinkedHashMap<>(request.campaignAngle());
+        Map<String, Object> context = new LinkedHashMap<>(lockedIdea.getSelectionContext() == null ? Map.of() : lockedIdea.getSelectionContext());
+        Map<String, Object> selectionPayload = mapValue(context.get("selectionPayload"));
+        selectionPayload.put("campaignAngle", angle);
+        Map<String, Object> selectedIdea = mapValue(selectionPayload.get("idea"));
+        if (!selectedIdea.isEmpty()) {
+            selectedIdea.put("campaignAngle", angle);
+            selectionPayload.put("idea", selectedIdea);
+        }
+        Map<String, Object> productBrief = mapValue(selectionPayload.get("productIntelligenceBrief"));
+        if (!productBrief.isEmpty()) {
+            productBrief.put("campaignAngle", angle);
+            selectionPayload.put("productIntelligenceBrief", productBrief);
+        }
+        context.put("selectionPayload", selectionPayload);
+        context.put("campaignAngle", angle);
+        context.put("campaignAngleSelectedAt", OffsetDateTime.now().toString());
+        lockedIdea.setSelectionContext(context);
+
+        return toResponse(ideaRepository.save(lockedIdea));
+    }
+
     private String normalizeSource(String sourceType) {
         String source = sourceType == null ? "" : sourceType.trim().toUpperCase(Locale.ROOT);
         if ("TREND".equals(source) || "ORIGINAL".equals(source)) {
@@ -135,11 +176,57 @@ public class LockedIdeaSelectionService {
         }
         context.put("durationSeconds", durationSeconds);
         context.put("lockedAt", lockedAt.toString());
-        context.put("selectionPayload", request.selectionPayload() == null ? Map.of() : request.selectionPayload());
+        Map<String, Object> selectionPayload = request.selectionPayload() == null ? Map.of() : request.selectionPayload();
+        context.put("selectionPayload", selectionPayload);
+        promoteSelectionPayloadValue(context, selectionPayload, "topicType");
+        promoteSelectionPayloadValue(context, selectionPayload, "dialogueLanguage");
+        promoteSelectionPayloadValue(context, selectionPayload, "screenType");
+        promoteSelectionPayloadValue(context, selectionPayload, "storytellingType");
+        promoteSelectionPayloadValue(context, selectionPayload, "hookLens");
+        promoteSelectionPayloadValue(context, selectionPayload, "productionStyle");
+        promoteSelectionPayloadValue(context, selectionPayload, "hybridSceneMode");
+        promoteSelectionPayloadValue(context, selectionPayload, "brollStyle");
+        promoteSelectionPayloadValue(context, selectionPayload, "captionStyle");
+        promoteSelectionPayloadValue(context, selectionPayload, "productionStyleGuidance");
+        promoteSelectionPayloadValue(context, selectionPayload, "screenplayVideoGenerationPackage");
+        promoteSelectionPayloadValue(context, selectionPayload, "briefMode");
+        promoteSelectionPayloadValue(context, selectionPayload, "marketingAgentMode");
+        promoteSelectionPayloadValue(context, selectionPayload, "productInputKey");
+        promoteSelectionPayloadValue(context, selectionPayload, "productIntelligenceBrief");
+        promoteSelectionPayloadValue(context, selectionPayload, "productUnderstanding");
+        promoteSelectionPayloadValue(context, selectionPayload, "adConceptLanes");
+        promoteSelectionPayloadValue(context, selectionPayload, "brandContext");
+        promoteSelectionPayloadValue(context, selectionPayload, "campaignObjective");
+        promoteSelectionPayloadValue(context, selectionPayload, "campaignAngle");
         if (trend != null) {
             context.put("trend", trendSnapshot(trend));
         }
         return context;
+    }
+
+    private void promoteSelectionPayloadValue(Map<String, Object> target, Map<String, Object> selectionPayload, String key) {
+        Object value = firstSelectionPayloadValue(selectionPayload, key);
+        if (hasValue(value)) {
+            target.put(key, value);
+        }
+    }
+
+    private Object firstSelectionPayloadValue(Map<String, Object> selectionPayload, String key) {
+        if (selectionPayload == null || selectionPayload.isEmpty()) {
+            return null;
+        }
+        Object value = selectionPayload.get(key);
+        if (hasValue(value)) {
+            return value;
+        }
+        Map<String, Object> idea = mapValue(selectionPayload.get("idea"));
+        value = idea.get(key);
+        if (hasValue(value)) {
+            return value;
+        }
+        Map<String, Object> packagePayload = mapValue(selectionPayload.get("screenplayVideoGenerationPackage"));
+        value = packagePayload.get(key);
+        return hasValue(value) ? value : null;
     }
 
     private Map<String, Object> trendSnapshot(CreatorTrend trend) {
@@ -223,6 +310,21 @@ public class LockedIdeaSelectionService {
         if (value != null && !value.isBlank()) {
             target.put(key, value);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> mapValue(Object value) {
+        return value instanceof Map<?, ?> map ? new LinkedHashMap<>((Map<String, Object>) map) : Map.of();
+    }
+
+    private boolean hasValue(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Map<?, ?> map) {
+            return !map.isEmpty();
+        }
+        return !String.valueOf(value).isBlank();
     }
 
     private String truncate(String value, int maxLength) {

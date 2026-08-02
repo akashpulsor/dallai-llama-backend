@@ -37,9 +37,17 @@ FROM eclipse-temurin:17-jre-jammy
 
 ARG DEEPFILTER_VERSION=0.5.6
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        ca-certificates \
+        curl \
+        fontconfig \
+        fonts-dejavu-core \
+        fonts-liberation \
+        fonts-noto-core \
     && curl -fsSL "https://github.com/Rikorose/DeepFilterNet/releases/download/v${DEEPFILTER_VERSION}/deep-filter-${DEEPFILTER_VERSION}-x86_64-unknown-linux-musl" -o /usr/local/bin/deep-filter \
     && chmod +x /usr/local/bin/deep-filter \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rnnoise-build /usr/local/bin/rnnoise_demo /usr/local/bin/rnnoise_demo
@@ -50,7 +58,7 @@ RUN ldconfig
 WORKDIR /app
 
 ENV JAVA_OPTS="\
--XX:MaxRAMPercentage=70.0 \
+-XX:MaxRAMPercentage=45.0 \
 -XX:MaxMetaspaceSize=512m \
 -XX:+UseG1GC \
 -XX:+UseStringDeduplication \

@@ -64,12 +64,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(PaymentFailedException.class)
     public ResponseEntity<ErrorResponse> handlePaymentFailed(PaymentFailedException ex) {
+        HttpStatus status = paymentFailureStatus(ex);
         log.warn("Payment failed: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+        return ResponseEntity.status(status)
                 .body(ErrorResponse.builder()
                         .error("PAYMENT_FAILED")
                         .message(ex.getMessage())
-                        .status(HttpStatus.BAD_REQUEST.value())
+                        .status(status.value())
                         .timestamp(Instant.now())
                         .build());
     }
@@ -108,5 +109,28 @@ public class GlobalExceptionHandler {
                         .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
                         .timestamp(Instant.now())
                         .build());
+    }
+
+    private HttpStatus paymentFailureStatus(PaymentFailedException ex) {
+        String text = (ex.getMessage() + " " + causeMessages(ex)).toLowerCase();
+        if (text.contains("auth") || text.contains("unauthorized") || text.contains("invalid key")) {
+            return HttpStatus.UNAUTHORIZED;
+        }
+        if (text.contains("failed to create payment order")
+                || text.contains("failed to create razorpay order")
+                || text.contains("razorpay order")) {
+            return HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        return HttpStatus.BAD_REQUEST;
+    }
+
+    private String causeMessages(Throwable throwable) {
+        StringBuilder messages = new StringBuilder();
+        Throwable current = throwable.getCause();
+        while (current != null) {
+            messages.append(' ').append(current.getMessage());
+            current = current.getCause();
+        }
+        return messages.toString();
     }
 }

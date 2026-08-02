@@ -645,14 +645,17 @@ public class CreatorAiPricingService {
 
     private void addBillingProjection(Map<String, Object> estimate, BigDecimal actualTotalCost) {
         BigDecimal safeActual = actualTotalCost == null ? BigDecimal.ZERO : actualTotalCost;
-        BigDecimal multiplier = usageMarkupMultiplier();
+        BigDecimal markupPercent = billingMarkupPercentFor(estimate);
+        BigDecimal multiplier = markupMultiplier(markupPercent);
         BigDecimal billableTotal = safeActual.multiply(multiplier).setScale(6, RoundingMode.HALF_UP);
         estimate.put("actualTotalCost", safeActual);
         estimate.put("billableTotalCost", billableTotal);
         estimate.put("customerTotalCost", billableTotal);
-        estimate.put("billingMarkupPercent", usageMarkupPercent());
+        estimate.put("billingMarkupPercent", markupPercent);
         estimate.put("billingMarkupMultiplier", multiplier);
-        estimate.put("billingMarkupAppliedBy", "creator-service");
+        estimate.put("billingMarkupAppliedBy", isVideoEstimate(estimate)
+                ? "creator-service:video"
+                : "creator-service:general");
     }
 
     private long markedUpLong(long value) {
@@ -671,12 +674,37 @@ public class CreatorAiPricingService {
     }
 
     private BigDecimal usageMarkupMultiplier() {
-        return BigDecimal.ONE.add(usageMarkupPercent().divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
+        return markupMultiplier(usageMarkupPercent());
     }
 
     private BigDecimal usageMarkupPercent() {
         BigDecimal percent = properties.getAi().getBilling().getUsageMarkupPercent();
         return percent == null ? BigDecimal.ZERO : percent.max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal billingMarkupPercentFor(Map<String, Object> estimate) {
+        return isVideoEstimate(estimate) ? videoUsageMarkupPercent() : usageMarkupPercent();
+    }
+
+    private BigDecimal videoUsageMarkupPercent() {
+        BigDecimal percent = properties.getAi().getBilling().getVideoUsageMarkupPercent();
+        return percent == null ? BigDecimal.valueOf(20) : percent.max(BigDecimal.ZERO);
+    }
+
+    private BigDecimal markupMultiplier(BigDecimal markupPercent) {
+        BigDecimal safePercent = markupPercent == null ? BigDecimal.ZERO : markupPercent.max(BigDecimal.ZERO);
+        return BigDecimal.ONE.add(safePercent.divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP));
+    }
+
+    private boolean isVideoEstimate(Map<String, Object> estimate) {
+        String provider = String.valueOf(estimate.getOrDefault("provider", "")).trim().toLowerCase(Locale.ROOT);
+        return provider.equals("google_veo")
+                || provider.equals("gemini_omni")
+                || provider.equals("google_omni")
+                || provider.equals("seedance")
+                || provider.equals("luma")
+                || provider.equals("runway")
+                || provider.equals("decart");
     }
 
     private Map<String, Object> baseEstimate(String provider, String model, String operation, String source, String rateUnit) {

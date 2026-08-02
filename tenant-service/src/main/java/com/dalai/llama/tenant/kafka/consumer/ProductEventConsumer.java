@@ -28,7 +28,7 @@ public class ProductEventConsumer {
     private final TenantService tenantService;
     private final TenantAppService tenantAppService;
 
-    @KafkaListener(topics = "product.plan.assigned", groupId = "product-service",
+    @KafkaListener(topics = "product.plan.assigned", groupId = "tenant-product-consumer",
             containerFactory = "planAssignedListenerFactory")
     public void onPlanAssigned(PlanAssignedEvent event) {
         log.info("Received plan assignment event tenantId={}",
@@ -37,7 +37,7 @@ public class ProductEventConsumer {
     }
 
 
-    @KafkaListener(topics = "product.did.purchased", groupId = "product-service",
+    @KafkaListener(topics = "product.did.purchased", groupId = "tenant-product-consumer",
             containerFactory = "didPurchasedListenerFactory")
     public void onDidPurchased(DidPurchasedEvent event) {
         log.info("Received billing.wallet.credited: tenantId={}",
@@ -56,7 +56,7 @@ public class ProductEventConsumer {
         tenantAppService.handleSubscriptionActivated(event, tenantData);
     }
 
-    @KafkaListener(topics = "product.subscription.failed", groupId = "product-service",
+    @KafkaListener(topics = "product.subscription.failed", groupId = "tenant-product-consumer",
             containerFactory = "subscriptionActivationFailedListenerFactory")
     public void onSubscriptionActivationFailed(SubscriptionActivationFailedEvent event) {
         log.info("Received Subscription Failed: tenantId={} subscription Id={}",

@@ -70,13 +70,15 @@ razorpay:
   mock-enabled: ${RAZORPAY_MOCK_ENABLED:true}
 # Billing Configuration
 billing:
+  creator-video-package:
+    ai-short-starter-price-inr: ${CREATOR_VIDEO_PACKAGE_AI_SHORT_STARTER_PRICE_INR:5999}
   grace-period-days: ${GRACE_PERIOD_DAYS:7}
   low-balance-threshold: ${LOW_BALANCE_THRESHOLD:500}
   default-currency: ${DEFAULT_CURRENCY:INR}
   kafka:
     creator-billing-events-topic: ${CREATOR_KAFKA_BILLING_EVENTS_TOPIC:creator.billing.events}
   currency:
-    conversion-rates: ${BILLING_CURRENCY_CONVERSION_RATES:INR_INR=1}
+    conversion-rates: ${BILLING_CURRENCY_CONVERSION_RATES:INR_INR=1,USD_INR=95}
 
 # Service URLs (for internal communication)
 services:

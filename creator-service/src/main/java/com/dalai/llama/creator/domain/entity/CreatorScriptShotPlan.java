@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Mutability;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -57,26 +58,31 @@ public class CreatorScriptShotPlan {
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "storyboard_tag", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> storyboardTag = new LinkedHashMap<>();
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "lighting_build_sheet_tag", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> lightingBuildSheetTag = new LinkedHashMap<>();
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "camera_plan_sheet_tag", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> cameraPlanSheetTag = new LinkedHashMap<>();
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "prompt_run_ids", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> promptRunIds = new LinkedHashMap<>();
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "input_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> inputPayload = new LinkedHashMap<>();
 

@@ -11,6 +11,7 @@ import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,21 +30,42 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     @Transactional
-    public void createWallet(UUID tenantId) {
-        if (walletRepository.existsByTenantId(tenantId)) {
-            log.info("Wallet already exists for tenantId={}, skipping create", tenantId);
-            return;
+    public Wallet createWallet(UUID tenantId) {
+        return walletRepository.findByTenantId(tenantId)
+                .map(wallet -> {
+                    log.info("Wallet already exists for tenantId={}, skipping create", tenantId);
+                    return wallet;
+                })
+                .orElseGet(() -> createMissingWallet(tenantId, false));
+    }
+
+    @Override
+    @Transactional
+    public Wallet getOrCreateWallet(UUID tenantId) {
+        return walletRepository.findByTenantId(tenantId)
+                .orElseGet(() -> {
+                    log.warn("Wallet missing for tenantId={}, creating default wallet", tenantId);
+                    return createMissingWallet(tenantId, true);
+                });
+    }
+
+    private Wallet createMissingWallet(UUID tenantId, boolean recovered) {
+        try {
+            Wallet wallet = walletRepository.save(Wallet.createDefault(tenantId));
+
+            eventProducer.publishWalletCreated(WalletCreatedEvent.builder()
+                    .tenantId(tenantId)
+                    .walletId(wallet.getId())
+                    .occurredAt(Instant.now())
+                    .build());
+
+            log.info("{} wallet id={} for tenantId={}",
+                    recovered ? "Recovered missing" : "Created", wallet.getId(), tenantId);
+            return wallet;
+        } catch (DataIntegrityViolationException e) {
+            log.info("Wallet was created concurrently for tenantId={}, loading existing wallet", tenantId);
+            return walletRepository.findByTenantId(tenantId).orElseThrow(() -> e);
         }
-
-        Wallet wallet = walletRepository.save(Wallet.createDefault(tenantId));
-
-        eventProducer.publishWalletCreated(WalletCreatedEvent.builder()
-                .tenantId(tenantId)
-                .walletId(wallet.getId())
-                .occurredAt(Instant.now())
-                .build());
-
-        log.info("Created wallet id={} for tenantId={}", wallet.getId(), tenantId);
     }
 
     @Override
@@ -109,8 +131,9 @@ public class WalletServiceImpl implements WalletService {
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
 
-        if (wallet.getBalance().compareTo(amount) < 0) {
-            throw new InsufficientBalanceException(wallet.getBalance(), amount);
+        BigDecimal balanceBefore = wallet.getBalance();
+        if (balanceBefore.compareTo(amount) < 0) {
+            throw new InsufficientBalanceException(balanceBefore, amount);
         }
 
         wallet.debit(amount);
@@ -120,12 +143,21 @@ public class WalletServiceImpl implements WalletService {
                 tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION,
                 reference, subscriptionId, idempotencyKey
         );
+        log.info(
+                "WALLET_DEBIT_AUDIT tenantId={} walletId={} amount={} balanceBefore={} balanceAfter={} reference={} subscriptionId={} idempotencyKey={}",
+                tenantId,
+                wallet.getId(),
+                amount,
+                balanceBefore,
+                wallet.getBalance(),
+                reference,
+                subscriptionId,
+                idempotencyKey
+        );
     }
 
     @Override
     public BigDecimal getBalance(UUID tenantId) {
-        return walletRepository.findByTenantId(tenantId)
-                .orElseThrow(() -> new WalletNotFoundException(tenantId))
-                .getBalance();
+        return getOrCreateWallet(tenantId).getBalance();
     }
 }

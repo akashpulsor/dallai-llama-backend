@@ -28,11 +28,26 @@ public class MockCreatorAiProvider implements CreatorAiProvider {
         if ("IDEA_GENERATE".equals(promptType)) {
             return generateIdeaCandidates(promptType, input);
         }
+        if ("CAMPAIGN_ANGLE_SUGGEST".equals(promptType)) {
+            return generateCampaignAngles(promptType, input);
+        }
         if ("WEEKLY_IDEA_TAGS".equals(promptType)) {
             return generateWeeklyIdeaTags(promptType, input);
         }
         if ("SHOT_JSON_EDIT".equals(promptType)) {
             return generateShotJsonEdit(promptType, input);
+        }
+        if ("CLIENT_FEEDBACK_PROPAGATE".equals(promptType)) {
+            return generateClientFeedbackPropagation(promptType, input);
+        }
+        if ("CLIENT_REVIEW_RAG_CHAT".equals(promptType)) {
+            return generateClientReviewRagChat(promptType, input);
+        }
+        if ("SCREENPLAY_DIALOGUE_LOCALIZE".equals(promptType)) {
+            return generateLocalizedDialogue(promptType, input);
+        }
+        if ("SHORTS_GENERATE".equals(promptType)) {
+            return generateShorts(promptType, input);
         }
 
         Map<String, Object> output = new LinkedHashMap<>();
@@ -41,6 +56,259 @@ public class MockCreatorAiProvider implements CreatorAiProvider {
         output.put("inputHash", Integer.toHexString(input.hashCode()));
         output.put("status", "deterministic_mock_ready");
         return output;
+    }
+
+    private Map<String, Object> generateClientReviewRagChat(String promptType, Map<String, Object> input) {
+        Map<String, Object> ragContext = mapValue(input.get("ragContext"));
+        Map<String, Object> currentShot = mapValue(ragContext.get("selectedShot"));
+        String message = defaultString(input.get("message"), "Apply the requested client revision.");
+        int shotNumber = intValue(input.get("shotNumber"), intValue(currentShot.get("shotNumber"), 0));
+        Map<String, Object> proposedShot = new LinkedHashMap<>(currentShot);
+        if (!proposedShot.isEmpty()) {
+            proposedShot.put("revisionRequest", message);
+            proposedShot.put("revisionReason", "Client review RAG chat");
+        }
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("status", "deterministic_mock_ready");
+        output.put(
+                "assistantMessage",
+                "I retrieved Shot " + shotNumber + ", its adjacent shots, production plan, current images, and review history. I will apply: " + message
+        );
+        output.put("changeSummary", message);
+        output.put("imageRevisionPrompt", message + " Preserve product identity, composition continuity, and approved references.");
+        output.put("proposedShot", proposedShot);
+        output.put("proposedOverlayPlan", mapValue(ragContext.get("selectedOverlayPlan")));
+        output.put("requiresFrameRegeneration", !"PLANNING".equals(String.valueOf(input.get("targetType"))));
+        output.put("affectedPlanningStages", List.of("screenplay", "shot_plan", "storyboard", "production_frames", "video_handoff"));
+        output.put("attachedReferenceImageCount", Math.min(8, Math.max(
+                stringList(input.get("referenceImageUrls")).size(),
+                mapList(input.get("referenceImageAssets")).size()
+        )));
+        return output;
+    }
+
+    private Map<String, Object> generateClientFeedbackPropagation(String promptType, Map<String, Object> input) {
+        List<Map<String, Object>> currentShots = mapList(input.get("currentShots"));
+        String dialogueLanguage = defaultString(
+                mapValue(input.get("constraints")).get("dialogueLanguage"), "English");
+        Map<String, Object> typography = new LinkedHashMap<>();
+        typography.put("primaryFont", "Montserrat");
+        typography.put("primaryWeight", 800);
+        typography.put("secondaryFont", "Inter");
+        typography.put("secondaryWeight", 600);
+        typography.put("fallbackStack", "Arial, sans-serif");
+        typography.put("caseRule", "Sentence case; uppercase only for short hooks");
+        typography.put("maxLines", 2);
+        typography.put("decisionSource", "Mock AI creative-direction decision");
+        if (!mapList(input.get("fontReferenceImages")).isEmpty()) {
+            typography.put("matchedFromFontReferences", true);
+            typography.put("approximation", true);
+            typography.put("confidence", "medium");
+            typography.put("styleTraits", List.of("geometric", "high-impact", "clean"));
+            typography.put("matchRationale", "Montserrat is the closest renderable match to the uploaded lettering sample.");
+        }
+
+        List<Map<String, Object>> overlays = new ArrayList<>();
+        List<Map<String, Object>> revisedShots = new ArrayList<>();
+        for (int index = 0; index < currentShots.size(); index++) {
+            Map<String, Object> shot = new LinkedHashMap<>(currentShots.get(index));
+            int shotNumber = intValue(shot.get("shotNumber"), index + 1);
+            boolean enabled = index == 0 || index == currentShots.size() - 1
+                    || (currentShots.size() > 4 && index == currentShots.size() / 2);
+            String title = defaultString(shot.get("title"), "Shot " + shotNumber);
+
+            Map<String, Object> overlay = new LinkedHashMap<>();
+            overlay.put("shotNumber", shotNumber);
+            overlay.put("enabled", enabled);
+            overlay.put("text", enabled ? truncate(title, 72) : "");
+            overlay.put("fontFamily", "Montserrat");
+            overlay.put("fontWeight", 800);
+            overlay.put("fontSizePx", index == 0 ? 64 : 52);
+            overlay.put("position", index == 0 ? "Upper safe zone" : "Lower safe zone");
+            overlay.put("safeZone", "Keep 10% inset from all mobile edges");
+            overlay.put("entrance", index == 0 ? "Wipe and fade" : "Slide up and fade");
+            overlay.put("entranceDurationMs", index == 0 ? 520 : 650);
+            overlay.put("delayMs", 250);
+            overlay.put("holdDurationMs", 1800);
+            overlay.put("exit", "Fade");
+            overlay.put("exitDurationMs", 450);
+            overlay.put("speed", index == 0 ? "Quick" : "Measured");
+            overlay.put(
+                    "rationale",
+                    enabled
+                            ? "Text supports comprehension while keeping the product focal point clear."
+                            : "This shot remains visual-only to protect pacing and avoid overlay fatigue."
+            );
+            overlays.add(overlay);
+
+            String searchable = shot.values().toString().toLowerCase();
+            if (searchable.contains("chocolate") && (searchable.contains("pour") || searchable.contains("drizzle"))) {
+                shot.put("action", "Reveal the finished chocolate texture in a clean macro break, then lift one piece into the hero light.");
+                shot.put("visualDirection", "Use a distinct finished-product texture and consumption beat with no pouring action.");
+                shot.put("revisionReason", "Replaced the repetitive chocolate-pouring visual.");
+            }
+            shot.put("dialogueLanguage", dialogueLanguage);
+            shot.put("emojisAllowed", false);
+            shot.put("detailLevel", "production_ready");
+            shot.put("overlayPlan", overlay);
+            revisedShots.add(shot);
+        }
+
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("status", "deterministic_mock_ready");
+        output.put("storyline", defaultString(input.get("currentStoryline"), "The revised story follows the approved client direction."));
+        output.put("screenplay", defaultString(input.get("currentScreenplay"), ""));
+        output.put("creativeDirection", Map.of(
+                "dialogueLanguage", dialogueLanguage,
+                "emojisAllowed", false,
+                "detailLevel", "production_ready",
+                "visualVarietyRule", "Avoid repeated chocolate-pouring imagery."
+        ));
+        output.put("typographySystem", typography);
+        output.put("overlayPlan", overlays);
+        output.put("shots", revisedShots);
+        return output;
+    }
+
+    private Map<String, Object> generateLocalizedDialogue(String promptType, Map<String, Object> input) {
+        String targetLanguage = defaultString(input.get("targetLanguage"), "English");
+        List<Map<String, Object>> scenes = mapList(input.get("scenes")).stream()
+                .map(source -> {
+                    Map<String, Object> localized = new LinkedHashMap<>();
+                    localized.put("id", defaultString(source.get("id"), "scene"));
+                    localized.put(
+                            "dialogueScript",
+                            defaultString(source.get("dialogueScript"), "") + " [" + targetLanguage + "]"
+                    );
+                    return localized;
+                })
+                .toList();
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("status", "deterministic_mock_ready");
+        output.put("scenes", scenes);
+        return output;
+    }
+
+    private Map<String, Object> generateCampaignAngles(String promptType, Map<String, Object> input) {
+        String topic = defaultString(input.get("ideaText"), "the brief");
+        List<Map<String, Object>> angles = List.of(
+                campaignAngle("Problem to payoff", "Frame " + topic + " around a clear friction, then show the useful payoff.", "Start with the costly or frustrating moment.", "Fast contrast and a visible result.", "Direct-response structure makes the benefit easy to understand."),
+                campaignAngle("Proof in the moment", "Make " + topic + " credible through one specific real-world use moment.", "Show the proof before explaining it.", "Close detail followed by a practical lifestyle beat.", "Demonstration earns attention without relying on claims."),
+                campaignAngle("A better ritual", "Position " + topic + " as the small upgrade that improves a familiar routine.", "The ordinary routine is missing one thing.", "Premium detail, deliberate pace, and a clean final pack shot.", "It creates an emotional reason to choose the product or idea.")
+        );
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("status", "deterministic_mock_ready");
+        output.put("angles", angles);
+        return output;
+    }
+
+    private Map<String, Object> campaignAngle(String title, String description, String hook, String visualDirection, String selectionReason) {
+        Map<String, Object> angle = new LinkedHashMap<>();
+        angle.put("title", title);
+        angle.put("description", description);
+        angle.put("hook", hook);
+        angle.put("visualDirection", visualDirection);
+        angle.put("selectionReason", selectionReason);
+        return angle;
+    }
+
+    private Map<String, Object> generateShorts(String promptType, Map<String, Object> input) {
+        int requestedShorts = Math.max(1, Math.min(50, intValue(input.get("requestedShorts"), 10)));
+        int targetDuration = Math.max(30, Math.min(90, intValue(input.get("targetDurationSeconds"), 60)));
+        String title = defaultString(input.get("title"), "Source video");
+        String platform = defaultString(input.get("platform"), "youtube_shorts");
+
+        List<Map<String, Object>> transcript = List.of(
+                videoNode("n-001", 0, 12, "Speaker 1", "What is the strongest moment in " + title + "?", 74, 28, 84),
+                videoNode("n-002", 12, 42, "Speaker 1", "The useful insight is clear enough to become a short by itself.", 86, 35, 93),
+                videoNode("n-003", 42, targetDuration, "Speaker 1", "Wrap it with a takeaway that viewers can remember.", 78, 30, 88)
+        );
+
+        List<Map<String, Object>> candidates = new ArrayList<>();
+        List<String> hooks = List.of("Question Hook", "Contrarian Hook", "Aha Moment", "Problem/Solution", "Reveal Hook");
+        for (int index = 0; index < requestedShorts; index++) {
+            int rank = index + 1;
+            String hook = hooks.get(index % hooks.size());
+            Map<String, Object> candidate = new LinkedHashMap<>();
+            candidate.put("title", rank == 1 ? truncate(title, 160) : truncate(title + " - short " + rank, 160));
+            candidate.put("durationSeconds", targetDuration);
+            candidate.put("score", Math.max(70, 96 - rank));
+            candidate.put("hookType", hook);
+            candidate.put("editDecisionList", Map.of(
+                    "strategy", hook.contains("Problem") ? "KEEP_PROBLEM_SOLUTION_CHAIN" : "KEEP_QA_CHAIN",
+                    "segments", List.of(
+                            Map.of("nodeId", "n-001", "operation", "KEEP", "reason", "Context for hook."),
+                            Map.of("nodeId", "n-002", "operation", "KEEP_QA_CHAIN", "reason", "Core insight."),
+                            Map.of("nodeId", "n-003", "operation", "KEEP", "reason", "Payoff.")
+                    )
+            ));
+            candidate.put("captionPlan", Map.of(
+                    "style", "platform-aware",
+                    "platform", platform,
+                    "captions", List.of(Map.of("start", 0, "end", 3, "text", "Watch this part"))
+            ));
+            candidate.put("renderManifest", Map.of(
+                    "renderStatus", "PENDING_REVIEW",
+                    "aspectRatio", "linkedin".equals(platform) ? "4:5" : "9:16",
+                    "safeZones", List.of("top_caption_safe", "bottom_ui_safe")
+            ));
+            candidate.put("metadata", Map.of(
+                    "chain", "Q1 + best answer + insight",
+                    "selectionReason", "Mock shorts agent generated a traceable candidate."
+            ));
+            candidates.add(candidate);
+        }
+
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("provider", providerName());
+        output.put("promptType", promptType);
+        output.put("inputHash", Integer.toHexString(input.hashCode()));
+        output.put("status", "deterministic_mock_ready");
+        output.put("videoDna", Map.of(
+                "primaryType", "podcast",
+                "confidence", 0.82,
+                "structureType", "qa",
+                "analysisSource", "upload_metadata"
+        ));
+        output.put("transcript", transcript);
+        output.put("graph", Map.of(
+                "graphViews", List.of("Conversation Graph", "Story Graph", "Scene Graph", "Compression Graph"),
+                "nodes", transcript,
+                "edges", List.of(
+                        Map.of("from", "n-001", "to", "n-002", "type", "QUESTION_ANSWER", "reason", "Question leads to the best answer."),
+                        Map.of("from", "n-002", "to", "n-003", "type", "CAUSE_EFFECT", "reason", "Insight needs a payoff.")
+                )
+        ));
+        output.put("candidates", candidates);
+        output.put("trace", List.of(
+                Map.of("stage", "VIDEO_TYPE_CLASSIFICATION", "status", "COMPLETED", "decision", "podcast", "confidence", 0.82),
+                Map.of("stage", "VIDEO_GRAPH_BUILDER", "status", "COMPLETED", "decision", "QUESTION_ANSWER", "confidence", 0.86),
+                Map.of("stage", "CANDIDATE_RANKING", "status", "COMPLETED", "decision", "ranked", "confidence", 0.9)
+        ));
+        return output;
+    }
+
+    private Map<String, Object> videoNode(String id, int start, int end, String speaker, String transcript, int emotion, int motion, int interestingness) {
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("id", id);
+        node.put("start", start);
+        node.put("end", end);
+        node.put("speaker", speaker);
+        node.put("transcript", transcript);
+        node.put("sceneId", "scene-001");
+        node.put("emotion", emotion);
+        node.put("motion", motion);
+        node.put("interestingness", interestingness);
+        node.put("frames", List.of("F01", "F02"));
+        return node;
     }
 
     private Map<String, Object> generateShotJsonEdit(String promptType, Map<String, Object> input) {

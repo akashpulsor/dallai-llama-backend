@@ -42,6 +42,9 @@ public class GeneratedStoryScriptResponse {
         private String screenType;
         private String storytellingType;
         private Map<String, Object> storytellingGuidance;
+        private Boolean noHumans;
+        private String narrativeMode;
+        private String dialogueMode;
         private String hookLens;
         private Map<String, Object> hookLensGuidance;
         private Map<String, Object> hookBridge;
@@ -56,6 +59,9 @@ public class GeneratedStoryScriptResponse {
         private String inferredTone;
         private List<CharacterProfile> characters;
         private List<StoryBeat> beats;
+        private Map<String, Object> llmGeneratedScript;
+        private Map<String, Object> userRevision;
+        private Map<String, Object> revisionAudit;
     }
 
     @Getter

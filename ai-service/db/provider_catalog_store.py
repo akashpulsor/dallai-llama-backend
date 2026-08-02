@@ -94,7 +94,7 @@ SEED_PROVIDER_CATALOG: dict[str, list[dict[str, Any]] | dict[str, Any]] = {
             "provider": "google",
             "label": "Google Gemini API",
             "credential_fields": ["api_key"],
-            "default_model": "gemini-2.5-flash-lite",
+            "default_model": "gemini-flash-lite-latest",
             "languages": [_language("multi", "Multilingual")],
             "selection_rules": {"next_required": ["stt_provider", "tts_provider"]},
         },
@@ -102,7 +102,7 @@ SEED_PROVIDER_CATALOG: dict[str, list[dict[str, Any]] | dict[str, Any]] = {
             "provider": "gemini_live",
             "label": "Gemini Live",
             "credential_fields": ["api_key"],
-            "default_model": "models/gemini-2.5-flash-native-audio-preview-12-2025",
+            "default_model": "models/gemini-2.5-flash-native-audio-latest",
             "languages": [
                 _language("hi-IN", "Hindi (India)"),
                 _language("en-IN", "English (India)"),

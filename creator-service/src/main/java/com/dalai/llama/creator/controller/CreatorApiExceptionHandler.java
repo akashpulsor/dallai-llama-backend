@@ -2,6 +2,8 @@ package com.dalai.llama.creator.controller;
 
 import com.dalai.llama.creator.exception.CreatorAiOutputException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -12,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 @RestControllerAdvice(basePackages = "com.dalai.llama.creator.controller")
@@ -50,6 +53,57 @@ public class CreatorApiExceptionHandler {
         return ResponseEntity
                 .status(status)
                 .body(body);
+    }
+
+    @ExceptionHandler(DataAccessException.class)
+    public ResponseEntity<Map<String, Object>> handleDataAccess(
+            DataAccessException ex,
+            HttpServletRequest request
+    ) {
+        boolean transientFailure = isTransientDatabaseFailure(ex);
+        HttpStatus status = transientFailure
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.INTERNAL_SERVER_ERROR;
+        String message = transientFailure
+                ? "The project database is temporarily unavailable. Your saved review is preserved; retry this request shortly."
+                : "The project database could not complete this request.";
+        Map<String, Object> body = errorBody(status, message, request, Map.of());
+        if (transientFailure) {
+            body.put("retryAfterMs", 3000);
+            return ResponseEntity
+                    .status(status)
+                    .header("Retry-After", "3")
+                    .body(body);
+        }
+        return ResponseEntity
+                .status(status)
+                .body(body);
+    }
+
+    private boolean isTransientDatabaseFailure(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof DataAccessResourceFailureException) {
+                return true;
+            }
+            if (current instanceof java.sql.SQLException sqlException
+                    && sqlException.getSQLState() != null
+                    && sqlException.getSQLState().startsWith("08")) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+                if (normalized.contains("connection is closed")
+                        || normalized.contains("connection has been closed")
+                        || normalized.contains("i/o error occurred while sending to the backend")
+                        || normalized.contains("unable to rollback against jdbc connection")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private String friendlyFieldMessage(String field, String defaultMessage) {

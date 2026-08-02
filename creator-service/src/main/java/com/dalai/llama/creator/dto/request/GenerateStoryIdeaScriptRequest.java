@@ -19,6 +19,12 @@ public record GenerateStoryIdeaScriptRequest(
         @Size(max = 64) String storytellingType,
         @Size(max = 64) String hookLens,
         @Size(max = 32) String budgetTier,
+        @Size(max = 32) String productionStyle,
+        @Size(max = 64) String hybridSceneMode,
+        @Size(max = 64) String brollStyle,
+        @Size(max = 64) String captionStyle,
+        JsonNode productionStyleGuidance,
+        JsonNode screenplayVideoGenerationPackage,
         List<@Valid CharacterCastMappingContext> characterCastMappings,
         List<@Valid ActorContext> availableActors,
         @Valid AudienceDecisionContext audienceDecision,
@@ -85,13 +91,13 @@ public record GenerateStoryIdeaScriptRequest(
             @Size(max = 200) String brandName,
             @Size(max = 200) String productName,
             @Size(max = 120) String productCategory,
-            @Size(max = 1000) String offer,
-            @Size(max = 200) String campaignObjective,
+            @Size(max = 4000) String offer,
+            @Size(max = 240) String campaignObjective,
             @Size(max = 240) String brandTone,
             @Size(max = 240) String cta,
-            List<@Size(max = 240) String> requiredMentions,
-            List<@Size(max = 240) String> bannedClaims,
-            List<@Size(max = 240) String> restrictions,
+            List<@Size(max = 2000) String> requiredMentions,
+            List<@Size(max = 2000) String> bannedClaims,
+            List<@Size(max = 2000) String> restrictions,
             @Valid VisualIdentityContext visualIdentity,
             JsonNode metadata
     ) {
@@ -117,6 +123,11 @@ public record GenerateStoryIdeaScriptRequest(
             @Size(max = 32) String screenType,
             @Size(max = 64) String storytellingType,
             @Size(max = 64) String hookLens,
+            @Size(max = 32) String productionStyle,
+            @Size(max = 64) String hybridSceneMode,
+            @Size(max = 64) String brollStyle,
+            @Size(max = 64) String captionStyle,
+            JsonNode productionStyleGuidance,
             JsonNode metadata
     ) {
     }
@@ -152,7 +163,13 @@ public record GenerateStoryIdeaScriptRequest(
             @Valid BrandContext brandContext,
             @Valid CreatorContext creatorContext,
             @Size(max = 64) String storytellingType,
-            @Size(max = 64) String hookLens
+            @Size(max = 64) String hookLens,
+            @Size(max = 32) String productionStyle,
+            @Size(max = 64) String hybridSceneMode,
+            @Size(max = 64) String brollStyle,
+            @Size(max = 64) String captionStyle,
+            JsonNode productionStyleGuidance,
+            JsonNode screenplayVideoGenerationPackage
     ) {
     }
 }

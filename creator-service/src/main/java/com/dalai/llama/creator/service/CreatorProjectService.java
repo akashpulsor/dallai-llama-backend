@@ -144,6 +144,19 @@ public class CreatorProjectService {
         putIfPresent(preferences, "platformCode", platformCode);
         putIfPresent(preferences, "categoryCode", categoryCode);
         putIfPresent(preferences, "countryCode", countryCode);
+        if (selectionContext != null) {
+            putIfPresent(preferences, "topicType", stringValue(selectionContext.get("topicType")));
+            putIfPresent(preferences, "dialogueLanguage", stringValue(selectionContext.get("dialogueLanguage")));
+            putIfPresent(preferences, "screenType", stringValue(selectionContext.get("screenType")));
+            putIfPresent(preferences, "storytellingType", stringValue(selectionContext.get("storytellingType")));
+            putIfPresent(preferences, "hookLens", stringValue(selectionContext.get("hookLens")));
+            putIfPresent(preferences, "productionStyle", stringValue(selectionContext.get("productionStyle")));
+            putIfPresent(preferences, "hybridSceneMode", stringValue(selectionContext.get("hybridSceneMode")));
+            putIfPresent(preferences, "brollStyle", stringValue(selectionContext.get("brollStyle")));
+            putIfPresent(preferences, "captionStyle", stringValue(selectionContext.get("captionStyle")));
+            putObjectIfPresent(preferences, "productionStyleGuidance", selectionContext.get("productionStyleGuidance"));
+            putObjectIfPresent(preferences, "screenplayVideoGenerationPackage", selectionContext.get("screenplayVideoGenerationPackage"));
+        }
         if (durationSeconds != null) {
             preferences.put("durationSeconds", durationSeconds);
         }
@@ -177,6 +190,21 @@ public class CreatorProjectService {
                     project.setSelectedIdeaId(idea.getId());
                     project.setSelectedTrendId(idea.getTrendId() == null ? project.getSelectedTrendId() : idea.getTrendId());
                     project.setDurationSeconds(idea.getDurationSeconds() == null ? project.getDurationSeconds() : idea.getDurationSeconds());
+                    Map<String, Object> preferences = copyMap(project.getPreferences());
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "topicType");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "dialogueLanguage");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "screenType");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "storytellingType");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "hookLens");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "productionStyle");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "hybridSceneMode");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "brollStyle");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "captionStyle");
+                    copySelectionPreference(preferences, idea.getSelectionContext(), "productionStyleGuidance");
+                    if (idea.getDurationSeconds() != null) {
+                        preferences.put("durationSeconds", idea.getDurationSeconds());
+                    }
+                    project.setPreferences(preferences);
                     project.setStatus(firstNonBlank(idea.getStatus(), project.getStatus(), "LOCKED"));
                     project.setUpdatedAt(OffsetDateTime.now());
                     projectRepository.save(project);
@@ -576,10 +604,59 @@ public class CreatorProjectService {
         return map == null ? new LinkedHashMap<>() : new LinkedHashMap<>(map);
     }
 
+    private void copySelectionPreference(Map<String, Object> target, Map<String, Object> selectionContext, String key) {
+        Object value = selectionPreferenceValue(selectionContext, key);
+        if (hasValue(value)) {
+            target.put(key, value);
+        }
+    }
+
+    private Object selectionPreferenceValue(Map<String, Object> selectionContext, String key) {
+        if (selectionContext == null || selectionContext.isEmpty()) {
+            return null;
+        }
+        Object value = selectionContext.get(key);
+        if (hasValue(value)) {
+            return value;
+        }
+        Map<String, Object> sourceBrief = mapOrEmpty(selectionContext.get("sourceBrief"));
+        value = sourceBrief.get(key);
+        if (hasValue(value)) {
+            return value;
+        }
+        Map<String, Object> selectionPayload = mapOrEmpty(sourceBrief.get("selectionPayload"));
+        if (selectionPayload.isEmpty()) {
+            selectionPayload = mapOrEmpty(selectionContext.get("selectionPayload"));
+        }
+        value = selectionPayload.get(key);
+        if (hasValue(value)) {
+            return value;
+        }
+        Map<String, Object> ideaPayload = mapOrEmpty(selectionPayload.get("idea"));
+        value = ideaPayload.get(key);
+        return hasValue(value) ? value : null;
+    }
+
     private void putIfPresent(Map<String, Object> target, String key, String value) {
         if (value != null && !value.isBlank()) {
             target.put(key, value);
         }
+    }
+
+    private void putObjectIfPresent(Map<String, Object> target, String key, Object value) {
+        if (hasValue(value)) {
+            target.put(key, value);
+        }
+    }
+
+    private boolean hasValue(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Map<?, ?> map) {
+            return !map.isEmpty();
+        }
+        return !String.valueOf(value).isBlank();
     }
 
     private String defaultString(String value, String defaultValue) {

@@ -42,6 +42,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -79,6 +80,43 @@ public class IdeaService {
             "Emotional payoff",
             "Shareable punchline"
     );
+    private static final List<Map<String, String>> PRODUCT_AD_CONCEPT_LANES = List.of(
+            Map.of(
+                    "key", "problem_solution",
+                    "title", "Problem -> Solution",
+                    "description", "Direct response concept that names the buyer pain, shows the product solving it, and closes with purchase intent."
+            ),
+            Map.of(
+                    "key", "luxury_brand_story",
+                    "title", "Luxury Brand Story",
+                    "description", "Premium concept built around packaging, atmosphere, sensory detail, and high-trust brand perception."
+            ),
+            Map.of(
+                    "key", "ugc_testimonial",
+                    "title", "UGC/Testimonial Style",
+                    "description", "Social-first concept that feels like a buyer discovery, proof moment, or creator recommendation."
+            )
+    );
+    private static final List<Map<String, String>> NO_HUMAN_PRODUCT_AD_CONCEPT_LANES = List.of(
+            Map.of(
+                    "key", "problem_solution",
+                    "title", "Product-Only Problem -> Solution",
+                    "description", "Represent the problem and solution through product states, materials, typography, and CGI without a customer or presenter."
+            ),
+            Map.of(
+                    "key", "luxury_brand_story",
+                    "title", "Product-Only Luxury Story",
+                    "description", "Build premium desire through packaging, atmosphere, macro texture, controlled lighting, and a hero packshot."
+            ),
+            Map.of(
+                    "key", "ingredient_transformation",
+                    "title", "Ingredient-to-Product Transformation",
+                    "description", "Turn ingredients, materials, or product features into a kinetic CGI transformation that resolves on the canonical product."
+            )
+    );
+    private static final String NO_HUMANS_NEGATIVE_PROMPT =
+            "no people, no person, no face, no hands, no arms, no body, no human silhouette, "
+                    + "no human reflection, no presenter, no customer, no creator, no human-operated product use";
 
     private final CreatorIdeaRepository ideaRepository;
     private final CreatorScriptRepository scriptRepository;
@@ -91,6 +129,7 @@ public class IdeaService {
     private final ScriptStructureService scriptStructureService;
     private final ProductionPlanTagService productionPlanTagService;
     private final CreatorProjectService projectService;
+    private final CreatorCreativeLearningService creativeLearningService;
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -107,6 +146,7 @@ public class IdeaService {
             ScriptStructureService scriptStructureService,
             ProductionPlanTagService productionPlanTagService,
             CreatorProjectService projectService,
+            CreatorCreativeLearningService creativeLearningService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper
@@ -122,6 +162,7 @@ public class IdeaService {
         this.scriptStructureService = scriptStructureService;
         this.productionPlanTagService = productionPlanTagService;
         this.projectService = projectService;
+        this.creativeLearningService = creativeLearningService;
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -461,6 +502,7 @@ public class IdeaService {
         jobInput.put("durationSeconds", lockedIdea.getDurationSeconds());
         jobInput.put("source", lockedIdea.getSource());
         jobInput.put("selectionContext", lockedIdea.getSelectionContext());
+        jobInput.putAll(productionStyleContextFromSelection(lockedIdea.getSelectionContext()));
         jobInput.put("page", pageable == null ? 0 : pageable.getPageNumber());
         jobInput.put("size", pageable == null ? DEFAULT_PAGE_SIZE : pageable.getPageSize());
         jobInput.put("targetGeneratedIdeaCount", targetGeneratedIdeaCount(pageable));
@@ -592,6 +634,18 @@ public class IdeaService {
         String hookLens = normalizeHookLens(request == null ? null : request.hookLens());
         Map<String, Object> hookLensGuidance = hookLensGuidanceFor(hookLens);
         String inferredTone = inferTone(ideaText, categoryCode);
+        Map<String, Object> productionStyleContext = productionStyleContextFromSelection(storyIdea.getSelectionContext());
+        Map<String, Object> sourceBrief = buildSourceBrief(storyIdea);
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        List<Map<String, Object>> approvedCreativeLearnings = approvedCreativeLearningsFor(
+                storyIdea,
+                categoryCode,
+                sourceBrief
+        );
+        if (isProductAdBrief(sourceBrief)) {
+            inferredTone = stringValue(firstValue(productBrief, "adTone", "tone"), inferredTone);
+        }
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.STORY_SCRIPT_GENERATE.name());
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
@@ -604,6 +658,12 @@ public class IdeaService {
         inputSnapshot.put("storytellingGuidance", storytellingGuidance);
         inputSnapshot.put("hookLens", hookLens);
         inputSnapshot.put("hookLensGuidance", hookLensGuidance);
+        inputSnapshot.putAll(productionStyleContext);
+        inputSnapshot.put("productAdMode", isProductAdBrief(sourceBrief));
+        inputSnapshot.put("noHumans", noHumans);
+        inputSnapshot.put("productIntelligenceBrief", productBrief);
+        inputSnapshot.put("approvedCreativeLearnings", approvedCreativeLearnings);
+        putProductReferenceAiContext(inputSnapshot, sourceBrief);
         inputSnapshot.put("tone", inferredTone);
         inputSnapshot.put("lockedIdeaId", lockedIdeaId);
         inputSnapshot.put("storyIdeaId", storyIdeaId);
@@ -611,6 +671,9 @@ public class IdeaService {
         inputSnapshot.put("context", request == null || request.context() == null ? Map.of() : request.context());
 
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
+        renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "story");
+        renderedPrompt = appendProductReferencePrompt(renderedPrompt, sourceBrief, "story script");
+        renderedPrompt = appendApprovedCreativeLearningPrompt(renderedPrompt, approvedCreativeLearnings);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
         CreatorGenerationJob generationJob = generationJobService.startGenerationJob(
@@ -648,8 +711,12 @@ public class IdeaService {
                     storytellingGuidance,
                     hookLens,
                     hookLensGuidance,
+                    noHumans,
                     aiOutputDiagnostics
             );
+            if (noHumans) {
+                applyNoHumanProductStoryContract(storyScript, storyIdea, sourceBrief, durationSeconds);
+            }
             Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
             Map<String, Object> promptOutputPayload = new LinkedHashMap<>(storyScriptMap);
             promptOutputPayload.put("providerOutput", providerOutput);
@@ -716,10 +783,12 @@ public class IdeaService {
     ) {
         CreatorIdea storyIdea = getStoryIdeaForLockedBrief(lockedIdeaId, storyIdeaId, tenantId, userId);
         GeneratedStoryScriptResponse.StoryScript storyScript = request == null ? null : request.scriptJson();
+        boolean synthesizedStoryScript = false;
         if (storyScript == null) {
             storyScript = readStoryScriptFromIdea(storyIdea);
         }
         if (storyScript == null) {
+            synthesizedStoryScript = true;
             storyScript = buildStoryScriptPayload(
                     storyIdea,
                     normalizeDuration(request == null ? null : request.durationSeconds(), storyIdea.getDurationSeconds()),
@@ -748,11 +817,34 @@ public class IdeaService {
         storyScript.setHookLensGuidance(nonEmptyMap(storyScript.getHookLensGuidance(), hookLensGuidanceFor(hookLens)));
         storyScript.setHookBridge(nonEmptyMap(storyScript.getHookBridge(), defaultHookBridgeFor(hookLens)));
         storyScript.setFactualityNotes(nonEmptyMap(storyScript.getFactualityNotes(), defaultFactualityNotesFor(hookLens)));
+        Map<String, Object> sourceBrief = ideaRepository.findById(lockedIdeaId)
+                .map(this::buildSourceBrief)
+                .map(LinkedHashMap::new)
+                .orElseGet(LinkedHashMap::new);
+        sourceBrief.putAll(buildSourceBrief(storyIdea));
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
+        if (noHumans) {
+            if (synthesizedStoryScript) {
+                applyNoHumanProductStoryContract(storyScript, storyIdea, sourceBrief, durationSeconds);
+            } else {
+                applyNoHumanProductStorySaveContract(storyScript);
+            }
+        }
 
-        String scriptText = defaultString(request == null ? null : request.scriptText(), buildStoryScriptText(storyScript));
+        String scriptText = noHumans
+                ? buildStoryScriptText(storyScript)
+                : defaultString(request == null ? null : request.scriptText(), buildStoryScriptText(storyScript));
         UUID promptRunId = storyIdea.getPromptRunId();
         CreatorIdea savedIdea = saveStoryScriptOnIdea(storyIdea, storyScript, scriptText, promptRunId, storyIdea.getGenerationJobId(), durationSeconds, dialogueLanguage, screenType, storytellingType, hookLens);
         linkProjectSelectedIdea(savedIdea);
+        log.info(
+                "Creator story script saved storyIdeaId={} lockedIdeaId={} noHumans={} storylineChars={} revisionNumber={}",
+                savedIdea.getId(),
+                lockedIdeaId,
+                noHumans,
+                defaultString(storyScript.getStoryline(), "").length(),
+                storyScript.getRevisionAudit() == null ? null : storyScript.getRevisionAudit().get("revisionNumber")
+        );
 
         return toGeneratedStoryScriptResponse(savedIdea, lockedIdeaId, promptRunId, storyScript, scriptText, null);
     }
@@ -802,10 +894,28 @@ public class IdeaService {
         if (storyScript == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Generate and save the story script before creating the shot-wise screenplay.");
         }
+        Map<String, Object> sourceBrief = buildSourceBrief(storyIdea);
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        if (noHumans) {
+            applyNoHumanProductStoryContract(storyScript, storyIdea, sourceBrief, durationSeconds);
+        }
         String categoryCode = resolveScreenplayCategory(request == null ? null : request.categoryCode(), storyIdea, storyScript, ideaText);
+        List<Map<String, Object>> approvedCreativeLearnings = approvedCreativeLearningsFor(
+                storyIdea,
+                categoryCode,
+                sourceBrief
+        );
         String inferredTone = inferTone(ideaText, categoryCode);
+        if (isProductAdBrief(sourceBrief)) {
+            inferredTone = stringValue(firstValue(productBrief, "adTone", "tone"), inferredTone);
+        }
         Map<String, Object> requestContext = request == null ? Map.of() : toGenericMap(request.context());
         Map<String, Object> lockedPackageContext = mapValue(requestContext.get("lockedPackage"));
+        Map<String, Object> inheritedProductionContext = productionStyleContextFromSelection(storyIdea.getSelectionContext());
+        if (inheritedProductionContext.isEmpty()) {
+            inheritedProductionContext = productionStyleContextFromSelection(mapValue(storyIdea.getSelectionContext() == null ? null : storyIdea.getSelectionContext().get("sourceBrief")));
+        }
         String budgetTier = defaultString(
                 request == null ? null : request.budgetTier(),
                 stringValue(requestContext.get("budgetTier"), stringValue(lockedPackageContext.get("budgetTier"), inferBudgetTier(durationSeconds)))
@@ -838,6 +948,21 @@ public class IdeaService {
                 request == null ? null : toGenericMap(request.creatorContext()),
                 nonEmptyMap(mapValue(requestContext.get("creatorContext")), mapValue(lockedPackageContext.get("creatorContext")))
         );
+        creatorContext = mergeDefaults(creatorContext, inheritedProductionContext);
+        String productionStyle = resolveScreenplayProductionStyle(request, requestContext, lockedPackageContext, creatorContext);
+        String hybridSceneMode = resolveScreenplayHybridSceneMode(request, requestContext, lockedPackageContext, creatorContext);
+        String brollStyle = resolveScreenplayBrollStyle(request, requestContext, lockedPackageContext, creatorContext);
+        String captionStyle = resolveScreenplayCaptionStyle(request, requestContext, lockedPackageContext, creatorContext);
+        Map<String, Object> productionStyleGuidance = resolveScreenplayProductionStyleGuidance(
+                request,
+                requestContext,
+                lockedPackageContext,
+                creatorContext,
+                productionStyle,
+                hybridSceneMode,
+                brollStyle,
+                captionStyle
+        );
         String storytellingType = resolveScreenplayStorytellingType(request, requestContext, lockedPackageContext, creatorContext, storyScript);
         Map<String, Object> storytellingGuidance = storytellingGuidanceFor(storytellingType);
         String hookLens = resolveScreenplayHookLens(request, requestContext, lockedPackageContext, creatorContext, storyScript);
@@ -853,6 +978,23 @@ public class IdeaService {
         creatorContext.putIfAbsent("storytellingGuidance", storytellingGuidance);
         creatorContext.putIfAbsent("hookLens", hookLens);
         creatorContext.putIfAbsent("hookLensGuidance", hookLensGuidance);
+        creatorContext.putIfAbsent("productionStyle", productionStyle);
+        creatorContext.putIfAbsent("hybridSceneMode", hybridSceneMode);
+        creatorContext.putIfAbsent("brollStyle", brollStyle);
+        creatorContext.putIfAbsent("captionStyle", captionStyle);
+        creatorContext.putIfAbsent("productionStyleGuidance", productionStyleGuidance);
+        if (!approvedCreativeLearnings.isEmpty()) {
+            creatorContext.put("approvedCreativeLearnings", approvedCreativeLearnings);
+            creatorContext.put("creativeLearningApplied", true);
+        }
+        if (isProductAdBrief(sourceBrief)) {
+            List<String> productReferenceImageUrls = productReferenceImageUrls(sourceBrief);
+            creatorContext.put("productIntelligenceBrief", productBrief);
+            creatorContext.put("productImageUrls", productReferenceImageUrls);
+            creatorContext.put("referenceImageUrls", productReferenceImageUrls);
+            creatorContext.put("productImageAssets", productReferenceImageAssets(sourceBrief));
+            creatorContext.put("referenceImageAssets", productReferenceImageAssets(sourceBrief));
+        }
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.SCRIPT_GENERATE.name());
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
@@ -865,6 +1007,16 @@ public class IdeaService {
         inputSnapshot.put("storytellingGuidance", storytellingGuidance);
         inputSnapshot.put("hookLens", hookLens);
         inputSnapshot.put("hookLensGuidance", hookLensGuidance);
+        inputSnapshot.put("productAdMode", isProductAdBrief(sourceBrief));
+        inputSnapshot.put("noHumans", noHumans);
+        inputSnapshot.put("productIntelligenceBrief", productBrief);
+        inputSnapshot.put("approvedCreativeLearnings", approvedCreativeLearnings);
+        putProductReferenceAiContext(inputSnapshot, sourceBrief);
+        inputSnapshot.put("productionStyle", productionStyle);
+        inputSnapshot.put("hybridSceneMode", hybridSceneMode);
+        inputSnapshot.put("brollStyle", brollStyle);
+        inputSnapshot.put("captionStyle", captionStyle);
+        inputSnapshot.put("productionStyleGuidance", productionStyleGuidance);
         inputSnapshot.put("tone", inferredTone);
         inputSnapshot.put("budgetTier", budgetTier);
         inputSnapshot.put("lockedIdeaId", lockedIdeaId);
@@ -881,6 +1033,9 @@ public class IdeaService {
         inputSnapshot.put("context", requestContext);
 
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
+        renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "screenplay");
+        renderedPrompt = appendProductReferencePrompt(renderedPrompt, sourceBrief, "screenplay");
+        renderedPrompt = appendApprovedCreativeLearningPrompt(renderedPrompt, approvedCreativeLearnings);
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
         CreatorGenerationJob generationJob = externalGenerationJobId == null
@@ -948,10 +1103,16 @@ public class IdeaService {
             }
             scriptPayload.setProvider(creatorAiService.providerName());
             scriptPayload.setModel(creatorAiService.modelName());
+            applyProductionStyleDefaults(scriptPayload, productionStyle, hybridSceneMode, brollStyle, captionStyle, productionStyleGuidance);
             enrichAudioAndMusicDesign(scriptPayload, categoryCode, inferredTone);
+            enrichVideoGenerationPlan(scriptPayload, categoryCode, screenType, storytellingType);
+            if (noHumans) {
+                applyNoHumanProductScreenplayContract(scriptPayload);
+            }
             Map<String, Object> scriptPayloadMap = toMap(scriptPayload);
             putStoryStructure(scriptPayloadMap, storyScript);
             putScreenplayPlanningContext(scriptPayloadMap, budgetTier, characterCastMappings, availableActors, audienceDecision, brandContext, creatorContext);
+            putProductReferencePersistence(scriptPayloadMap, sourceBrief);
             Map<String, Object> promptOutputPayload = new LinkedHashMap<>(scriptPayloadMap);
             promptOutputPayload.put("providerOutput", providerOutput);
             promptOutputPayload.put("aiOutputDiagnostics", aiOutputDiagnostics);
@@ -1043,6 +1204,11 @@ public class IdeaService {
             context.put("scriptScreenType", screenType);
             context.put("scriptStorytellingType", storytellingType);
             context.put("scriptHookLens", hookLens);
+            context.put("productionStyle", productionStyle);
+            context.put("hybridSceneMode", hybridSceneMode);
+            context.put("brollStyle", brollStyle);
+            context.put("captionStyle", captionStyle);
+            context.put("productionStyleGuidance", productionStyleGuidance);
             context.put("productionPlanTagCount", productionPlanTags.size());
             context.put("productionPlanStatus", productionPlanResult.status());
             if (!productionPlanResult.error().isBlank()) {
@@ -1120,7 +1286,7 @@ public class IdeaService {
     ) {
         CreatorIdea storyIdea = getStoryIdeaForLockedBrief(lockedIdeaId, storyIdeaId, tenantId, userId);
         CreatorScript creatorScript = scriptRepository
-                .findByIdAndTenantIdAndUserId(scriptId, storyIdea.getTenantId(), storyIdea.getUserId())
+                .findByIdAndTenantIdAndUserIdForUpdate(scriptId, storyIdea.getTenantId(), storyIdea.getUserId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Generated script was not found."));
         if (!lockedIdeaId.equals(creatorScript.getLockedIdeaId()) || !storyIdeaId.equals(creatorScript.getStoryIdeaId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Script does not belong to the selected story idea.");
@@ -1157,15 +1323,35 @@ public class IdeaService {
         scriptJson.setHookLensGuidance(nonEmptyMap(scriptJson.getHookLensGuidance(), hookLensGuidanceFor(hookLens)));
         scriptJson.setHookBridge(nonEmptyMap(scriptJson.getHookBridge(), defaultHookBridgeFor(hookLens)));
         scriptJson.setFactualityNotes(nonEmptyMap(scriptJson.getFactualityNotes(), defaultFactualityNotesFor(hookLens)));
+        String productionStyle = normalizeProductionStyle(defaultString(request == null ? null : request.productionStyle(), scriptJson.getProductionStyle()));
+        String hybridSceneMode = normalizeHybridSceneMode(defaultString(request == null ? null : request.hybridSceneMode(), scriptJson.getHybridSceneMode()));
+        String brollStyle = normalizeBrollStyle(defaultString(request == null ? null : request.brollStyle(), scriptJson.getBrollStyle()));
+        String captionStyle = normalizeCaptionStyle(defaultString(request == null ? null : request.captionStyle(), scriptJson.getCaptionStyle()));
+        Map<String, Object> productionStyleGuidance = nonEmptyMap(
+                request == null ? null : request.productionStyleGuidance(),
+                scriptJson.getProductionStyleGuidance()
+        );
         applyShotStorytellingDefaults(shots, storytellingType);
+        applyProductionStyleDefaults(scriptJson, productionStyle, hybridSceneMode, brollStyle, captionStyle, productionStyleGuidance);
         stripEmbeddedProductionPlanTags(scriptJson);
+        Map<String, Object> sourceBrief = buildSourceBrief(storyIdea);
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
+        if (noHumans) {
+            applyNoHumanProductScreenplayContract(scriptJson);
+        }
 
         String title = defaultString(request == null ? null : request.title(), defaultString(scriptJson.getProjectTitle(), storyIdea.getTitle()));
         scriptJson.setProjectTitle(title);
-        String scriptText = defaultString(request == null ? null : request.script(), buildScriptText(storyIdea, shots));
+        String scriptText = noHumans
+                ? buildScriptText(storyIdea, shots)
+                : defaultString(request == null ? null : request.script(), buildScriptText(storyIdea, shots));
         String categoryCode = defaultString(scriptJson.getCategory(), creatorScript.getCategoryCode());
         String inferredTone = defaultString(scriptJson.getInferredTone(), inferTone(scriptText, categoryCode));
         enrichAudioAndMusicDesign(scriptJson, categoryCode, inferredTone);
+        enrichVideoGenerationPlan(scriptJson, categoryCode, screenType, storytellingType);
+        if (noHumans) {
+            applyNoHumanProductScreenplayContract(scriptJson);
+        }
         Map<String, Object> scriptPayloadMap = toMap(scriptJson);
         GeneratedStoryScriptResponse.StoryScript storyScript = readStoryScriptFromIdea(storyIdea);
         if (storyScript != null) {
@@ -1218,6 +1404,11 @@ public class IdeaService {
         context.put("scriptScreenType", screenType);
         context.put("scriptStorytellingType", storytellingType);
         context.put("scriptHookLens", hookLens);
+        context.put("productionStyle", productionStyle);
+        context.put("hybridSceneMode", hybridSceneMode);
+        context.put("brollStyle", brollStyle);
+        context.put("captionStyle", captionStyle);
+        context.put("productionStyleGuidance", scriptJson.getProductionStyleGuidance());
         context.put("productionPlanTagCount", productionPlanTags.size());
         context.put("productionPlanStatus", productionPlanResult.status());
         if (!productionPlanResult.error().isBlank()) {
@@ -1253,6 +1444,86 @@ public class IdeaService {
                 .durationSeconds(durationSeconds)
                 .status(savedIdea.getStatus())
                 .generatedAt(savedIdea.getUpdatedAt())
+                .build();
+    }
+
+    @Transactional
+    public GeneratedScriptResponse approveScreenplayForVideo(
+            UUID lockedIdeaId,
+            UUID storyIdeaId,
+            UUID scriptId,
+            Map<String, Object> request,
+            String tenantId,
+            String userId
+    ) {
+        CreatorIdea storyIdea = getStoryIdeaForLockedBrief(lockedIdeaId, storyIdeaId, tenantId, userId);
+        CreatorScript creatorScript = scriptRepository
+                .findByIdAndTenantIdAndUserId(scriptId, storyIdea.getTenantId(), storyIdea.getUserId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Generated script was not found."));
+        if (!lockedIdeaId.equals(creatorScript.getLockedIdeaId()) || !storyIdeaId.equals(creatorScript.getStoryIdeaId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Script does not belong to the selected story idea.");
+        }
+
+        Map<String, Object> scriptPayload = new LinkedHashMap<>(creatorScript.getScriptPayload() == null ? Map.of() : creatorScript.getScriptPayload());
+        List<Map<String, Object>> shotPayloads = new ArrayList<>(creatorScript.getShots() == null ? List.of() : creatorScript.getShots());
+        Map<String, Object> approval = new LinkedHashMap<>();
+        approval.put("approved", true);
+        approval.put("approvedAt", OffsetDateTime.now().toString());
+        approval.put("approvedBy", defaultString(userId, "anonymous"));
+        approval.put("approvalSource", stringValue(request == null ? null : request.get("approvalSource"), "creator_ui_video_generation"));
+        approval.put("targetProvider", stringValue(request == null ? null : request.get("targetProvider"), "seedance"));
+        approval.put("maxClipSeconds", integerValue(request == null ? null : request.get("maxClipSeconds"), 15));
+        approval.put("durationSeconds", integerValue(request == null ? null : request.get("durationSeconds"), creatorScript.getDurationSeconds()));
+        approval.put("screenType", stringValue(request == null ? null : request.get("screenType"), creatorScript.getScreenType()));
+
+        scriptPayload.put("screenplayApprovedForVideo", true);
+        scriptPayload.put("screenplayApproval", approval);
+        scriptPayload.put("videoApproval", approval);
+        scriptPayload.put("targetProvider", approval.get("targetProvider"));
+        scriptPayload.put("maxClipSeconds", approval.get("maxClipSeconds"));
+        if (request != null && request.get("productionStyle") != null) {
+            scriptPayload.put("productionStyle", normalizeProductionStyle(stringValue(request.get("productionStyle"))));
+        }
+        if (request != null && request.get("productionStyleGuidance") != null) {
+            scriptPayload.put("productionStyleGuidance", request.get("productionStyleGuidance"));
+        }
+
+        creatorScript.setScriptPayload(scriptPayload);
+        creatorScript.setStatus("SCREENPLAY_APPROVED");
+        creatorScript.setUpdatedAt(OffsetDateTime.now());
+        CreatorScript savedScript = scriptRepository.save(creatorScript);
+
+        Map<String, Object> context = new LinkedHashMap<>(storyIdea.getSelectionContext() == null ? Map.of() : storyIdea.getSelectionContext());
+        context.put("scriptId", savedScript.getId().toString());
+        context.put("screenplayApprovedForVideo", true);
+        context.put("screenplayApproval", approval);
+        context.put("videoApproval", approval);
+        context.put("screenplayApprovedAt", approval.get("approvedAt"));
+        context.put("screenplayStatus", savedScript.getStatus());
+        storyIdea.setSelectionContext(context);
+        storyIdea.setStatus("SCREENPLAY_APPROVED");
+        storyIdea.setUpdatedAt(OffsetDateTime.now());
+        CreatorIdea savedIdea = ideaRepository.save(storyIdea);
+        linkProjectSelectedIdea(savedIdea);
+
+        GeneratedScriptResponse.CinematicScript scriptJson = objectMapper.convertValue(scriptPayload, GeneratedScriptResponse.CinematicScript.class);
+        List<GeneratedScriptResponse.CinematicShot> shots = objectMapper.convertValue(shotPayloads, new TypeReference<List<GeneratedScriptResponse.CinematicShot>>() {
+        });
+        scriptJson.setShots(shots);
+
+        return GeneratedScriptResponse.builder()
+                .scriptId(savedScript.getId())
+                .ideaId(savedIdea.getId())
+                .lockedIdeaId(lockedIdeaId)
+                .projectId(savedIdea.getProjectId())
+                .promptRunId(savedScript.getPromptRunId())
+                .title(savedScript.getTitle())
+                .script(savedScript.getScriptText())
+                .scriptJson(scriptJson)
+                .scenes(shots)
+                .durationSeconds(savedScript.getDurationSeconds())
+                .status(savedScript.getStatus())
+                .generatedAt(savedScript.getUpdatedAt())
                 .build();
     }
 
@@ -1375,26 +1646,58 @@ public class IdeaService {
             int targetTotal,
             int candidateCount
     ) {
-        List<String> batchAngles = ideaAnglesForBatch(existingCount + alreadyGeneratedCount, candidateCount);
+        List<String> batchAngles = ideaAnglesForBatch(sourceBrief, existingCount + alreadyGeneratedCount, candidateCount);
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("lockedIdeaId", lockedIdea.getId().toString());
         inputSnapshot.put("candidateCount", candidateCount);
         inputSnapshot.put("totalCandidateTarget", targetTotal);
         inputSnapshot.put("existingCandidateCount", existingCount + alreadyGeneratedCount);
         inputSnapshot.put("durationSeconds", lockedIdea.getDurationSeconds() == null ? 30 : lockedIdea.getDurationSeconds());
+        inputSnapshot.put("noHumans", noHumans);
+        inputSnapshot.putAll(productionStyleContextFromSelection(sourceBrief));
         inputSnapshot.put("lockedBrief", sourceBrief);
+        List<Map<String, Object>> approvedCreativeLearnings = approvedCreativeLearningsFor(
+                lockedIdea,
+                stringValue(firstValue(sourceBrief, "categoryCode", "category")),
+                sourceBrief
+        );
+        inputSnapshot.put("approvedCreativeLearnings", approvedCreativeLearnings);
+        putProductReferenceAiContext(inputSnapshot, sourceBrief);
         inputSnapshot.put("ideaAngles", batchAngles);
-        inputSnapshot.put("generationRules", List.of(
+        Map<String, Object> selectedCampaignAngle = mapValue(firstSelectionContextValue(sourceBrief, "campaignAngle"));
+        inputSnapshot.put("selectedCampaignAngle", selectedCampaignAngle);
+        List<String> generationRules = new ArrayList<>(isProductAdBrief(sourceBrief) ? List.of(
+                "Generate distinct product-ad campaign concepts from the locked product brief.",
+                noHumans
+                        ? "The first concepts should cover Product-Only Problem -> Solution, Product-Only Luxury Story, and Ingredient-to-Product Transformation."
+                        : "The first concepts should cover Problem -> Solution, Luxury Brand Story, and UGC/Testimonial Style.",
+                "Include compact marketing strategy, shot planner, image prompts, video prompt plan, voice/music/caption direction, and editor plan in creativeNotes.",
+                "Inspect the attached product images together with ingredients, audience, and objective; choose and return adTone plus toneRationale in each idea's creativeNotes.",
+                "Return JSON only with an ideas array."
+        ) : List.of(
                 "Generate distinct short-form story ideas from the locked brief.",
                 "Each idea must be practical for a beginner creator using a phone.",
                 "Do not return a screenplay or storyboard yet.",
                 "Return JSON only with an ideas array."
         ));
+        if (!selectedCampaignAngle.isEmpty()) {
+            generationRules.add("The selected campaign angle is mandatory for every returned idea. Preserve its persuasion mechanism, hook, visual direction, and promised payoff; vary only the execution.");
+        }
+        if (noHumans) {
+            generationRules.add("NO HUMANS is a hard narrative and visual constraint. Do not create a named or unnamed customer, protagonist, creator, presenter, hands, body parts, silhouettes, reflections, testimonials, or human point-of-view.");
+            generationRules.add("The product, packaging, ingredients, materials, environments, typography, motion graphics, sound design, and off-screen voiceover must carry the complete story.");
+            generationRules.add("Every shotPlanner and imagePrompts entry must be product-only and explicitly exclude all humans and body parts.");
+        }
+        inputSnapshot.put("generationRules", generationRules);
 
         Map<String, Object> renderVariables = new LinkedHashMap<>(inputSnapshot);
         renderVariables.put("lockedBriefJson", toJson(sourceBrief));
         renderVariables.put("ideaAnglesJson", toJson(batchAngles));
         String renderedPrompt = promptTemplateService.render(template, renderVariables);
+        renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "idea");
+        renderedPrompt = appendProductReferencePrompt(renderedPrompt, sourceBrief, "campaign idea");
+        renderedPrompt = appendApprovedCreativeLearningPrompt(renderedPrompt, approvedCreativeLearnings);
 
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
@@ -1411,6 +1714,18 @@ public class IdeaService {
         Map<String, Object> providerOutput = aiResponse.output();
 
         List<IdeaCandidate> candidates = ideaCandidates(providerOutput, candidateCount);
+        if (noHumans) {
+            List<IdeaCandidate> productOnlyCandidates = new ArrayList<>();
+            for (int index = 0; index < candidates.size(); index++) {
+                productOnlyCandidates.add(enforceNoHumanProductIdeaCandidate(
+                        lockedIdea,
+                        sourceBrief,
+                        existingCount + alreadyGeneratedCount + index + 1,
+                        candidates.get(index)
+                ));
+            }
+            candidates = productOnlyCandidates;
+        }
         List<Map<String, Object>> normalizedIdeas = candidates.stream()
                 .map(IdeaCandidate::toMap)
                 .toList();
@@ -1445,7 +1760,30 @@ public class IdeaService {
         return new AiIdeaBatchResult(candidates, promptRun.getId(), providerOutput);
     }
 
-    private List<String> ideaAnglesForBatch(int offset, int count) {
+    private List<String> ideaAnglesForBatch(Map<String, Object> sourceBrief, int offset, int count) {
+        Map<String, Object> selectedCampaignAngle = mapValue(firstSelectionContextValue(sourceBrief, "campaignAngle"));
+        if (!selectedCampaignAngle.isEmpty()) {
+            String title = stringValue(selectedCampaignAngle.get("title"), "Selected campaign angle");
+            String description = stringValue(selectedCampaignAngle.get("description"), "");
+            String hook = stringValue(selectedCampaignAngle.get("hook"), "");
+            String requiredAngle = "MANDATORY selected campaign angle: " + title
+                    + (description.isBlank() ? "" : ". " + description)
+                    + (hook.isBlank() ? "" : ". Hook: " + hook);
+            return java.util.Collections.nCopies(Math.max(1, count), requiredAngle);
+        }
+        if (isProductAdBrief(sourceBrief)) {
+            List<Map<String, String>> conceptLanes = isNoHumanProductAdBrief(sourceBrief)
+                    ? NO_HUMAN_PRODUCT_AD_CONCEPT_LANES
+                    : PRODUCT_AD_CONCEPT_LANES;
+            List<String> productAngles = conceptLanes.stream()
+                    .map(lane -> lane.get("title") + ": " + lane.get("description"))
+                    .toList();
+            List<String> angles = new ArrayList<>();
+            for (int index = 0; index < count; index++) {
+                angles.add(productAngles.get((offset + index) % productAngles.size()));
+            }
+            return angles;
+        }
         List<String> angles = new ArrayList<>();
         for (int index = 0; index < count; index++) {
             angles.add(IDEA_ANGLES.get((offset + index) % IDEA_ANGLES.size()));
@@ -1464,9 +1802,27 @@ public class IdeaService {
         context.put("parentLockedIdeaId", lockedIdea.getId().toString());
         context.put("generatedIndex", ideaNumber);
         context.put("angle", candidate.angle());
-        context.put("sourceBrief", buildSourceBrief(lockedIdea));
+        Map<String, Object> sourceBrief = buildSourceBrief(lockedIdea);
+        context.put("sourceBrief", sourceBrief);
+        context.putAll(productionStyleContextFromSelection(sourceBrief));
+        copyIfPresent(sourceBrief, context, "briefMode");
+        copyIfPresent(sourceBrief, context, "marketingAgentMode");
+        copyIfPresent(sourceBrief, context, "productInputKey");
+        copyIfPresent(sourceBrief, context, "productIntelligenceBrief");
+        copyIfPresent(sourceBrief, context, "productUnderstanding");
+        copyIfPresent(sourceBrief, context, "adConceptLanes");
+        copyIfPresent(sourceBrief, context, "brandContext");
+        copyIfPresent(sourceBrief, context, "campaignObjective");
+        copyIfPresent(sourceBrief, context, "campaignAngle");
         context.put("hashtags", candidate.hashtags().isEmpty() ? hashtagsFor(lockedIdea, candidate.angle()) : candidate.hashtags());
         context.put("creativeNotes", candidate.creativeNotes());
+        if (isProductAdBrief(sourceBrief)) {
+            Map<String, Object> productBrief = new LinkedHashMap<>(productBriefFromSource(sourceBrief));
+            Map<String, Object> creativeNotes = candidate.creativeNotes() == null ? Map.of() : candidate.creativeNotes();
+            putIfPresent(productBrief, "adTone", firstValue(creativeNotes, "adTone", "tone"));
+            putIfPresent(productBrief, "toneRationale", creativeNotes.get("toneRationale"));
+            context.put("productIntelligenceBrief", productBrief);
+        }
         context.put("provider", creatorAiService.providerName());
         context.put("model", creatorAiService.modelName());
         if (promptRunId != null) {
@@ -1489,9 +1845,47 @@ public class IdeaService {
         putIfPresent(sourceBrief, "categoryCode", selectionContext.get("categoryCode"));
         putIfPresent(sourceBrief, "countryCode", selectionContext.get("countryCode"));
         putIfPresent(sourceBrief, "timeframe", selectionContext.get("timeframe"));
+        putIfPresent(sourceBrief, "topicType", selectionContext.get("topicType"));
+        putIfPresent(sourceBrief, "dialogueLanguage", selectionContext.get("dialogueLanguage"));
+        putIfPresent(sourceBrief, "screenType", selectionContext.get("screenType"));
+        putIfPresent(sourceBrief, "storytellingType", selectionContext.get("storytellingType"));
+        putIfPresent(sourceBrief, "hookLens", selectionContext.get("hookLens"));
         putIfPresent(sourceBrief, "selectionPayload", selectionContext.get("selectionPayload"));
+        putIfPresent(sourceBrief, "briefMode", firstSelectionContextValue(selectionContext, "briefMode"));
+        putIfPresent(sourceBrief, "marketingAgentMode", firstSelectionContextValue(selectionContext, "marketingAgentMode"));
+        putIfPresent(sourceBrief, "productInputKey", firstSelectionContextValue(selectionContext, "productInputKey"));
+        putIfPresent(sourceBrief, "productIntelligenceBrief", firstSelectionContextValue(selectionContext, "productIntelligenceBrief"));
+        putIfPresent(sourceBrief, "productUnderstanding", firstSelectionContextValue(selectionContext, "productUnderstanding"));
+        putIfPresent(sourceBrief, "adConceptLanes", firstSelectionContextValue(selectionContext, "adConceptLanes"));
+        putIfPresent(sourceBrief, "brandContext", firstSelectionContextValue(selectionContext, "brandContext"));
+        putIfPresent(sourceBrief, "campaignObjective", firstSelectionContextValue(selectionContext, "campaignObjective"));
+        putIfPresent(sourceBrief, "campaignAngle", firstSelectionContextValue(selectionContext, "campaignAngle"));
+        sourceBrief.putAll(productionStyleContextFromSelection(selectionContext));
         putIfPresent(sourceBrief, "trend", selectionContext.get("trend"));
         return sourceBrief;
+    }
+
+    private Object firstSelectionContextValue(Map<String, Object> selectionContext, String key) {
+        if (selectionContext == null || selectionContext.isEmpty()) {
+            return null;
+        }
+        Object value = selectionContext.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> selectionPayload = mapValue(selectionContext.get("selectionPayload"));
+        value = selectionPayload.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> ideaPayload = mapValue(selectionPayload.get("idea"));
+        value = ideaPayload.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> productBrief = mapValue(selectionPayload.get("productIntelligenceBrief"));
+        value = productBrief.get(key);
+        return hasContextValue(value) ? value : null;
     }
 
     private List<IdeaCandidate> ideaCandidates(Map<String, Object> providerOutput, int limit) {
@@ -1525,6 +1919,22 @@ public class IdeaService {
             copyIfPresent(rawIdea, creativeNotes, "whyItWorks");
             copyIfPresent(rawIdea, creativeNotes, "openingVisual");
             copyIfPresent(rawIdea, creativeNotes, "audiencePromise");
+            copyIfPresent(rawIdea, creativeNotes, "adConceptLane");
+            copyIfPresent(rawIdea, creativeNotes, "adConceptTitle");
+            copyIfPresent(rawIdea, creativeNotes, "marketingObjective");
+            copyIfPresent(rawIdea, creativeNotes, "cta");
+            copyIfPresent(rawIdea, creativeNotes, "targetAudience");
+            copyIfPresent(rawIdea, creativeNotes, "adTone");
+            copyIfPresent(rawIdea, creativeNotes, "toneRationale");
+            copyIfPresent(rawIdea, creativeNotes, "productUnderstanding");
+            copyIfPresent(rawIdea, creativeNotes, "shotPlanner");
+            copyIfPresent(rawIdea, creativeNotes, "imagePrompts");
+            copyIfPresent(rawIdea, creativeNotes, "videoPromptPlan");
+            copyIfPresent(rawIdea, creativeNotes, "voiceMusicCaptionPlan");
+            copyIfPresent(rawIdea, creativeNotes, "editorPlan");
+            copyIfPresent(rawIdea, creativeNotes, "productIntelligenceBrief");
+            copyIfPresent(rawIdea, creativeNotes, "adConceptStrategy");
+            copyIfPresent(rawIdea, creativeNotes, "campaignStrategy");
             creativeNotes.putIfAbsent("hook", title);
             creativeNotes.putIfAbsent("selectionReason", "AI generated from the locked creator brief.");
 
@@ -1539,18 +1949,802 @@ public class IdeaService {
     }
 
     private IdeaCandidate fallbackIdeaCandidate(CreatorIdea lockedIdea, int ideaNumber) {
-        String angle = IDEA_ANGLES.get((ideaNumber - 1) % IDEA_ANGLES.size());
+        Map<String, Object> sourceBrief = buildSourceBrief(lockedIdea);
+        if (isProductAdBrief(sourceBrief)) {
+            return fallbackProductAdIdeaCandidate(lockedIdea, sourceBrief, ideaNumber);
+        }
+        Map<String, Object> selectedCampaignAngle = mapValue(sourceBrief.get("campaignAngle"));
+        String angle = !selectedCampaignAngle.isEmpty()
+                ? stringValue(selectedCampaignAngle.get("title"), "Selected campaign angle")
+                : IDEA_ANGLES.get((ideaNumber - 1) % IDEA_ANGLES.size());
         Map<String, Object> creativeNotes = new LinkedHashMap<>();
-        creativeNotes.put("hook", angle);
+        creativeNotes.put("hook", stringValue(selectedCampaignAngle.get("hook"), angle));
         creativeNotes.put("targetEmotion", targetEmotionFor(angle));
         creativeNotes.put("storyShape", storyShapeFor(angle));
-        creativeNotes.put("selectionReason", "Fallback idea added because the AI provider returned fewer candidates than requested.");
+        if (!selectedCampaignAngle.isEmpty()) {
+            creativeNotes.put("campaignAngle", selectedCampaignAngle);
+            creativeNotes.put("selectionReason", "Fallback idea retained the selected campaign angle because the AI provider returned fewer candidates than requested.");
+        }
+        creativeNotes.putIfAbsent("selectionReason", "Fallback idea added because the AI provider returned fewer candidates than requested.");
         return new IdeaCandidate(
                 buildTitle(lockedIdea, angle, ideaNumber),
-                buildSummary(lockedIdea, angle),
+                !selectedCampaignAngle.isEmpty()
+                        ? truncate(stringValue(selectedCampaignAngle.get("description"), buildSummary(lockedIdea, angle)), 1000)
+                        : buildSummary(lockedIdea, angle),
                 hashtagsFor(lockedIdea, angle),
                 creativeNotes
         );
+    }
+
+    private IdeaCandidate fallbackProductAdIdeaCandidate(CreatorIdea lockedIdea, Map<String, Object> sourceBrief, int ideaNumber) {
+        boolean noHumans = isNoHumanProductAdBrief(sourceBrief);
+        List<Map<String, String>> conceptLanes = noHumans
+                ? NO_HUMAN_PRODUCT_AD_CONCEPT_LANES
+                : PRODUCT_AD_CONCEPT_LANES;
+        Map<String, String> lane = conceptLanes.get((ideaNumber - 1) % conceptLanes.size());
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        String productName = productDisplayName(productBrief, lockedIdea);
+        Map<String, Object> strategy = productAdStrategyForLane(lane.get("key"), productBrief, productName, noHumans);
+        Map<String, Object> selectedCampaignAngle = mapValue(sourceBrief.get("campaignAngle"));
+        String conceptTitle = noHumans
+                ? lane.get("title")
+                : stringValue(selectedCampaignAngle.get("title"), lane.get("title"));
+        Map<String, Object> creativeNotes = new LinkedHashMap<>();
+        creativeNotes.put("briefMode", "product_ad_agent");
+        creativeNotes.put("productInputKey", sourceBrief.get("productInputKey"));
+        creativeNotes.put("productIntelligenceBrief", productBrief);
+        creativeNotes.put("adConceptLane", lane.get("key"));
+        creativeNotes.put("adConceptTitle", conceptTitle);
+        creativeNotes.put("hook", stringValue(selectedCampaignAngle.get("hook"), stringValue(strategy.get("hook"))));
+        creativeNotes.put("cta", strategy.get("cta"));
+        creativeNotes.put("marketingObjective", strategy.get("marketingObjective"));
+        creativeNotes.put("targetAudience", strategy.get("targetAudience"));
+        putIfPresent(creativeNotes, "adTone", firstValue(productBrief, "adTone", "tone"));
+        putIfPresent(creativeNotes, "toneRationale", productBrief.get("toneRationale"));
+        creativeNotes.put("productUnderstanding", strategy.get("productUnderstanding"));
+        creativeNotes.put("shotPlanner", strategy.get("shotPlanner"));
+        creativeNotes.put("imagePrompts", strategy.get("imagePrompts"));
+        creativeNotes.put("videoPromptPlan", strategy.get("videoPromptPlan"));
+        creativeNotes.put("voiceMusicCaptionPlan", strategy.get("voiceMusicCaptionPlan"));
+        creativeNotes.put("editorPlan", strategy.get("editorPlan"));
+        creativeNotes.put("adConceptStrategy", strategy);
+        creativeNotes.put("noHumans", noHumans);
+        if (!selectedCampaignAngle.isEmpty()) {
+            creativeNotes.put("campaignAngle", selectedCampaignAngle);
+        }
+        creativeNotes.put("selectionReason", !selectedCampaignAngle.isEmpty()
+                ? "Fallback concept retained the selected campaign angle because the AI provider returned fewer candidates than requested."
+                : strategy.get("selectionReason"));
+        return new IdeaCandidate(
+                truncate("%02d. %s: %s".formatted(ideaNumber, conceptTitle, productName), 240),
+                truncate(noHumans
+                        ? stringValue(strategy.get("summary"), lane.get("description"))
+                        : stringValue(selectedCampaignAngle.get("description"), stringValue(strategy.get("summary"), lane.get("description"))), 1000),
+                List.of("ProductAd", lane.get("key").replace("_", ""), "Commercial"),
+                creativeNotes
+        );
+    }
+
+    private boolean isProductAdBrief(Map<String, Object> sourceBrief) {
+        if (sourceBrief == null || sourceBrief.isEmpty()) {
+            return false;
+        }
+        String mode = stringValue(firstValue(sourceBrief, "briefMode", "mode"));
+        if ("product_ad_agent".equalsIgnoreCase(mode)) {
+            return true;
+        }
+        if (Boolean.TRUE.equals(sourceBrief.get("marketingAgentMode"))) {
+            return true;
+        }
+        return !productBriefFromSource(sourceBrief).isEmpty();
+    }
+
+    private Map<String, Object> productBriefFromSource(Map<String, Object> sourceBrief) {
+        if (sourceBrief == null || sourceBrief.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> productBrief = new LinkedHashMap<>(mapValue(sourceBrief.get("productIntelligenceBrief")));
+        if (productBrief.isEmpty()) {
+            Map<String, Object> selectionPayload = mapValue(sourceBrief.get("selectionPayload"));
+            productBrief.putAll(mapValue(selectionPayload.get("productIntelligenceBrief")));
+            if (productBrief.isEmpty()) {
+                productBrief.putAll(mapValue(mapValue(selectionPayload.get("idea")).get("productIntelligenceBrief")));
+            }
+        }
+        Map<String, Object> understanding = mapValue(firstValue(
+                sourceBrief,
+                "productUnderstanding"
+        ));
+        if (understanding.isEmpty()) {
+            understanding = mapValue(productBrief.get("productUnderstanding"));
+        }
+        if (!understanding.isEmpty()) {
+            productBrief.put("productUnderstanding", understanding);
+        }
+        putIfPresent(productBrief, "productInputKey", sourceBrief.get("productInputKey"));
+        putIfPresent(productBrief, "campaignObjective", sourceBrief.get("campaignObjective"));
+        return productBrief;
+    }
+
+    private List<Map<String, Object>> approvedCreativeLearningsFor(
+            CreatorIdea idea,
+            String categoryCode,
+            Map<String, Object> sourceBrief
+    ) {
+        if (idea == null || !isProductAdBrief(sourceBrief)) {
+            return List.of();
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        Map<String, Object> understanding = mapValue(productBrief.get("productUnderstanding"));
+        Map<String, Object> direction = mapValue(productBrief.get("creativeDirection"));
+        List<Map<String, Object>> guidance = creativeLearningService.approvedGuidance(
+                idea.getTenantId(),
+                idea.getUserId(),
+                defaultString(categoryCode, stringValue(firstValue(sourceBrief, "categoryCode", "category"))),
+                stringValue(firstNonNull(
+                        direction.get("adFormat"),
+                        direction.get("adFormatLabel"),
+                        productBrief.get("adFormat"),
+                        sourceBrief.get("adFormat")
+                )),
+                stringValue(firstNonNull(
+                        understanding.get("productCategory"),
+                        understanding.get("category"),
+                        productBrief.get("productCategory"),
+                        productBrief.get("category")
+                ))
+        );
+        return guidance == null ? List.of() : guidance;
+    }
+
+    private String appendApprovedCreativeLearningPrompt(
+            String renderedPrompt,
+            List<Map<String, Object>> approvedCreativeLearnings
+    ) {
+        String enriched = creativeLearningService.appendApprovedGuidance(
+                renderedPrompt,
+                approvedCreativeLearnings
+        );
+        return enriched == null || enriched.isBlank() ? renderedPrompt : enriched;
+    }
+
+    void putProductReferenceAiContext(Map<String, Object> input, Map<String, Object> sourceBrief) {
+        if (input == null || !isProductAdBrief(sourceBrief)) {
+            return;
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        Map<String, Object> productUnderstanding = mapValue(productBrief.get("productUnderstanding"));
+        List<String> imageUrls = productReferenceImageUrls(sourceBrief);
+        input.put("referenceImageUrls", imageUrls);
+        input.put("productReferenceImageUrls", imageUrls);
+        input.put("attachReferenceImages", !imageUrls.isEmpty());
+        input.put("ingredientDetails", truncate(stringValue(firstValue(
+                productBrief,
+                "ingredientDetails",
+                "ingredients"
+        ), stringValue(productUnderstanding.get("ingredients"))), 150));
+        input.put("targetAudience", stringValue(firstValue(
+                productBrief,
+                "targetAudience"
+        ), stringValue(productUnderstanding.get("targetAudience"))));
+        input.put("campaignObjective", stringValue(firstValue(
+                productBrief,
+                "campaignObjective"
+        )));
+        input.put("adTone", stringValue(firstValue(
+                productBrief,
+                "adTone",
+                "tone"
+        ), stringValue(firstValue(productUnderstanding, "adTone", "tone"))));
+        input.put("toneSelectionMode", "AUTO_FROM_PRODUCT_CONTEXT");
+    }
+
+    private List<String> productReferenceImageUrls(Map<String, Object> sourceBrief) {
+        if (!isProductAdBrief(sourceBrief)) {
+            return List.of();
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        Map<String, Object> productUnderstanding = mapValue(productBrief.get("productUnderstanding"));
+        LinkedHashSet<String> urls = new LinkedHashSet<>();
+        addProductReferenceImageUrls(urls, productBrief.get("sourceProductImageUrls"));
+        addProductReferenceImageUrls(urls, productBrief.get("imageUrls"));
+        addProductReferenceImageUrls(urls, productBrief.get("productImageUrls"));
+        addProductReferenceImageUrls(urls, productBrief.get("referenceImageUrls"));
+        addProductReferenceImageUrls(urls, productUnderstanding.get("imageUrls"));
+        for (Map<String, Object> asset : productReferenceImageAssets(sourceBrief)) {
+            addProductReferenceImageUrls(urls, firstValue(
+                    asset,
+                    "assetUrl",
+                    "signedUrl",
+                    "publicUrl",
+                    "imageUrl",
+                    "url"
+            ));
+        }
+        return urls.stream().limit(8).toList();
+    }
+
+    private void addProductReferenceImageUrls(LinkedHashSet<String> urls, Object value) {
+        for (String url : stringList(value)) {
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                urls.add(url);
+            }
+        }
+    }
+
+    private List<Map<String, Object>> productReferenceImageAssets(Map<String, Object> sourceBrief) {
+        if (!isProductAdBrief(sourceBrief)) {
+            return List.of();
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        List<Map<String, Object>> assets = new ArrayList<>();
+        Object[] sources = {
+                productBrief.get("imageAssets"),
+                productBrief.get("productImageAssets"),
+                productBrief.get("referenceImageAssets")
+        };
+        for (Object source : sources) {
+            for (Map<String, Object> asset : mapListValue(source)) {
+                String bucket = stringValue(asset.get("bucket")).trim();
+                String objectKey = stringValue(firstValue(asset, "objectKey", "object_key")).trim();
+                String url = stringValue(firstValue(asset, "assetUrl", "signedUrl", "publicUrl", "imageUrl", "url")).trim();
+                if ((bucket.isBlank() || objectKey.isBlank()) && url.isBlank()) {
+                    continue;
+                }
+                boolean duplicate = assets.stream().anyMatch(existing ->
+                        !bucket.isBlank()
+                                && bucket.equals(stringValue(existing.get("bucket")).trim())
+                                && objectKey.equals(stringValue(firstValue(existing, "objectKey", "object_key")).trim())
+                                || !url.isBlank()
+                                && url.equals(stringValue(firstValue(existing, "assetUrl", "signedUrl", "publicUrl", "imageUrl", "url")).trim()));
+                if (!duplicate) {
+                    Map<String, Object> canonical = new LinkedHashMap<>(asset);
+                    canonical.put("referenceRole", "canonical_product_reference");
+                    canonical.put("assetRole", "canonical_product_reference");
+                    assets.add(canonical);
+                }
+                if (assets.size() >= 8) {
+                    return assets;
+                }
+            }
+        }
+        return assets;
+    }
+
+    private String appendProductReferencePrompt(
+            String renderedPrompt,
+            Map<String, Object> sourceBrief,
+            String stage
+    ) {
+        if (!isProductAdBrief(sourceBrief)) {
+            return renderedPrompt;
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        Map<String, Object> productUnderstanding = mapValue(productBrief.get("productUnderstanding"));
+        return defaultString(renderedPrompt, "") + """
+
+                PRODUCT REFERENCE CONTRACT
+                The supplied product images are attached to this request. Inspect all of them together as canonical visual evidence; preserve the exact package shape, label, logo, colors, materials, proportions, and visible ingredients across the %s.
+                Ingredient/product details: %s
+                Audience: %s
+                Campaign objective: %s
+                Treat the supplied audience and campaign objective as binding creative requirements, not passive metadata. Tailor the hook, narrative, proof beats, vocabulary, visual emphasis, retention devices, and CTA to them throughout the %s.
+                Select the ad tone from those images and fields. Return adTone and toneRationale in the product/campaign metadata, then keep that tone consistent. If the objective is blank, infer the most commercially appropriate objective from the supplied product and audience. Never invent an ingredient, claim, certification, price, or package detail that is not supplied or visibly supported.
+                """.formatted(
+                stage,
+                truncate(stringValue(firstValue(productBrief, "ingredientDetails", "ingredients"), stringValue(productUnderstanding.get("ingredients"))), 150),
+                stringValue(firstValue(productBrief, "targetAudience"), stringValue(productUnderstanding.get("targetAudience"))),
+                stringValue(firstValue(productBrief, "campaignObjective")),
+                stage
+        );
+    }
+
+    private void putProductReferencePersistence(
+            Map<String, Object> scriptPayload,
+            Map<String, Object> sourceBrief
+    ) {
+        if (scriptPayload == null || !isProductAdBrief(sourceBrief)) {
+            return;
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        List<String> imageUrls = productReferenceImageUrls(sourceBrief);
+        List<Map<String, Object>> imageAssets = productReferenceImageAssets(sourceBrief);
+        scriptPayload.put("productIntelligenceBrief", productBrief);
+        scriptPayload.put("productImageUrls", imageUrls);
+        scriptPayload.put("referenceImageUrls", imageUrls);
+        scriptPayload.put("productImageAssets", imageAssets);
+        scriptPayload.put("referenceImageAssets", imageAssets);
+        scriptPayload.put("ingredientDetails", firstValue(productBrief, "ingredientDetails", "ingredients"));
+        scriptPayload.put("targetAudience", firstValue(
+                productBrief,
+                "targetAudience",
+                "audience"
+        ));
+        scriptPayload.put("campaignObjective", productBrief.get("campaignObjective"));
+        scriptPayload.put("adTone", firstValue(productBrief, "adTone", "tone"));
+        scriptPayload.put("toneRationale", productBrief.get("toneRationale"));
+    }
+
+    boolean isNoHumanProductAdBrief(Map<String, Object> sourceBrief) {
+        if (!isProductAdBrief(sourceBrief)) {
+            return false;
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        Map<String, Object> creativeDirection = mapValue(productBrief.get("creativeDirection"));
+        Object configured = firstValue(productBrief, "noHumans", "no_humans");
+        if (configured == null) {
+            configured = firstValue(creativeDirection, "noHumans", "no_humans");
+        }
+        if (configured == null) {
+            configured = firstValue(sourceBrief, "noHumans", "no_humans");
+        }
+        return booleanValue(configured, false);
+    }
+
+    private IdeaCandidate enforceNoHumanProductIdeaCandidate(
+            CreatorIdea lockedIdea,
+            Map<String, Object> sourceBrief,
+            int ideaNumber,
+            IdeaCandidate providerCandidate
+    ) {
+        List<Map<String, String>> lanes = NO_HUMAN_PRODUCT_AD_CONCEPT_LANES;
+        Map<String, Object> providerNotes = providerCandidate == null || providerCandidate.creativeNotes() == null
+                ? Map.of()
+                : providerCandidate.creativeNotes();
+        String requestedLane = stringValue(providerNotes.get("adConceptLane"));
+        Map<String, String> lane = lanes.stream()
+                .filter(candidate -> candidate.get("key").equalsIgnoreCase(requestedLane))
+                .findFirst()
+                .orElse(lanes.get((Math.max(1, ideaNumber) - 1) % lanes.size()));
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        String productName = productDisplayName(productBrief, lockedIdea);
+        Map<String, Object> strategy = productAdStrategyForLane(
+                lane.get("key"),
+                productBrief,
+                productName,
+                true
+        );
+        Map<String, Object> creativeNotes = new LinkedHashMap<>(providerNotes);
+        creativeNotes.put("briefMode", "product_ad_agent");
+        creativeNotes.put("productIntelligenceBrief", productBrief);
+        creativeNotes.put("adConceptLane", lane.get("key"));
+        creativeNotes.put("adConceptTitle", lane.get("title"));
+        creativeNotes.put("marketingObjective", strategy.get("marketingObjective"));
+        creativeNotes.put("hook", strategy.get("hook"));
+        creativeNotes.put("cta", strategy.get("cta"));
+        creativeNotes.put("targetAudience", strategy.get("targetAudience"));
+        putIfPresent(creativeNotes, "adTone", firstValue(providerNotes, "adTone", "tone"));
+        putIfPresent(creativeNotes, "toneRationale", providerNotes.get("toneRationale"));
+        creativeNotes.put("productUnderstanding", strategy.get("productUnderstanding"));
+        creativeNotes.put("shotPlanner", strategy.get("shotPlanner"));
+        creativeNotes.put("imagePrompts", strategy.get("imagePrompts"));
+        creativeNotes.put("videoPromptPlan", strategy.get("videoPromptPlan"));
+        creativeNotes.put("voiceMusicCaptionPlan", strategy.get("voiceMusicCaptionPlan"));
+        creativeNotes.put("editorPlan", strategy.get("editorPlan"));
+        creativeNotes.put("adConceptStrategy", strategy);
+        creativeNotes.put("noHumans", true);
+        creativeNotes.put("humanExclusionLock", NO_HUMANS_NEGATIVE_PROMPT);
+        creativeNotes.put("selectionReason", strategy.get("selectionReason"));
+        return new IdeaCandidate(
+                truncate("%02d. %s: %s".formatted(ideaNumber, lane.get("title"), productName), 240),
+                truncate(stringValue(strategy.get("summary"), lane.get("description")), 1000),
+                providerCandidate == null || providerCandidate.hashtags() == null || providerCandidate.hashtags().isEmpty()
+                        ? List.of("ProductAd", "ProductOnly", "CGICommercial")
+                        : providerCandidate.hashtags(),
+                creativeNotes
+        );
+    }
+
+    private String productDisplayName(Map<String, Object> productBrief, CreatorIdea lockedIdea) {
+        Map<String, Object> understanding = mapValue(productBrief.get("productUnderstanding"));
+        return truncate(defaultString(
+                firstNonBlank(
+                        stringValue(productBrief.get("displayName")),
+                        stringValue(productBrief.get("productName")),
+                        stringValue(understanding.get("productName")),
+                        cleanBaseTitle(lockedIdea.getTitle())
+                ),
+                "Product campaign"
+        ), 96);
+    }
+
+    private Map<String, Object> productAdStrategyForLane(
+            String laneKey,
+            Map<String, Object> productBrief,
+            String productName,
+            boolean noHumans
+    ) {
+        Map<String, Object> understanding = mapValue(productBrief.get("productUnderstanding"));
+        String category = defaultString(stringValue(understanding.get("productCategory")), "product");
+        String audience = defaultString(stringValue(understanding.get("targetAudience")), "likely buyers");
+        String usp = defaultString(stringValue(understanding.get("usp")), "clear product value");
+        String cta = defaultString(stringValue(productBrief.get("cta")), "Order today");
+        if (noHumans) {
+            return noHumanProductAdStrategyForLane(laneKey, productBrief, productName, category, audience, usp, cta);
+        }
+        List<String> imagePrompts = List.of(
+                "Hero packshot of %s, clean product-first commercial image, brand colors respected, vertical 9:16 safe framing".formatted(productName),
+                "Macro sensory detail for %s, premium lighting, shallow depth of field, high-retention social ad still".formatted(productName),
+                "Lifestyle use moment for %s, product visible, believable environment, natural hands and practical composition".formatted(audience),
+                "Final end-card style image with %s, clear CTA space, readable layout, no fake claims".formatted(productName)
+        );
+        Map<String, Object> strategy = new LinkedHashMap<>();
+        strategy.put("laneKey", laneKey);
+        strategy.put("cta", cta);
+        strategy.put("targetAudience", audience);
+        strategy.put("productUnderstanding", understanding.isEmpty() ? productBrief : understanding);
+        strategy.put("imagePrompts", imagePrompts);
+
+        if ("luxury_brand_story".equals(laneKey)) {
+            strategy.put("marketingObjective", "Increase premium perception and purchase confidence.");
+            strategy.put("hook", productName + " should create desire and mystery before the complete pack or any ingredient explanation appears.");
+            strategy.put("summary", "Position %s as a premium %s through a mystery-first brand world, artifact-like partial reveals, craft, ingredients, and an earned full-product hero.".formatted(productName, category));
+            strategy.put("shotPlanner", List.of(
+                    "0-2.5s brand-world hook: near-black, architectural scale, amber light, or abstract silhouette; no ingredients and no full pack",
+                    "Artifact discovery: reveal only 10-20% through foil, edge geometry, engraving, material texture, or reflection",
+                    "Distinct texture and craft transformation; do not repeat a pouring action",
+                    "Ingredient reveal only after desire and product-world context are established",
+                    "Earned full product hero with exact approved identity and clean CTA space"
+            ));
+            strategy.put("videoPromptPlan", List.of(
+                    "4K master minimum; professional ARRI Alexa 35 / Sony Venice 2 class cinema capture, premium glass, 10/12-bit log or RAW intent, 24fps base and controlled 180-degree shutter",
+                    "Professional motion-control dolly or calibrated tiny orbit from darkness; DP and gaffer-designed amber rim, shaped negative fill, modifiers and reflection control; below 10% product visibility",
+                    "85-100mm cinema macro, remote focus with measured marks, one rack-focus event, gaffer-programmed light sweep, 10-20% partial reveal",
+                    "Physically plausible texture or craft transition, one new visual idea, no repetitive pouring",
+                    "Full approved pack appears only in the earned hero beat with stable logo, label, geometry, colors, claims, and proportions"
+            ));
+            strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Calm premium voiceover with minimal words.", "music", "Warm modern luxury bed ducked under speech.", "captions", "Sparse premium captions with key benefit words only."));
+            strategy.put("editorPlan", "Plan every second at commercial-director, DP, gaffer, camera-operator, and focus-puller standard; never use rookie camera, lighting, exposure, or direction. Hold longer, use motivated transitions and restrained sound, and end on an earned full packshot.");
+            strategy.put("selectionReason", "Best when brand perception and product desirability matter more than hard-selling.");
+            return strategy;
+        }
+
+        if ("ugc_testimonial".equals(laneKey)) {
+            strategy.put("marketingObjective", "Make the product feel discovered, useful, and socially believable.");
+            strategy.put("hook", "I did not expect " + productName + " to be this useful.");
+            strategy.put("summary", "Make %s feel like a creator recommendation with proof beats, quick reactions, and simple buyer language.".formatted(productName));
+            strategy.put("shotPlanner", List.of("Creator discovery hook", "Product in hand or real-use setup", "Visible proof/detail moment", "Direct recommendation and CTA"));
+            strategy.put("videoPromptPlan", List.of("Handheld creator-style movement, natural room light, honest framing", "Quick product insert with practical proof detail", "Fast social cut with testimonial caption emphasis"));
+            strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Conversational first-person delivery.", "music", "Light social rhythm ducked below voice.", "captions", "Bold keyword captions on proof and CTA beats."));
+            strategy.put("editorPlan", "Keep cuts fast, preserve natural pauses, add small whooshes sparingly, make proof beat impossible to miss.");
+            strategy.put("selectionReason", "Best when the buyer needs authenticity and social proof before purchase.");
+            return strategy;
+        }
+
+        strategy.put("marketingObjective", "Convert a clear buyer pain into purchase intent.");
+        strategy.put("hook", "Still choosing ordinary " + category + "?");
+        strategy.put("summary", "Open with a buyer problem, introduce %s as the cleaner solution, then close on %s and CTA.".formatted(productName, usp));
+        strategy.put("shotPlanner", List.of("Problem visual in first three seconds", "Product enters as the solution", "Benefit proof through close-ups", "CTA packshot"));
+        strategy.put("videoPromptPlan", List.of("Fast contrast cut from problem state to product reveal", "Cinematic product push-in with benefit text-safe framing", "Clean final packshot with motion accent and CTA space"));
+        strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Direct response voiceover with clear benefit order.", "music", "Fast modern pulse ducked under dialogue.", "captions", "High-contrast captions for problem, solution, benefit, CTA."));
+        strategy.put("editorPlan", "Use fast opening cuts, tighten every pause, add crisp transition accents, keep CTA readable.");
+        strategy.put("selectionReason", "Best for immediate conversion and paid performance testing.");
+        return strategy;
+    }
+
+    private Map<String, Object> noHumanProductAdStrategyForLane(
+            String laneKey,
+            Map<String, Object> productBrief,
+            String productName,
+            String category,
+            String audience,
+            String usp,
+            String cta
+    ) {
+        Map<String, Object> understanding = mapValue(productBrief.get("productUnderstanding"));
+        List<String> ingredients = stringList(firstValue(understanding, "ingredients", "keyIngredients", "materials"));
+        List<String> benefits = stringList(firstValue(understanding, "benefits", "keyBenefits"));
+        String evidence = firstNonBlank(
+                ingredients.isEmpty() ? "" : String.join(", ", ingredients),
+                benefits.isEmpty() ? "" : String.join(", ", benefits),
+                usp
+        );
+        Map<String, Object> strategy = new LinkedHashMap<>();
+        strategy.put("laneKey", laneKey);
+        strategy.put("cta", cta);
+        strategy.put("targetAudience", audience);
+        strategy.put("productUnderstanding", understanding.isEmpty() ? productBrief : understanding);
+        strategy.put("noHumans", true);
+        strategy.put("humanExclusionLock", NO_HUMANS_NEGATIVE_PROMPT);
+        strategy.put("dialogueMode", "OFF_SCREEN_VOICEOVER");
+        strategy.put("imagePrompts", List.of(
+                "Canonical hero packshot of %s, exact packaging and brand identity, controlled commercial lighting, product only, %s".formatted(productName, NO_HUMANS_NEGATIVE_PROMPT),
+                "Macro product texture and material detail for %s, premium sensory CGI, product only, %s".formatted(productName, NO_HUMANS_NEGATIVE_PROMPT),
+                "Kinetic ingredient or feature composition around %s using %s, product remains canonical and unobstructed, %s".formatted(productName, evidence, NO_HUMANS_NEGATIVE_PROMPT),
+                "Final product-only packshot of %s with clean CTA space, accurate packaging, no invented claims, %s".formatted(productName, NO_HUMANS_NEGATIVE_PROMPT)
+        ));
+
+        if ("luxury_brand_story".equals(laneKey)) {
+            strategy.put("marketingObjective", "Increase premium perception and purchase confidence without relying on a lifestyle model.");
+            strategy.put("hook", "Make " + productName + " feel mysterious and desirable before the first word, ingredient, or complete-pack reveal.");
+            strategy.put("summary", "A product-only luxury film discovers %s as an artifact: brand world first, 10-20 percent detail reveals second, craft and ingredients later, then a precise earned hero packshot ending on %s.".formatted(productName, cta));
+            strategy.put("shotPlanner", List.of(
+                    "Near-black brand-world hook with abstract silhouette and less than 10% product visibility",
+                    "Macro artifact discovery across real package foil, edge, engraving, or texture",
+                    "Distinct texture and craft transformation with no pouring repetition",
+                    "Ingredient or material proof after the desire hook",
+                    "Canonical full hero packshot with CTA"
+            ));
+            strategy.put("videoPromptPlan", List.of(
+                    "4K vertical or horizontal master minimum; ARRI Alexa 35 / Sony Venice 2 class cinema package, 10/12-bit log or RAW intent, professional lenses, remote focus and exposure discipline",
+                    "Professional dolly or motion-control orbit; DP/gaffer-designed amber rim, negative fill, declared color temperature and contrast ratio; product only",
+                    "100mm cinema macro slider, measured shallow-focus marks and rack focus, gaffer-programmed light sweep, 10-20% of approved identity visible; no hands",
+                    "Physically plausible atmospheric CGI tied to approved product evidence and continuity",
+                    "Locked earned hero with exact name, logo, packaging, colors, claims, proportions, and CTA space"
+            ));
+            strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Calm off-screen premium voiceover.", "music", "Restrained modern luxury bed.", "captions", "Sparse benefit captions; no on-camera speaker."));
+            strategy.put("editorPlan", "Direct every second at professional commercial crew standard with controlled camera, focus, exposure, light, visibility, and sound; no rookie setup. Use motivated reveals, preserve canonical identity, and exclude all human forms.");
+            strategy.put("selectionReason", "Best when premium perception must come entirely from product craft, light, texture, and sound.");
+            return strategy;
+        }
+
+        if ("ingredient_transformation".equals(laneKey)) {
+            strategy.put("marketingObjective", "Make product composition and benefits memorable through a product-safe CGI transformation.");
+            strategy.put("hook", evidence + " becomes the visual trigger for " + productName + ".");
+            strategy.put("summary", "A product-only CGI sequence transforms %s into the canonical %s pack, then demonstrates %s through macro motion and closes on %s.".formatted(evidence, productName, usp, cta));
+            strategy.put("shotPlanner", List.of("Ingredient or material macro hook", "Kinetic assembly toward the product", "Benefit proof through product detail", "Canonical packshot and CTA"));
+            strategy.put("videoPromptPlan", List.of("Macro ingredients or materials suspended in controlled space", "Kinetic CGI transformation assembling around the unchanged product", "Feature-focused orbit and texture reveal", "Clean product lockup with sound hit and CTA"));
+            strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Bold off-screen product narration.", "music", "Rhythmic build with a clean reveal hit.", "captions", "Short evidence-led captions timed to transformations."));
+            strategy.put("editorPlan", "Use match cuts, material transitions, and sync hits while preserving product geometry, label, and colors.");
+            strategy.put("selectionReason", "Best for visually explaining ingredients, materials, or product benefits without a spokesperson.");
+            return strategy;
+        }
+
+        strategy.put("marketingObjective", "Convert a buyer need into purchase intent using only product and environmental visual evidence.");
+        strategy.put("hook", "Show the problem as a visual product-state contrast, then reveal " + productName + ".");
+        strategy.put("summary", "A product-only problem-to-solution commercial contrasts an unsatisfying %s state with %s, proves %s through close product detail, and ends on %s.".formatted(category, productName, usp, cta));
+        strategy.put("shotPlanner", List.of("Abstract or object-led problem state", "Product reveal as the solution", "Macro feature and benefit proof", "Canonical CTA packshot"));
+        strategy.put("videoPromptPlan", List.of("Fast visual contrast using objects, typography, or environment only", "Cinematic product push-in with exact packaging", "Macro proof beat with product-safe CGI accents", "Locked final product frame with CTA space"));
+        strategy.put("voiceMusicCaptionPlan", Map.of("voice", "Direct off-screen benefit voiceover.", "music", "Fast modern pulse under narration.", "captions", "Problem, solution, proof, and CTA captions."));
+        strategy.put("editorPlan", "Use a fast opening contrast and crisp product reveals; never introduce customers, presenters, hands, or reflections.");
+        strategy.put("selectionReason", "Best for direct response while maintaining a strict product-only visual language.");
+        return strategy;
+    }
+
+    private String appendNoHumanProductPrompt(String renderedPrompt, boolean noHumans, String stage) {
+        if (!noHumans) {
+            return renderedPrompt;
+        }
+        String stageRules = switch (defaultString(stage, "").toLowerCase(Locale.ROOT)) {
+            case "idea" -> """
+                    - Every idea title, description, hook, shotPlanner entry, image prompt, and video prompt must describe a product-only commercial.
+                    - Do not invent a named customer or make a human's craving, routine, reaction, testimonial, or decision the story.
+                    """;
+            case "story" -> """
+                    - Return "characters": [] exactly. An empty character list is valid and required.
+                    - The logline, conflict, storyline, hook, emotional arc, ending, and every beat must be carried by the product, packaging, ingredients/materials, environment, typography, motion graphics, sound, and off-screen voiceover.
+                    - Do not use a named or unnamed protagonist, customer, creator, presenter, viewer, owner, family member, or human point-of-view.
+                    """;
+            case "screenplay" -> """
+                    - Every shot must use peopleInFrame=0, primaryActors=[], sideActors=[], primaryCharacters=[], and sideCharacters=[].
+                    - Use off-screen voiceOver only; dialogue must be an empty object and lip-sync is not required.
+                    - Every visual prompt and shot must explicitly exclude people, faces, hands, arms, bodies, silhouettes, and human reflections.
+                    """;
+            default -> "";
+        };
+        return defaultString(renderedPrompt, "") + """
+
+                HARD PRODUCT-ONLY / NO-HUMANS CONTRACT
+                noHumans=true is a mandatory constraint, not a preference.
+                - No people, faces, hands, arms, bodies, human silhouettes, reflections, presenters, customers, creators, actors, or human-operated use may appear or be implied.
+                - Product, packaging, ingredients or materials, environment, kinetic typography, CGI motion, sound design, and off-screen narration must carry the story.
+                - Never convert a UGC or lifestyle concept into a human testimonial. Convert its persuasion goal into product evidence.
+                """
+                + stageRules;
+    }
+
+    void applyNoHumanProductStoryContract(
+            GeneratedStoryScriptResponse.StoryScript storyScript,
+            CreatorIdea storyIdea,
+            Map<String, Object> sourceBrief,
+            int durationSeconds
+    ) {
+        if (storyScript == null) {
+            return;
+        }
+        Map<String, Object> productBrief = productBriefFromSource(sourceBrief);
+        String productName = productDisplayName(productBrief, storyIdea);
+        Map<String, Object> selectionContext = storyIdea == null || storyIdea.getSelectionContext() == null
+                ? Map.of()
+                : storyIdea.getSelectionContext();
+        Map<String, Object> creativeNotes = mapValue(selectionContext.get("creativeNotes"));
+        int generatedIndex = integerValue(selectionContext.get("generatedIndex"), 1);
+        String requestedLane = stringValue(creativeNotes.get("adConceptLane"));
+        Map<String, String> lane = NO_HUMAN_PRODUCT_AD_CONCEPT_LANES.stream()
+                .filter(candidate -> candidate.get("key").equalsIgnoreCase(requestedLane))
+                .findFirst()
+                .orElse(NO_HUMAN_PRODUCT_AD_CONCEPT_LANES.get((Math.max(1, generatedIndex) - 1) % NO_HUMAN_PRODUCT_AD_CONCEPT_LANES.size()));
+        Map<String, Object> strategy = productAdStrategyForLane(
+                lane.get("key"),
+                productBrief,
+                productName,
+                true
+        );
+        Map<String, Object> understanding = mapValue(productBrief.get("productUnderstanding"));
+        List<String> ingredients = stringList(firstValue(understanding, "ingredients", "keyIngredients", "materials"));
+        List<String> benefits = stringList(firstValue(understanding, "benefits", "keyBenefits"));
+        String usp = defaultString(stringValue(understanding.get("usp")), "the product's verified value");
+        String evidence = firstNonBlank(
+                ingredients.isEmpty() ? "" : String.join(", ", ingredients),
+                benefits.isEmpty() ? "" : String.join(", ", benefits),
+                usp
+        );
+        String cta = defaultString(stringValue(productBrief.get("cta")), "Order today");
+
+        storyScript.setProjectTitle(productName + " - " + lane.get("title"));
+        storyScript.setDuration(durationSeconds);
+        storyScript.setNoHumans(true);
+        storyScript.setNarrativeMode("product_only");
+        storyScript.setDialogueMode("off_screen_voiceover");
+        storyScript.setLogline(stringValue(
+                strategy.get("summary"),
+                "A product-only commercial turns material detail into a clear reveal of " + productName + "."
+        ));
+        storyScript.setCentralConflict(
+                "Communicate desire and credible product value without relying on a customer, presenter, testimonial, hands, or any visible human."
+        );
+        storyScript.setStoryline(
+                "Open with a product-relevant visual tension using objects, ingredients, materials, or typography. "
+                        + "Reveal " + productName + " as the visual answer, build proof through " + evidence
+                        + ", then resolve on the exact canonical product, a clean benefit message, and the CTA: " + cta + "."
+        );
+        storyScript.setEmotionalArc("Immediate curiosity -> sensory desire -> product proof -> purchase confidence");
+        storyScript.setHook(defaultString(stringValue(strategy.get("hook")), "Open on an arresting product-only macro detail."));
+        storyScript.setEndingPayoff(
+                "The exact product holds in a clean hero frame while off-screen voiceover and typography deliver " + cta + "."
+        );
+        storyScript.setSetting(
+                "A controlled product-CGI world built from packaging, ingredients or materials, brand colors, typography, and physically believable light; no human presence."
+        );
+        storyScript.setCharacters(List.of());
+        storyScript.setBeats(noHumanProductStoryBeats(durationSeconds, productName, evidence));
+    }
+
+    void applyNoHumanProductStorySaveContract(GeneratedStoryScriptResponse.StoryScript storyScript) {
+        if (storyScript == null) {
+            return;
+        }
+        storyScript.setNoHumans(true);
+        storyScript.setNarrativeMode("product_only");
+        storyScript.setDialogueMode("off_screen_voiceover");
+        storyScript.setCharacters(List.of());
+    }
+
+    private List<GeneratedStoryScriptResponse.StoryBeat> noHumanProductStoryBeats(
+            int durationSeconds,
+            String productName,
+            String evidence
+    ) {
+        int hookSeconds = Math.max(2, Math.round(durationSeconds * 0.17f));
+        int revealSeconds = Math.max(3, Math.round(durationSeconds * 0.25f));
+        int proofSeconds = Math.max(3, Math.round(durationSeconds * 0.35f));
+        int closeSeconds = Math.max(2, durationSeconds - hookSeconds - revealSeconds - proofSeconds);
+        return List.of(
+                GeneratedStoryScriptResponse.StoryBeat.builder()
+                        .beatNumber(1)
+                        .title("Product Tension Hook")
+                        .summary("Use a macro material, ingredient, object-state contrast, or kinetic type beat to create immediate curiosity without showing a person.")
+                        .characterFocus("Product, materials, and environment")
+                        .emotionalPurpose("Stop the scroll with product-relevant visual tension.")
+                        .estimatedSeconds(hookSeconds)
+                        .build(),
+                GeneratedStoryScriptResponse.StoryBeat.builder()
+                        .beatNumber(2)
+                        .title("Canonical Product Reveal")
+                        .summary("Reveal " + productName + " with exact packaging, proportions, label, and brand colors as the answer to the opening tension.")
+                        .characterFocus("Canonical product")
+                        .emotionalPurpose("Create recognition and desire.")
+                        .estimatedSeconds(revealSeconds)
+                        .build(),
+                GeneratedStoryScriptResponse.StoryBeat.builder()
+                        .beatNumber(3)
+                        .title("Sensory Proof")
+                        .summary("Demonstrate " + evidence + " through product-safe macro detail, ingredients or materials, motion graphics, and off-screen voiceover.")
+                        .characterFocus("Product evidence")
+                        .emotionalPurpose("Turn visual desire into believable product value.")
+                        .estimatedSeconds(proofSeconds)
+                        .build(),
+                GeneratedStoryScriptResponse.StoryBeat.builder()
+                        .beatNumber(4)
+                        .title("Hero Packshot Payoff")
+                        .summary("Resolve on the unchanged canonical product with a clean benefit caption, sound hit, and readable CTA space.")
+                        .characterFocus("Product and typography")
+                        .emotionalPurpose("Land purchase confidence and recall.")
+                        .estimatedSeconds(closeSeconds)
+                        .build()
+        );
+    }
+
+    void applyNoHumanProductScreenplayContract(GeneratedScriptResponse.CinematicScript screenplay) {
+        if (screenplay == null) {
+            return;
+        }
+        screenplay.putExtra("productLed", true);
+        screenplay.putExtra("noHumans", true);
+        screenplay.putExtra("narrativeMode", "product_only");
+        screenplay.putExtra("dialogueMode", "off_screen_voiceover");
+        screenplay.putExtra("lipSyncRequired", false);
+        Map<String, Object> consistencyBible = new LinkedHashMap<>(
+                screenplay.getVideoConsistencyBible() == null ? Map.of() : screenplay.getVideoConsistencyBible()
+        );
+        consistencyBible.put("noHumans", true);
+        consistencyBible.put("humanExclusionLock", NO_HUMANS_NEGATIVE_PROMPT);
+        consistencyBible.put("speakerVisibility", "OFF_SCREEN");
+        screenplay.setVideoConsistencyBible(consistencyBible);
+        Map<String, Object> shotMixPlan = new LinkedHashMap<>(
+                screenplay.getShotMixPlan() == null ? Map.of() : screenplay.getShotMixPlan()
+        );
+        shotMixPlan.put("narratorFacePercent", 0);
+        shotMixPlan.put("relatedVisualPercent", 100);
+        shotMixPlan.put("recordOrGenerateVisualsNote", "Generate product-only CGI and product evidence shots; no human capture.");
+        screenplay.setShotMixPlan(shotMixPlan);
+
+        if (screenplay.getShots() == null) {
+            return;
+        }
+        for (GeneratedScriptResponse.CinematicShot shot : screenplay.getShots()) {
+            if (shot == null) {
+                continue;
+            }
+            boolean replacedHumanBlocking = (shot.getPeopleInFrame() != null && shot.getPeopleInFrame() > 0)
+                    || shot.getPrimaryActors() != null && !shot.getPrimaryActors().isEmpty()
+                    || shot.getSideActors() != null && !shot.getSideActors().isEmpty()
+                    || shot.getPrimaryCharacters() != null && !shot.getPrimaryCharacters().isEmpty()
+                    || shot.getSideCharacters() != null && !shot.getSideCharacters().isEmpty();
+            String dialogueVoiceOver = dialogueValuesText(shot.getDialogue());
+            shot.setVoiceOver(firstNonBlank(shot.getVoiceOver(), dialogueVoiceOver));
+            shot.setDialogue(Map.of());
+            shot.setPeopleInFrame(0);
+            shot.setPrimaryActors(List.of());
+            shot.setSideActors(List.of());
+            shot.setPrimaryCharacters(List.of());
+            shot.setSideCharacters(List.of());
+            shot.setPrimaryCharacterAction("No character is present; the product, materials, typography, and environment carry this beat.");
+            shot.setPrimaryActorAction("No actor is required.");
+            shot.setSideActorAction("No side actor or background person is allowed.");
+            shot.setBlockingNotes("Product-only blocking. Keep all people and body parts outside the frame and out of reflections.");
+            shot.setExpression("");
+            shot.setBodyLanguage("");
+            shot.setStorytellingRole("related_visual");
+            shot.setGenerationMode("ai_generated");
+            shot.setAssetCaptureMode("generate");
+            if (replacedHumanBlocking) {
+                String purpose = firstNonBlank(shot.getPurpose(), shot.getNarrativeBeat(), shot.getTitle(), "the planned story beat");
+                shot.setAction("Express " + purpose + " using the canonical product, packaging, ingredients or materials, environment, typography, and CGI motion only.");
+                shot.setSetDesign("Product-only CGI set derived from the planned environment and brand world; no people, body parts, silhouettes, or human reflections.");
+            }
+            shot.setAssetGenerationPrompt(appendNoHumanVisualExclusion(shot.getAssetGenerationPrompt()));
+            shot.setSketchPrompt(appendNoHumanVisualExclusion(shot.getSketchPrompt()));
+            shot.setSeedancePrompt(appendNoHumanVisualExclusion(shot.getSeedancePrompt()));
+            shot.setCreatorDirection("Use only the product, objects, ingredients or materials, environment, typography, and off-screen voiceover. No human may appear.");
+            shot.setDirectorNotes("Hard no-humans lock: " + NO_HUMANS_NEGATIVE_PROMPT + ".");
+            shot.setCastReason("No cast is required for this product-only shot.");
+            shot.putExtra("productLed", true);
+            shot.putExtra("noHumans", true);
+            shot.putExtra("negativePrompt", NO_HUMANS_NEGATIVE_PROMPT);
+            shot.putExtra("speakerVisibility", "OFF_SCREEN");
+            shot.putExtra("lipSyncRequired", false);
+        }
+    }
+
+    private String appendNoHumanVisualExclusion(String prompt) {
+        String base = defaultString(prompt, "Product-only commercial visual using the canonical product and its verified details.");
+        if (base.toLowerCase(Locale.ROOT).contains("no people")
+                && base.toLowerCase(Locale.ROOT).contains("no hands")) {
+            return base;
+        }
+        return base + ". HARD EXCLUSION: " + NO_HUMANS_NEGATIVE_PROMPT + ".";
+    }
+
+    private String dialogueValuesText(Map<String, Object> dialogue) {
+        if (dialogue == null || dialogue.isEmpty()) {
+            return "";
+        }
+        return dialogue.values().stream()
+                .map(this::dialogueValueText)
+                .filter(value -> value != null && !value.isBlank())
+                .reduce((left, right) -> left + " " + right)
+                .orElse("");
     }
 
     private String buildTitle(CreatorIdea lockedIdea, String angle, int ideaNumber) {
@@ -1621,6 +2815,7 @@ public class IdeaService {
             Map<String, Object> storytellingGuidance,
             String hookLens,
             Map<String, Object> hookLensGuidance,
+            boolean noHumans,
             Map<String, Object> diagnostics
     ) {
         GeneratedStoryScriptResponse.StoryScript fallback = buildStoryScriptPayload(
@@ -1642,9 +2837,9 @@ public class IdeaService {
                 diagnostics.put("retainedPayloadKeys", retainedPayload.keySet().stream().toList());
                 GeneratedStoryScriptResponse.StoryScript storyScript =
                         objectMapper.convertValue(retainedPayload, GeneratedStoryScriptResponse.StoryScript.class);
-                String validationReason = storyScriptValidationReason(storyScript);
+                String validationReason = storyScriptValidationReason(storyScript, noHumans);
                 if (validationReason.isBlank()) {
-                    applyStoryScriptDefaults(storyScript, fallback, storyIdea, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance);
+                    applyStoryScriptDefaults(storyScript, fallback, storyIdea, durationSeconds, categoryCode, inferredTone, dialogueLanguage, screenType, storytellingType, storytellingGuidance, hookLens, hookLensGuidance, noHumans);
                     diagnostics.put("usedAiOutput", true);
                     diagnostics.put("fallbackUsed", false);
                     log.info("Creator story script AI output accepted storyIdeaId={} payloadKeys={}",
@@ -1688,18 +2883,21 @@ public class IdeaService {
     }
 
     private boolean isUsableStoryScript(GeneratedStoryScriptResponse.StoryScript storyScript) {
-        return storyScriptValidationReason(storyScript).isBlank();
+        return storyScriptValidationReason(storyScript, false).isBlank();
     }
 
-    private String storyScriptValidationReason(GeneratedStoryScriptResponse.StoryScript storyScript) {
+    private String storyScriptValidationReason(
+            GeneratedStoryScriptResponse.StoryScript storyScript,
+            boolean noHumans
+    ) {
         if (storyScript == null) {
             return "NULL_STORY_SCRIPT";
         }
         boolean hasStory = !defaultString(storyScript.getProjectTitle(), "").isBlank()
                 || !defaultString(storyScript.getLogline(), "").isBlank()
                 || !defaultString(storyScript.getStoryline(), "").isBlank();
-        boolean hasStructure = storyScript.getCharacters() != null && !storyScript.getCharacters().isEmpty()
-                || storyScript.getBeats() != null && !storyScript.getBeats().isEmpty();
+        boolean hasStructure = storyScript.getBeats() != null && !storyScript.getBeats().isEmpty()
+                || !noHumans && storyScript.getCharacters() != null && !storyScript.getCharacters().isEmpty();
         if (!hasStory) {
             return "MISSING_PROJECT_TITLE_LOGLINE_AND_STORYLINE";
         }
@@ -1721,7 +2919,8 @@ public class IdeaService {
             String storytellingType,
             Map<String, Object> storytellingGuidance,
             String hookLens,
-            Map<String, Object> hookLensGuidance
+            Map<String, Object> hookLensGuidance,
+            boolean noHumans
     ) {
         storyScript.setProjectTitle(defaultString(storyScript.getProjectTitle(), fallback.getProjectTitle()));
         storyScript.setDuration(storyScript.getDuration() == null || storyScript.getDuration() <= 0 ? durationSeconds : storyScript.getDuration());
@@ -1744,11 +2943,13 @@ public class IdeaService {
         storyScript.setEndingPayoff(defaultString(storyScript.getEndingPayoff(), fallback.getEndingPayoff()));
         storyScript.setSetting(defaultString(storyScript.getSetting(), fallback.getSetting()));
         storyScript.setInferredTone(defaultString(storyScript.getInferredTone(), inferredTone));
-        if (storyScript.getCharacters() == null || storyScript.getCharacters().isEmpty()) {
+        if (!noHumans && (storyScript.getCharacters() == null || storyScript.getCharacters().isEmpty())) {
             storyScript.setCharacters(fallback.getCharacters());
         }
         if (storyScript.getBeats() == null || storyScript.getBeats().isEmpty()) {
-            storyScript.setBeats(storyBeatsFor(durationSeconds, storyScript.getCharacters()));
+            storyScript.setBeats(noHumans
+                    ? noHumanProductStoryBeats(durationSeconds, fallback.getProjectTitle(), "product proof")
+                    : storyBeatsFor(durationSeconds, storyScript.getCharacters()));
         }
     }
 
@@ -2919,6 +4120,500 @@ public class IdeaService {
         }
     }
 
+    private void enrichVideoGenerationPlan(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            String categoryCode,
+            String screenType,
+            String storytellingType
+    ) {
+        if (scriptPayload == null) {
+            return;
+        }
+        List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
+        if (shots == null || shots.isEmpty()) {
+            return;
+        }
+        String pacingKey = videoPacingKey(scriptPayload, categoryCode, storytellingType);
+        String productionStyle = normalizeProductionStyle(scriptPayload.getProductionStyle());
+        Map<String, Object> pacingProfile = videoPacingProfile(scriptPayload, shots, pacingKey);
+        scriptPayload.setVideoPacingProfile(mergeDefaults(scriptPayload.getVideoPacingProfile(), pacingProfile));
+
+        Map<String, Object> consistencyBible = videoConsistencyBible(scriptPayload, shots, categoryCode, screenType);
+        scriptPayload.setVideoConsistencyBible(mergeDefaults(scriptPayload.getVideoConsistencyBible(), consistencyBible));
+
+        String globalPrompt = seedanceGlobalPrompt(pacingKey, screenType, scriptPayload.getVideoConsistencyBible());
+        Map<String, Object> promptStrategy = new LinkedHashMap<>();
+        promptStrategy.put("provider", "seedance");
+        promptStrategy.put("maxClipSeconds", 15);
+        promptStrategy.put("pacingKey", pacingKey);
+        promptStrategy.put("productionStyle", productionStyle);
+        promptStrategy.put("sceneGenerationRule", "full_ai".equals(productionStyle)
+                ? "Every scene is generated by Seedance. Do not require uploaded/recorded talking-head footage."
+                : "Hybrid scenes may use user-recorded talking-head clips or Seedance-generated AI clips according to generationMode.");
+        promptStrategy.put("globalConsistencyPrompt", globalPrompt);
+        promptStrategy.put("fastPacedPrompt", "Use energetic cuts, visible motion, punchy camera movement, strong hook text, and short readable caption beats. Keep every shot visually coherent with the locked character, wardrobe, set, lighting, and color palette.");
+        promptStrategy.put("slowPacedPrompt", "Use steadier camera language, longer emotional beats, softer motion, fewer cuts, and more breathing room. Keep every shot visually coherent with the locked character, wardrobe, set, lighting, and color palette.");
+        promptStrategy.put("continuityTechniques", List.of(
+                "repeat locked character identity words in every scene prompt",
+                "carry wardrobe, hair, face, props, and set geography across adjacent shots",
+                "include previous-shot and next-shot continuity notes",
+                "preserve screen direction, eyeline, lighting temperature, lens language, and aspect ratio",
+                "use the first generated frame or approved storyboard image as a reference frame when the provider supports it",
+                "use negative prompts that forbid face drift, wardrobe changes, extra fingers, logo artifacts, and sudden environment changes"
+        ));
+        promptStrategy.put("srtRequired", true);
+        scriptPayload.setSeedancePromptStrategy(mergeDefaults(scriptPayload.getSeedancePromptStrategy(), promptStrategy));
+
+        List<Map<String, Object>> allCues = new ArrayList<>();
+        for (int index = 0; index < shots.size(); index++) {
+            GeneratedScriptResponse.CinematicShot shot = shots.get(index);
+            if (shot == null) {
+                continue;
+            }
+            int shotNumber = shot.getShotNumber() == null || shot.getShotNumber() <= 0 ? index + 1 : shot.getShotNumber();
+            double start = secondsValue(shot.getStartTime(), timelineStartFallback(shots, index));
+            double end = secondsValue(shot.getEndTime(), start + durationForShot(shot));
+            if (end <= start) {
+                end = start + Math.max(1d, durationForShot(shot));
+            }
+            shot.setDurationSeconds(Math.max(0.5d, end - start));
+
+            List<Map<String, Object>> captionTrack = normalizedCaptionTrackForShot(shot, start, end);
+            if (shot.getCaptionTrack() == null || shot.getCaptionTrack().isEmpty()) {
+                shot.setCaptionTrack(captionTrack);
+            }
+            List<Map<String, Object>> srtCues = srtCuesForShot(shotNumber, captionTrack, start, end);
+            shot.setSrtCues(srtCues);
+            allCues.addAll(srtCues);
+
+            Map<String, Object> continuity = shotVideoContinuity(shot, shotNumber, shots, index, scriptPayload.getVideoConsistencyBible());
+            shot.setVideoContinuity(mergeDefaults(shot.getVideoContinuity(), continuity));
+            shot.setPacingPrompt(defaultString(shot.getPacingPrompt(), shotPacingPrompt(pacingKey, shot)));
+            shot.setSeedancePrompt(defaultString(
+                    shot.getSeedancePrompt(),
+                    seedanceScenePrompt(scriptPayload, shot, shotNumber, pacingKey, globalPrompt)
+            ));
+        }
+
+        List<Map<String, Object>> normalizedCues = normalizeSrtCueSequence(allCues);
+        String srt = buildSrt(normalizedCues);
+        scriptPayload.setSrtCues(normalizedCues);
+        scriptPayload.setSrt(srt);
+        Map<String, Object> srtFile = new LinkedHashMap<>();
+        srtFile.put("filename", "generated.srt");
+        srtFile.put("contentType", "application/x-subrip");
+        srtFile.put("cueCount", normalizedCues.size());
+        srtFile.put("durationSeconds", scriptPayload.getDuration());
+        srtFile.put("content", srt);
+        scriptPayload.setSrtFile(mergeDefaults(scriptPayload.getSrtFile(), srtFile));
+    }
+
+    private Map<String, Object> videoPacingProfile(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            List<GeneratedScriptResponse.CinematicShot> shots,
+            String pacingKey
+    ) {
+        int duration = scriptPayload == null || scriptPayload.getDuration() == null ? 0 : scriptPayload.getDuration();
+        int shotCount = shots == null || shots.isEmpty() ? 1 : shots.size();
+        double averageShotSeconds = duration > 0 ? duration / (double) shotCount : 0d;
+        Map<String, Object> profile = new LinkedHashMap<>();
+        profile.put("paceKey", pacingKey);
+        profile.put("averageShotSeconds", Math.round(averageShotSeconds * 100d) / 100d);
+        profile.put("cutDensity", switch (pacingKey) {
+            case "fast_paced" -> "high";
+            case "slow_paced" -> "low";
+            default -> "medium";
+        });
+        profile.put("captionRhythm", switch (pacingKey) {
+            case "fast_paced" -> "short punchy captions every 1.2-2.4 seconds";
+            case "slow_paced" -> "readable captions every 2.8-5.0 seconds with emotional breathing room";
+            default -> "clean captions every 2.0-3.5 seconds";
+        });
+        profile.put("shotDurationRule", switch (pacingKey) {
+            case "fast_paced" -> "Prefer 1.5-3.5 second shots, except payoff shots may breathe briefly.";
+            case "slow_paced" -> "Prefer 4-8 second shots with steadier camera and fewer abrupt transitions.";
+            default -> "Mix 2.5-5 second shots with faster hook and slower payoff.";
+        });
+        return profile;
+    }
+
+    private String videoPacingKey(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            String categoryCode,
+            String storytellingType
+    ) {
+        String text = (
+                defaultString(categoryCode, "")
+                        + " " + defaultString(storytellingType, "")
+                        + " " + defaultString(scriptPayload == null ? null : scriptPayload.getPacingStyle(), "")
+                        + " " + defaultString(scriptPayload == null ? null : scriptPayload.getInferredTone(), "")
+        ).toLowerCase(Locale.ROOT);
+        int duration = scriptPayload == null || scriptPayload.getDuration() == null ? 0 : scriptPayload.getDuration();
+        if (text.contains("comedy") || text.contains("meme") || text.contains("trend") || text.contains("fitness")
+                || text.contains("urgent") || text.contains("fast") || duration > 0 && duration <= 45) {
+            return "fast_paced";
+        }
+        if (text.contains("emotional") || text.contains("romantic") || text.contains("documentary")
+                || text.contains("slow") || text.contains("dramatic_scene") || duration >= 180) {
+            return "slow_paced";
+        }
+        return "balanced";
+    }
+
+    private Map<String, Object> videoConsistencyBible(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            List<GeneratedScriptResponse.CinematicShot> shots,
+            String categoryCode,
+            String screenType
+    ) {
+        Map<String, Object> bible = new LinkedHashMap<>();
+        bible.put("projectTitle", defaultString(scriptPayload == null ? null : scriptPayload.getProjectTitle(), "Creator video"));
+        bible.put("screenType", normalizeScreenType(defaultString(screenType, scriptPayload == null ? null : scriptPayload.getScreenType())));
+        bible.put("category", defaultString(categoryCode, scriptPayload == null ? null : scriptPayload.getCategory()));
+        bible.put("characterIdentityLocks", collectUniqueShotValues(shots, "actors"));
+        bible.put("wardrobeAndAppearanceLocks", collectUniqueShotValues(shots, "appearance"));
+        bible.put("setAndPropLocks", collectUniqueShotValues(shots, "set"));
+        bible.put("cameraLanguageLocks", collectUniqueShotValues(shots, "camera"));
+        bible.put("lightingAndColorLocks", collectUniqueShotValues(shots, "lighting"));
+        bible.put("continuityRules", List.of(
+                "Do not change the main character face, age, hairstyle, wardrobe, body type, or skin tone between shots.",
+                "Keep location geography and props stable unless the screenplay says the scene changes.",
+                "Preserve left-right screen direction, eyeline, lens feel, lighting temperature, and color palette across adjacent clips.",
+                "Use captions inside safe zones and keep space for platform UI.",
+                "When a shot is regenerated after chat, apply only that requested change and preserve the locked continuity bible."
+        ));
+        bible.put("negativePrompt", "Do not introduce a new actor, changed face, changed outfit, changed room layout, wrong aspect ratio, unreadable text, extra limbs, logo artifacts, watermark, random subtitles, or inconsistent lighting.");
+        return bible;
+    }
+
+    private List<String> collectUniqueShotValues(List<GeneratedScriptResponse.CinematicShot> shots, String kind) {
+        List<String> values = new ArrayList<>();
+        for (GeneratedScriptResponse.CinematicShot shot : shots == null ? List.<GeneratedScriptResponse.CinematicShot>of() : shots) {
+            if (shot == null) {
+                continue;
+            }
+            List<String> candidates = switch (kind) {
+                case "actors" -> List.of(
+                        listText(shot.getPrimaryActors()),
+                        listText(shot.getSideActors()),
+                        defaultString(shot.getExpression(), ""),
+                        defaultString(shot.getBodyLanguage(), "")
+                );
+                case "appearance" -> List.of(
+                        defaultString(shot.getBlockingNotes(), ""),
+                        defaultString(shot.getCreatorDirection(), ""),
+                        defaultString(shot.getPrimaryActorAction(), "")
+                );
+                case "set" -> List.of(
+                        defaultString(shot.getSetDesign(), ""),
+                        defaultString(shot.getEnvironment(), ""),
+                        stringValue(shot.getResourceRequirements())
+                );
+                case "camera" -> List.of(
+                        defaultString(shot.getShotType(), ""),
+                        defaultString(shot.getCameraAngle(), ""),
+                        defaultString(shot.getCameraMovement(), ""),
+                        defaultString(shot.getLensSuggestion(), "")
+                );
+                case "lighting" -> List.of(
+                        defaultString(shot.getLighting(), ""),
+                        defaultString(shot.getLightingMobile(), ""),
+                        defaultString(shot.getLightingProfessional(), "")
+                );
+                default -> List.of();
+            };
+            for (String candidate : candidates) {
+                String cleaned = truncate(candidate == null ? "" : candidate.trim(), 160);
+                if (!cleaned.isBlank() && !values.contains(cleaned)) {
+                    values.add(cleaned);
+                }
+                if (values.size() >= 8) {
+                    return values;
+                }
+            }
+        }
+        return values;
+    }
+
+    private String seedanceGlobalPrompt(String pacingKey, String screenType, Map<String, Object> consistencyBible) {
+        String pacingLine = switch (pacingKey) {
+            case "fast_paced" -> "Fast paced: punchy movement, quick visual payoff, crisp readable captions, energetic but coherent edits.";
+            case "slow_paced" -> "Slow paced: steadier movement, expressive pauses, smoother transitions, emotional readability before cutting.";
+            default -> "Balanced pacing: fast hook, readable middle, clear payoff, no rushed emotional beats.";
+        };
+        return """
+                Generate a coherent short-form video scene using the screenplay JSON as the source of truth.
+                %s
+                Maintain continuity across all clips: same character identity, face, wardrobe, hairstyle, props, set geography, lighting temperature, color palette, camera/lens language, screen direction, and aspect ratio.
+                Use reference frames or approved storyboard frames when available. If regenerating one scene, change only the requested detail and preserve all other continuity locks.
+                Keep captions and text overlays inside mobile safe zones. Do not create random subtitles; use the provided SRT/caption cues.
+                Negative constraints: %s
+                Screen type: %s.
+                """.formatted(
+                pacingLine,
+                stringValue(consistencyBible == null ? null : consistencyBible.get("negativePrompt")),
+                normalizeScreenType(screenType)
+        ).trim();
+    }
+
+    private Map<String, Object> shotVideoContinuity(
+            GeneratedScriptResponse.CinematicShot shot,
+            int shotNumber,
+            List<GeneratedScriptResponse.CinematicShot> shots,
+            int index,
+            Map<String, Object> consistencyBible
+    ) {
+        Map<String, Object> continuity = new LinkedHashMap<>();
+        continuity.put("shotNumber", shotNumber);
+        continuity.put("previousShot", adjacentShotSummary(shots, index - 1));
+        continuity.put("nextShot", adjacentShotSummary(shots, index + 1));
+        continuity.put("lockedActors", listText(shot == null ? null : shot.getPrimaryActors()));
+        continuity.put("lockedSideActors", listText(shot == null ? null : shot.getSideActors()));
+        continuity.put("lockedSet", defaultString(shot == null ? null : shot.getSetDesign(), shot == null ? null : shot.getEnvironment()));
+        continuity.put("lockedCamera", compactText(List.of(
+                defaultString(shot == null ? null : shot.getShotType(), ""),
+                defaultString(shot == null ? null : shot.getCameraAngle(), ""),
+                defaultString(shot == null ? null : shot.getCameraMovement(), ""),
+                defaultString(shot == null ? null : shot.getLensSuggestion(), "")
+        )));
+        continuity.put("lockedLighting", defaultString(shot == null ? null : shot.getLighting(), ""));
+        continuity.put("globalNegativePrompt", stringValue(consistencyBible == null ? null : consistencyBible.get("negativePrompt")));
+        return continuity;
+    }
+
+    private Map<String, Object> adjacentShotSummary(List<GeneratedScriptResponse.CinematicShot> shots, int index) {
+        if (shots == null || index < 0 || index >= shots.size() || shots.get(index) == null) {
+            return Map.of();
+        }
+        GeneratedScriptResponse.CinematicShot shot = shots.get(index);
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("shotNumber", shot.getShotNumber());
+        summary.put("title", shot.getTitle());
+        summary.put("action", truncate(defaultString(shot.getAction(), ""), 180));
+        summary.put("camera", compactText(List.of(defaultString(shot.getShotType(), ""), defaultString(shot.getCameraAngle(), ""), defaultString(shot.getCameraMovement(), ""))));
+        summary.put("set", defaultString(shot.getSetDesign(), shot.getEnvironment()));
+        return summary;
+    }
+
+    private String shotPacingPrompt(String pacingKey, GeneratedScriptResponse.CinematicShot shot) {
+        String base = switch (pacingKey) {
+            case "fast_paced" -> "Keep this shot kinetic: visible motion, sharp hook/cut timing, no dead air, captions short and bold.";
+            case "slow_paced" -> "Let this shot breathe: steady framing, slower motion, expressive pause, captions readable and restrained.";
+            default -> "Use balanced short-form pacing: direct action, readable caption, and a clean transition point.";
+        };
+        return base + " Duration target: " + Math.round(durationForShot(shot)) + " seconds.";
+    }
+
+    private String seedanceScenePrompt(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            GeneratedScriptResponse.CinematicShot shot,
+            int shotNumber,
+            String pacingKey,
+            String globalPrompt
+    ) {
+        return """
+                %s
+
+                SCENE %02d PROMPT:
+                Title: %s
+                Action: %s
+                Dialogue/VO: %s
+                Text/captions: %s
+                Camera: %s
+                Set and props: %s
+                Lighting: %s
+                Pacing: %s
+                Continuity: %s
+                """.formatted(
+                globalPrompt,
+                shotNumber,
+                defaultString(shot == null ? null : shot.getTitle(), "Scene"),
+                defaultString(shot == null ? null : shot.getAction(), ""),
+                defaultString(shot == null ? null : shot.getVoiceOver(), dialogueText(shot == null ? null : shot.getDialogue())),
+                defaultString(shot == null ? null : shot.getTextOverlay(), captionTextForShot(shot)),
+                compactText(List.of(
+                        defaultString(shot == null ? null : shot.getShotType(), ""),
+                        defaultString(shot == null ? null : shot.getCameraAngle(), ""),
+                        defaultString(shot == null ? null : shot.getCameraMovement(), ""),
+                        defaultString(shot == null ? null : shot.getLensSuggestion(), "")
+                )),
+                defaultString(shot == null ? null : shot.getSetDesign(), shot == null ? null : shot.getEnvironment()),
+                defaultString(shot == null ? null : shot.getLighting(), ""),
+                shotPacingPrompt(pacingKey, shot),
+                stringValue(shot == null ? null : shot.getVideoContinuity())
+        ).trim();
+    }
+
+    private List<Map<String, Object>> normalizedCaptionTrackForShot(
+            GeneratedScriptResponse.CinematicShot shot,
+            double shotStart,
+            double shotEnd
+    ) {
+        List<Map<String, Object>> captions = mapListValue(shot == null ? null : shot.getCaptionTrack());
+        if (captions.isEmpty()) {
+            Map<String, Object> caption = new LinkedHashMap<>();
+            caption.put("start", shotStart);
+            caption.put("end", shotEnd);
+            caption.put("text", captionTextForShot(shot));
+            caption.put("style", "subtitle");
+            return List.of(caption);
+        }
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (Map<String, Object> caption : captions) {
+            if (caption == null) {
+                continue;
+            }
+            Map<String, Object> item = new LinkedHashMap<>(caption);
+            double start = secondsValue(firstValue(item, "start", "startTime", "start_time"), shotStart);
+            double end = secondsValue(firstValue(item, "end", "endTime", "end_time"), Math.min(shotEnd, start + 2.5d));
+            if (start < shotStart && start >= 0d && start < durationForShot(shot) + 0.25d) {
+                start = shotStart + start;
+            }
+            if (end <= durationForShot(shot) + 0.25d && end <= shotEnd - shotStart + 0.25d) {
+                end = shotStart + end;
+            }
+            end = Math.max(start + 0.5d, Math.min(Math.max(shotEnd, start + 0.5d), end));
+            item.put("start", start);
+            item.put("end", end);
+            item.put("text", truncate(defaultString(stringValue(firstValue(item, "text", "caption", "line")), captionTextForShot(shot)), 120));
+            item.putIfAbsent("style", "subtitle");
+            normalized.add(item);
+        }
+        return normalized.isEmpty() ? normalizedCaptionTrackForShot(null, shotStart, shotEnd) : normalized;
+    }
+
+    private List<Map<String, Object>> srtCuesForShot(int shotNumber, List<Map<String, Object>> captions, double shotStart, double shotEnd) {
+        List<Map<String, Object>> cues = new ArrayList<>();
+        for (Map<String, Object> caption : captions == null ? List.<Map<String, Object>>of() : captions) {
+            if (caption == null) {
+                continue;
+            }
+            String text = truncate(stringValue(caption.get("text")), 180);
+            if (text.isBlank()) {
+                continue;
+            }
+            double start = secondsValue(caption.get("start"), shotStart);
+            double end = secondsValue(caption.get("end"), shotEnd);
+            if (end <= start) {
+                end = start + 1.2d;
+            }
+            Map<String, Object> cue = new LinkedHashMap<>();
+            cue.put("shotNumber", shotNumber);
+            cue.put("startSeconds", Math.max(0d, start));
+            cue.put("endSeconds", Math.max(start + 0.5d, end));
+            cue.put("text", text);
+            cues.add(cue);
+        }
+        return cues;
+    }
+
+    private List<Map<String, Object>> normalizeSrtCueSequence(List<Map<String, Object>> cues) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        List<Map<String, Object>> sorted = new ArrayList<>(cues == null ? List.of() : cues);
+        sorted.sort((left, right) -> Double.compare(
+                secondsValue(left == null ? null : left.get("startSeconds"), 0d),
+                secondsValue(right == null ? null : right.get("startSeconds"), 0d)
+        ));
+        int index = 1;
+        double lastEnd = 0d;
+        for (Map<String, Object> cue : sorted) {
+            if (cue == null) {
+                continue;
+            }
+            double start = Math.max(lastEnd, secondsValue(cue.get("startSeconds"), lastEnd));
+            double end = Math.max(start + 0.5d, secondsValue(cue.get("endSeconds"), start + 1.5d));
+            Map<String, Object> item = new LinkedHashMap<>(cue);
+            item.put("index", index++);
+            item.put("startSeconds", start);
+            item.put("endSeconds", end);
+            item.put("startTimecode", formatSrtTimestamp(start));
+            item.put("endTimecode", formatSrtTimestamp(end));
+            normalized.add(item);
+            lastEnd = end;
+        }
+        return normalized;
+    }
+
+    private String buildSrt(List<Map<String, Object>> cues) {
+        StringBuilder builder = new StringBuilder();
+        for (Map<String, Object> cue : cues == null ? List.<Map<String, Object>>of() : cues) {
+            int index = integerValue(cue.get("index"), builder.length() == 0 ? 1 : 0);
+            builder.append(index <= 0 ? "" : index).append("\n");
+            builder.append(defaultString(stringValue(cue.get("startTimecode")), formatSrtTimestamp(secondsValue(cue.get("startSeconds"), 0d))))
+                    .append(" --> ")
+                    .append(defaultString(stringValue(cue.get("endTimecode")), formatSrtTimestamp(secondsValue(cue.get("endSeconds"), 1d))))
+                    .append("\n");
+            builder.append(stringValue(cue.get("text")).replaceAll("[\\r\\n]+", " ").trim()).append("\n\n");
+        }
+        return builder.toString();
+    }
+
+    private String formatSrtTimestamp(double seconds) {
+        double safe = Math.max(0d, seconds);
+        long totalMillis = Math.round(safe * 1000d);
+        long hours = totalMillis / 3_600_000L;
+        long minutes = (totalMillis % 3_600_000L) / 60_000L;
+        long secs = (totalMillis % 60_000L) / 1000L;
+        long millis = totalMillis % 1000L;
+        return String.format(Locale.ROOT, "%02d:%02d:%02d,%03d", hours, minutes, secs, millis);
+    }
+
+    private String captionTextForShot(GeneratedScriptResponse.CinematicShot shot) {
+        if (shot == null) {
+            return "";
+        }
+        String text = defaultString(shot.getTextOverlay(), "");
+        if (text.isBlank()) {
+            text = defaultString(shot.getVoiceOver(), "");
+        }
+        if (text.isBlank()) {
+            text = dialogueText(shot.getDialogue());
+        }
+        if (text.isBlank()) {
+            text = defaultString(shot.getTitle(), "");
+        }
+        return truncate(text, 120);
+    }
+
+    private double timelineStartFallback(List<GeneratedScriptResponse.CinematicShot> shots, int index) {
+        double cursor = 0d;
+        for (int i = 0; i < index && i < (shots == null ? 0 : shots.size()); i++) {
+            cursor += durationForShot(shots.get(i));
+        }
+        return cursor;
+    }
+
+    private double durationForShot(GeneratedScriptResponse.CinematicShot shot) {
+        if (shot == null) {
+            return 3d;
+        }
+        if (shot.getDurationSeconds() != null && shot.getDurationSeconds() > 0d) {
+            return shot.getDurationSeconds();
+        }
+        double start = secondsValue(shot.getStartTime(), 0d);
+        double end = secondsValue(shot.getEndTime(), start + 3d);
+        return Math.max(1d, end - start);
+    }
+
+    private Map<String, Object> mergeDefaults(Map<String, Object> existing, Map<String, Object> defaults) {
+        Map<String, Object> merged = new LinkedHashMap<>(defaults == null ? Map.of() : defaults);
+        if (existing != null) {
+            merged.putAll(existing);
+        }
+        return merged;
+    }
+
+    private String compactText(List<String> parts) {
+        List<String> cleaned = new ArrayList<>();
+        for (String part : parts == null ? List.<String>of() : parts) {
+            String text = defaultString(part, "").trim();
+            if (!text.isBlank() && !cleaned.contains(text)) {
+                cleaned.add(text);
+            }
+        }
+        return String.join(", ", cleaned);
+    }
+
     private Map<String, Object> backgroundMusicCueFor(String phase, String musicMood, double start, double end, double duration) {
         Map<String, Object> cue = new LinkedHashMap<>();
         cue.put("cueType", switch (phase) {
@@ -3271,25 +4966,10 @@ public class IdeaService {
     }
 
     private void linkProjectSelectedIdea(CreatorIdea idea) {
-        if (idea.getProjectId() == null) {
+        if (idea == null || idea.getProjectId() == null) {
             return;
         }
-        jdbcTemplate.update(
-                """
-                update creator_projects
-                   set selected_idea_id = ?,
-                       status = coalesce(?, status),
-                       updated_at = now()
-                 where id = ?
-                   and tenant_id = ?
-                   and user_id = ?
-                """,
-                idea.getId(),
-                idea.getStatus(),
-                idea.getProjectId(),
-                idea.getTenantId(),
-                idea.getUserId()
-        );
+        projectService.markSelectedIdea(idea);
     }
 
     private CreatorIdea ensureProjectOnLockedIdea(CreatorIdea lockedIdea) {
@@ -3341,14 +5021,40 @@ public class IdeaService {
                 ? list.stream().map(String::valueOf).toList()
                 : List.of("#CreatorIdea", "#Shorts");
         Map<String, Object> creativeNotes = context.get("creativeNotes") instanceof Map<?, ?> map
-                ? (Map<String, Object>) map
-                : Map.of();
+                ? new LinkedHashMap<>((Map<String, Object>) map)
+                : new LinkedHashMap<>();
+        copyIfPresent(context, creativeNotes, "briefMode");
+        copyIfPresent(context, creativeNotes, "marketingAgentMode");
+        copyIfPresent(context, creativeNotes, "productInputKey");
+        copyIfPresent(context, creativeNotes, "productIntelligenceBrief");
+        copyIfPresent(context, creativeNotes, "productUnderstanding");
+        copyIfPresent(context, creativeNotes, "adConceptLanes");
+        copyIfPresent(context, creativeNotes, "brandContext");
+        copyIfPresent(context, creativeNotes, "campaignObjective");
+        String title = idea.getTitle();
+        String summary = idea.getSummary();
+        Map<String, Object> sourceBrief = mapValue(context.get("sourceBrief"));
+        if (sourceBrief.isEmpty()) {
+            sourceBrief = new LinkedHashMap<>(context);
+        }
+        if (isNoHumanProductAdBrief(sourceBrief)) {
+            int ideaNumber = integerValue(context.get("generatedIndex"), 1);
+            IdeaCandidate productOnly = enforceNoHumanProductIdeaCandidate(
+                    idea,
+                    sourceBrief,
+                    ideaNumber,
+                    new IdeaCandidate(title, summary, hashtags, creativeNotes)
+            );
+            title = productOnly.title();
+            summary = productOnly.summary();
+            creativeNotes = new LinkedHashMap<>(productOnly.creativeNotes());
+        }
         return new GeneratedIdeaResponse(
                 idea.getId(),
                 UUID.fromString(String.valueOf(context.get("parentLockedIdeaId"))),
                 idea.getProjectId(),
-                idea.getTitle(),
-                idea.getSummary(),
+                title,
+                summary,
                 idea.getSource(),
                 idea.getDurationSeconds(),
                 hashtags,
@@ -3597,6 +5303,307 @@ public class IdeaService {
                 ? "Related visual shots may be recorded by the user or generated from assetGenerationPrompt."
                 : "");
         return plan;
+    }
+
+    private Map<String, Object> productionStyleContextFromSelection(Map<String, Object> selectionContext) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        if (selectionContext == null || selectionContext.isEmpty()) {
+            return context;
+        }
+        copyProductionStyleValue(context, selectionContext, "productionStyle");
+        copyProductionStyleValue(context, selectionContext, "hybridSceneMode");
+        copyProductionStyleValue(context, selectionContext, "brollStyle");
+        copyProductionStyleValue(context, selectionContext, "captionStyle");
+        copyProductionStyleValue(context, selectionContext, "productionStyleGuidance");
+        copyProductionStyleValue(context, selectionContext, "screenplayVideoGenerationPackage");
+
+        Map<String, Object> packageContext = mapValue(context.get("screenplayVideoGenerationPackage"));
+        if (!packageContext.isEmpty()) {
+            copyProductionStyleValue(context, packageContext, "productionStyle");
+            copyProductionStyleValue(context, packageContext, "hybridSceneMode");
+            copyProductionStyleValue(context, packageContext, "brollStyle");
+            copyProductionStyleValue(context, packageContext, "captionStyle");
+            copyProductionStyleValue(context, packageContext, "productionStyleGuidance");
+        }
+
+        Map<String, Object> guidance = mapValue(context.get("productionStyleGuidance"));
+        if (!hasContextValue(context.get("productionStyle"))) {
+            Object guidanceMode = guidance.get("mode");
+            if (hasContextValue(guidanceMode)) {
+                context.put("productionStyle", guidanceMode);
+            }
+        }
+
+        boolean hasProductionChoice = hasContextValue(context.get("productionStyle"))
+                || hasContextValue(context.get("hybridSceneMode"))
+                || hasContextValue(context.get("brollStyle"))
+                || hasContextValue(context.get("captionStyle"))
+                || !guidance.isEmpty();
+        if (!hasProductionChoice) {
+            return context;
+        }
+
+        String productionStyle = normalizeProductionStyle(stringValue(context.get("productionStyle")));
+        String hybridSceneMode = normalizeHybridSceneMode(stringValue(context.get("hybridSceneMode")));
+        String brollStyle = normalizeBrollStyle(stringValue(context.get("brollStyle")));
+        String captionStyle = normalizeCaptionStyle(stringValue(context.get("captionStyle")));
+        context.put("productionStyle", productionStyle);
+        context.put("hybridSceneMode", hybridSceneMode);
+        context.put("brollStyle", brollStyle);
+        context.put("captionStyle", captionStyle);
+        context.put("productionStyleGuidance", mergeDefaults(
+                guidance,
+                productionStyleGuidanceFor(productionStyle, hybridSceneMode, brollStyle, captionStyle)
+        ));
+        return context;
+    }
+
+    private void copyProductionStyleValue(Map<String, Object> target, Map<String, Object> source, String key) {
+        if (hasContextValue(target.get(key))) {
+            return;
+        }
+        Object value = firstProductionStyleValue(source, key);
+        if (hasContextValue(value)) {
+            target.put(key, value);
+        }
+    }
+
+    private Object firstProductionStyleValue(Map<String, Object> source, String key) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        Object value = source.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> selectionPayload = mapValue(source.get("selectionPayload"));
+        value = selectionPayload.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> ideaPayload = mapValue(selectionPayload.get("idea"));
+        value = ideaPayload.get(key);
+        if (hasContextValue(value)) {
+            return value;
+        }
+        Map<String, Object> packagePayload = mapValue(selectionPayload.get("screenplayVideoGenerationPackage"));
+        value = packagePayload.get(key);
+        return hasContextValue(value) ? value : null;
+    }
+
+    private boolean hasContextValue(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Map<?, ?> map) {
+            return !map.isEmpty();
+        }
+        return !String.valueOf(value).isBlank();
+    }
+
+    private String normalizeProductionStyle(String value) {
+        String normalized = defaultString(value, "hybrid")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (normalized) {
+            case "full_ai", "all_ai", "ai_only", "seedance_only" -> "full_ai";
+            default -> "hybrid";
+        };
+    }
+
+    private String normalizeHybridSceneMode(String value) {
+        String normalized = defaultString(value, "ask_speaking_scenes")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (normalized) {
+            case "full_founder", "founder_only", "avatar_only", "talking_head_only", "all_founder" -> "full_founder";
+            case "auto_mix", "human_first", "ai_first", "ask_speaking_scenes" -> normalized;
+            default -> "ask_speaking_scenes";
+        };
+    }
+
+    private String normalizeBrollStyle(String value) {
+        String normalized = defaultString(value, "cinematic_social")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return normalized.isBlank() ? "cinematic_social" : normalized;
+    }
+
+    private String normalizeCaptionStyle(String value) {
+        String normalized = defaultString(value, "bold_keyword")
+                .trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return normalized.isBlank() ? "bold_keyword" : normalized;
+    }
+
+    private String resolveScreenplayProductionStyle(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext
+    ) {
+        return normalizeProductionStyle(firstNonBlank(
+                request == null ? null : request.productionStyle(),
+                stringValue(requestContext == null ? null : requestContext.get("productionStyle")),
+                stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("productionStyle")),
+                stringValue(creatorContext == null ? null : creatorContext.get("productionStyle"))
+        ));
+    }
+
+    private String resolveScreenplayHybridSceneMode(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext
+    ) {
+        return normalizeHybridSceneMode(firstNonBlank(
+                request == null ? null : request.hybridSceneMode(),
+                stringValue(requestContext == null ? null : requestContext.get("hybridSceneMode")),
+                stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("hybridSceneMode")),
+                stringValue(creatorContext == null ? null : creatorContext.get("hybridSceneMode"))
+        ));
+    }
+
+    private String resolveScreenplayBrollStyle(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext
+    ) {
+        return normalizeBrollStyle(firstNonBlank(
+                request == null ? null : request.brollStyle(),
+                stringValue(requestContext == null ? null : requestContext.get("brollStyle")),
+                stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("brollStyle")),
+                stringValue(creatorContext == null ? null : creatorContext.get("brollStyle"))
+        ));
+    }
+
+    private String resolveScreenplayCaptionStyle(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext
+    ) {
+        return normalizeCaptionStyle(firstNonBlank(
+                request == null ? null : request.captionStyle(),
+                stringValue(requestContext == null ? null : requestContext.get("captionStyle")),
+                stringValue(lockedPackageContext == null ? null : lockedPackageContext.get("captionStyle")),
+                stringValue(creatorContext == null ? null : creatorContext.get("captionStyle"))
+        ));
+    }
+
+    private Map<String, Object> resolveScreenplayProductionStyleGuidance(
+            GenerateStoryIdeaScriptRequest request,
+            Map<String, Object> requestContext,
+            Map<String, Object> lockedPackageContext,
+            Map<String, Object> creatorContext,
+            String productionStyle,
+            String hybridSceneMode,
+            String brollStyle,
+            String captionStyle
+    ) {
+        Map<String, Object> requestedGuidance = nonEmptyMap(
+                request == null ? null : toGenericMap(request.productionStyleGuidance()),
+                nonEmptyMap(
+                        mapValue(requestContext == null ? null : requestContext.get("productionStyleGuidance")),
+                        nonEmptyMap(
+                                mapValue(lockedPackageContext == null ? null : lockedPackageContext.get("productionStyleGuidance")),
+                                mapValue(creatorContext == null ? null : creatorContext.get("productionStyleGuidance"))
+                        )
+                )
+        );
+        return mergeDefaults(requestedGuidance, productionStyleGuidanceFor(productionStyle, hybridSceneMode, brollStyle, captionStyle));
+    }
+
+    private Map<String, Object> productionStyleGuidanceFor(String productionStyle, String hybridSceneMode, String brollStyle, String captionStyle) {
+        String normalizedStyle = normalizeProductionStyle(productionStyle);
+        String normalizedHybrid = normalizeHybridSceneMode(hybridSceneMode);
+        String normalizedBroll = normalizeBrollStyle(brollStyle);
+        String normalizedCaption = normalizeCaptionStyle(captionStyle);
+        boolean fullFounder = "hybrid".equals(normalizedStyle) && "full_founder".equals(normalizedHybrid);
+        Map<String, Object> guidance = new LinkedHashMap<>();
+        guidance.put("mode", normalizedStyle);
+        guidance.put("label", "full_ai".equals(normalizedStyle) ? "Full AI" : "Hybrid");
+        guidance.put("aiScenePercent", "full_ai".equals(normalizedStyle) ? 100 : fullFounder ? 0 : 65);
+        guidance.put("talkingHeadPercent", "full_ai".equals(normalizedStyle) ? 0 : fullFounder ? 100 : 35);
+        guidance.put("hybridSceneMode", normalizedHybrid);
+        guidance.put("brollStyle", normalizedBroll);
+        guidance.put("captionStyle", normalizedCaption);
+        guidance.put("seedanceMaxClipSeconds", 15);
+        guidance.put("scenePlanningRule", "full_ai".equals(normalizedStyle)
+                ? "Every timeline scene must be generated as AI video with Seedance-compatible prompts; do not mark narrator or talking-head shots as recorded."
+                : fullFounder
+                        ? "Every timeline scene must show the uploaded founder with generationMode talking_head. Split all spoken dialogue into consecutive model-safe clips without dropping or paraphrasing words."
+                        : "Mix human talking-head shots with generated AI visual scenes; mark each scene with generationMode talking_head or ai_generated.");
+        guidance.put("brollRule", "Use " + normalizedBroll + " B-roll for visual support, transitions, and non-speaking inserts.");
+        guidance.put("captionRule", "Use " + normalizedCaption + " captions and generate a complete SRT file.");
+        guidance.put("mergeRule", "Generate each timeline scene as <=15 second clips, then merge clips in timeline order to meet the target duration.");
+        return guidance;
+    }
+
+    private void applyProductionStyleDefaults(
+            GeneratedScriptResponse.CinematicScript scriptPayload,
+            String productionStyle,
+            String hybridSceneMode,
+            String brollStyle,
+            String captionStyle,
+            Map<String, Object> productionStyleGuidance
+    ) {
+        if (scriptPayload == null) {
+            return;
+        }
+        String normalizedStyle = normalizeProductionStyle(productionStyle);
+        String normalizedHybrid = normalizeHybridSceneMode(hybridSceneMode);
+        String normalizedBroll = normalizeBrollStyle(brollStyle);
+        String normalizedCaption = normalizeCaptionStyle(captionStyle);
+        scriptPayload.setProductionStyle(normalizedStyle);
+        scriptPayload.setHybridSceneMode(normalizedHybrid);
+        scriptPayload.setBrollStyle(normalizedBroll);
+        scriptPayload.setCaptionStyle(normalizedCaption);
+        scriptPayload.setProductionStyleGuidance(mergeDefaults(scriptPayload.getProductionStyleGuidance(), productionStyleGuidanceFor(normalizedStyle, normalizedHybrid, normalizedBroll, normalizedCaption)));
+        if (productionStyleGuidance != null && !productionStyleGuidance.isEmpty()) {
+            scriptPayload.setProductionStyleGuidance(mergeDefaults(productionStyleGuidance, scriptPayload.getProductionStyleGuidance()));
+        }
+        List<GeneratedScriptResponse.CinematicShot> shots = scriptPayload.getShots();
+        if (shots == null || shots.isEmpty()) {
+            return;
+        }
+        for (GeneratedScriptResponse.CinematicShot shot : shots) {
+            if (shot == null) {
+                continue;
+            }
+            shot.setBrollStyle(defaultString(shot.getBrollStyle(), normalizedBroll));
+            shot.setCaptionStyle(defaultString(shot.getCaptionStyle(), normalizedCaption));
+            if ("full_ai".equals(normalizedStyle)) {
+                shot.setGenerationMode("ai_generated");
+                shot.setTargetProvider("seedance");
+                shot.setAssetCaptureMode("generate");
+                shot.setAssetGenerationPrompt(defaultString(
+                        shot.getAssetGenerationPrompt(),
+                        "Generate this full-AI scene from the screenplay action, dialogue, captions, and Seedance prompt."
+                ));
+            } else if ("full_founder".equals(normalizedHybrid)) {
+                shot.setGenerationMode("talking_head");
+                shot.setAssetCaptureMode("record");
+            } else {
+                String existingMode = defaultString(shot.getGenerationMode(), "");
+                if (existingMode.isBlank()) {
+                    String assetMode = defaultString(shot.getAssetCaptureMode(), "").toLowerCase(Locale.ROOT);
+                    shot.setGenerationMode(assetMode.contains("generate") ? "ai_generated" : "talking_head");
+                }
+                if (defaultString(shot.getTargetProvider(), "").isBlank() && "ai_generated".equals(defaultString(shot.getGenerationMode(), ""))) {
+                    shot.setTargetProvider("seedance");
+                }
+            }
+        }
     }
 
     private String storytellingRoleFor(int shotNumber, String storytellingType) {
@@ -4483,6 +6490,15 @@ public class IdeaService {
         return null;
     }
 
+    private Object firstNonNull(Object... values) {
+        for (Object value : values) {
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
         Object value = source.get(key);
         if (value != null && !String.valueOf(value).isBlank()) {
@@ -4521,6 +6537,17 @@ public class IdeaService {
     private String stringValue(Object value, String fallback) {
         String text = stringValue(value).trim();
         return text.isBlank() ? fallback : text;
+    }
+
+    private boolean booleanValue(Object value, boolean fallback) {
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = String.valueOf(value).trim();
+        return normalized.isEmpty() ? fallback : Boolean.parseBoolean(normalized);
     }
 
     private record IdeaGenerationResult(
@@ -4600,6 +6627,18 @@ public class IdeaService {
 
     private String defaultString(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private String truncate(String value, int maxLength) {

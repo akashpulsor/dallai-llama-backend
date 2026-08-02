@@ -26,6 +26,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -316,8 +317,8 @@ public class InternalBillingController {
                 request.sourceId,
                 request.description,
                 request.subscriptionId,
-                null,
-                null,
+                request.idempotencyKey,
+                request.currency,
                 Instant.now()
         ));
 
@@ -467,6 +468,7 @@ public class InternalBillingController {
 
     // Usage
     @Getter
+    @Setter
     public static class RecordUsageRequest {
         @NotNull
         private UsageMetric metric;
@@ -480,6 +482,8 @@ public class InternalBillingController {
         private UUID sourceId;
         private String description;
         private UUID subscriptionId; // Optional, for better charge tracking
+        private String currency;
+        private String idempotencyKey;
 
 
     }

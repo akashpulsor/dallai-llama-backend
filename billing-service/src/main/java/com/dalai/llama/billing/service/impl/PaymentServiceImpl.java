@@ -17,10 +17,12 @@ import com.dalai.llama.billing.service.WalletService;
 import com.dalai.llama.billing.service.payment.PaymentGateway;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -36,61 +38,48 @@ public class PaymentServiceImpl implements PaymentService {
     private final WalletService walletService;
     private final BillingEventProducer eventProducer;
 
+    @Value("${razorpay.key-id:}")
+    private String razorpayKeyId;
+
     // =========================
     // CREATE PAYMENT
     // =========================
     @Override
     @Transactional
     public UUID createPayment(UUID tenantId, BigDecimal amount, String description) {
-
-        Wallet wallet = walletRepository.findByTenantId(tenantId)
-                .orElseThrow(() -> new WalletNotFoundException(tenantId));
-
-        String gatewayOrderId;
-        try {
-            gatewayOrderId = paymentGateway.createOrder(
-                    amount, wallet.getCurrency(), "rcpt_" + tenantId);
-        } catch (Exception e) {
-            throw new PaymentFailedException("Failed to create payment order", e);
-        }
-
-        Payment payment = Payment.create(
-                tenantId, wallet.getId(), amount,
-                wallet.getCurrency(), "RAZORPAY",
-                gatewayOrderId, null, description
-        );
-
-        paymentRepository.save(payment);
-
-        paymentEventRepository.save(PaymentEvent.record(
-                payment,
-                null,
-                PaymentStatus.PENDING,
-                description,
-                "SYSTEM"
-        ));
-
-        return payment.getId();
+        return createPaymentOrder(tenantId, null, amount, description, null).paymentId();
     }
 
     @Override
+    @Transactional
     public UUID createPayment(UUID tenantId, String currency, BigDecimal amount,
                               String description, UUID subscriptionId) {
+        return createPaymentOrder(tenantId, currency, amount, description, subscriptionId).paymentId();
+    }
+
+    @Override
+    @Transactional
+    public PaymentOrderResult createPaymentOrder(UUID tenantId, String currency, BigDecimal amount,
+                                                 String description, UUID subscriptionId) {
+        BigDecimal rechargeAmount = validateRechargeAmount(amount);
 
         Wallet wallet = walletRepository.findByTenantId(tenantId)
                 .orElseThrow(() -> new WalletNotFoundException(tenantId));
+        String paymentCurrency = normalizeCurrency(currency, wallet.getCurrency());
 
         String gatewayOrderId;
         try {
             gatewayOrderId = paymentGateway.createOrder(
-                    amount, wallet.getCurrency(), "rcpt_" + tenantId);
+                    rechargeAmount, paymentCurrency, razorpayReceipt(tenantId));
         } catch (Exception e) {
+            log.warn("Failed to create Razorpay payment order tenantId={} amount={} currency={} cause={}",
+                    tenantId, rechargeAmount, paymentCurrency, e.getMessage(), e);
             throw new PaymentFailedException("Failed to create payment order", e);
         }
 
         Payment payment = Payment.create(
-                tenantId, wallet.getId(), amount,
-                wallet.getCurrency(), "RAZORPAY",
+                tenantId, wallet.getId(), rechargeAmount,
+                paymentCurrency, "RAZORPAY",
                 gatewayOrderId, subscriptionId, description
         );
 
@@ -104,7 +93,14 @@ public class PaymentServiceImpl implements PaymentService {
                 "SYSTEM"
         ));
 
-        return payment.getId();
+        return new PaymentOrderResult(
+                payment.getId(),
+                payment.getGatewayOrderId(),
+                payment.getAmount(),
+                payment.getCurrency(),
+                razorpayKeyId,
+                payment.getStatus().name()
+        );
     }
 
     // =========================
@@ -118,7 +114,39 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElseThrow(() ->
                         new PaymentFailedException("Payment not found for order " + gatewayOrderId));
 
-        PaymentStatus previous = payment.markSuccess(paymentId, signature);
+        handlePaymentSuccess(payment.getTenantId(), payment.getId(), gatewayOrderId, paymentId, signature);
+    }
+
+    @Override
+    @Transactional
+    public void handlePaymentSuccess(UUID tenantId, UUID paymentId,
+                                     String gatewayOrderId, String gatewayPaymentId, String signature) {
+        if (tenantId == null || paymentId == null) {
+            throw new IllegalArgumentException("Tenant and payment id are required");
+        }
+        if (isBlank(gatewayOrderId) || isBlank(gatewayPaymentId) || isBlank(signature)) {
+            throw new IllegalArgumentException("Missing Razorpay payment verification fields");
+        }
+
+        Payment payment = paymentRepository.findById(paymentId)
+                .filter(p -> p.getTenantId().equals(tenantId))
+                .orElseThrow(() -> new PaymentFailedException("Payment not found: " + paymentId));
+
+        if (!gatewayOrderId.equals(payment.getGatewayOrderId())) {
+            throw new PaymentFailedException("Payment order mismatch");
+        }
+
+        if (payment.getStatus() == PaymentStatus.SUCCESS) {
+            if (gatewayPaymentId.equals(payment.getGatewayPaymentId())) {
+                log.info("Payment {} already verified; skipping duplicate callback", paymentId);
+                return;
+            }
+            throw new PaymentFailedException("Payment already verified with a different gateway payment id");
+        }
+
+        paymentGateway.verify(gatewayOrderId, gatewayPaymentId, signature);
+
+        PaymentStatus previous = payment.markSuccess(gatewayPaymentId, signature);
         paymentRepository.save(payment);
 
         paymentEventRepository.save(PaymentEvent.record(
@@ -132,10 +160,63 @@ public class PaymentServiceImpl implements PaymentService {
         walletService.credit(
                 payment.getTenantId(),
                 payment.getAmount(),
-                "PAYMENT:" + paymentId
+                "PAYMENT:" + gatewayPaymentId,
+                payment.getSubscriptionId(),
+                "PAYMENT:" + payment.getId()
         );
 
         eventProducer.publishPaymentReceived(payment.toEvent());
+    }
+
+    private BigDecimal validateRechargeAmount(BigDecimal amount) {
+        if (amount == null) {
+            throw new IllegalArgumentException("Amount is required");
+        }
+        BigDecimal normalized = amount.setScale(2, RoundingMode.HALF_UP);
+        if (normalized.compareTo(BigDecimal.ONE) < 0) {
+            throw new IllegalArgumentException("Minimum recharge amount is INR 1.00 (100 paise)");
+        }
+        return normalized;
+    }
+
+    private String normalizeCurrency(String requestedCurrency, String walletCurrency) {
+        String walletLedgerCurrency = normalizeCurrencyCode(walletCurrency);
+        String requested = normalizeCurrencyCode(requestedCurrency);
+        if (!isBlank(walletLedgerCurrency)) {
+            if (!isBlank(requested) && !walletLedgerCurrency.equals(requested)) {
+                log.info("Using wallet ledger currency {} for recharge instead of requested currency {}",
+                        walletLedgerCurrency, requested);
+            }
+            return walletLedgerCurrency;
+        }
+        if (isBlank(requested)) {
+            throw new IllegalArgumentException("Invalid currency: " + requestedCurrency);
+        }
+        return requested;
+    }
+
+    private String normalizeCurrencyCode(String currency) {
+        if (isBlank(currency)) {
+            return "";
+        }
+        String normalized = currency.trim().toUpperCase();
+        if (normalized.length() != 3) {
+            throw new IllegalArgumentException("Invalid currency: " + currency);
+        }
+        return normalized;
+    }
+
+    private String razorpayReceipt(UUID tenantId) {
+        String compactTenantId = tenantId == null
+                ? "tenant"
+                : tenantId.toString().replace("-", "");
+        String suffix = Long.toString(System.currentTimeMillis(), 36);
+        String prefix = compactTenantId.length() > 22 ? compactTenantId.substring(0, 22) : compactTenantId;
+        return ("rcpt_" + prefix + "_" + suffix).substring(0, Math.min(40, 6 + prefix.length() + suffix.length()));
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     // =========================

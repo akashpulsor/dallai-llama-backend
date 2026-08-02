@@ -89,6 +89,8 @@ public class PaymentController {
             @Valid @RequestBody VerifyPaymentRequest request
     ) {
         paymentService.handlePaymentSuccess(
+                tenantId,
+                paymentId,
                 request.getGatewayOrderId(),
                 request.getGatewayPaymentId(),
                 request.getGatewaySignature()

@@ -12,7 +12,13 @@ public interface PaymentService {
     UUID createPayment(UUID tenantId, String currency, BigDecimal amount,
                        String description, UUID subscriptionId);
 
+    PaymentOrderResult createPaymentOrder(UUID tenantId, String currency, BigDecimal amount,
+                                          String description, UUID subscriptionId);
+
     void handlePaymentSuccess(String gatewayOrderId, String paymentId, String signature);
+
+    void handlePaymentSuccess(UUID tenantId, UUID paymentId,
+                              String gatewayOrderId, String gatewayPaymentId, String signature);
 
     PaymentServiceImpl.SubscriptionPaymentResult createSubscriptionPayment(
             UUID tenantId,
@@ -54,5 +60,14 @@ public interface PaymentService {
             BigDecimal planAmount,
             BigDecimal walletCredit,
             String currency
+    ) {}
+
+    record PaymentOrderResult(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal amount,
+            String currency,
+            String keyId,
+            String status
     ) {}
 }

@@ -24,7 +24,7 @@ public class BillingEventConsumer {
     private final TenantService tenantService;
 
 
-    @KafkaListener(topics = "billing.wallet.created", groupId = "billing-service",
+    @KafkaListener(topics = "billing.wallet.created", groupId = "tenant-billing-consumer",
             containerFactory = "walletCreatedListenerFactory")
     @RetryableTopic(
             attempts = "5",
@@ -39,7 +39,7 @@ public class BillingEventConsumer {
     }
 
 
-    @KafkaListener(topics = "billing.wallet.funded", groupId = "billing-service",
+    @KafkaListener(topics = "billing.wallet.funded", groupId = "tenant-billing-consumer",
             containerFactory = "walletCreditedListenerFactory")
     public void onWalletCredited(WalletCreditedEvent event) {
         log.info("Received billing.wallet.credited: tenantId={} amount={} balanceAfter={} subscriptionId={}",
@@ -50,7 +50,7 @@ public class BillingEventConsumer {
 
     }
 
-    @KafkaListener(topics = "billing.state.changed", groupId = "billing-service",
+    @KafkaListener(topics = "billing.state.changed", groupId = "tenant-billing-consumer",
             containerFactory = "billingStateChangedListenerFactory")
     public void onBillingStateChanged(BillingStateChangedEvent event) {
         log.info("Received billing.state.changed: tenantId={} state={}",
@@ -58,7 +58,7 @@ public class BillingEventConsumer {
         tenantService.onBillingStateChanged(event.getTenantId(), event.getCurrentState().toString());
     }
 
-    @KafkaListener(topics = "billing.refund.initiated", groupId = "billing-service",
+    @KafkaListener(topics = "billing.refund.initiated", groupId = "tenant-billing-consumer",
             containerFactory = "refundInitiatedListenerFactory")
     public void onRefundInitiated(RefundInitiatedEvent event) {
         log.info("Received billing.refund.initiated: tenantId={} paymentId={} amount={} trigger={}",

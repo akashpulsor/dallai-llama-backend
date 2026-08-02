@@ -94,7 +94,11 @@ public class BillingWalletGuardInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        if (path.endsWith("/weekly-idea-tags/refresh") || path.endsWith("/trends/predict")) {
+        if (path.endsWith("/trends/predict")) {
+            return true;
+        }
+
+        if (path.endsWith("/creator/angles/suggest")) {
             return true;
         }
 
@@ -108,6 +112,7 @@ public class BillingWalletGuardInterceptor implements HandlerInterceptor {
 
         if (path.contains("/api/v1/creator/storyboards/scripts/")) {
             return path.endsWith("/plans/generate-async")
+                    || path.endsWith("/videos/generate-async")
                     || path.endsWith("/generate")
                     || path.endsWith("/generate-async")
                     || path.endsWith("/shots/insert")
@@ -115,6 +120,13 @@ public class BillingWalletGuardInterceptor implements HandlerInterceptor {
                     || path.endsWith("/enhance-all-async")
                     || (path.contains("/shots/") && path.contains("/images/"))
                     || (path.contains("/shots/") && path.endsWith("/ai-edit"));
+        }
+
+        if (path.contains("/api/v1/creator/storyboards/videos/")) {
+            return path.endsWith("/chat")
+                    || path.endsWith("/generate-async")
+                    || path.endsWith("/regenerate-async")
+                    || path.endsWith("/final-render-async");
         }
 
         if (path.contains("/api/v1/creator/storyboards/shots/takes/")) {

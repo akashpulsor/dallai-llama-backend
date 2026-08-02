@@ -1,0 +1,16 @@
+# Optional founder-avatar GPU runtime dependencies.
+# Use a Python 3.10 environment for the third-party model repos where possible.
+faster-whisper>=1.1.0
+whisperx>=3.3.0
+huggingface_hub[cli]>=0.24.0
+modelscope>=1.17.0
+diffusers>=0.35.0
+accelerate>=1.0.0
+transformers>=4.45.0
+safetensors>=0.4.5
+soundfile>=0.12.1
+librosa>=0.10.2
+rembg[gpu]>=2.0.60
+onnxruntime-gpu>=1.18.0
+opencv-python>=4.10.0
+pillow>=10.4.0

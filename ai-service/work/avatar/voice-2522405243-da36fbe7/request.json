@@ -1,0 +1,26 @@
+{
+  "text": "If procrastination were really about willpower, why do we avoid the tasks that matter most? Psychologically, procrastination is often emotional avoidance. A task can trigger fear of failure, perfectionism, uncertainty, or overwhelm. Avoiding it gives your brain quick relief, so the cycle gets reinforced. Instead of asking, \"Why am I so lazy?\" ask, \"What feeling am I avoiding?\" Then shrink the next step: open the document, write one line, or work for just two minutes. Progress begins with emotional safety, not self-punishment.",
+  "provider": "dalai_llama",
+  "model": "cosy_voice2",
+  "voiceModel": "cosy_voice2",
+  "voiceId": "elfina-founder-local",
+  "voiceEmbeddingId": "",
+  "avatarId": "",
+  "language": "English",
+  "languageCode": "en-IN",
+  "stylePrompt": "Warm, grounded, compassionate mental-health founder. Natural Indian English delivery with thoughtful pauses. Do not rush.",
+  "gpuProfile": "rtx_4060_8gb",
+  "founderAvatarProfile": {
+    "consentConfirmed": true,
+    "avatarId": "elfina-founder-local",
+    "voiceId": "elfina-founder-local"
+  },
+  "sourceUrl": "C:\\Users\\Akash\\Downloads\\IMG_7111.MOV",
+  "sourceAsset": {},
+  "sourceContent": "",
+  "sourceContentType": "video/quicktime",
+  "localModels": {},
+  "consentConfirmed": true,
+  "manualApprovalRequiredForFallback": true,
+  "fallbackProvider": "synthesia"
+}

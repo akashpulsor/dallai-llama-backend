@@ -11,6 +11,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Mutability;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -69,6 +70,7 @@ public class CreatorPromptRun {
     /** JSON project memory/input snapshot used to render the prompt. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "input_snapshot", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> inputSnapshot = new LinkedHashMap<>();
 
@@ -83,6 +85,7 @@ public class CreatorPromptRun {
     /** Structured AI response or parsed output. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "output_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> outputPayload = new LinkedHashMap<>();
 
@@ -97,12 +100,14 @@ public class CreatorPromptRun {
     /** Token usage metadata for future real AI providers. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "token_metadata", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> tokenMetadata = new LinkedHashMap<>();
 
     /** Cost metadata for future billing/reconciliation. */
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "cost_metadata", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> costMetadata = new LinkedHashMap<>();
 

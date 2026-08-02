@@ -7,7 +7,9 @@ import java.util.UUID;
 
 public interface WalletService {
 
-    void createWallet(UUID tenantId);
+    Wallet createWallet(UUID tenantId);
+
+    Wallet getOrCreateWallet(UUID tenantId);
 
     void deleteWallet(UUID tenantId);
 

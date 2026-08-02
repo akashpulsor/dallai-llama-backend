@@ -1,0 +1,4 @@
+ARG CREATOR_SERVICE_BASE_IMAGE=localhost:5000/akashtripathi/creator-service:0.1.920-product-storyboard-assets
+FROM ${CREATOR_SERVICE_BASE_IMAGE}
+
+COPY creator-service/target/creator-service-*.jar /app/app.jar

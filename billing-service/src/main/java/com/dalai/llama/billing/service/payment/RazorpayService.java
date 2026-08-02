@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.UUID;
 
 @Service
@@ -40,8 +41,13 @@ public class RazorpayService implements PaymentGateway {
         }
 
         try {
+            int amountPaise = toPaise(amount);
+            if (amountPaise < 100) {
+                throw new IllegalArgumentException("Minimum Razorpay order amount is 100 paise");
+            }
+
             JSONObject request = new JSONObject();
-            request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue());
+            request.put("amount", amountPaise);
             request.put("currency", currency);
             request.put("receipt", receipt);
 
@@ -83,7 +89,7 @@ public class RazorpayService implements PaymentGateway {
 
         try {
             JSONObject request = new JSONObject();
-            request.put("amount", amount.multiply(BigDecimal.valueOf(100)).intValue());
+            request.put("amount", toPaise(amount));
 
             var refund = razorpayClient.payments.refund(paymentId, request);
             String refundId = refund.get("id");
@@ -119,5 +125,14 @@ public class RazorpayService implements PaymentGateway {
         } catch (Exception e) {
             throw new PaymentFailedException("Invalid refund webhook payload", e);
         }
+    }
+
+    private int toPaise(BigDecimal amount) {
+        if (amount == null) {
+            throw new IllegalArgumentException("Amount is required");
+        }
+        return amount.multiply(BigDecimal.valueOf(100))
+                .setScale(0, RoundingMode.HALF_UP)
+                .intValueExact();
     }
 }

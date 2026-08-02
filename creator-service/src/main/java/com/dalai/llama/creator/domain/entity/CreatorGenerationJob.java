@@ -11,6 +11,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Mutability;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -56,11 +57,13 @@ public class CreatorGenerationJob {
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "input_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> inputPayload = new LinkedHashMap<>();
 
     @Builder.Default
     @JdbcTypeCode(SqlTypes.JSON)
+    @Mutability(ReplacementOnlyJsonMutabilityPlan.class)
     @Column(name = "output_payload", nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> outputPayload = new LinkedHashMap<>();
 

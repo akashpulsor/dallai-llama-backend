@@ -17,7 +17,7 @@ public interface CreatorAssetRepository extends JpaRepository<CreatorAsset, UUID
                     where tenant_id = :tenantId
                       and user_id = :userId
                       and metadata ->> 'scriptId' = cast(:scriptId as text)
-                      and asset_type in ('STORYBOARD_IMAGE', 'LIGHTING_BUILD_SHEET_IMAGE', 'CAMERA_PLAN_SHEET_IMAGE')
+                      and asset_type in ('STORYBOARD_IMAGE', 'PRODUCT_VISUAL_ANCHOR', 'LIGHTING_BUILD_SHEET_IMAGE', 'CAMERA_PLAN_SHEET_IMAGE')
                     order by
                       nullif(regexp_replace(coalesce(metadata ->> 'shotNumber', ''), '[^0-9]', '', 'g'), '')::int asc nulls last,
                       created_at desc

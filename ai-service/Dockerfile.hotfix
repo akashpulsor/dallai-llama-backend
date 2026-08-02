@@ -1,0 +1,10 @@
+FROM akashtripathi/ai-service:1.0.11-founder-avatar-consent-slim
+
+USER root
+RUN pip install --no-cache-dir "fal-client>=0.7,<1"
+COPY --chown=appuser:appuser ai-service/config.py /app/config.py
+COPY --chown=appuser:appuser ai-service/api/avatar_generation.py /app/api/avatar_generation.py
+COPY --chown=appuser:appuser ai-service/services/avatar_local_runtime.py /app/services/avatar_local_runtime.py
+COPY --chown=appuser:appuser ai-service/avatar_worker_main.py /app/avatar_worker_main.py
+COPY --chown=appuser:appuser ai-service/scripts/ /app/scripts/
+USER appuser

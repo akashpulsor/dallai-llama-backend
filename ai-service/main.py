@@ -26,6 +26,7 @@ from auth.keycloak import require_auth
 from pipeline.callbacks import pbx_core_client
 from api.bot_config import router as bot_config_router
 from api.provider_catalog import router as provider_catalog_router
+from api.avatar_generation import router as avatar_generation_router
 from api.websocket_handler import handle_audio_websocket, active_calls, active_sessions
 from api.test_console import router as test_router
 from api.rtp_sessions import router as rtp_sessions_router
@@ -229,6 +230,7 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(provider_catalog_router)
 app.include_router(bot_config_router)
+app.include_router(avatar_generation_router)
 app.include_router(test_router)
 app.include_router(rtp_sessions_router)
 

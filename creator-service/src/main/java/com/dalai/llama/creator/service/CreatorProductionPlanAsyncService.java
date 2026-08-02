@@ -43,14 +43,20 @@ public class CreatorProductionPlanAsyncService {
             String styleKey,
             Integer focusedShotNumber,
             boolean forceRegenerate,
+            String videoProvider,
+            String videoModel,
+            Integer maxClipSeconds,
             String tenantId,
             String userId
     ) {
+        ProductionPlanTagService.VideoModelCapability videoModelCapability =
+                new ProductionPlanTagService.VideoModelCapability(videoProvider, videoModel, maxClipSeconds);
         ProductionPlanTagService.ProductionPlanJobStart jobStart = productionPlanTagService.startGenerateTagsForScriptJob(
                 scriptId,
                 styleKey,
                 focusedShotNumber,
                 forceRegenerate,
+                videoModelCapability,
                 tenantId,
                 userId
         );
@@ -67,26 +73,68 @@ public class CreatorProductionPlanAsyncService {
             );
             return job;
         }
-        taskExecutor.execute(() -> {
-            try {
-                productionPlanTagService.runGenerateTagsForScriptJob(job.getId(), scriptId, styleKey, focusedShotNumber, forceRegenerate, tenantId, userId);
-            } catch (RuntimeException ex) {
-                Map<String, Object> debug = ex instanceof CreatorAiOutputException aiOutputException
-                        ? new LinkedHashMap<>(aiOutputException.getDebugPayload())
-                        : Map.of();
-                generationJobService.failGenerationJob(job.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()), debug);
-                log.error(
-                        "Creator async production plan generation failed jobId={} scriptId={} tenantId={} userId={} errorType={} errorMessage={}",
+        log.info(
+                "Creator async production plan generation submitting worker jobId={} scriptId={} tenantId={} userId={} styleKey={} focusedShotNumber={} forceRegenerate={} videoProvider={} videoModel={} maxClipSeconds={}",
+                job.getId(),
+                scriptId,
+                tenantId,
+                userId,
+                styleKey,
+                focusedShotNumber,
+                forceRegenerate,
+                videoProvider,
+                videoModel,
+                maxClipSeconds
+        );
+        try {
+            taskExecutor.execute(() -> {
+                log.info(
+                        "Creator async production plan worker started jobId={} scriptId={} tenantId={} userId={}",
                         job.getId(),
                         scriptId,
                         tenantId,
-                        userId,
-                        ex.getClass().getSimpleName(),
-                        ex.getMessage(),
-                        ex
+                        userId
                 );
-            }
-        });
+                try {
+                    productionPlanTagService.runGenerateTagsForScriptJob(job.getId(), scriptId, styleKey, focusedShotNumber, forceRegenerate, videoModelCapability, tenantId, userId);
+                    log.info(
+                            "Creator async production plan worker completed jobId={} scriptId={} tenantId={} userId={}",
+                            job.getId(),
+                            scriptId,
+                            tenantId,
+                            userId
+                    );
+                } catch (Throwable ex) {
+                    Map<String, Object> debug = ex instanceof CreatorAiOutputException aiOutputException
+                            ? new LinkedHashMap<>(aiOutputException.getDebugPayload())
+                            : Map.of();
+                    generationJobService.failGenerationJob(job.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()), debug);
+                    log.error(
+                            "Creator async production plan generation failed jobId={} scriptId={} tenantId={} userId={} errorType={} errorMessage={}",
+                            job.getId(),
+                            scriptId,
+                            tenantId,
+                            userId,
+                            ex.getClass().getSimpleName(),
+                            ex.getMessage(),
+                            ex
+                    );
+                }
+            });
+        } catch (RuntimeException ex) {
+            generationJobService.failGenerationJob(job.getId(), defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+            log.error(
+                    "Creator async production plan worker submission failed jobId={} scriptId={} tenantId={} userId={} errorType={} errorMessage={}",
+                    job.getId(),
+                    scriptId,
+                    tenantId,
+                    userId,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage(),
+                    ex
+            );
+            throw ex;
+        }
         return job;
     }
 

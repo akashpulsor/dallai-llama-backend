@@ -14,10 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY ai-service/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY ai-service/ .
-
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /app/work \
+    && chown appuser:appuser /app/work
+
+COPY --chown=appuser:appuser ai-service/ .
 
 USER appuser
 

@@ -5,6 +5,7 @@ public enum BillingUnit {
     MINUTE,
     SECOND,
     TOKEN,
+    CHARACTER,
     MILLION_PIXELS,
     CREDIT,
     CLIP,

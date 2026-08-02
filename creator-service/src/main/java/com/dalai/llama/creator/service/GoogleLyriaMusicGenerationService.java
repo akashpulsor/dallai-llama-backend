@@ -28,7 +28,7 @@ import java.util.Map;
 public class GoogleLyriaMusicGenerationService {
 
     private static final Logger log = LoggerFactory.getLogger(GoogleLyriaMusicGenerationService.class);
-    private static final String DEFAULT_LYRIA_MODEL = "lyria-3-clip-preview";
+    private static final String DEFAULT_LYRIA_MODEL = "lyria-3-clip";
     private static final String DEFAULT_LOCATION = "us-central1";
     private static final String CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
     private static final int AUDIO_RESPONSE_MAX_IN_MEMORY_BYTES = 96 * 1024 * 1024;
@@ -58,14 +58,19 @@ public class GoogleLyriaMusicGenerationService {
         if (!properties.getAi().isLyriaMusicGenerationEnabled()) {
             throw new IllegalStateException("Lyria music generation is disabled. Set LYRIA_MUSIC_GENERATION_ENABLED=true.");
         }
+        String model = stringValue(properties.getAi().getLyriaMusicModel(), DEFAULT_LYRIA_MODEL);
+        String normalizedPrompt = buildPrompt(prompt, negativePrompt, normalizedLayerType, durationSeconds);
+        String geminiApiKey = lyriaGeminiApiKey();
+        if (shouldUseGeminiApiLyria(model, geminiApiKey)) {
+            return generateGeminiApiLyria(model, normalizedPrompt, normalizedLayerType, durationSeconds, geminiApiKey);
+        }
+
         String projectId = stringValue(properties.getAi().getGoogleCloudProjectId(), "");
         if (projectId.isBlank()) {
-            throw new IllegalStateException("Google Cloud project is not configured. Set GOOGLE_CLOUD_PROJECT_ID for Lyria.");
+            throw new IllegalStateException("Google Cloud project is not configured. Set GOOGLE_CLOUD_PROJECT_ID for Vertex Lyria, or set GEMINI_API_KEY/GOOGLE_API_KEY for Gemini API Lyria.");
         }
-        String model = stringValue(properties.getAi().getLyriaMusicModel(), DEFAULT_LYRIA_MODEL);
         String location = stringValue(properties.getAi().getGoogleCloudLocation(), DEFAULT_LOCATION);
         String token = accessToken();
-        String normalizedPrompt = buildPrompt(prompt, negativePrompt, normalizedLayerType, durationSeconds);
         JsonNode response;
         Map<String, Object> request;
         InlineAudio audio;
@@ -100,6 +105,60 @@ public class GoogleLyriaMusicGenerationService {
         metadata.put("location", model.startsWith("lyria-3") ? "global" : location);
         metadata.put("layerType", normalizedLayerType);
         metadata.put("requestedDurationSeconds", durationSeconds);
+        metadata.put("audioMixStandards", defaultAudioMixStandards());
+        metadata.put("mimeType", audio.mimeType());
+        metadata.put("responsePath", audio.responsePath());
+        metadata.put("costMetadata", pricingService.estimateLyriaCall(
+                model,
+                BigDecimal.valueOf(Math.max(0.25, durationSeconds)),
+                1,
+                "lyria_music_generation"
+        ));
+        return new GeneratedAudio(
+                decodeAudio(audio.base64Data()),
+                stringValue(audio.mimeType(), "audio/wav"),
+                metadata,
+                request,
+                response == null ? Map.of() : objectMapper.convertValue(response, new TypeReference<>() {})
+        );
+    }
+
+    private GeneratedAudio generateGeminiApiLyria(
+            String model,
+            String normalizedPrompt,
+            String normalizedLayerType,
+            double durationSeconds,
+            String apiKey
+    ) {
+        Map<String, Object> part = new LinkedHashMap<>();
+        part.put("text", normalizedPrompt);
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("role", "user");
+        content.put("parts", List.of(part));
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("contents", List.of(content));
+
+        log.info("Google Lyria music generation request backend=gemini_api model={} layerType={}", model, normalizedLayerType);
+        JsonNode response = geminiApiClient()
+                .post()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/models/{model}:generateContent")
+                        .queryParam("key", apiKey)
+                        .build(model))
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(Duration.ofMillis(Math.max(properties.getAi().getTimeoutMs(), 180000)));
+        InlineAudio audio = extractGeminiGenerateContentAudio(response, model);
+
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("provider", "google_lyria");
+        metadata.put("backend", "gemini_api");
+        metadata.put("model", model);
+        metadata.put("location", "global");
+        metadata.put("layerType", normalizedLayerType);
+        metadata.put("requestedDurationSeconds", durationSeconds);
+        metadata.put("audioMixStandards", defaultAudioMixStandards());
         metadata.put("mimeType", audio.mimeType());
         metadata.put("responsePath", audio.responsePath());
         metadata.put("costMetadata", pricingService.estimateLyriaCall(
@@ -126,6 +185,40 @@ public class GoogleLyriaMusicGenerationService {
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build();
+    }
+
+    private WebClient geminiApiClient() {
+        return webClientBuilder
+                .baseUrl(stringValue(properties.getAi().getGeminiBaseUrl(), "https://generativelanguage.googleapis.com/v1beta"))
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(AUDIO_RESPONSE_MAX_IN_MEMORY_BYTES))
+                        .build())
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .build();
+    }
+
+    private boolean shouldUseGeminiApiLyria(String model, String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return false;
+        }
+        String backend = stringValue(envText("LYRIA_BACKEND"), stringValue(envText("GOOGLE_LYRIA_BACKEND"), "gemini_api"))
+                .toLowerCase()
+                .replace("-", "_");
+        if ("vertex".equals(backend) || "vertex_ai".equals(backend)) {
+            return false;
+        }
+        return stringValue(model, "").toLowerCase().startsWith("lyria-3");
+    }
+
+    private String lyriaGeminiApiKey() {
+        return firstText(
+                envText("LYRIA_API_KEY"),
+                envText("GOOGLE_LYRIA_API_KEY"),
+                properties.getAi().getGeminiApiKey(),
+                envText("GEMINI_API_KEY"),
+                envText("GOOGLE_API_KEY"),
+                envText("CREATOR_GEMINI_API_KEY")
+        );
     }
 
     private String accessToken() {
@@ -212,6 +305,46 @@ public class GoogleLyriaMusicGenerationService {
         throw new IllegalStateException("Google Lyria 2 returned no audioContent for model " + model + ".");
     }
 
+    private InlineAudio extractGeminiGenerateContentAudio(JsonNode response, String model) {
+        JsonNode candidates = response == null ? null : response.path("candidates");
+        if (candidates != null && candidates.isArray()) {
+            for (int candidateIndex = 0; candidateIndex < candidates.size(); candidateIndex++) {
+                JsonNode parts = candidates.get(candidateIndex).path("content").path("parts");
+                if (parts == null || !parts.isArray()) {
+                    continue;
+                }
+                for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+                    JsonNode part = parts.get(partIndex);
+                    JsonNode inlineData = firstNode(part.get("inlineData"), part.get("inline_data"));
+                    String data = firstText(
+                            textAt(inlineData, "data"),
+                            textAt(part, "data"),
+                            textAt(part, "audioContent")
+                    );
+                    if (!data.isBlank()) {
+                        String mimeType = firstText(
+                                textAt(inlineData, "mimeType"),
+                                textAt(inlineData, "mime_type"),
+                                textAt(part, "mimeType"),
+                                textAt(part, "mime_type"),
+                                "audio/wav"
+                        );
+                        return new InlineAudio(
+                                mimeType,
+                                data,
+                                "candidates[%d].content.parts[%d].inlineData.data".formatted(candidateIndex, partIndex)
+                        );
+                    }
+                }
+            }
+        }
+        try {
+            return extractLyria3Audio(response, model);
+        } catch (RuntimeException ignored) {
+            throw new IllegalStateException("Gemini API Lyria returned no inline audio output for model " + model + ".");
+        }
+    }
+
     private String buildPrompt(String prompt, String negativePrompt, String layerType, double durationSeconds) {
         String exclusions = firstText(negativePrompt, "vocals, lyrics, singing, spoken dialogue, narration, voiceover, copyrighted melodies, famous songs, artist imitation");
         return """
@@ -224,6 +357,11 @@ public class GoogleLyriaMusicGenerationService {
                 Requirements:
                 - Instrumental or non-verbal sound only.
                 - Keep dialogue space clear; do not generate speech.
+                - Assume dialogue is primary and keep the clip mix-ready under speech.
+                - Keep ambience as subtle room tone when requested.
+                - Use whooshes, clicks, transitions, foley, and sync hits sparingly.
+                - Match reverb to the described scene space.
+                - Make clip edges easy to fade smoothly into adjacent segments.
                 - Do not generate voice, vocals, lyrics, narration, or dialogue.
                 - Make it royalty-safe and original.
                 - Avoid: %s.
@@ -264,6 +402,22 @@ public class GoogleLyriaMusicGenerationService {
         return Base64.getDecoder().decode(data);
     }
 
+    private Map<String, Object> defaultAudioMixStandards() {
+        Map<String, Object> standards = new LinkedHashMap<>();
+        standards.put("dialogueLevel", "consistent_speech_first");
+        standards.put("backgroundMusicDucking", "duck_under_speech");
+        standards.put("ambientRoomTone", "maintain_low_scene_matched_room_tone");
+        standards.put("soundEffectsUse", "small_sfx_sparingly_for_whooshes_clicks_transitions");
+        standards.put("reverbMatch", "match_scene_space_and_camera_distance");
+        standards.put("fades", "smooth_fades_between_audio_segments");
+        standards.put("dialogueTargetDb", -3);
+        standards.put("musicBedDb", -18);
+        standards.put("ambienceBedDb", -22);
+        standards.put("sfxPeakDb", -9);
+        standards.put("fadeMs", 120);
+        return standards;
+    }
+
     private String textAt(JsonNode node, String... path) {
         JsonNode current = node;
         for (String item : path) {
@@ -284,8 +438,24 @@ public class GoogleLyriaMusicGenerationService {
         return "";
     }
 
+    private JsonNode firstNode(JsonNode... values) {
+        if (values == null) {
+            return null;
+        }
+        for (JsonNode value : values) {
+            if (value != null && !value.isMissingNode() && !value.isNull()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private String stringValue(Object value, String fallback) {
         return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value);
+    }
+
+    private String envText(String name) {
+        return name == null || name.isBlank() ? "" : stringValue(System.getenv(name), "");
     }
 
     private record InlineAudio(
