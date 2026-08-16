@@ -3074,7 +3074,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
                 .filter(value -> !value.isBlank())
                 .toList();
         boolean requireAcceptedScenes = booleanValue(inputPayload.get("requireAcceptedScenes"), false);
-        if (requireAcceptedScenes && !acceptedScenesCoverAll(scenes, acceptedSceneIds)) {
+        if (requireAcceptedScenes && !finalVideoRenderer().acceptedScenesCoverAll(scenes, acceptedSceneIds)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Accept every generated scene clip before combining the final video."
@@ -3113,10 +3113,11 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         renderManifest.put("acceptedSceneIds", acceptedSceneIds);
         renderManifest.put("requireAcceptedScenes", requireAcceptedScenes);
         renderManifest.put("preparedAt", OffsetDateTime.now().toString());
-        renderManifest.put("readyForMerge", mergeInputs.stream().allMatch(this::hasMergeableClip));
+        FinalVideoRenderer finalVideoRenderer = finalVideoRenderer();
+        renderManifest.put("readyForMerge", mergeInputs.stream().allMatch(finalVideoRenderer::hasMergeableClip));
 
         if (Boolean.TRUE.equals(renderManifest.get("readyForMerge"))) {
-            Map<String, Object> finalVideo = mergeSceneClips(script, runId, scenes, run, inputPayload);
+            Map<String, Object> finalVideo = finalVideoRenderer.mergeSceneClips(script, runId, scenes, run, inputPayload);
             List<Map<String, Object>> finalVideoVariants = mapListValue(finalVideo.get("variants"));
             if (!finalVideoVariants.isEmpty()) {
                 run.put("finalVideoVariants", finalVideoVariants);
@@ -3323,28 +3324,8 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return Math.max(10, Math.min(92, 10 + (safeCompleted * 82 / safeTotal)));
     }
 
-    private boolean hasMergeableClip(Map<String, Object> input) {
-        return input != null
-                && !firstText(input.get("bucket")).isBlank()
-                && !firstText(input.get("objectKey")).isBlank();
-    }
-
-    private boolean acceptedScenesCoverAll(List<Map<String, Object>> scenes, List<String> acceptedSceneIds) {
-        if (scenes == null || scenes.isEmpty()) {
-            return false;
-        }
-        if (acceptedSceneIds == null || acceptedSceneIds.isEmpty()) {
-            return false;
-        }
-        return scenes.stream()
-                .allMatch(scene -> {
-                    String id = firstText(scene.get("id"), scene.get("sceneId"), scene.get("scene_id"));
-                    String sceneNumber = stringValue(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), "");
-                    return acceptedSceneIds.contains(id)
-                            || (!sceneNumber.isBlank() && acceptedSceneIds.contains(sceneNumber))
-                            || Boolean.TRUE.equals(scene.get("accepted"))
-                            || Boolean.TRUE.equals(scene.get("clipAccepted"));
-                });
+    private FinalVideoRenderer finalVideoRenderer() {
+        return new FinalVideoRenderer(this, assetStorageService);
     }
 
     private Map<String, Object> compactGeneratedScene(Map<String, Object> scene) {
@@ -3360,261 +3341,8 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return compact;
     }
 
-    private Map<String, Object> mergeSceneClips(
-            CreatorScript script,
-            UUID runId,
-            List<Map<String, Object>> scenes,
-            Map<String, Object> run,
-            Map<String, Object> request
-    ) {
-        Path workDir = null;
-        try {
-            workDir = Files.createTempDirectory("screenplay-video-" + runId + "-");
-            List<Path> clipPaths = new ArrayList<>();
-            for (int index = 0; index < scenes.size(); index++) {
-                Map<String, Object> scene = scenes.get(index);
-                String bucket = firstText(scene.get("bucket"));
-                String objectKey = firstText(scene.get("objectKey"));
-                if (bucket.isBlank() || objectKey.isBlank()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Scene " + (index + 1) + " is missing a generated clip object.");
-                }
-                Path clipPath = workDir.resolve("%03d-%s.mp4".formatted(index + 1, safeSlug(firstText(scene.get("id"), scene.get("sceneId"), "scene"))));
-                assetStorageService.downloadObjectToPath(bucket, objectKey, clipPath);
-                clipPaths.add(clipPath);
-            }
-            Path concatFile = workDir.resolve("concat.txt");
-            Path output = workDir.resolve("final.mp4");
-            Path logPath = workDir.resolve("ffmpeg-concat.log");
-            Files.writeString(concatFile, concatFile(clipPaths));
 
-            List<String> command = new ArrayList<>(List.of(
-                    "ffmpeg",
-                    "-y",
-                    "-f",
-                    "concat",
-                    "-safe",
-                    "0",
-                    "-i",
-                    concatFile.toString()
-            ));
-            int requestedTargetDuration = positiveInt(firstValue(request.get("targetDurationSeconds"), request.get("durationSeconds")), 0);
-            boolean trimToTargetDuration = booleanValue(request.get("trimToTargetDuration"), false);
-            int targetDuration = trimToTargetDuration ? requestedTargetDuration : 0;
-            if (requestedTargetDuration > 0 && !trimToTargetDuration) {
-                log.info("Ignoring final merge duration cap to preserve every generated scene clip scriptId={} runId={} requestedTargetDurationSeconds={} sceneCount={}",
-                        script == null ? null : script.getId(), runId, requestedTargetDuration, scenes.size());
-            }
-            if (targetDuration > 0) {
-                command.add("-t");
-                command.add(String.valueOf(targetDuration));
-            }
-            command.addAll(List.of(
-                    "-c:v",
-                    "libx264",
-                    "-c:a",
-                    "aac",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",
-                    output.toString()
-            ));
-            runFfmpeg(command, logPath, "Screenplay final video merge failed");
-
-            Map<String, Object> nativeVideoAudio = storeFinalVideoVariant(
-                    script,
-                    runId,
-                    output,
-                    "VIDEO_GENERATED_AUDIO",
-                    "Video generated audio",
-                    scenes.size(),
-                    targetDuration,
-                    tail(readQuietly(logPath), 1600)
-            );
-            List<Map<String, Object>> variants = new ArrayList<>();
-            variants.add(nativeVideoAudio);
-
-            Map<String, Object> customVoiceAudio = new LinkedHashMap<>();
-            String customVoiceUnavailableReason = "Generate and save the dialogue voiceover before final merge to create the custom-voice version.";
-            try {
-                customVoiceAudio = renderCustomVoiceVariant(
-                        script,
-                        runId,
-                        output,
-                        run,
-                        workDir,
-                        scenes.size(),
-                        targetDuration
-                );
-            } catch (ResponseStatusException ex) {
-                customVoiceUnavailableReason = firstText(ex.getReason(), "The custom voice version could not be rendered.");
-                log.warn("Could not render custom voice final video scriptId={} runId={} errorMessage={}",
-                        script == null ? null : script.getId(), runId, customVoiceUnavailableReason);
-            }
-            if (!customVoiceAudio.isEmpty()) {
-                variants.add(customVoiceAudio);
-            }
-
-            Map<String, Object> primary = new LinkedHashMap<>(customVoiceAudio.isEmpty() ? nativeVideoAudio : customVoiceAudio);
-            primary.put("variants", variants);
-            primary.put("defaultAudioVariant", primary.get("audioVariant"));
-            primary.put("customVoiceAvailable", !customVoiceAudio.isEmpty());
-            if (customVoiceAudio.isEmpty()) {
-                primary.put("customVoiceUnavailableReason", customVoiceUnavailableReason);
-            }
-            return primary;
-        } catch (ResponseStatusException ex) {
-            throw ex;
-        } catch (IOException ex) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not render screenplay final video.", ex);
-        } finally {
-            deleteQuietly(workDir);
-        }
-    }
-
-    private Map<String, Object> renderCustomVoiceVariant(
-            CreatorScript script,
-            UUID runId,
-            Path nativeVideo,
-            Map<String, Object> run,
-            Path workDir,
-            int sceneCount,
-            int targetDuration
-    ) {
-        Map<String, Object> dialogueAsset = customVoiceAsset(run);
-        String dialogueBucket = firstText(dialogueAsset.get("bucket"));
-        String dialogueObjectKey = firstText(dialogueAsset.get("objectKey"));
-        if (dialogueBucket.isBlank() || dialogueObjectKey.isBlank()) {
-            return new LinkedHashMap<>();
-        }
-
-        try {
-            Path dialoguePath = workDir.resolve("custom-dialogue." + audioFileExtension(firstText(dialogueAsset.get("contentType"), "audio/mpeg")));
-            assetStorageService.downloadObjectToPath(dialogueBucket, dialogueObjectKey, dialoguePath);
-
-            Map<String, Object> musicAsset = generatedMusicAsset(run);
-            String musicBucket = firstText(musicAsset.get("bucket"));
-            String musicObjectKey = firstText(musicAsset.get("objectKey"));
-            Path output = workDir.resolve("final-custom-voice.mp4");
-            Path logPath = workDir.resolve("ffmpeg-custom-voice.log");
-            List<String> command = new ArrayList<>(List.of(
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    nativeVideo.toString(),
-                    "-i",
-                    dialoguePath.toString()
-            ));
-            boolean hasMusic = !musicBucket.isBlank() && !musicObjectKey.isBlank();
-            if (hasMusic) {
-                Path musicPath = workDir.resolve("background-music." + audioFileExtension(firstText(musicAsset.get("contentType"), "audio/mpeg")));
-                assetStorageService.downloadObjectToPath(musicBucket, musicObjectKey, musicPath);
-                command.add("-stream_loop");
-                command.add("-1");
-                command.add("-i");
-                command.add(musicPath.toString());
-                command.add("-filter_complex");
-                command.add("[1:a]apad,volume=1.0,asplit=2[voice][voice_sidechain];"
-                        + "[2:a]apad,volume=0.20[music];"
-                        + "[music][voice_sidechain]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=250[ducked_music];"
-                        + "[voice][ducked_music]amix=inputs=2:duration=first:normalize=0[aout]");
-            } else {
-                command.add("-filter_complex");
-                command.add("[1:a]apad,volume=1.0[aout]");
-            }
-            command.addAll(List.of(
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "[aout]",
-                    "-c:v",
-                    "copy",
-                    "-c:a",
-                    "aac",
-                    "-shortest",
-                    "-movflags",
-                    "+faststart",
-                    output.toString()
-            ));
-            runFfmpeg(command, logPath, "Screenplay custom voice final render failed");
-            Map<String, Object> customVoiceVideo = storeFinalVideoVariant(
-                    script,
-                    runId,
-                    output,
-                    "CUSTOM_GENERATED_VOICE",
-                    hasMusic ? "Custom generated voice with ducked AI background music" : "Custom generated voice",
-                    sceneCount,
-                    targetDuration,
-                    tail(readQuietly(logPath), 1600)
-            );
-            customVoiceVideo.put("dialogueAssetId", dialogueAsset.get("assetId"));
-            customVoiceVideo.put("backgroundMusicIncluded", hasMusic);
-            return customVoiceVideo;
-        } catch (RuntimeException ex) {
-            throw ex;
-        } catch (IOException ex) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not create the custom-voice final video.", ex);
-        }
-    }
-
-    private Map<String, Object> storeFinalVideoVariant(
-            CreatorScript script,
-            UUID runId,
-            Path output,
-            String audioVariant,
-            String audioVariantLabel,
-            int sceneCount,
-            int targetDuration,
-            String ffmpegLogTail
-    ) throws IOException {
-        AssetStorageService.StoredObject stored;
-        try (InputStream input = Files.newInputStream(output)) {
-            stored = assetStorageService.uploadCreatorAssetFromStream(
-                    finalVideoObjectKey(script, runId, audioVariant),
-                    input,
-                    "video/mp4",
-                    SIGNED_URL_TTL
-            );
-        }
-        Map<String, Object> finalVideo = new LinkedHashMap<>();
-        finalVideo.put("bucket", stored.bucket());
-        finalVideo.put("objectKey", stored.objectKey());
-        finalVideo.put("contentType", stored.contentType());
-        finalVideo.put("sizeBytes", stored.sizeBytes());
-        finalVideo.put("videoUrl", stored.signedUrl());
-        finalVideo.put("signedUrl", stored.signedUrl());
-        finalVideo.put("publicUrl", stored.signedUrl());
-        finalVideo.put("audioVariant", audioVariant);
-        finalVideo.put("audioVariantLabel", audioVariantLabel);
-        finalVideo.put("sceneCount", sceneCount);
-        finalVideo.put("renderer", "local_ffmpeg_concat");
-        finalVideo.put("targetDurationSeconds", targetDuration);
-        finalVideo.put("renderedAt", OffsetDateTime.now().toString());
-        finalVideo.put("ffmpegLogTail", ffmpegLogTail);
-        return finalVideo;
-    }
-
-    private Map<String, Object> customVoiceAsset(Map<String, Object> run) {
-        Map<String, Object> direct = firstNonEmptyMap(
-                run == null ? null : run.get("combinedDialogueAudio"),
-                run == null ? null : run.get("combinedSceneDialogueAudio"),
-                run == null ? null : run.get("dialogueAudio"),
-                firstMap(firstMap(run == null ? null : run.get("audioPack")).get("dialogue")).get("asset"),
-                firstMap(firstMap(run == null ? null : run.get("audioProductionPlan")).get("dialogue")).get("asset")
-        );
-        if (hasStoredAssetLocation(direct)) {
-            return direct;
-        }
-        for (Map<String, Object> asset : mapListValue(run == null ? null : run.get("audioAssets"))) {
-            String layerType = firstText(asset.get("layerType"), asset.get("assetKind"), asset.get("assetType")).toLowerCase(Locale.ROOT);
-            if ((layerType.contains("voice") || layerType.contains("dialogue")) && hasStoredAssetLocation(asset)) {
-                return asset;
-            }
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private Map<String, Object> generatedMusicAsset(Map<String, Object> run) {
+    Map<String, Object> generatedMusicAsset(Map<String, Object> run) {
         Map<String, Object> backgroundMusic = firstMap(run == null ? null : run.get("backgroundMusic"));
         Map<String, Object> direct = firstNonEmptyMap(
                 backgroundMusic.get("asset"),
@@ -3702,14 +3430,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return command;
     }
 
-    private String concatFile(List<Path> paths) {
-        return paths.stream()
-                .map(path -> "file '" + path.toAbsolutePath().toString().replace("\\", "/").replace("'", "'\\''") + "'")
-                .reduce((left, right) -> left + System.lineSeparator() + right)
-                .orElse("");
-    }
-
-    private String readQuietly(Path path) {
+    String readQuietly(Path path) {
         try {
             return Files.exists(path) ? Files.readString(path) : "";
         } catch (IOException ex) {
@@ -3717,7 +3438,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         }
     }
 
-    private String tail(String value, int maxChars) {
+    String tail(String value, int maxChars) {
         if (value == null || value.length() <= maxChars) {
             return value == null ? "" : value;
         }
@@ -3755,14 +3476,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return "screenplay-videos/%s/%s/final/final-%s.mp4".formatted(script.getId(), runId, UUID.randomUUID());
     }
 
-    private String finalVideoObjectKey(CreatorScript script, UUID runId, String audioVariant) {
-        return "screenplay-videos/%s/%s/final/%s-%s.mp4".formatted(
-                script.getId(),
-                runId,
-                safeSlug(firstText(audioVariant, "final")),
-                UUID.randomUUID()
-        );
-    }
 
     Map<String, Object> storeAudioAsset(
             CreatorScript script,
