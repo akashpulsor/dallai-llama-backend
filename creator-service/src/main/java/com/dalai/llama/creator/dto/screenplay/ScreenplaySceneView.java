@@ -2,6 +2,7 @@ package com.dalai.llama.creator.dto.screenplay;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 import java.util.Map;
@@ -48,7 +49,14 @@ public record ScreenplaySceneView(
         String model,
         String brollProvider,
         String brollModel,
+        // Verified: ScreenplayVideoService.generationModeFor reads firstText(..., scene.get("generationMode"),
+        // scene.get("generation_mode"), scene.get("assetCaptureMode"), scene.get("asset_capture_mode"), ...) -
+        // a same-purpose fallback READ chain, not a duplicate write, so these four stay separate
+        // un-aliased fields (same reasoning as caption/captionText/textOverlay).
         String generationMode,
+        @JsonProperty("generation_mode") String generationModeSnakeCase,
+        String assetCaptureMode,
+        @JsonProperty("asset_capture_mode") String assetCaptureModeSnakeCase,
 
         // --- timing ---
         Integer startSeconds,
@@ -114,8 +122,26 @@ public record ScreenplaySceneView(
         String captionSafeArea,
 
         // --- dialogue / voice-clone ---
-        String dialogue,
+        // Untyped on purpose: ScreenplayVideoService.dialogueObjectText walks scene.get("dialogue")
+        // expecting it to be EITHER a plain scalar, OR a nested Map, OR a Collection of either -
+        // real scene data uses all three shapes for this one key. A String-typed field here would
+        // make Jackson's record conversion throw (and silently fall back to EMPTY) for every scene
+        // whose "dialogue" is the structured form, so this stays Object rather than being forced
+        // into a type the data doesn't actually have.
+        Object dialogue,
         String dialogueScript,
+        // Verified: ScreenplayVideoService.dialogueTextForScene reads these as a same-purpose
+        // fallback chain alongside dialogueScript (dialogueScript, exactDialogue, spokenDialogue,
+        // voiceover, voiceOver, narration, spokenLine), but - like caption/captionText/textOverlay
+        // below, which follow the identical pattern - a shared fallback READ chain is not evidence
+        // of a duplicate WRITE, so these stay separate un-aliased fields rather than being merged
+        // onto dialogueScript.
+        String exactDialogue,
+        String spokenDialogue,
+        String voiceover,
+        String voiceOver,
+        String narration,
+        String spokenLine,
         String character,
         String characterDetail,
         String characterDetails,
@@ -175,7 +201,12 @@ public record ScreenplaySceneView(
         Map<String, Object> ragContext,
         Map<String, Object> storyboardTag,
         Map<String, Object> founderAvatarProfile,
+        // Verified: ScreenplayVideoService.providerForSceneGeneration checks scene.get("avatarProviderMode")
+        // and scene.get("avatarProvider") as separate fallback candidates inside avatarProviderFrom(...) -
+        // a fallback READ, not a duplicate write, so kept un-aliased (unlike the Run-level
+        // avatarProviderMode/avatarProvider pair, which IS a verified duplicate write - see ScreenplayRunView).
         String avatarProviderMode,
+        String avatarProvider,
         String avatarSceneSelectionReason,
         Map<String, Object> avatarPortraitAsset,
         String avatarPortraitUrl,

@@ -5097,12 +5097,13 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
 
     String providerForSceneGeneration(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
         String generationMode = generationModeFor(scene == null ? Map.of() : scene, runOrRequest == null ? Map.of() : runOrRequest, request);
+        ScreenplaySceneView sceneView = SceneViewMapper.sceneView(scene, objectMapper);
         if ("talking_head".equals(generationMode)) {
             return normalizeVideoProvider(avatarProviderFrom(
                     request == null ? null : request.get("avatarProviderMode"),
                     request == null ? null : request.get("avatarProvider"),
-                    scene == null ? null : scene.get("avatarProviderMode"),
-                    scene == null ? null : scene.get("avatarProvider"),
+                    sceneView.avatarProviderMode(),
+                    sceneView.avatarProvider(),
                     runOrRequest == null ? null : runOrRequest.get("avatarProviderMode"),
                     runOrRequest == null ? null : runOrRequest.get("avatarProvider"),
                     firstMap(runOrRequest == null ? null : runOrRequest.get("founderAvatarProfile")).get("avatarProviderMode")
@@ -5111,7 +5112,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return normalizeVideoProvider(firstText(
                 request == null ? null : request.get("provider"),
                 request == null ? null : request.get("targetProvider"),
-                scene == null ? null : scene.get("provider"),
+                sceneView.provider(),
                 runOrRequest == null ? null : runOrRequest.get("provider")
         ));
     }
@@ -6191,12 +6192,13 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         if (!override.isBlank()) {
             return normalizeGenerationMode(override);
         }
+        ScreenplaySceneView sceneView = SceneViewMapper.sceneView(scene, objectMapper);
         return normalizeGenerationMode(firstText(
                 request == null ? null : request.get("generationMode"),
-                scene.get("generationMode"),
-                scene.get("generation_mode"),
-                scene.get("assetCaptureMode"),
-                scene.get("asset_capture_mode"),
+                sceneView.generationMode(),
+                sceneView.generationModeSnakeCase(),
+                sceneView.assetCaptureMode(),
+                sceneView.assetCaptureModeSnakeCase(),
                 "ai_generated"
         ));
     }
@@ -6446,23 +6448,24 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         if (scene == null || scene.isEmpty()) {
             return "";
         }
+        ScreenplaySceneView view = SceneViewMapper.sceneView(scene, objectMapper);
         String explicit = firstText(
-                scene.get("dialogueScript"),
-                scene.get("exactDialogue"),
-                scene.get("spokenDialogue"),
-                scene.get("voiceover"),
-                scene.get("voiceOver"),
-                scene.get("narration"),
-                scene.get("spokenLine")
+                view.dialogueScript(),
+                view.exactDialogue(),
+                view.spokenDialogue(),
+                view.voiceover(),
+                view.voiceOver(),
+                view.narration(),
+                view.spokenLine()
         );
         if (!explicit.isBlank()) {
             return normalizeDialogueText(explicit);
         }
-        String structured = dialogueObjectText(scene.get("dialogue"));
+        String structured = dialogueObjectText(view.dialogue());
         if (!structured.isBlank()) {
             return normalizeDialogueText(structured);
         }
-        return normalizeDialogueText(firstText(scene.get("caption"), scene.get("captionText"), scene.get("textOverlay")));
+        return normalizeDialogueText(firstText(view.caption(), view.captionText(), view.textOverlay()));
     }
 
     private String dialogueObjectText(Object value) {

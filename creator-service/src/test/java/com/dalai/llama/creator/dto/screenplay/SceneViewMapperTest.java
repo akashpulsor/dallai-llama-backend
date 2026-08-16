@@ -114,6 +114,68 @@ class SceneViewMapperTest {
     }
 
     @Test
+    void sceneView_dialogueFieldAcceptsStructuredMapOrListShapesWithoutFallingBackToEmpty() {
+        // Regression test: "dialogue" is polymorphic in real scene data - ScreenplayVideoService's
+        // dialogueObjectText walks it as a scalar, Map, or Collection. If this field were typed as
+        // String, any of these structured shapes would throw during Jackson conversion and the
+        // whole scene would silently collapse to the EMPTY fallback view.
+        Map<String, Object> structuredDialogue = Map.of("text", "Hello there.", "voice", "warm");
+        ScreenplaySceneView mapShape = SceneViewMapper.sceneView(Map.of("id", "scene-1", "dialogue", structuredDialogue), objectMapper);
+        assertEquals("scene-1", mapShape.id());
+        assertEquals(structuredDialogue, mapShape.dialogue());
+
+        List<Map<String, Object>> listDialogue = List.of(Map.of("text", "Line one."), Map.of("text", "Line two."));
+        ScreenplaySceneView listShape = SceneViewMapper.sceneView(Map.of("id", "scene-2", "dialogue", listDialogue), objectMapper);
+        assertEquals("scene-2", listShape.id());
+        assertEquals(listDialogue, listShape.dialogue());
+
+        ScreenplaySceneView scalarShape = SceneViewMapper.sceneView(Map.of("id", "scene-3", "dialogue", "Plain line."), objectMapper);
+        assertEquals("Plain line.", scalarShape.dialogue());
+    }
+
+    @Test
+    void sceneView_readsDialogueTextFallbackFieldsSeparately() {
+        Map<String, Object> raw = Map.of(
+                "exactDialogue", "exact value",
+                "spokenDialogue", "spoken value",
+                "voiceover", "voiceover value",
+                "voiceOver", "voiceOver value",
+                "narration", "narration value",
+                "spokenLine", "spokenLine value"
+        );
+        ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
+        assertEquals("exact value", view.exactDialogue());
+        assertEquals("spoken value", view.spokenDialogue());
+        assertEquals("voiceover value", view.voiceover());
+        assertEquals("voiceOver value", view.voiceOver());
+        assertEquals("narration value", view.narration());
+        assertEquals("spokenLine value", view.spokenLine());
+    }
+
+    @Test
+    void sceneView_readsGenerationModeAndAssetCaptureModeFallbackFieldsSeparately() {
+        Map<String, Object> raw = Map.of(
+                "generationMode", "ai_generated",
+                "generation_mode", "snake case value",
+                "assetCaptureMode", "camel case value",
+                "asset_capture_mode", "snake case capture value"
+        );
+        ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
+        assertEquals("ai_generated", view.generationMode());
+        assertEquals("snake case value", view.generationModeSnakeCase());
+        assertEquals("camel case value", view.assetCaptureMode());
+        assertEquals("snake case capture value", view.assetCaptureModeSnakeCase());
+    }
+
+    @Test
+    void sceneView_readsAvatarProviderModeAndAvatarProviderSeparately() {
+        Map<String, Object> raw = Map.of("avatarProviderMode", "mode value", "avatarProvider", "provider value");
+        ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
+        assertEquals("mode value", view.avatarProviderMode());
+        assertEquals("provider value", view.avatarProvider());
+    }
+
+    @Test
     void sceneView_booleanFieldsCoerceCorrectly() {
         Map<String, Object> raw = Map.of("noHumans", true, "dialogueCloneAccepted", false);
         ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
