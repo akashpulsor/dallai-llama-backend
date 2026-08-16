@@ -82,8 +82,8 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     private static final String ASSET_TYPE_SCREENPLAY_REFERENCE_IMAGE = "SCREENPLAY_REFERENCE_IMAGE";
     private static final String ASSET_TYPE_FOUNDER_AVATAR_SOURCE_VIDEO = "FOUNDER_AVATAR_SOURCE_VIDEO";
     private static final String DEFAULT_SCREENPLAY_VIDEO_PROVIDER = "gemini_omni";
-    private static final Duration SIGNED_URL_TTL = Duration.ofDays(7);
-    private static final long MEDIA_URL_RENEWAL_SECONDS = 6 * 60 * 60;
+    static final Duration SIGNED_URL_TTL = Duration.ofDays(7);
+    static final long MEDIA_URL_RENEWAL_SECONDS = 6 * 60 * 60;
     private static final Set<String> SCENE_VOICE_METHODS = Set.of(
             "client_rvc_english",
             "fal_chatterbox_multilingual",
@@ -1745,7 +1745,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         if (runScriptId != null && !scriptId.equals(runScriptId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Screenplay video run was not found for this script.");
         }
-        mergeLatestAudioState(run, defaultString(tenantId, "unknown"), defaultString(userId, "anonymous"), firstText(run.get("runId")));
+        videoRunHydrator().mergeLatestAudioState(run, defaultString(tenantId, "unknown"), defaultString(userId, "anonymous"), firstText(run.get("runId")));
         return hydrateVideoRunForResponse(run, tenantId, userId);
     }
 
@@ -6578,13 +6578,13 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         if (run.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Screenplay video run payload was not found.");
         }
-        mergeLatestAudioState(run, defaultString(tenantId, "unknown"), defaultString(userId, "anonymous"), runId.toString());
+        videoRunHydrator().mergeLatestAudioState(run, defaultString(tenantId, "unknown"), defaultString(userId, "anonymous"), runId.toString());
         UUID scriptId = uuidValue(run.get("scriptId"));
         if (scriptId != null) {
             CreatorScript script = loadScript(scriptId, tenantId, userId);
             List<Map<String, Object>> scenes = reconcilePreparedRunScenes(script, run, mapListValue(run.get("scenes")));
             run.put("scenes", scenes);
-            invalidateStaleCombinedDialogueAudio(run, scenes);
+            videoRunHydrator().invalidateStaleCombinedDialogueAudio(run, scenes);
             run.put("sceneClips", scenes);
             Map<String, Object> timeline = copyMap(run.get("timeline"));
             if (!timeline.isEmpty()) {
@@ -6592,7 +6592,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
                 run.put("timeline", timeline);
             }
         }
-        refreshRunMediaUrls(run);
+        videoRunHydrator().refreshRunMediaUrls(run);
         return new RunRecord(job, run);
     }
 
@@ -6604,7 +6604,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             List<Map<String, Object>> scenes = reconcilePreparedRunScenes(script, run, mapListValue(run.get("scenes")));
             scenes = enrichScenesWithStoryboardReferences(script, scenes, Map.of());
             run.put("scenes", scenes);
-            invalidateStaleCombinedDialogueAudio(run, scenes);
+            videoRunHydrator().invalidateStaleCombinedDialogueAudio(run, scenes);
             run.put("sceneClips", scenes);
             Map<String, Object> timeline = copyMap(run.get("timeline"));
             if (!timeline.isEmpty()) {
@@ -6612,52 +6612,15 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
                 run.put("timeline", timeline);
             }
         }
-        refreshRunMediaUrls(run);
+        videoRunHydrator().refreshRunMediaUrls(run);
         return run;
     }
 
-    private void mergeLatestAudioState(Map<String, Object> run, String tenantId, String userId, String runId) {
-        if (run == null || run.isEmpty()) {
-            return;
-        }
-        generationJobRepository
-                .findLatestScreenplayVideoAudioRunJob(defaultString(tenantId, "unknown"), defaultString(userId, "anonymous"), runId)
-                .map(CreatorGenerationJob::getOutputPayload)
-                .map(payload -> firstNonEmptyMap(payload.get("videoRun"), payload.get("screenplayVideoRun"), payload))
-                .filter(this::hasAudioState)
-                .ifPresent(audioRun -> {
-                    copyIfPresent(run, audioRun, "dialogueAudio");
-                    copyIfPresent(run, audioRun, "voiceTrack");
-                    copyIfPresent(run, audioRun, "audioPack");
-                    copyIfPresent(run, audioRun, "audioAssets");
-                    copyIfPresent(run, audioRun, "audioProductionPlan");
-                    copyIfPresent(run, audioRun, "freeMusicSelectionPlan");
-                    copyIfPresent(run, audioRun, "backgroundMusicSelection");
-                    copyIfPresent(run, audioRun, "backgroundMusic");
-                    copyIfPresent(run, audioRun, "musicTrack");
-                    copyIfPresent(run, audioRun, "combinedDialogueAudio");
-                    copyIfPresent(run, audioRun, "combinedSceneDialogueAudio");
-                    copyIfPresent(run, audioRun, "combinedDialogueTrack");
-                    copyIfPresent(run, audioRun, "combinedDialogueSummary");
-                    run.put("audioStateRecoveredFromJob", true);
-                });
+    private VideoRunHydrator videoRunHydrator() {
+        return new VideoRunHydrator(this, generationJobRepository, assetStorageService);
     }
 
-    private boolean hasAudioState(Map<String, Object> run) {
-        return run != null && (
-                !firstMap(run.get("dialogueAudio")).isEmpty()
-                        || !firstMap(run.get("audioPack")).isEmpty()
-                        || !mapListValue(run.get("audioAssets")).isEmpty()
-                        || !firstText(run.get("voiceTrack")).isBlank()
-                        || !firstMap(run.get("backgroundMusic")).isEmpty()
-                        || !firstMap(run.get("backgroundMusicSelection")).isEmpty()
-                        || !firstMap(run.get("combinedDialogueAudio")).isEmpty()
-                        || !firstMap(run.get("combinedSceneDialogueAudio")).isEmpty()
-                        || !firstMap(run.get("freeMusicSelectionPlan")).isEmpty()
-        );
-    }
-
-    private void copyIfPresent(Map<String, Object> target, Map<String, Object> source, String key) {
+    void copyIfPresent(Map<String, Object> target, Map<String, Object> source, String key) {
         if (target == null || source == null || key == null || !source.containsKey(key)) {
             return;
         }
@@ -6675,220 +6638,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             return;
         }
         target.put(key, value);
-    }
-
-    private void refreshRunMediaUrls(Map<String, Object> run) {
-        if (run == null || run.isEmpty()) {
-            return;
-        }
-        List<Map<String, Object>> scenes = refreshSceneVideoUrls(run.get("scenes"));
-        if (!scenes.isEmpty()) {
-            run.put("scenes", scenes);
-            run.put("sceneClips", scenes);
-        }
-        Map<String, Object> finalVideo = refreshVideoAssetReference(run.get("finalVideo"));
-        List<Map<String, Object>> finalVariants = refreshVideoAssetList(run.get("finalVideoVariants"));
-        if (!finalVariants.isEmpty()) {
-            run.put("finalVideoVariants", finalVariants);
-            finalVideo = preferredFinalVideo(finalVariants, finalVideo);
-        }
-        if (!finalVideo.isEmpty()) {
-            run.put("finalVideo", finalVideo);
-            String finalUrl = firstText(finalVideo.get("videoUrl"), finalVideo.get("signedUrl"), finalVideo.get("publicUrl"));
-            if (!finalUrl.isBlank()) {
-                run.put("videoUrl", finalUrl);
-                run.put("publicUrl", finalUrl);
-                run.put("finalVideoUrl", finalUrl);
-            }
-        }
-        Map<String, Object> renderManifest = copyMap(run.get("renderManifest"));
-        if (!renderManifest.isEmpty()) {
-            Map<String, Object> manifestFinal = refreshVideoAssetReference(renderManifest.get("finalVideo"));
-            List<Map<String, Object>> manifestVariants = refreshVideoAssetList(renderManifest.get("finalVideoVariants"));
-            if (!manifestVariants.isEmpty()) {
-                renderManifest.put("finalVideoVariants", manifestVariants);
-                manifestFinal = preferredFinalVideo(manifestVariants, manifestFinal);
-            }
-            if (!manifestFinal.isEmpty()) {
-                renderManifest.put("finalVideo", manifestFinal);
-                renderManifest.put("finalVideoUrl", firstText(manifestFinal.get("videoUrl"), manifestFinal.get("signedUrl"), manifestFinal.get("publicUrl")));
-            }
-            run.put("renderManifest", renderManifest);
-        }
-        refreshAudioAssetUrls(run);
-    }
-
-    private List<Map<String, Object>> refreshSceneVideoUrls(Object value) {
-        List<Map<String, Object>> scenes = mapListValue(value);
-        List<Map<String, Object>> refreshed = new ArrayList<>();
-        for (Map<String, Object> scene : scenes) {
-            Map<String, Object> refreshedScene = refreshVideoAssetReference(scene);
-            Map<String, Object> dialogueAudio = refreshAudioAssetReference(refreshedScene.get("dialogueAudio"));
-            if (!dialogueAudio.isEmpty()) {
-                refreshedScene.put("dialogueAudio", dialogueAudio);
-                refreshedScene.put("voiceTrack", firstText(
-                        dialogueAudio.get("assetUrl"),
-                        dialogueAudio.get("signedUrl"),
-                        dialogueAudio.get("publicUrl")
-                ));
-            }
-            Map<String, Object> avatarPortrait = refreshVideoAssetReference(refreshedScene.get("avatarPortraitAsset"));
-            if (!avatarPortrait.isEmpty()) {
-                refreshedScene.put("avatarPortraitAsset", avatarPortrait);
-                refreshedScene.put("avatarPortraitUrl", firstText(
-                        avatarPortrait.get("assetUrl"),
-                        avatarPortrait.get("signedUrl"),
-                        avatarPortrait.get("publicUrl")
-                ));
-            }
-            Map<String, Object> videoAsset = refreshVideoAssetReference(refreshedScene.get("videoAsset"));
-            if (!videoAsset.isEmpty()) {
-                refreshedScene.put("videoAsset", videoAsset);
-                String videoUrl = firstText(videoAsset.get("videoUrl"), videoAsset.get("signedUrl"), videoAsset.get("publicUrl"));
-                if (!videoUrl.isBlank()) {
-                    refreshedScene.put("videoUrl", videoUrl);
-                    refreshedScene.put("clipUrl", videoUrl);
-                }
-            }
-            refreshed.add(refreshedScene);
-        }
-        return refreshed;
-    }
-
-    private List<Map<String, Object>> refreshVideoAssetList(Object value) {
-        List<Map<String, Object>> assets = mapListValue(value);
-        List<Map<String, Object>> refreshed = new ArrayList<>();
-        for (Map<String, Object> asset : assets) {
-            Map<String, Object> refreshedAsset = refreshVideoAssetReference(asset);
-            if (!refreshedAsset.isEmpty()) {
-                refreshed.add(refreshedAsset);
-            }
-        }
-        return refreshed;
-    }
-
-    private Map<String, Object> refreshVideoAssetReference(Object value) {
-        Map<String, Object> video = copyMap(value);
-        if (video.isEmpty()) {
-            return video;
-        }
-        String bucket = firstText(video.get("bucket"));
-        String objectKey = firstText(video.get("objectKey"));
-        if (bucket.isBlank() || objectKey.isBlank()) {
-            return video;
-        }
-        try {
-            String signedUrl = assetStorageService.signedUrl(bucket, objectKey, SIGNED_URL_TTL);
-            video.put("videoUrl", signedUrl);
-            video.put("clipUrl", signedUrl);
-            video.put("assetUrl", signedUrl);
-            video.put("signedUrl", signedUrl);
-            video.put("publicUrl", signedUrl);
-            video.put("storageProvider", "minio");
-            video.put("storageStatus", "SAVED_TO_MINIO");
-            video.put("signedUrlTtlSeconds", SIGNED_URL_TTL.toSeconds());
-            video.put("signedUrlRefreshedAt", OffsetDateTime.now().toString());
-            video.put("mediaAccessPolicy", "renew_on_authenticated_video_run_fetch");
-            video.put("mediaUrlRefreshAfterSeconds", MEDIA_URL_RENEWAL_SECONDS);
-        } catch (RuntimeException ex) {
-            log.warn("Could not refresh screenplay video signed URL bucket={} objectKey={} errorType={} errorMessage={}",
-                    bucket, objectKey, ex.getClass().getSimpleName(), ex.getMessage());
-        }
-        return video;
-    }
-
-    private Map<String, Object> preferredFinalVideo(List<Map<String, Object>> variants, Map<String, Object> fallback) {
-        for (Map<String, Object> variant : variants) {
-            if ("CUSTOM_GENERATED_VOICE".equalsIgnoreCase(firstText(variant.get("audioVariant")))) {
-                return variant;
-            }
-        }
-        for (Map<String, Object> variant : variants) {
-            if ("VIDEO_GENERATED_AUDIO".equalsIgnoreCase(firstText(variant.get("audioVariant")))) {
-                return variant;
-            }
-        }
-        return variants.isEmpty() ? fallback : variants.get(0);
-    }
-
-    private void refreshAudioAssetUrls(Map<String, Object> run) {
-        if (run == null || run.isEmpty()) {
-            return;
-        }
-        Map<String, Object> combinedDialogueAudio = refreshAudioAssetReference(firstNonEmptyMap(
-                run.get("combinedDialogueAudio"),
-                run.get("combinedSceneDialogueAudio")
-        ));
-        if (!combinedDialogueAudio.isEmpty()) {
-            run.put("combinedDialogueAudio", combinedDialogueAudio);
-            run.put("combinedSceneDialogueAudio", combinedDialogueAudio);
-            String combinedUrl = firstText(
-                    combinedDialogueAudio.get("assetUrl"),
-                    combinedDialogueAudio.get("signedUrl"),
-                    combinedDialogueAudio.get("publicUrl")
-            );
-            if (!combinedUrl.isBlank()) {
-                run.put("combinedDialogueTrack", combinedUrl);
-            }
-        }
-        Map<String, Object> dialogueAudio = refreshAudioAssetReference(run.get("dialogueAudio"));
-        if (!dialogueAudio.isEmpty()) {
-            run.put("dialogueAudio", dialogueAudio);
-            String voiceUrl = firstText(dialogueAudio.get("assetUrl"), dialogueAudio.get("signedUrl"), dialogueAudio.get("publicUrl"));
-            if (!voiceUrl.isBlank()) {
-                run.put("voiceTrack", voiceUrl);
-            }
-        }
-        Map<String, Object> backgroundMusic = refreshAudioContainer(run.get("backgroundMusic"));
-        if (!backgroundMusic.isEmpty()) {
-            run.put("backgroundMusic", backgroundMusic);
-            Map<String, Object> musicAsset = firstNonEmptyMap(backgroundMusic.get("asset"), backgroundMusic);
-            String musicUrl = firstText(musicAsset.get("assetUrl"), musicAsset.get("signedUrl"), musicAsset.get("publicUrl"));
-            if (!musicUrl.isBlank()) {
-                run.put("musicTrack", musicUrl);
-            }
-        }
-        List<Map<String, Object>> audioAssets = refreshAudioAssetList(run.get("audioAssets"));
-        if (!audioAssets.isEmpty()) {
-            run.put("audioAssets", audioAssets);
-        }
-        Map<String, Object> audioPack = refreshAudioPack(run.get("audioPack"));
-        if (!audioPack.isEmpty()) {
-            run.put("audioPack", audioPack);
-        }
-        Map<String, Object> audioProductionPlan = refreshAudioPlan(run.get("audioProductionPlan"));
-        if (!audioProductionPlan.isEmpty()) {
-            run.put("audioProductionPlan", audioProductionPlan);
-        }
-        Map<String, Object> editingPlan = refreshAudioPlan(firstNonEmptyMap(run.get("editingPlan"), run.get("editorHandoffPlan")));
-        if (!editingPlan.isEmpty()) {
-            run.put("editingPlan", editingPlan);
-            run.put("editorHandoffPlan", editingPlan);
-        }
-    }
-
-    private Map<String, Object> refreshAudioPlan(Object value) {
-        Map<String, Object> plan = copyMap(value);
-        if (plan.isEmpty()) {
-            return plan;
-        }
-        List<Map<String, Object>> generatedAssets = refreshAudioAssetList(plan.get("generatedAudioAssets"));
-        if (!generatedAssets.isEmpty()) {
-            plan.put("generatedAudioAssets", generatedAssets);
-        }
-        Map<String, Object> dialogue = refreshAudioContainer(plan.get("dialogue"));
-        if (!dialogue.isEmpty()) {
-            plan.put("dialogue", dialogue);
-        }
-        Map<String, Object> backgroundMusic = refreshAudioContainer(plan.get("backgroundMusic"));
-        if (!backgroundMusic.isEmpty()) {
-            plan.put("backgroundMusic", backgroundMusic);
-        }
-        Map<String, Object> audioPack = refreshAudioPack(plan.get("audioPack"));
-        if (!audioPack.isEmpty()) {
-            plan.put("audioPack", audioPack);
-        }
-        return plan;
     }
 
     List<Map<String, Object>> sceneDialogueAudioInputs(List<Map<String, Object>> scenes) {
@@ -6952,31 +6701,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         );
     }
 
-    private void invalidateStaleCombinedDialogueAudio(
-            Map<String, Object> run,
-            List<Map<String, Object>> scenes
-    ) {
-        Map<String, Object> combined = firstNonEmptyMap(
-                run == null ? null : run.get("combinedDialogueAudio"),
-                run == null ? null : run.get("combinedSceneDialogueAudio")
-        );
-        if (combined.isEmpty()) {
-            return;
-        }
-        String expectedFingerprint = sceneDialogueAudioFingerprint(
-                sceneDialogueAudioInputs(scenes),
-                scenes == null ? 0 : scenes.size()
-        );
-        String storedFingerprint = firstText(
-                combined.get("combinedFingerprint"),
-                combined.get("dialogueFingerprint"),
-                firstMap(combined.get("metadata")).get("dialogueFingerprint")
-        );
-        if (expectedFingerprint.isBlank() || !expectedFingerprint.equals(storedFingerprint)) {
-            clearCombinedDialogueAudio(run);
-        }
-    }
-
     void clearCombinedDialogueAudio(Map<String, Object> run) {
         if (run == null) {
             return;
@@ -6985,54 +6709,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         run.remove("combinedSceneDialogueAudio");
         run.remove("combinedDialogueTrack");
         run.remove("combinedDialogueSummary");
-    }
-
-    private Map<String, Object> refreshAudioPack(Object value) {
-        Map<String, Object> audioPack = copyMap(value);
-        if (audioPack.isEmpty()) {
-            return audioPack;
-        }
-        List<Map<String, Object>> assets = refreshAudioAssetList(audioPack.get("assets"));
-        if (!assets.isEmpty()) {
-            audioPack.put("assets", assets);
-        }
-        Map<String, Object> dialogue = refreshAudioContainer(audioPack.get("dialogue"));
-        if (!dialogue.isEmpty()) {
-            audioPack.put("dialogue", dialogue);
-        }
-        Map<String, Object> backgroundMusic = refreshAudioContainer(audioPack.get("backgroundMusic"));
-        if (!backgroundMusic.isEmpty()) {
-            audioPack.put("backgroundMusic", backgroundMusic);
-        }
-        return audioPack;
-    }
-
-    private Map<String, Object> refreshAudioContainer(Object value) {
-        Map<String, Object> container = copyMap(value);
-        if (container.isEmpty()) {
-            return container;
-        }
-        Map<String, Object> asset = refreshAudioAssetReference(container.get("asset"));
-        if (!asset.isEmpty()) {
-            container.put("asset", asset);
-            return container;
-        }
-        return refreshAudioAssetReference(container);
-    }
-
-    private List<Map<String, Object>> refreshAudioAssetList(Object value) {
-        List<Map<String, Object>> assets = mapListValue(value);
-        if (assets.isEmpty()) {
-            return assets;
-        }
-        List<Map<String, Object>> refreshed = new ArrayList<>();
-        for (Map<String, Object> asset : assets) {
-            Map<String, Object> refreshedAsset = refreshAudioAssetReference(asset);
-            if (!refreshedAsset.isEmpty()) {
-                refreshed.add(refreshedAsset);
-            }
-        }
-        return refreshed;
     }
 
     Map<String, Object> refreshAudioAssetReference(Object value) {
