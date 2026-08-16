@@ -166,31 +166,31 @@ class ScreenplayVideoAiScenePolicyTest {
             Map<String, Object> scriptPayload,
             Map<String, Object> request
     ) throws Exception {
-        ScreenplayVideoService service = mock(
-                ScreenplayVideoService.class,
-                withSettings().defaultAnswer(CALLS_REAL_METHODS)
-        );
-        Field objectMapperField = ScreenplayVideoService.class.getDeclaredField("objectMapper");
-        objectMapperField.setAccessible(true);
-        objectMapperField.set(service, new ObjectMapper());
-        Method method = ScreenplayVideoService.class.getDeclaredMethod(
+        // enrichProductCgiScenePlan moved to InitialRunAssembler (same package, owner back-reference)
+        // as part of the closed no-human product-CGI subgraph. It never calls back into owner - the
+        // only external dependency is shotPlanRepository, and every call here passes scriptId=null,
+        // which short-circuits before that repository is touched - so both constructor args are null.
+        InitialRunAssembler assembler = new InitialRunAssembler(null, null);
+        Method method = InitialRunAssembler.class.getDeclaredMethod(
                 "enrichProductCgiScenePlan",
                 Map.class,
                 List.class,
                 int.class,
                 Map.class,
                 Map.class,
-                String.class
+                String.class,
+                UUID.class
         );
         method.setAccessible(true);
         return (Map<String, Object>) method.invoke(
-                service,
+                assembler,
                 scene,
                 scenes,
                 0,
                 scriptPayload,
                 request,
-                "Preserve the original label exactly."
+                "Preserve the original label exactly.",
+                null
         );
     }
 }

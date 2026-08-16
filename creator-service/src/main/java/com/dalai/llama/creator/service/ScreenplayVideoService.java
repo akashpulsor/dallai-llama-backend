@@ -1,18 +1,28 @@
 package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.domain.PromptTemplateType;
+import com.dalai.llama.creator.service.screenplayvideo.AvatarDialogueSyncGateway;
+import com.dalai.llama.creator.service.screenplayvideo.MapCoercion;
+import com.dalai.llama.creator.service.screenplayvideo.ProviderRequestFactory;
+import com.dalai.llama.creator.service.screenplayvideo.SceneChatEditor;
+import com.dalai.llama.creator.service.screenplayvideo.SceneEditResult;
+import com.dalai.llama.creator.service.screenplayvideo.ShotPlanTagGateway;
+
+import static com.dalai.llama.creator.service.screenplayvideo.MapCoercion.*;
 import com.dalai.llama.creator.domain.entity.CreatorAvatarSceneDialogue;
 import com.dalai.llama.creator.domain.entity.CreatorAsset;
 import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
 import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
 import com.dalai.llama.creator.domain.entity.CreatorScriptShot;
+import com.dalai.llama.creator.domain.entity.CreatorScriptShotPlan;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboard;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboardScene;
 import com.dalai.llama.creator.repository.CreatorAssetRepository;
 import com.dalai.llama.creator.repository.CreatorGenerationJobRepository;
 import com.dalai.llama.creator.repository.CreatorPromptRunRepository;
 import com.dalai.llama.creator.repository.CreatorScriptRepository;
+import com.dalai.llama.creator.repository.CreatorScriptShotPlanRepository;
 import com.dalai.llama.creator.repository.CreatorScriptShotRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardSceneRepository;
@@ -51,7 +61,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
-public class ScreenplayVideoService {
+public class ScreenplayVideoService implements ProviderRequestFactory {
 
     private static final Logger log = LoggerFactory.getLogger(ScreenplayVideoService.class);
 
@@ -90,6 +100,7 @@ public class ScreenplayVideoService {
     private final CreatorScriptShotRepository scriptShotRepository;
     private final CreatorStoryboardRepository storyboardRepository;
     private final CreatorStoryboardSceneRepository storyboardSceneRepository;
+    private final CreatorScriptShotPlanRepository shotPlanRepository;
     private final CreatorAssetRepository assetRepository;
     private final CreatorGenerationJobRepository generationJobRepository;
     private final CreatorPromptRunRepository promptRunRepository;
@@ -101,6 +112,10 @@ public class ScreenplayVideoService {
     private final GoogleLyriaMusicGenerationService musicGenerationService;
     private final AssetStorageService assetStorageService;
     private final BillingWalletService billingWalletService;
+    private final CreatorScreenplaySceneAssetService sceneAssetService;
+    private final ShotPlanTagGateway shotPlanTagGateway;
+    private final SceneChatEditor sceneChatEditor;
+    private final AvatarDialogueSyncGateway avatarDialogueSyncGateway;
     private final ObjectMapper objectMapper;
     private final BigDecimal aiShortStarterPriceInr;
     private final BigDecimal packageUsdInrRate;
@@ -112,6 +127,7 @@ public class ScreenplayVideoService {
             CreatorScriptShotRepository scriptShotRepository,
             CreatorStoryboardRepository storyboardRepository,
             CreatorStoryboardSceneRepository storyboardSceneRepository,
+            CreatorScriptShotPlanRepository shotPlanRepository,
             CreatorAssetRepository assetRepository,
             CreatorGenerationJobRepository generationJobRepository,
             CreatorPromptRunRepository promptRunRepository,
@@ -123,6 +139,10 @@ public class ScreenplayVideoService {
             GoogleLyriaMusicGenerationService musicGenerationService,
             AssetStorageService assetStorageService,
             BillingWalletService billingWalletService,
+            CreatorScreenplaySceneAssetService sceneAssetService,
+            ShotPlanTagGateway shotPlanTagGateway,
+            SceneChatEditor sceneChatEditor,
+            AvatarDialogueSyncGateway avatarDialogueSyncGateway,
             ObjectMapper objectMapper,
             @Value("${creator.video-packages.ai-short-starter-price-inr:5999}") BigDecimal aiShortStarterPriceInr,
             @Value("${creator.video-packages.usd-inr-rate:95}") BigDecimal packageUsdInrRate,
@@ -133,6 +153,7 @@ public class ScreenplayVideoService {
         this.scriptShotRepository = scriptShotRepository;
         this.storyboardRepository = storyboardRepository;
         this.storyboardSceneRepository = storyboardSceneRepository;
+        this.shotPlanRepository = shotPlanRepository;
         this.assetRepository = assetRepository;
         this.generationJobRepository = generationJobRepository;
         this.promptRunRepository = promptRunRepository;
@@ -144,21 +165,15 @@ public class ScreenplayVideoService {
         this.musicGenerationService = musicGenerationService;
         this.assetStorageService = assetStorageService;
         this.billingWalletService = billingWalletService;
+        this.sceneAssetService = sceneAssetService;
+        this.shotPlanTagGateway = shotPlanTagGateway;
+        this.sceneChatEditor = sceneChatEditor;
+        this.avatarDialogueSyncGateway = avatarDialogueSyncGateway;
         this.objectMapper = objectMapper;
         this.aiShortStarterPriceInr = aiShortStarterPriceInr == null ? BigDecimal.valueOf(5999) : aiShortStarterPriceInr;
         this.packageUsdInrRate = packageUsdInrRate == null ? BigDecimal.valueOf(95) : packageUsdInrRate;
         this.usageMarkupPercent = usageMarkupPercent == null ? BigDecimal.valueOf(85) : usageMarkupPercent;
         this.videoUsageMarkupPercent = videoUsageMarkupPercent == null ? BigDecimal.valueOf(20) : videoUsageMarkupPercent;
-    }
-
-    @Transactional
-    public CreatorGenerationJob startVideoGeneration(
-            UUID scriptId,
-            Map<String, Object> request,
-            String tenantId,
-            String userId
-    ) {
-        return startVideoGenerationJob(scriptId, request, tenantId, userId);
     }
 
     @Transactional
@@ -1388,6 +1403,7 @@ public class ScreenplayVideoService {
         String safeUserId = defaultString(userId, "anonymous");
         CreatorScript script = loadScript(scriptId, safeTenantId, safeUserId);
         Map<String, Object> inputPayload = copyMap(request);
+        trimClientReviewHistory(inputPayload);
         boolean prepareOnly = booleanValue(inputPayload.get("prepareOnly"), false)
                 || "scene_by_scene".equalsIgnoreCase(firstText(inputPayload.get("generationWorkflow")));
         String provider = normalizeVideoProvider(firstText(inputPayload.get("provider"), inputPayload.get("targetProvider"), inputPayload.get("modelProvider")));
@@ -1790,13 +1806,14 @@ public class ScreenplayVideoService {
                 inputPayload
         );
 
-        AiSceneEditResult editResult = generateEditedScene(script, scene, message, ragContext, renderedPrompt, chatJob.getId());
+        SceneEditResult editResult = sceneChatEditor.generateEditedScene(script, scene, message, ragContext, renderedPrompt, chatJob.getId());
         Map<String, Object> editedScene = applySceneEdit(scene, editResult.scene(), run, request);
         editedScene.put("status", "NEEDS_REGENERATION");
         editedScene.put("ragContext", ragContext);
         editedScene.put("providerRequest", buildProviderRequest(run, editedScene, request));
         appendRevision(editedScene, message, scene, editResult, ragContext);
         scenes.set(sceneIndex, editedScene);
+        shotPlanTagGateway.persistEditedTag(script.getId(), editedScene, sceneIndex);
 
         run.put("scenes", scenes);
         run.put("sceneClips", scenes);
@@ -1809,7 +1826,14 @@ public class ScreenplayVideoService {
                 "promptRunId", editResult.promptRunId() == null ? "" : editResult.promptRunId().toString(),
                 "updatedAt", OffsetDateTime.now().toString()
         ));
-        generationJobService.completeGenerationJob(chatJob.getId(), outputPayload(run, "Scene edit saved with RAG context."));
+        // Confirmed fix: previously this always completed the job, even when the AI edit itself
+        // failed - the error sat in editResult.errorMessage(), buried in the response body, with
+        // no signal in job status. Fail loudly instead so job status reflects real outcome.
+        if (editResult.failed()) {
+            generationJobService.failGenerationJob(chatJob.getId(), editResult.errorMessage(), outputPayload(run, editResult.errorMessage()));
+        } else {
+            generationJobService.completeGenerationJob(chatJob.getId(), outputPayload(run, "Scene edit saved with RAG context."));
+        }
         return run;
     }
 
@@ -1840,13 +1864,13 @@ public class ScreenplayVideoService {
         int sceneIndex = findSceneIndex(scenes, sceneId);
         Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
         int sceneNumber = positiveInt(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), sceneIndex + 1);
-        CreatorAvatarSceneDialogue sourceDialogueRecord = currentAvatarSourceDialogue(
+        CreatorAvatarSceneDialogue sourceDialogueRecord = avatarDialogueSyncGateway.currentSource(
                 script,
                 runId,
                 sceneNumber
         );
         if (sourceDialogueRecord != null) {
-            applyAvatarDialogueRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
+            avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
         }
         Map<String, Object> input = copyMap(request);
         input.put("runId", runId.toString());
@@ -1930,7 +1954,7 @@ public class ScreenplayVideoService {
                 }
             }
             if (translationRequired && selectedDialogueRecord != null) {
-                applyAvatarDialogueRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
+                avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
             } else if (translationRequired) {
                 scene = copyMap(localizeDialogueScenes(
                         script,
@@ -1951,10 +1975,10 @@ public class ScreenplayVideoService {
                             creatorAiService.providerName(),
                             creatorAiService.modelName()
                     );
-                    applyAvatarDialogueRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
+                    avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
                 }
             } else if (sourceDialogueRecord != null) {
-                applyAvatarDialogueRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
+                avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
             }
             String translatedDialogue = dialogueTextForScene(scene);
             if (translatedDialogue.isBlank()) {
@@ -2089,6 +2113,19 @@ public class ScreenplayVideoService {
     ) {
         String safeTenantId = defaultString(tenantId, "unknown");
         String safeUserId = defaultString(userId, "anonymous");
+        // Confirmed fix: this method used to take no advisory lock at all, while its two siblings
+        // (generateSceneDialogueVoice, combineSceneDialogueAudio) both lock this same key - a real
+        // race window against a concurrent generate/combine call on the same scene. Closed by
+        // taking the identical lock here too.
+        boolean decisionLockAcquired = generationJobRepository.tryAcquireTransactionalAdvisoryLock(
+                "screenplay-scene-voice:" + safeTenantId + ":" + safeUserId + ":" + runId
+        );
+        if (!decisionLockAcquired) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Wait for the current scene voice cloning process to complete."
+            );
+        }
         RunRecord record = loadRun(runId, safeTenantId, safeUserId);
         Map<String, Object> run = copyMap(record.run());
         CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
@@ -2569,16 +2606,108 @@ public class ScreenplayVideoService {
         return response;
     }
 
+    // A separate, dedicated upload endpoint - same reasoning as uploadSceneProductionImage()
+    // right above: this stays out of the JSON regenerate/generate-async request bodies so
+    // neither endpoint's contract changes. Unlike that method, this one does NOT overwrite the
+    // scene's persisted product/generated image fields - it's a one-off supplemental reference
+    // the caller explicitly asked to either override or combine with whatever's already there.
     @Transactional
-    public CreatorGenerationJob regenerateScene(
+    public Map<String, Object> uploadSceneReferenceImage(
             UUID runId,
             String sceneId,
-            Map<String, Object> request,
+            MultipartFile file,
+            String priority,
             String tenantId,
             String userId
     ) {
-        CreatorGenerationJob job = startRegenerateSceneJob(runId, sceneId, request, tenantId, userId);
-        return runRegenerateSceneJob(job.getId(), runId, sceneId, request, tenantId, userId);
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a reference image for this scene.");
+        }
+        String contentType = firstText(file.getContentType(), "application/octet-stream").toLowerCase(Locale.ROOT);
+        String filename = firstText(file.getOriginalFilename(), "scene-reference-image.jpg");
+        if (!contentType.startsWith("image/")
+                && !filename.toLowerCase(Locale.ROOT).matches(".*\\.(avif|gif|jpg|jpeg|png|webp)$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reference image must be a JPG, PNG, WebP, AVIF, or GIF image.");
+        }
+        String safePriority = "override".equalsIgnoreCase(defaultString(priority, "")) ? "override" : "combine";
+
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        RunRecord record = loadRun(runId, safeTenantId, safeUserId);
+        Map<String, Object> run = copyMap(record.run());
+        CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
+        List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
+        int sceneIndex = findSceneIndex(scenes, sceneId);
+        Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
+        String extension = contentType.contains("png") ? ".png"
+                : contentType.contains("webp") ? ".webp"
+                : contentType.contains("avif") ? ".avif"
+                : contentType.contains("gif") ? ".gif"
+                : ".jpg";
+        String safeSceneId = defaultString(sceneId, "scene").replaceAll("[^A-Za-z0-9._-]", "_");
+        String fingerprint = stableFingerprint(runId.toString(), sceneId, filename, String.valueOf(file.getSize()));
+        String objectKey = "screenplay-videos/" + script.getId() + "/" + runId + "/ad-hoc-references/"
+                + safeSceneId + "-" + fingerprint.substring(0, 16) + extension;
+
+        AssetStorageService.StoredObject stored;
+        try (InputStream inputStream = file.getInputStream()) {
+            stored = assetStorageService.uploadCreatorAssetFromStream(
+                    objectKey,
+                    inputStream,
+                    contentType.startsWith("image/") ? contentType : "image/jpeg",
+                    SIGNED_URL_TTL
+            );
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not upload the scene reference image.", ex);
+        }
+
+        Map<String, Object> asset = new LinkedHashMap<>();
+        asset.put("bucket", stored.bucket());
+        asset.put("objectKey", stored.objectKey());
+        asset.put("contentType", stored.contentType());
+        asset.put("sizeBytes", stored.sizeBytes());
+        asset.put("originalFilename", filename);
+        asset.put("assetUrl", stored.signedUrl());
+        asset.put("signedUrl", stored.signedUrl());
+        asset.put("publicUrl", stored.signedUrl());
+        asset.put("assetType", "PRODUCT_VISUAL_ANCHOR");
+        asset.put("assetKind", "ad_hoc_scene_reference");
+        asset.put("priority", safePriority);
+        asset.put("uploadedAt", OffsetDateTime.now().toString());
+
+        // Read directly by buildProviderRequestForScene() on the next generate/regenerate call -
+        // see its adHocReferenceImageAsset/referenceImagePriority lines.
+        scene.put("adHocReferenceImageAsset", asset);
+        scene.put("referenceImagePriority", safePriority);
+        scene.put("updatedAt", OffsetDateTime.now().toString());
+        scenes.set(sceneIndex, scene);
+        run.put("scenes", scenes);
+        run.put("sceneClips", scenes);
+        run.put("updatedAt", OffsetDateTime.now().toString());
+
+        Map<String, Object> jobInput = Map.of(
+                "runId", runId.toString(),
+                "scriptId", script.getId().toString(),
+                "sceneId", sceneId,
+                "objectKey", stored.objectKey(),
+                "priority", safePriority
+        );
+        CreatorGenerationJob job = generationJobService.startGenerationJob(
+                JOB_SCREENPLAY_VIDEO_SCENE_IMAGE,
+                safeTenantId,
+                safeUserId,
+                script.getProjectId(),
+                jobInput
+        );
+        generationJobService.completeGenerationJob(job.getId(), outputPayload(run, "Scene reference image uploaded."));
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "UPLOADED");
+        response.put("asset", asset);
+        response.put("priority", safePriority);
+        response.put("scene", scene);
+        response.put("videoRun", hydrateVideoRunForResponse(run, safeTenantId, safeUserId));
+        return response;
     }
 
     @Transactional
@@ -2835,6 +2964,21 @@ public class ScreenplayVideoService {
             scene.put("message", "Scene video generated with " + providerLabel(provider) + " and uploaded.");
             scenes.set(sceneIndex, scene);
 
+            recordSceneAssetSafely(new CreatorScreenplaySceneAssetService.SceneVideoUpsert(
+                    script.getTenantId(),
+                    script.getUserId(),
+                    script.getId(),
+                    runId,
+                    intValue(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), sceneIndex + 1),
+                    stored.bucket(),
+                    stored.objectKey(),
+                    stored.contentType(),
+                    stored.sizeBytes(),
+                    positiveInt(scene.get("durationSeconds"), 0),
+                    provider,
+                    "READY"
+            ));
+
             run.put("scenes", scenes);
             run.put("sceneClips", scenes);
             run.put("status", allScenesHaveClips(scenes) ? "SCENE_CLIPS_READY" : "PARTIAL_SCENE_CLIPS_READY");
@@ -2901,23 +3045,78 @@ public class ScreenplayVideoService {
                     jobId, runId, sceneId, provider, model, message);
             return generationJobService.completeGenerationJob(jobId, outputPayload(run, message));
         } catch (RuntimeException ex) {
-            String message = defaultString(ex.getMessage(), ex.getClass().getSimpleName());
-            log.error("Screenplay scene video generation failed jobId={} runId={} sceneId={} provider={} model={} elapsedMs={} errorType={} errorMessage={}",
-                    jobId, runId, sceneId, provider, model,
-                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sceneStartedNanos),
-                    ex.getClass().getSimpleName(), message, ex);
-            scene.put("status", "VIDEO_FAILED");
+            String rawMessage = defaultString(ex.getMessage(), ex.getClass().getSimpleName());
+            boolean contentPolicyViolation = isContentPolicyViolation(ex);
+            String status = contentPolicyViolation ? "CONTENT_POLICY_REJECTED" : "VIDEO_FAILED";
+            String message = contentPolicyViolation
+                    ? "The provider rejected this scene's output for its content policy (not a system error) - "
+                            + "adjust the prompt/direction for this shot and regenerate. Provider detail: " + rawMessage
+                    : rawMessage;
+            if (contentPolicyViolation) {
+                log.warn("Screenplay scene video rejected by provider content policy jobId={} runId={} sceneId={} provider={} model={} elapsedMs={} providerDetail={}",
+                        jobId, runId, sceneId, provider, model,
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sceneStartedNanos), rawMessage);
+            } else {
+                log.error("Screenplay scene video generation failed jobId={} runId={} sceneId={} provider={} model={} elapsedMs={} errorType={} errorMessage={}",
+                        jobId, runId, sceneId, provider, model,
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sceneStartedNanos),
+                        ex.getClass().getSimpleName(), rawMessage, ex);
+            }
+            scene.put("status", status);
             scene.put("errorMessage", message);
+            scene.put("contentPolicyViolation", contentPolicyViolation);
             scene.put("failedAt", OffsetDateTime.now().toString());
             scenes.set(sceneIndex, scene);
             run.put("scenes", scenes);
             run.put("sceneClips", scenes);
-            run.put("status", "VIDEO_FAILED");
+            run.put("status", status);
             run.put("updatedAt", OffsetDateTime.now().toString());
             run.put("message", message);
             generationJobService.failGenerationJob(jobId, message, outputPayload(run, message));
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, message, ex);
+            throw new ResponseStatusException(
+                    contentPolicyViolation ? HttpStatus.UNPROCESSABLE_ENTITY : HttpStatus.BAD_GATEWAY, message, ex
+            );
         }
+    }
+
+    /**
+     * Best-effort dual-write to the normalized creator_assets scene/combined-video rows.
+     * The JSONB run.scenes[] write these calls sit next to remains the code every other
+     * method in this class already reads/writes - this only adds a reliable, queryable
+     * mirror for the video page and the accept/reject workflow. A failure here must never
+     * fail an otherwise-successful scene generation or final render.
+     */
+    private void recordSceneAssetSafely(CreatorScreenplaySceneAssetService.SceneVideoUpsert upsert) {
+        try {
+            sceneAssetService.recordSceneVideo(upsert);
+        } catch (RuntimeException ex) {
+            log.warn("Could not record normalized scene asset runId={} shotNumber={} errorType={} errorMessage={}",
+                    upsert.runId(), upsert.shotNumber(), ex.getClass().getSimpleName(), ex.getMessage());
+        }
+    }
+
+    private void recordCombinedVideoAssetSafely(CreatorScreenplaySceneAssetService.CombinedVideoUpsert upsert) {
+        try {
+            sceneAssetService.recordCombinedVideo(upsert);
+        } catch (RuntimeException ex) {
+            log.warn("Could not record normalized combined video asset runId={} errorType={} errorMessage={}",
+                    upsert.runId(), ex.getClass().getSimpleName(), ex.getMessage());
+        }
+    }
+
+    // fal.ai (and providers behind it, e.g. seedance) return HTTP 422 with
+    // type=content_policy_violation when generated output - not the request itself -
+    // trips their safety filter (seen in practice on generated audio). That's an
+    // expected, non-retryable provider decision on this specific input, not an
+    // infrastructure failure, so it shouldn't surface identically to a real 502/timeout.
+    private boolean isContentPolicyViolation(Throwable ex) {
+        for (Throwable current = ex; current != null; current = current.getCause()) {
+            String text = defaultString(current.getMessage(), "").toLowerCase(Locale.ROOT);
+            if (text.contains("content_policy_violation") || text.contains("partner_validation_failed")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> prepareFounderSceneAudio(
@@ -2928,250 +3127,8 @@ public class ScreenplayVideoService {
             Map<String, Object> scene,
             boolean allowGeneration
     ) {
-        if (!"talking_head".equals(generationModeFor(scene, run, firstMap(scene.get("providerRequest"))))) {
-            return Map.of();
-        }
-        Map<String, Object> providerRequest = firstMap(scene.get("providerRequest"));
-        if (!"dalai_llama".equals(providerForSceneGeneration(scene, run, providerRequest))) {
-            return Map.of();
-        }
-        Map<String, Object> founderProfile = founderAvatarProfile(
-                providerRequest,
-                run,
-                copyMap(script.getScriptPayload())
-        );
-        Map<String, Object> localModels = firstMap(
-                providerRequest.get("localModels"),
-                founderProfile.get("localModels")
-        );
-        String voiceModel = requireSceneVoiceMethod(firstText(
-                providerRequest.get("voiceModel"),
-                providerRequest.get("voiceCloneMethod"),
-                localModels.get("voiceModel"),
-                scene.get("dialogueCloneVoiceModel"),
-                firstMap(founderProfile.get("localModels")).get("voiceModel")
-        ));
-        String talkingAvatarModel = normalizeLocalTalkingAvatarModel(firstText(
-                providerRequest.get("talkingAvatarModel"),
-                localModels.get("talkingAvatarModel")
-        ));
-        if (!booleanValue(founderProfile.get("consentConfirmed"), false)) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Confirm creator consent before cloning or using scene dialogue."
-            );
-        }
-        if (!allowGeneration
-                && !"fal_heygen_avatar4".equals(talkingAvatarModel)
-                && !"APPROVED".equalsIgnoreCase(firstText(founderProfile.get("avatarPreviewStatus")))) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Create and approve the portrait avatar quality test before generating avatar scenes."
-            );
-        }
-        String dialogue = dialogueTextForScene(scene);
-        if (dialogue.isBlank()) {
-            return Map.of();
-        }
-        String language = firstText(
-                providerRequest.get("language"),
-                founderProfile.get("language"),
-                run.get("dialogueLanguage"),
-                "English"
-        );
-        String languageCode = firstText(
-                providerRequest.get("languageCode"),
-                founderProfile.get("languageCode"),
-                run.get("languageCode"),
-                languageCodeFor(language)
-        );
-        if ("client_rvc_english".equals(voiceModel) && !sameLanguage(language, "English")) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Prepare the current dialogue in English before generating the client avatar voice."
-            );
-        }
-        if ("uploaded_founder_audio".equals(voiceModel)) {
-            Map<String, Object> exactAudioAsset = firstMap(
-                    founderProfile.get("exactFounderAudioAsset"),
-                    founderProfile.get("finalFounderAudioAsset")
-            );
-            if (!exactAudioAsset.isEmpty() && mapListValue(run.get("scenes")).size() == 1) {
-                return exactAudioAsset;
-            }
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Full-video avatar scenes need a reusable cloned voice. Exact uploaded audio can only be used when the screenplay has one avatar scene."
-            );
-        }
-        if ("synthesia_managed".equals(voiceModel)) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Select a DalaiLlama cloned voice before using the DalaiLlama portrait avatar."
-            );
-        }
-
-        String profileId = firstText(
-                providerRequest.get("voiceProfileId"),
-                founderProfile.get("voiceProfileId"),
-                localModels.get("voiceProfileId"),
-                "client_rvc_english".equals(voiceModel) ? "founder_female_v1" : null
-        );
-        String providerVoiceId = providerVoiceIdForMethod(voiceModel, founderProfile);
-        String dialogueFingerprint = stableFingerprint(
-                dialogue,
-                voiceModel,
-                profileId,
-                providerVoiceId,
-                language,
-                languageCode,
-                firstText(founderProfile.get("pronunciationGuide"))
-        );
-        Map<String, Object> existingAsset = firstMap(scene.get("dialogueAudio"));
-        String storedDialogueFingerprint = firstText(
-                existingAsset.get("dialogueFingerprint"),
-                firstMap(existingAsset.get("metadata")).get("dialogueFingerprint"),
-                scene.get("dialogueCloneFingerprint")
-        );
-        boolean matchingDialogueClone = matchesPersistedSceneDialogueAudio(
-                scene,
-                existingAsset,
-                dialogueFingerprint,
-                dialogue,
-                language,
-                voiceModel
-        );
-        if (matchingDialogueClone
-                && (allowGeneration || "APPROVED".equalsIgnoreCase(firstText(scene.get("dialogueCloneStatus"))))) {
-            log.info(
-                    "Reusing persisted scene dialogue audio runId={} sceneId={} language={} voiceModel={} match={}",
-                    runId,
-                    firstText(scene.get("id"), scene.get("sceneId")),
-                    language,
-                    voiceModel,
-                    dialogueFingerprint.equals(storedDialogueFingerprint) ? "fingerprint" : "accepted_fields"
-            );
-            return existingAsset;
-        }
-        if (!allowGeneration) {
-            if (matchingDialogueClone) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Accept the cloned dialogue for this scene before creating its avatar."
-                );
-            }
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Clone this scene dialogue in the selected language before creating its avatar."
-            );
-        }
-
-        Map<String, Object> voiceOptions = new LinkedHashMap<>();
-        voiceOptions.put("provider", "dalai_llama");
-        voiceOptions.put("voiceModel", voiceModel);
-        voiceOptions.put("voiceProfileId", profileId);
-        voiceOptions.put("localModels", localModels);
-        voiceOptions.put("founderAvatarProfile", founderProfile);
-        voiceOptions.put("founderKit", founderProfile);
-        voiceOptions.put("spokenText", applyPronunciationGuide(dialogue, firstText(founderProfile.get("pronunciationGuide"))));
-        voiceOptions.put("captionText", dialogue);
-        voiceOptions.put("pronunciationGuide", firstText(founderProfile.get("pronunciationGuide")));
-        voiceOptions.put("language", language);
-        voiceOptions.put("dialogueLanguage", language);
-        voiceOptions.put("languageCode", languageCode);
-        voiceOptions.put("dialogueLanguageCode", languageCode);
-        voiceOptions.put("voiceLanguage", firstText(founderProfile.get("voiceLanguage"), language));
-        voiceOptions.put("voiceLanguageCode", firstText(founderProfile.get("voiceLanguageCode"), languageCode));
-        voiceOptions.put("languageBoost", firstText(founderProfile.get("minimaxLanguageBoost"), founderProfile.get("languageBoost"), "auto"));
-        voiceOptions.put("referenceLanguage", firstText(founderProfile.get("referenceLanguage")));
-        voiceOptions.put("minimaxVoiceId", firstText(founderProfile.get("minimaxVoiceId")));
-        voiceOptions.put("elevenLabsVoiceId", firstText(founderProfile.get("elevenLabsVoiceId")));
-        voiceOptions.put("sarvamVoiceId", firstText(founderProfile.get("sarvamVoiceId")));
-        voiceOptions.put("providerVoiceId", providerVoiceId);
-        voiceOptions.put("consentConfirmed", booleanValue(founderProfile.get("consentConfirmed"), false));
-        voiceOptions.put(
-                "requestId",
-                "scene-voice-" + runId + "-" + firstText(scene.get("id"), scene.get("sceneId"), "scene")
-                        + "-" + dialogueFingerprint.substring(0, Math.min(12, dialogueFingerprint.length()))
-        );
-
-        CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
-                script.getTenantId(),
-                script.getUserId(),
-                script.getProjectId(),
-                jobId,
-                null
-        );
-        creatorAiService.assertWalletBalanceForModelRun("SCREENPLAY_AUDIO_VOICE_GENERATE", usageContext);
-        GoogleChirpVoiceGenerationService.GeneratedVoice voice = voiceGenerationService.generateVoice(
-                firstText(voiceOptions.get("spokenText"), dialogue),
-                voiceOptions
-        );
-        Map<String, Object> voiceMetadata = new LinkedHashMap<>(voice.metadata());
-        voiceMetadata.put("sceneId", firstText(scene.get("id"), scene.get("sceneId")));
-        voiceMetadata.put("sceneNumber", intValue(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), 1));
-        voiceMetadata.put("dialogueFingerprint", dialogueFingerprint);
-        voiceMetadata.put("voiceProfileId", profileId);
-        voiceMetadata.put("voiceModel", voiceModel);
-        voiceMetadata.put("language", language);
-        voiceMetadata.put("languageCode", languageCode);
-        voiceMetadata.put("dialogueSource", "localized_screenplay_scene");
-        Map<String, Object> asset = storeAudioAsset(
-                script,
-                runId,
-                voice.bytes(),
-                voice.contentType(),
-                "founder_scene_voice",
-                voiceMetadata,
-                voice.providerRequest(),
-                voice.providerResponse()
-        );
-        creatorAiService.publishProviderUsageDebit(
-                "SCREENPLAY_AUDIO_VOICE_GENERATE",
-                firstText(voiceMetadata.get("provider"), "dalai_llama"),
-                firstText(voiceMetadata.get("model"), voiceModel),
-                firstMap(voiceMetadata.get("costMetadata")),
-                usageContext,
-                "Generated approved cloned voice for avatar scene"
-        );
-        return asset;
-    }
-
-    private boolean matchesPersistedSceneDialogueAudio(
-            Map<String, Object> scene,
-            Map<String, Object> existingAsset,
-            String expectedFingerprint,
-            String dialogue,
-            String language,
-            String voiceModel
-    ) {
-        String storedFingerprint = firstText(
-                existingAsset.get("dialogueFingerprint"),
-                firstMap(existingAsset.get("metadata")).get("dialogueFingerprint"),
-                scene.get("dialogueCloneFingerprint")
-        );
-        boolean hasStoredAudio = !firstText(
-                existingAsset.get("objectKey"),
-                existingAsset.get("assetUrl"),
-                existingAsset.get("signedUrl")
-        ).isBlank();
-        boolean acceptedFieldsMatch = normalizeDialogueText(dialogue)
-                .equals(normalizeDialogueText(firstText(scene.get("dialogueCloneText"))))
-                && sameLanguage(language, firstText(scene.get("dialogueCloneLanguage")))
-                && voiceModel.equals(firstText(scene.get("dialogueCloneVoiceModel"), scene.get("dialogueCloneMethod")));
-        return hasStoredAudio
-                && (expectedFingerprint.equals(storedFingerprint) || acceptedFieldsMatch);
-    }
-
-    @Transactional
-    public CreatorGenerationJob renderFinalVideo(
-            UUID runId,
-            Map<String, Object> request,
-            String tenantId,
-            String userId
-    ) {
-        CreatorGenerationJob job = startFinalRenderJob(runId, request, tenantId, userId);
-        return runFinalRenderJob(job.getId(), runId, request, tenantId, userId);
+        return new FounderSceneAudioCloner(this, creatorAiService, voiceGenerationService)
+                .prepareFounderSceneAudio(script, runId, jobId, run, scene, allowGeneration);
     }
 
     @Transactional
@@ -3695,7 +3652,25 @@ public class ScreenplayVideoService {
                 renderManifest.put("finalVideoVariants", finalVideoVariants);
                 renderManifest.put("defaultAudioVariant", firstText(finalVideo.get("audioVariant"), "VIDEO_GENERATED_AUDIO"));
             }
-            Map<String, Object> packageBilling = chargeAiShortStarterPackageIfNeeded(script, runId, scenes, run);
+            // The merge above already produced a real, storable video. A wallet/billing
+            // failure here is a separate concern from that merge and must not discard it -
+            // catch it, record it for reconciliation, and still persist the finished video
+            // below. Letting it propagate would abort before completeGenerationJob() ever
+            // runs, leaving the job's output stuck on its early sparse progress payload
+            // (just runId/scriptId) - which then poisons every "latest run" lookup for this
+            // script into reporting no video exists, even though one was just rendered.
+            Map<String, Object> packageBilling;
+            try {
+                packageBilling = chargeAiShortStarterPackageIfNeeded(script, runId, scenes, run);
+            } catch (RuntimeException ex) {
+                log.error("Creator video package billing failed after a successful merge runId={} scriptId={} errorType={} errorMessage={}",
+                        runId, script.getId(), ex.getClass().getSimpleName(), ex.getMessage(), ex);
+                packageBilling = new LinkedHashMap<>();
+                packageBilling.put("packageCode", "AI_SHORT_STARTER_60");
+                packageBilling.put("status", "DEBIT_FAILED");
+                packageBilling.put("errorMessage", defaultString(ex.getMessage(), ex.getClass().getSimpleName()));
+                packageBilling.put("failedAt", OffsetDateTime.now().toString());
+            }
             if (!packageBilling.isEmpty()) {
                 finalVideo.put("packageBilling", packageBilling);
                 renderManifest.put("packageBilling", packageBilling);
@@ -3717,6 +3692,22 @@ public class ScreenplayVideoService {
             run.put("finalVideoUrl", finalVideo.get("videoUrl"));
             run.put("status", "VIDEO_READY");
             run.put("message", "Final video rendered and uploaded.");
+
+            int totalDurationSeconds = scenes.stream()
+                    .mapToInt(scene -> positiveInt(scene.get("durationSeconds"), 0))
+                    .sum();
+            recordCombinedVideoAssetSafely(new CreatorScreenplaySceneAssetService.CombinedVideoUpsert(
+                    script.getTenantId(),
+                    script.getUserId(),
+                    script.getId(),
+                    runId,
+                    stringValue(finalVideo.get("bucket"), ""),
+                    stringValue(finalVideo.get("objectKey"), ""),
+                    stringValue(finalVideo.get("contentType"), "video/mp4"),
+                    longValue(finalVideo.get("sizeBytes"), 0),
+                    totalDurationSeconds,
+                    "READY"
+            ));
         } else {
             run.put("status", "WAITING_FOR_SCENE_CLIPS");
             run.put("message", "Final render manifest prepared, but scene MP4 object keys are still missing.");
@@ -4599,7 +4590,7 @@ public class ScreenplayVideoService {
         );
     }
 
-    private Map<String, Object> storeAudioAsset(
+    Map<String, Object> storeAudioAsset(
             CreatorScript script,
             UUID runId,
             byte[] bytes,
@@ -5269,7 +5260,7 @@ public class ScreenplayVideoService {
         return "";
     }
 
-    private Map<String, Object> dialogueVoiceProfile(
+    Map<String, Object> dialogueVoiceProfile(
             Map<String, Object> inputPayload,
             Map<String, Object> run,
             Map<String, Object> scriptPayload
@@ -5389,7 +5380,7 @@ public class ScreenplayVideoService {
         }
     }
 
-    private String stableFingerprint(String... parts) {
+    String stableFingerprint(String... parts) {
         String material = String.join("|", parts == null ? new String[0] : parts);
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(material.getBytes(StandardCharsets.UTF_8));
@@ -5450,7 +5441,7 @@ public class ScreenplayVideoService {
         return "fal_minimax_voice_clone";
     }
 
-    private String requireSceneVoiceMethod(String value) {
+    String requireSceneVoiceMethod(String value) {
         String selected = defaultString(value, "fal_minimax_voice_clone")
                 .trim()
                 .toLowerCase(Locale.ROOT)
@@ -5464,7 +5455,7 @@ public class ScreenplayVideoService {
         return selected;
     }
 
-    private String providerVoiceIdForMethod(String voiceModel, Map<String, Object> founderProfile) {
+    String providerVoiceIdForMethod(String voiceModel, Map<String, Object> founderProfile) {
         Map<String, Object> profile = founderProfile == null ? Map.of() : founderProfile;
         String profileVoiceModel = firstText(firstMap(profile.get("localModels")).get("voiceModel"));
         boolean selectedProfileMethod = voiceModel.equals(profileVoiceModel);
@@ -5488,7 +5479,7 @@ public class ScreenplayVideoService {
         };
     }
 
-    private String applyPronunciationGuide(String text, String guide) {
+    String applyPronunciationGuide(String text, String guide) {
         String result = firstText(text);
         if (result.isBlank() || firstText(guide).isBlank()) {
             return result;
@@ -5513,7 +5504,7 @@ public class ScreenplayVideoService {
         return result;
     }
 
-    private String normalizeLocalTalkingAvatarModel(String value) {
+    String normalizeLocalTalkingAvatarModel(String value) {
         String normalized = defaultString(value, "fal_heygen_avatar4")
                 .toLowerCase(Locale.ROOT)
                 .replace('-', '_')
@@ -5529,7 +5520,7 @@ public class ScreenplayVideoService {
         return "source_video";
     }
 
-    private String normalizeLocalLipSyncModel(String value) {
+    String normalizeLocalLipSyncModel(String value) {
         String normalized = defaultString(value, "fal_latentsync").toLowerCase(Locale.ROOT).replace('-', '_').trim();
         if (normalized.equals("avatar_native") || normalized.equals("native") || normalized.equals("none")) return "avatar_native";
         if (normalized.contains("muse")) return "fal_musetalk";
@@ -5551,11 +5542,7 @@ public class ScreenplayVideoService {
         return "fal_seedance";
     }
 
-    private String normalizeWhitespace(String value) {
-        return defaultString(value, "").replaceAll("\\s+", " ").trim();
-    }
-
-    private boolean sameLanguage(String left, String right) {
+    boolean sameLanguage(String left, String right) {
         return normalizeLanguageName(left).equals(normalizeLanguageName(right));
     }
 
@@ -5566,7 +5553,7 @@ public class ScreenplayVideoService {
                 .replaceAll("^_+|_+$", "");
     }
 
-    private String languageCodeFor(String language) {
+    String languageCodeFor(String language) {
         return switch (normalizeLanguageName(language)) {
             case "english" -> "en-IN";
             case "hindi", "hinglish" -> "hi-IN";
@@ -5739,699 +5726,8 @@ public class ScreenplayVideoService {
             String model,
             int maxClipSeconds
     ) {
-        Map<String, Object> scriptPayload = copyMap(script.getScriptPayload());
-        Map<String, Object> creatorContext = firstMap(scriptPayload.get("creatorContext"));
-        boolean prepareOnly = booleanValue(request.get("prepareOnly"), false)
-                || "scene_by_scene".equalsIgnoreCase(firstText(request.get("generationWorkflow")));
-        String sourceDialogueLanguage = firstText(
-                request.get("sourceDialogueLanguage"),
-                script.getDialogueLanguage(),
-                scriptPayload.get("dialogueLanguage"),
-                "Hinglish"
-        );
-        String dialogueLanguage = firstText(
-                request.get("dialogueLanguage"),
-                request.get("language"),
-                sourceDialogueLanguage
-        );
-        String dialogueLanguageCode = firstText(
-                request.get("languageCode"),
-                languageCodeFor(dialogueLanguage),
-                "hi-IN"
-        );
-        request.put("dialogueLanguage", dialogueLanguage);
-        request.put("language", dialogueLanguage);
-        request.put("languageCode", dialogueLanguageCode);
-        List<String> productReferenceImageUrls = productReferenceImageUrls(request, scriptPayload, creatorContext);
-        List<Map<String, Object>> productReferenceImageAssets = productReferenceImageAssets(request, scriptPayload, creatorContext);
-        Map<String, Object> founderAvatarProfile = founderAvatarProfile(request, scriptPayload, creatorContext);
-        if (!founderAvatarProfile.isEmpty()) {
-            founderAvatarProfile.put("language", dialogueLanguage);
-            founderAvatarProfile.put("languageCode", dialogueLanguageCode);
-        }
-        String referenceImageDetails = firstText(
-                request.get("referenceImageDetails"),
-                request.get("productReferenceDetails"),
-                request.get("referenceDetails"),
-                scriptPayload.get("referenceImageDetails"),
-                creatorContext.get("referenceImageDetails")
-        );
-        String productionStyle = normalizeProductionStyle(firstText(request.get("productionStyle"), scriptPayload.get("productionStyle")));
-        String hybridSceneMode = normalizeFounderHybridSceneMode(firstText(request.get("hybridSceneMode"), scriptPayload.get("hybridSceneMode")));
-        boolean fullFounderMode = "full_founder".equals(hybridSceneMode);
-        boolean useSceneDialogue = booleanValue(request.get("useSceneDialogue"), false);
-        String avatarScriptOverride = useSceneDialogue
-                ? ""
-                : firstText(
-                        request.get("avatarScriptOverride"),
-                        request.get("avatarScript"),
-                        fullFounderMode ? request.get("spokenText") : null,
-                        fullFounderMode ? founderAvatarProfile.get("avatarScript") : null,
-                        fullFounderMode ? founderAvatarProfile.get("spokenText") : null
-                );
-        List<Map<String, Object>> screenplayScenes = sourceScenes(script, request);
-        if (fullFounderMode && !avatarScriptOverride.isBlank()) {
-            screenplayScenes = avatarScriptScenes(screenplayScenes, avatarScriptOverride);
-            request.put("avatarScriptOverride", avatarScriptOverride);
-            request.put("avatarScriptApplied", true);
-        }
-        boolean dialogueLocalizationRequested = booleanValue(
-                request.get("autoTranslateDialogue"),
-                !sameLanguage(sourceDialogueLanguage, dialogueLanguage)
-        ) && !sameLanguage(sourceDialogueLanguage, dialogueLanguage);
-        if (dialogueLocalizationRequested) {
-            screenplayScenes = localizeDialogueScenes(
-                    script,
-                    screenplayScenes,
-                    sourceDialogueLanguage,
-                    dialogueLanguage,
-                    dialogueLanguageCode,
-                    jobId
-            );
-        }
-        List<Map<String, Object>> sourceScenes = prepareOnly
-                ? screenplayScenes
-                : splitScenesForModelCapability(screenplayScenes, maxClipSeconds);
-        boolean founderLedHybridEnabled = booleanValue(
-                firstValue(request.get("founderLedHybridEnabled"), scriptPayload.get("founderLedHybridEnabled")),
-                !founderAvatarProfile.isEmpty()
-        ) || fullFounderMode;
-        if (!prepareOnly && fullFounderMode && founderAvatarProfile.isEmpty()) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Upload a founder source video before generating a Full Founder video."
-            );
-        }
-        boolean founderConsentConfirmed = booleanValue(
-                firstValue(
-                        request.get("founderConsentConfirmed"),
-                        request.get("consentConfirmed"),
-                        founderAvatarProfile.get("consentConfirmed")
-                ),
-                false
-        );
-        if (!prepareOnly && founderLedHybridEnabled && !founderAvatarProfile.isEmpty() && !founderConsentConfirmed) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Founder consent must be confirmed before generating avatar scenes."
-            );
-        }
-        String founderAvatarProviderMode = avatarProviderFrom(
-                request.get("avatarProviderMode"),
-                founderAvatarProfile.get("avatarProviderMode")
-        );
-        Map<String, Object> founderLocalModels = firstMap(
-                request.get("localModels"),
-                founderAvatarProfile.get("localModels")
-        );
-        String founderTalkingAvatarModel = normalizeLocalTalkingAvatarModel(firstText(
-                request.get("talkingAvatarModel"),
-                founderLocalModels.get("talkingAvatarModel")
-        ));
-        if (!prepareOnly
-                && "hybrid".equals(productionStyle)
-                && founderLedHybridEnabled
-                && !founderAvatarProfile.isEmpty()
-                && "dalai_llama".equals(founderAvatarProviderMode)
-                && !"fal_heygen_avatar4".equals(founderTalkingAvatarModel)
-                && !"APPROVED".equalsIgnoreCase(firstText(founderAvatarProfile.get("avatarPreviewStatus")))) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Create and approve the portrait avatar quality test before running the founder video pipeline."
-            );
-        }
-        List<Map<String, Object>> sceneRows = new ArrayList<>();
-        int runningStart = 0;
-        for (int index = 0; index < sourceScenes.size(); index++) {
-            Map<String, Object> source = copyMap(sourceScenes.get(index));
-            Map<String, Object> requestSceneOverride = requestSceneOverride(request, source, index + 1);
-            if (!requestSceneOverride.isEmpty()) {
-                source.putAll(requestSceneOverride);
-            }
-            int sceneNumber = intValue(firstValue(source.get("sceneNumber"), source.get("scene_number"), source.get("shotNumber"), source.get("shot_number")), index + 1);
-            int durationSeconds = positiveInt(firstValue(source.get("durationSeconds"), source.get("duration_seconds"), source.get("duration")), maxClipSeconds);
-            durationSeconds = Math.max(1, Math.min(Math.max(durationSeconds, estimatedDialogueSeconds(source)), maxClipSeconds));
-            Map<String, Object> scene = new LinkedHashMap<>(source);
-            String sceneId = sceneIdFor(source, sceneNumber);
-            scene.put("id", sceneId);
-            scene.put("sceneId", sceneId);
-            scene.put("sceneNumber", sceneNumber);
-            scene.put("shotNumber", intValue(firstValue(source.get("shotNumber"), source.get("shot_number")), sceneNumber));
-            scene.put("title", firstText(source.get("title"), source.get("beatTitle"), source.get("narrativeBeat"), "Scene " + sceneNumber));
-            scene.put("durationSeconds", durationSeconds);
-            scene.put("startSeconds", runningStart);
-            scene.put("endSeconds", runningStart + durationSeconds);
-            scene.put("startTime", srtTime(runningStart));
-            scene.put("endTime", srtTime(runningStart + durationSeconds));
-            scene.put("status", "PLANNED");
-            String sceneGenerationMode = generationModeFor(source, request, request);
-            if (shouldAutoAssignFounderAvatarScene(
-                    sourceScenes,
-                    source,
-                    index,
-                    request,
-                    founderAvatarProfile,
-                    productionStyle,
-                    hybridSceneMode,
-                    founderLedHybridEnabled
-            )) {
-                sceneGenerationMode = "talking_head";
-                source.put("generationMode", sceneGenerationMode);
-                scene.put("avatarSceneSelectionReason", fullFounderMode ? "full_founder_all_scenes" : "auto_founder_start_middle_end");
-            }
-            String sceneProvider = providerForSceneGeneration(source, request, request);
-            String sceneModel = modelForSceneGeneration(sceneProvider, source, request, request);
-            scene.put("provider", sceneProvider);
-            scene.put("targetProvider", sceneProvider);
-            scene.put("model", sceneModel);
-            scene.put("brollProvider", provider);
-            scene.put("brollModel", model);
-            scene.put("maxClipSeconds", maxClipSeconds);
-            scene.put("generationMode", sceneGenerationMode);
-            if ("talking_head".equals(sceneGenerationMode)) {
-                scene.put("avatarProviderMode", avatarProviderFrom(request.get("avatarProviderMode"), founderAvatarProfile.get("avatarProviderMode")));
-                scene.put("founderAvatarProfile", founderAvatarProfile);
-            }
-            scene = enrichProductCgiScenePlan(
-                    scene,
-                    sourceScenes,
-                    index,
-                    scriptPayload,
-                    request,
-                    referenceImageDetails
-            );
-            scene.put("providerPrompt", providerPromptFor(source, scriptPayload, request));
-            if (booleanValue(scene.get("productCgiScene"), false)) {
-                scene.put("providerPrompt", firstText(
-                        scene.get("videoMotionPrompt"),
-                        scene.get("productMotionPrompt"),
-                        scene.get("providerPrompt")
-                ));
-            }
-            scene.put("prompt", firstText(scene.get("providerPrompt"), source.get("seedancePrompt"), source.get("visualPrompt"), source.get("action"), source.get("description")));
-            scene.put("brollStyle", firstText(source.get("brollStyle"), source.get("broll_style"), request.get("brollStyle")));
-            scene.put("captionStyle", firstText(source.get("captionStyle"), source.get("caption_style"), request.get("captionStyle")));
-            scene.put("dialogueScript", dialogueTextForScene(scene));
-            scene.put("dialogueCoverageRequired", !firstText(scene.get("dialogueScript")).isBlank());
-            scene.put("referenceImageDetails", referenceImageDetails);
-            scene.put("ragContext", buildRagContext(script, null, sourceScenes, index, request));
-            scene.put("providerRequest", buildProviderRequestForScene(sceneProvider, sceneModel, scene, request, scriptPayload));
-            sceneRows.add(scene);
-            runningStart += durationSeconds;
-        }
-
-        Map<String, Object> run = new LinkedHashMap<>();
-        run.put("runId", runId.toString());
-        run.put("id", runId.toString());
-        run.put("scriptId", script.getId().toString());
-        run.put("jobId", jobId.toString());
-        run.put("tenantId", script.getTenantId());
-        run.put("userId", script.getUserId());
-        run.put("projectId", script.getProjectId() == null ? null : script.getProjectId().toString());
-        run.put("title", defaultString(script.getTitle(), stringValue(scriptPayload.get("projectTitle"), "Screenplay video")));
-        run.put("status", "PLANNED");
-        run.put("provider", provider);
-        run.put("model", model);
-        run.put("providerOptions", providerOptions());
-        run.put("modelOptions", modelOptions(provider));
-        run.put("maxClipSeconds", maxClipSeconds);
-        run.put("durationSeconds", positiveInt(firstValue(request.get("targetDurationSeconds"), request.get("durationSeconds"), script.getDurationSeconds()), runningStart));
-        run.put("screenType", firstText(request.get("screenType"), script.getScreenType(), scriptPayload.get("screenType")));
-        run.put("productionStyle", productionStyle);
-        run.put("hybridSceneMode", hybridSceneMode);
-        run.put("useSceneDialogue", useSceneDialogue);
-        run.put("noHumans", booleanValue(firstValue(request.get("noHumans"), scriptPayload.get("noHumans")), false));
-        run.put("shotPlanningMode", firstText(request.get("shotPlanningMode"), scriptPayload.get("shotPlanningMode")));
-        run.put("brollStyle", firstText(request.get("brollStyle"), scriptPayload.get("brollStyle")));
-        run.put("captionStyle", firstText(request.get("captionStyle"), scriptPayload.get("captionStyle")));
-        run.put("sourceDialogueLanguage", sourceDialogueLanguage);
-        run.put("dialogueLanguage", dialogueLanguage);
-        run.put("languageCode", dialogueLanguageCode);
-        run.put("dialogueLocalizationRequested", dialogueLocalizationRequested);
-        run.put("dialogueLocalizationStatus", dialogueLocalizationRequested ? "COMPLETED" : "NOT_REQUIRED");
-        run.put("founderLedHybridEnabled", founderLedHybridEnabled);
-        run.put("founderAvatarProfile", founderAvatarProfile);
-        run.put("founderKit", founderAvatarProfile);
-        run.put("avatarProviderMode", founderAvatarProviderMode);
-        run.put("avatarProvider", run.get("avatarProviderMode"));
-        run.put("voiceProvider", firstText(request.get("voiceProvider"), scriptPayload.get("voiceProvider"), avatarVoiceProvider(founderAvatarProfile), "google_chirp"));
-        run.put("avatarId", firstText(request.get("avatarId"), founderAvatarProfile.get("avatarId")));
-        run.put("voiceId", firstText(request.get("voiceId"), founderAvatarProfile.get("voiceId")));
-        run.put("portraitEmbeddingId", firstText(founderAvatarProfile.get("portraitEmbeddingId")));
-        run.put("facialFeatureEmbeddingId", firstText(founderAvatarProfile.get("facialFeatureEmbeddingId")));
-        run.put("voiceEmbeddingId", firstText(founderAvatarProfile.get("voiceEmbeddingId")));
-        run.put("productImageUrls", productReferenceImageUrls);
-        run.put("referenceImageUrls", productReferenceImageUrls);
-        run.put("productImageAssets", productReferenceImageAssets);
-        run.put("referenceImageAssets", productReferenceImageAssets);
-        run.put("referenceImageDetails", referenceImageDetails);
-        run.put("storyCharacters", firstList(scriptPayload.get("storyCharacters"), scriptPayload.get("characters"), creatorContext.get("storyCharacters"), creatorContext.get("characters")));
-        run.put("characterCastMappings", firstList(scriptPayload.get("characterCastMappings"), creatorContext.get("characterCastMappings")));
-        run.put("availableActors", firstList(scriptPayload.get("availableActors"), creatorContext.get("availableActors"), firstMap(creatorContext.get("castPlan")).get("actors")));
-        run.put("dialogueVoiceProfile", dialogueVoiceProfile(request, run, scriptPayload));
-        run.put("videoPacingProfile", firstMap(request.get("videoPacingProfile"), scriptPayload.get("videoPacingProfile")));
-        run.put("videoConsistencyBible", firstMap(request.get("videoConsistencyBible"), scriptPayload.get("videoConsistencyBible")));
-        run.put("seedancePromptStrategy", firstMap(request.get("seedancePromptStrategy"), scriptPayload.get("seedancePromptStrategy")));
-        run.put("srt", firstText(request.get("srt"), scriptPayload.get("srt")));
-        run.put("srtFile", firstMap(request.get("srtFile"), scriptPayload.get("srtFile")));
-        run.put("srtCues", firstList(request.get("srtCues"), scriptPayload.get("srtCues")));
-        Map<String, Object> videoFinishingPlan = withAudioMixStandards(firstMap(request.get("videoFinishingPlan"), scriptPayload.get("videoFinishingPlan")));
-        Map<String, Object> soundDesignPlan = withAudioMixStandards(firstMap(request.get("soundDesignPlan"), scriptPayload.get("soundDesignPlan")));
-        Map<String, Object> imageLedAdPlan = imageLedAdPlan(request, scriptPayload, videoFinishingPlan);
-        Map<String, Object> audioProductionPlan = audioProductionPlan(request, scriptPayload, soundDesignPlan, videoFinishingPlan);
-        Map<String, Object> editingPlan = editingPlan(request, scriptPayload, videoFinishingPlan, soundDesignPlan, imageLedAdPlan, audioProductionPlan);
-        run.put("videoFinishingPlan", videoFinishingPlan);
-        run.put("soundDesignPlan", soundDesignPlan);
-        run.put("imageLedAdPlan", imageLedAdPlan);
-        run.put("audioProductionPlan", audioProductionPlan);
-        run.put("editingPlan", editingPlan);
-        run.put("editorHandoffPlan", editingPlan);
-        run.put("recommendedEditingTools", firstValue(editingPlan.get("recommendedTools"), editingPlan.get("toolsToUse")));
-        run.put("audioMixStandards", audioMixStandards(videoFinishingPlan.get("audioMixStandards"), soundDesignPlan.get("audioMixStandards"), request.get("audioMixStandards"), scriptPayload.get("audioMixStandards")));
-        run.put("storyboardReferenceMode", firstText(request.get("storyboardReferenceMode"), request.get("referenceImageMode"), videoFinishingPlan.get("referenceImageMode"), imageLedAdPlan.get("referenceImageMode"), "prompt_only"));
-        run.put("referenceImageMode", firstText(
-                request.get("referenceImageMode"),
-                productReferenceImageUrls.isEmpty() ? null : "product_motion_anchor",
-                videoFinishingPlan.get("referenceImageMode"),
-                imageLedAdPlan.get("referenceImageMode"),
-                "prompt_only"
-        ));
-        run.put("requireImageAnchors", booleanValue(firstValue(request.get("requireImageAnchors"), videoFinishingPlan.get("requireImageAnchors"), imageLedAdPlan.get("requireImageAnchors")), false));
-        run.put("burnCaptions", booleanValue(firstValue(request.get("burnCaptions"), mapValue(request.get("videoFinishingPlan")).get("burnCaptions")), true));
-        run.put("useMixedAudio", booleanValue(firstValue(request.get("useMixedAudio"), mapValue(request.get("videoFinishingPlan")).get("useMixedAudio")), true));
-        run.put("scenes", sceneRows);
-        run.put("sceneClips", sceneRows);
-        run.put("timeline", Map.of(
-                "durationSeconds", runningStart,
-                "maxClipSeconds", maxClipSeconds,
-                "sceneCount", sceneRows.size()
-        ));
-        run.put("renderManifest", renderManifest(provider, model, request, scriptPayload, sceneRows));
-        run.put("createdAt", OffsetDateTime.now().toString());
-        run.put("updatedAt", OffsetDateTime.now().toString());
-        return run;
-    }
-
-    private Map<String, Object> enrichProductCgiScenePlan(
-            Map<String, Object> sourceScene,
-            List<Map<String, Object>> allScenes,
-            int sceneIndex,
-            Map<String, Object> scriptPayload,
-            Map<String, Object> request,
-            String referenceImageDetails
-    ) {
-        Map<String, Object> scene = copyMap(sourceScene);
-        if (!isNoHumanProductCgiFlow(scene, scriptPayload, request)) {
-            return scene;
-        }
-
-        Map<String, Object> safeScript = scriptPayload == null ? Map.of() : scriptPayload;
-        Map<String, Object> creatorContext = firstMap(safeScript.get("creatorContext"));
-        Map<String, Object> productBrief = firstMap(
-                safeScript.get("productIntelligence"),
-                safeScript.get("productIntelligenceBrief"),
-                creatorContext.get("productIntelligence"),
-                creatorContext.get("productIntelligenceBrief")
-        );
-        Map<String, Object> productUnderstanding = firstMap(productBrief.get("productUnderstanding"));
-        String productName = firstText(
-                productBrief.get("productName"),
-                productBrief.get("name"),
-                productUnderstanding.get("productName"),
-                productUnderstanding.get("name"),
-                safeScript.get("productName"),
-                safeScript.get("projectTitle"),
-                "the supplied product"
-        );
-        Map<String, Object> productCreativeEvidence = productCreativeEvidence(
-                productBrief,
-                productUnderstanding,
-                safeScript,
-                creatorContext,
-                request
-        );
-        String productStoryBeat = firstText(
-                scene.get("productStoryBeat"),
-                scene.get("narrativeBeat"),
-                scene.get("purpose"),
-                scene.get("retentionGoal"),
-                scene.get("action"),
-                "Advance the approved product story with one clear visual proof beat."
-        );
-        String previousShotBrief = productShotImageBrief(allScenes, sceneIndex - 1);
-        String nextShotBrief = productShotImageBrief(allScenes, sceneIndex + 1);
-        String imagePrompt = productCgiImagePrompt(
-                scene,
-                productName,
-                productCreativeEvidence,
-                productStoryBeat,
-                referenceImageDetails,
-                previousShotBrief,
-                nextShotBrief
-        );
-        String motionPrompt = productCgiMotionPrompt(
-                scene,
-                productName,
-                productCreativeEvidence,
-                productStoryBeat,
-                nextShotBrief
-        );
-        String negativePrompt = appendPromptClause(
-                firstText(scene.get("negativePrompt"), scene.get("negative_prompt")),
-                "no people, no person, no face, no hands, no arms, no body, no human silhouette, no human reflection, no presenter, no crowd, no package mutation, no logo drift, no label change, no warped product, no duplicate product, no invented text, no watermark"
-        );
-
-        Map<String, Object> productShotPlan = new LinkedHashMap<>(firstMap(
-                scene.get("productShotPlan"),
-                scene.get("product_shot_plan")
-        ));
-        productShotPlan.put("shotNumber", intValue(firstValue(scene.get("shotNumber"), scene.get("sceneNumber")), sceneIndex + 1));
-        productShotPlan.put("shotType", firstText(scene.get("shotType"), scene.get("shot_type"), "hero product shot"));
-        productShotPlan.put("imagePrompt", imagePrompt);
-        productShotPlan.put("cgiFramePrompt", imagePrompt);
-        productShotPlan.put("motionPrompt", motionPrompt);
-        productShotPlan.put("storyBeat", productStoryBeat);
-        productShotPlan.put("productCreativeEvidence", productCreativeEvidence);
-        productShotPlan.put("previousShotImageBrief", previousShotBrief);
-        productShotPlan.put("nextShotImagePrompt", nextShotBrief);
-        productShotPlan.put("sourceProductReferencePolicy", "Use the original product image only for exact identity, packaging, logo, label, color, material, and proportion.");
-        productShotPlan.put("generatedFramePolicy", "Generate and approve one shot-specific CGI frame before video generation.");
-        productShotPlan.put("seedanceInputPolicy", "@Image1 is the approved CGI shot frame. @Image2 and later images are canonical product references.");
-        productShotPlan.put("noHumans", true);
-
-        scene.put("productLed", true);
-        scene.put("productCgiScene", true);
-        scene.put("noHumans", true);
-        scene.put("productShotPlan", productShotPlan);
-        scene.put("productStoryBeat", productStoryBeat);
-        scene.put("productCreativeEvidence", productCreativeEvidence);
-        scene.put("productImagePrompt", imagePrompt);
-        scene.put("productionImagePrompt", imagePrompt);
-        scene.put("imagePrompt", imagePrompt);
-        scene.put("nextProductImagePrompt", nextShotBrief);
-        scene.put("productMotionPrompt", motionPrompt);
-        scene.put("videoMotionPrompt", motionPrompt);
-        scene.put("animationPrompt", motionPrompt);
-        scene.put("videoPrompt", motionPrompt);
-        scene.put("seedancePrompt", motionPrompt);
-        scene.put("negativePrompt", negativePrompt);
-        return scene;
-    }
-
-    private boolean isNoHumanProductCgiFlow(
-            Map<String, Object> scene,
-            Map<String, Object> scriptPayload,
-            Map<String, Object> request
-    ) {
-        Map<String, Object> safeScript = scriptPayload == null ? Map.of() : scriptPayload;
-        Map<String, Object> safeRequest = request == null ? Map.of() : request;
-        Map<String, Object> videoFinishingPlan = firstMap(
-                safeRequest.get("videoFinishingPlan"),
-                safeScript.get("videoFinishingPlan")
-        );
-        Map<String, Object> imageLedAdPlan = firstMap(
-                safeRequest.get("imageLedAdPlan"),
-                safeScript.get("imageLedAdPlan"),
-                videoFinishingPlan.get("imageLedAdPlan")
-        );
-        Map<String, Object> creatorContext = firstMap(safeScript.get("creatorContext"));
-        boolean productLed = booleanValue(firstValue(
-                scene == null ? null : scene.get("productLed"),
-                safeRequest.get("productLed"),
-                safeRequest.get("imageLedAdMode"),
-                videoFinishingPlan.get("imageLedAdMode"),
-                imageLedAdPlan.get("enabled")
-        ), false)
-                || !firstMap(safeScript.get("productIntelligence"), safeScript.get("productIntelligenceBrief")).isEmpty()
-                || !firstMap(creatorContext.get("productIntelligence"), creatorContext.get("productIntelligenceBrief")).isEmpty();
-        boolean noHumans = booleanValue(firstValue(
-                scene == null ? null : scene.get("noHumans"),
-                scene == null ? null : scene.get("no_humans"),
-                safeRequest.get("noHumans"),
-                safeScript.get("noHumans"),
-                firstMap(safeScript.get("productIntelligenceBrief")).get("noHumans"),
-                firstMap(creatorContext.get("productIntelligenceBrief")).get("noHumans")
-        ), false);
-        return productLed && noHumans;
-    }
-
-    private String productCgiImagePrompt(
-            Map<String, Object> scene,
-            String productName,
-            Map<String, Object> productCreativeEvidence,
-            String productStoryBeat,
-            String referenceImageDetails,
-            String previousShotBrief,
-            String nextShotBrief
-    ) {
-        String existingPrompt = firstText(
-                scene.get("productImagePrompt"),
-                scene.get("productionImagePrompt"),
-                scene.get("imagePrompt"),
-                scene.get("storyboardImagePrompt"),
-                scene.get("visualPrompt")
-        );
-        String shotType = firstText(scene.get("shotType"), scene.get("shot_type"), "hero product shot");
-        String visualAction = firstText(scene.get("action"), scene.get("visual"), scene.get("description"), scene.get("purpose"));
-        String narrativePurpose = firstText(scene.get("retentionGoal"), scene.get("purpose"), scene.get("narrativeBeat"), "Keep the product readable while advancing the ad.");
-        String camera = firstText(scene.get("cameraAngle"), scene.get("cameraMovement"), scene.get("cameraMove"), "commercial product camera");
-        String lens = firstText(scene.get("lensSuggestion"), scene.get("lens"), "premium product lens with controlled depth of field");
-        String lighting = firstText(scene.get("lighting"), scene.get("lightingSetup"), "physically plausible premium commercial lighting");
-        String environment = firstText(scene.get("environment"), scene.get("setDesign"), scene.get("background"), "purpose-built CGI product environment");
-        String textSpace = firstText(scene.get("textOverlay"), scene.get("caption"), scene.get("captionText"));
-        return """
-                Create one final, photoreal CGI product-ad frame for %s. This is a finished commercial image, not a storyboard drawing, panel, contact sheet, mood board, or production diagram.
-                Use the supplied original product image as the canonical identity reference. Preserve exact package silhouette, geometry, logo placement, label layout, colors, materials, proportions, cap/lid details, and every visible brand feature. Do not redesign or beautify the packaging.
-                Shot type: %s.
-                Shot-specific visual: %s.
-                Existing creative direction: %s.
-                Product story beat: %s.
-                Grounded product facts and approved creative evidence: %s.
-                If this shot visualizes ingredients, materials, features, or benefits, use only facts present in that evidence. Show the named ingredient/material or an honest abstract sensory metaphor; never invent an ingredient, mechanism, certification, result, or claim.
-                Narrative and retention purpose: %s.
-                Composition and camera: %s. Lens treatment: %s.
-                Lighting: %s. Environment/background: %s.
-                Render physically plausible materials, reflections, refraction, particles, liquid/texture behavior, contact shadows, and premium macro detail. Keep the product as the unmistakable focal subject with clean mobile-safe framing.
-                Previous-frame continuity: %s.
-                Next-frame continuity: %s.
-                Text-safe area: %s. Reserve space only; do not render captions or invent copy.
-                Product reference notes: %s.
-                Hard exclusion: no humans, faces, hands, arms, bodies, silhouettes, crowds, presenters, or human reflections. No duplicate product, package mutation, logo drift, label change, invented claim, unreadable text, watermark, or storyboard annotation.
-                """.formatted(
-                productName,
-                shotType,
-                firstText(visualAction, "Show the product in a premium, shot-specific CGI composition."),
-                firstText(existingPrompt, "Follow the screenplay's approved visual direction."),
-                productStoryBeat,
-                toJson(productCreativeEvidence),
-                narrativePurpose,
-                camera,
-                lens,
-                lighting,
-                environment,
-                firstText(previousShotBrief, "Opening frame; establish the product identity clearly."),
-                firstText(nextShotBrief, "Finish with a clean composition that can cut into the following product shot."),
-                firstText(textSpace, "Keep optional copy space clear of the product and platform UI."),
-                firstText(referenceImageDetails, "Match the supplied original product image exactly.")
-        ).trim();
-    }
-
-    private String productCgiMotionPrompt(
-            Map<String, Object> scene,
-            String productName,
-            Map<String, Object> productCreativeEvidence,
-            String productStoryBeat,
-            String nextShotBrief
-    ) {
-        Map<String, Object> videoDirectorPlan = firstMap(
-                scene.get("videoDirectorPlan"),
-                scene.get("video_director_plan"),
-                scene.get("directorPlan"),
-                scene.get("director_plan")
-        );
-        String existingMotion = firstText(
-                videoDirectorPlan.get("generationPrompt"),
-                scene.get("videoMotionPrompt"),
-                scene.get("videoPrompt"),
-                scene.get("animationPrompt"),
-                scene.get("seedancePrompt"),
-                scene.get("providerPrompt"),
-                scene.get("action")
-        );
-        String cameraMovement = firstText(
-                scene.get("cameraMovement"),
-                scene.get("cameraMove"),
-                scene.get("motion"),
-                "Use restrained, premium product-camera motion."
-        );
-        String duration = stringValue(firstValue(scene.get("durationSeconds"), scene.get("duration")), "5");
-        String hook = firstText(scene.get("hook"), scene.get("openingHook"), scene.get("hookLine"));
-        String retention = firstText(scene.get("retentionGoal"), scene.get("retention_goal"));
-        String patternInterrupt = firstText(scene.get("patternInterrupt"), scene.get("pattern_interrupt"));
-        String brollRole = firstText(scene.get("brollStyle"), scene.get("brollRole"), scene.get("shotPurpose"));
-        String lighting = firstText(scene.get("lighting"), scene.get("lightingSetup"));
-        String environment = firstText(scene.get("environment"), scene.get("background"), scene.get("setDesign"));
-        String editDirection = firstText(
-                scene.get("editingNotes"),
-                scene.get("editNotes"),
-                scene.get("transition"),
-                scene.get("cutDirection")
-        );
-        String soundDirection = firstText(
-                scene.get("audioDescription"),
-                scene.get("soundPrompt"),
-                scene.get("soundDescription"),
-                scene.get("soundDesign"),
-                scene.get("syncHitDescription"),
-                scene.get("ambientBedDescription")
-        );
-        return """
-                Animate the approved CGI frame as a %s-second no-human product commercial shot for %s.
-                Product story beat: %s.
-                Grounded product evidence: %s.
-                Motion and action: %s.
-                Camera direction: %s.
-                Hook: %s. Retention goal: %s. Pattern interrupt: %s. B-roll role: %s.
-                Lighting and set continuity: %s | %s.
-                Edit/cut direction: %s.
-                Sound-design sync direction: %s.
-                Preserve the exact product identity, package geometry, logo, label, colors, materials, scale, and proportions throughout every frame. Use physically plausible motion, stable geometry, premium commercial lighting continuity, natural reflections and shadows, and a clean focal subject.
-                Execute at professional commercial-production standard: 4K master minimum, cinema-camera and professional lens intent, controlled exposure and focus, deliberate motion cadence, DP/gaffer-designed lighting with motivated key, shaped fill or negative fill, rim separation and reflection control, and director-level product choreography. Never interpret this as a rookie, casual, phone-camera, or automatic lighting setup.
-                Visualize only ingredients, materials, features, benefits, and claims supported by the grounded product evidence. Do not infer or invent product facts.
-                End-state continuity: %s.
-                Do not introduce people, faces, hands, arms, bodies, human reflections, extra products, package mutations, logo drift, label changes, invented text, random captions, or watermarks.
-                """.formatted(
-                duration,
-                productName,
-                productStoryBeat,
-                toJson(productCreativeEvidence),
-                firstText(existingMotion, "Create subtle product and environmental motion that supports the shot purpose."),
-                cameraMovement,
-                firstText(hook, "Use the opening composition or movement as the visual hook."),
-                firstText(retention, "Deliver one new visual proof or payoff in this shot."),
-                firstText(patternInterrupt, "Use a purposeful change in scale, movement, texture, or lighting when the screenplay calls for it."),
-                firstText(brollRole, "Product-first CGI proof shot."),
-                firstText(lighting, "Match the approved CGI frame's commercial lighting."),
-                firstText(environment, "Keep the approved CGI frame's background and set geometry."),
-                firstText(editDirection, "Enter and exit on clean motion beats suitable for the planned cut."),
-                firstText(soundDirection, "Time product foley, impact, whoosh, or ambience to visible motion without overpowering voiceover."),
-                firstText(nextShotBrief, "Settle on a clean transition-ready product composition.")
-        ).trim();
-    }
-
-    private Map<String, Object> productCreativeEvidence(
-            Map<String, Object> productBrief,
-            Map<String, Object> productUnderstanding,
-            Map<String, Object> scriptPayload,
-            Map<String, Object> creatorContext,
-            Map<String, Object> request
-    ) {
-        Map<String, Object> brief = productBrief == null ? Map.of() : productBrief;
-        Map<String, Object> understanding = productUnderstanding == null ? Map.of() : productUnderstanding;
-        Map<String, Object> script = scriptPayload == null ? Map.of() : scriptPayload;
-        Map<String, Object> context = creatorContext == null ? Map.of() : creatorContext;
-        Map<String, Object> safeRequest = request == null ? Map.of() : request;
-        Map<String, Object> campaignAngle = firstMap(
-                safeRequest.get("campaignAngle"),
-                script.get("campaignAngle"),
-                brief.get("campaignAngle"),
-                context.get("campaignAngle")
-        );
-
-        Map<String, Object> evidence = new LinkedHashMap<>();
-        putProductEvidence(evidence, "category",
-                understanding.get("productCategory"), understanding.get("category"),
-                brief.get("productCategory"), brief.get("category"));
-        putProductEvidence(evidence, "description",
-                understanding.get("description"), brief.get("description"), brief.get("summary"),
-                script.get("productDescription"), safeRequest.get("productDescription"));
-        putProductEvidence(evidence, "ingredientsOrMaterials",
-                understanding.get("ingredients"), understanding.get("ingredientList"), understanding.get("materials"),
-                brief.get("ingredients"), brief.get("ingredientList"), brief.get("materials"),
-                script.get("ingredients"), safeRequest.get("ingredients"));
-        putProductEvidence(evidence, "features",
-                understanding.get("features"), understanding.get("keyFeatures"),
-                brief.get("features"), brief.get("keyFeatures"), brief.get("productFeatures"));
-        putProductEvidence(evidence, "benefits",
-                understanding.get("benefits"), understanding.get("keyBenefits"), understanding.get("approvedBenefits"),
-                brief.get("benefits"), brief.get("keyBenefits"), brief.get("approvedBenefits"));
-        putProductEvidence(evidence, "usp",
-                understanding.get("usp"), understanding.get("valueProposition"),
-                brief.get("usp"), brief.get("valueProposition"));
-        putProductEvidence(evidence, "approvedClaims",
-                understanding.get("approvedClaims"), brief.get("approvedClaims"),
-                brief.get("requiredMentions"), script.get("approvedClaims"), safeRequest.get("approvedClaims"));
-        putProductEvidence(evidence, "packaging",
-                understanding.get("packaging"), understanding.get("packagingDescription"),
-                brief.get("packaging"), brief.get("packagingDescription"));
-        putProductEvidence(evidence, "targetAudience",
-                safeRequest.get("targetAudience"), script.get("targetAudience"),
-                understanding.get("targetAudience"), brief.get("targetAudience"),
-                context.get("targetAudience"), firstMap(script.get("brandContext")).get("targetAudience"),
-                firstMap(context.get("brandContext")).get("targetAudience"));
-        putProductEvidence(evidence, "campaignObjective",
-                safeRequest.get("campaignObjective"), script.get("campaignObjective"),
-                brief.get("campaignObjective"), context.get("campaignObjective"),
-                firstMap(script.get("brandContext")).get("campaignObjective"),
-                firstMap(context.get("brandContext")).get("campaignObjective"));
-        putProductEvidence(evidence, "campaignAngle",
-                campaignAngle.get("description"), campaignAngle.get("title"), campaignAngle);
-        putProductEvidence(evidence, "campaignNotes",
-                safeRequest.get("campaignNotes"), brief.get("campaignNotes"),
-                script.get("campaignNotes"), context.get("campaignNotes"));
-        putProductEvidence(evidence, "formatPlaybook",
-                safeRequest.get("formatPlaybook"), brief.get("formatPlaybook"),
-                firstMap(brief.get("creativeDirection")).get("formatPlaybook"));
-        putProductEvidence(evidence, "evidencePolicy",
-                understanding.get("evidencePolicy"), brief.get("evidencePolicy"),
-                "Use only supplied or researched product facts. Never invent ingredients, benefits, claims, certifications, pricing, or results.");
-        return evidence;
-    }
-
-    private void putProductEvidence(
-            Map<String, Object> evidence,
-            String key,
-            Object... candidates
-    ) {
-        if (evidence == null || key == null || key.isBlank() || candidates == null) {
-            return;
-        }
-        for (Object candidate : candidates) {
-            if (candidate == null
-                    || candidate instanceof CharSequence text && text.toString().isBlank()
-                    || candidate instanceof Collection<?> collection && collection.isEmpty()
-                    || candidate instanceof Map<?, ?> map && map.isEmpty()) {
-                continue;
-            }
-            evidence.put(key, candidate);
-            return;
-        }
-    }
-
-    private String productShotImageBrief(List<Map<String, Object>> scenes, int index) {
-        if (scenes == null || index < 0 || index >= scenes.size()) {
-            return "";
-        }
-        Map<String, Object> adjacent = scenes.get(index);
-        return String.join(" | ", List.of(
-                "Shot " + intValue(firstValue(adjacent.get("shotNumber"), adjacent.get("sceneNumber")), index + 1),
-                firstText(adjacent.get("shotType"), adjacent.get("shot_type"), "product shot"),
-                firstText(adjacent.get("action"), adjacent.get("visual"), adjacent.get("description"), adjacent.get("purpose"), "product continuity frame"),
-                firstText(adjacent.get("cameraAngle"), adjacent.get("cameraMovement"), adjacent.get("cameraMove"), "consistent camera language"),
-                firstText(adjacent.get("lighting"), adjacent.get("environment"), "consistent lighting and set")
-        ));
-    }
-
-    private String appendPromptClause(String base, String clause) {
-        String left = firstText(base);
-        String right = firstText(clause);
-        if (left.isBlank()) {
-            return right;
-        }
-        if (right.isBlank() || left.toLowerCase(Locale.ROOT).contains(right.toLowerCase(Locale.ROOT))) {
-            return left;
-        }
-        return left + ", " + right;
+        return new InitialRunAssembler(this, shotPlanRepository)
+                .buildInitialRun(script, request, runId, jobId, provider, model, maxClipSeconds);
     }
 
     private Map<String, Object> localizeAiSceneForGeneration(
@@ -6526,7 +5822,7 @@ public class ScreenplayVideoService {
         ).get(0);
     }
 
-    private List<Map<String, Object>> localizeDialogueScenes(
+    List<Map<String, Object>> localizeDialogueScenes(
             CreatorScript script,
             List<Map<String, Object>> sourceScenes,
             String sourceLanguage,
@@ -6686,7 +5982,7 @@ public class ScreenplayVideoService {
         return localizedScenes;
     }
 
-    private Map<String, Object> requestSceneOverride(Map<String, Object> request, Map<String, Object> source, int defaultSceneNumber) {
+    Map<String, Object> requestSceneOverride(Map<String, Object> request, Map<String, Object> source, int defaultSceneNumber) {
         List<Map<String, Object>> requestScenes = mapListValue(request == null ? null : request.get("scenes"));
         if (requestScenes.isEmpty()) {
             return new LinkedHashMap<>();
@@ -6722,7 +6018,7 @@ public class ScreenplayVideoService {
         return new LinkedHashMap<>();
     }
 
-    private Map<String, Object> renderManifest(
+    Map<String, Object> renderManifest(
             String provider,
             String model,
             Map<String, Object> request,
@@ -6752,81 +6048,6 @@ public class ScreenplayVideoService {
         manifest.put("requiresProviderAdapter", true);
         manifest.put("providerAdapterStatus", "REQUEST_PAYLOAD_READY");
         return manifest;
-    }
-
-    private AiSceneEditResult generateEditedScene(
-            CreatorScript script,
-            Map<String, Object> scene,
-            String message,
-            Map<String, Object> ragContext,
-            String renderedPrompt,
-            UUID jobId
-    ) {
-        Map<String, Object> providerInput = new LinkedHashMap<>();
-        providerInput.put("scriptId", script.getId().toString());
-        providerInput.put("projectId", script.getProjectId() == null ? null : script.getProjectId().toString());
-        providerInput.put("instruction", message);
-        providerInput.put("shot", scene);
-        providerInput.put("scene", scene);
-        providerInput.put("ragContext", ragContext);
-        providerInput.put("renderedPrompt", renderedPrompt);
-
-        try {
-            CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
-                    script.getTenantId(),
-                    script.getUserId(),
-                    script.getProjectId(),
-                    jobId,
-                    null
-            );
-            CreatorAiService.MeteredAiResponse aiResponse = creatorAiService.generateMetered(
-                    PromptTemplateType.SHOT_JSON_EDIT.name(),
-                    providerInput,
-                    usageContext
-            );
-            Map<String, Object> providerOutput = copyMap(aiResponse.output());
-            Map<String, Object> editedScene = firstNonEmptyMap(
-                    providerOutput.get("scene"),
-                    providerOutput.get("shot"),
-                    providerOutput.get("updatedScene"),
-                    providerOutput.get("updatedShot")
-            );
-            if (editedScene.isEmpty()) {
-                editedScene = fallbackEditedScene(scene, message, ragContext);
-            }
-            CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
-                    .tenantId(script.getTenantId())
-                    .userId(script.getUserId())
-                    .projectId(script.getProjectId())
-                    .jobId(jobId)
-                    .promptTemplateKey(PromptTemplateType.SHOT_JSON_EDIT.name())
-                    .promptTemplateVersion(1)
-                    .renderedPrompt(renderedPrompt)
-                    .inputSnapshot(providerInput)
-                    .provider(creatorAiService.providerName())
-                    .model(creatorAiService.modelName())
-                    .outputPayload(providerOutput)
-                    .tokenMetadata(aiResponse.tokenMetadata())
-                    .costMetadata(aiResponse.costMetadata())
-                    .status("COMPLETED")
-                    .completedAt(OffsetDateTime.now())
-                    .build());
-            creatorAiService.publishBillingDebit(
-                    PromptTemplateType.SHOT_JSON_EDIT.name(),
-                    aiResponse,
-                    usageContext.withPromptRunId(promptRun.getId())
-            );
-            return new AiSceneEditResult(editedScene, promptRun.getId(), providerOutput, null);
-        } catch (ResponseStatusException ex) {
-            throw ex;
-        } catch (RuntimeException ex) {
-            log.warn("Scene AI edit failed scriptId={} sceneId={} errorType={} errorMessage={}",
-                    script.getId(),
-                    scene.get("id"),
-                    ex.getClass().getSimpleName(),
-                    ex.getMessage());
-            return new AiSceneEditResult(fallbackEditedScene(scene, message, ragContext), null, Map.of(), ex.getMessage());
-        }
     }
 
     private Map<String, Object> applySceneEdit(
@@ -6860,33 +6081,11 @@ public class ScreenplayVideoService {
         return result;
     }
 
-    private Map<String, Object> fallbackEditedScene(Map<String, Object> scene, String message, Map<String, Object> ragContext) {
-        Map<String, Object> edited = new LinkedHashMap<>(scene);
-        String existingPrompt = firstText(scene.get("providerPrompt"), scene.get("seedancePrompt"), scene.get("prompt"), scene.get("action"));
-        String continuity = firstText(
-                mapValue(ragContext.get("videoConsistencyBible")).get("globalConsistencyPrompt"),
-                mapValue(ragContext.get("seedancePromptStrategy")).get("globalConsistencyPrompt"),
-                "Preserve characters, wardrobe, location continuity, captions, pacing, and shot order."
-        );
-        String revisedPrompt = """
-                %s
-
-                Revision request: %s
-                Continuity lock: %s
-                Keep the same timeline duration, aspect ratio, captions, and adjacent-scene continuity.
-                """.formatted(existingPrompt, message, continuity).trim();
-        edited.put("providerPrompt", revisedPrompt);
-        edited.put("prompt", revisedPrompt);
-        edited.put("action", firstText(scene.get("action"), scene.get("description"), "") + " Revision: " + message);
-        edited.put("editingNotes", List.of("RAG fallback edit applied: " + message));
-        return edited;
-    }
-
     private void appendRevision(
             Map<String, Object> scene,
             String message,
             Map<String, Object> beforeScene,
-            AiSceneEditResult editResult,
+            SceneEditResult editResult,
             Map<String, Object> ragContext
     ) {
         List<Map<String, Object>> revisions = mapListValue(scene.get("revisions"));
@@ -6907,7 +6106,7 @@ public class ScreenplayVideoService {
         scene.put("chatRevisions", revisions);
     }
 
-    private Map<String, Object> buildRagContext(
+    Map<String, Object> buildRagContext(
             CreatorScript script,
             Map<String, Object> run,
             List<Map<String, Object>> scenes,
@@ -6977,12 +6176,14 @@ public class ScreenplayVideoService {
                 %s
 
                 Rules:
+                - This is a targeted enhancement to an already-approved plan, not a rewrite. Change ONLY what the user's edit request asks for; every other field (wardrobe, set, props, camera, lighting, expression, emotion, emotionIntensity, bodyLanguage, dialogue content) must come back exactly as it is in the current scene JSON below unless the request explicitly asks to change it too.
                 - Keep the same id, sceneNumber, shotNumber, durationSeconds, startTime, and endTime unless the user explicitly asked for timing changes.
                 - Preserve continuity from the RAG context: same characters, wardrobe, geography, lighting logic, captions, tone, and adjacent-scene motion.
                 - Update providerPrompt/prompt for the selected video model.
                 - If the scene is full AI, generationMode must stay ai_generated.
                 - If hybrid and the user asks for a person/talking head, generationMode may be talking_head; otherwise prefer ai_generated for B-roll/visual-only shots.
                 - Keep captions compatible with the SRT cues and caption style.
+                - If (and only if) the user's edit request asks to change the spoken/dialogue language for this scene, translate dialogue, captionTrack, and srtCues into the requested language, preserving meaning, tone, and timing, and set dialogueLanguage to the requested language - this chat is the only place a single scene's dialogue language can be changed, so honor this request explicitly when asked.
                 - Include short editingNotes explaining the change.
 
                 Current scene JSON:
@@ -6998,13 +6199,14 @@ public class ScreenplayVideoService {
         );
     }
 
-    private Map<String, Object> buildProviderRequest(Map<String, Object> run, Map<String, Object> scene, Map<String, Object> request) {
+    @Override
+    public Map<String, Object> buildProviderRequest(Map<String, Object> run, Map<String, Object> scene, Map<String, Object> request) {
         String provider = providerForSceneGeneration(scene, run, request);
         String model = modelForSceneGeneration(provider, scene, run, request);
         return buildProviderRequestForScene(provider, model, scene, request == null ? Map.of() : request, copyMap(run));
     }
 
-    private String providerForSceneGeneration(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
+    String providerForSceneGeneration(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
         String generationMode = generationModeFor(scene == null ? Map.of() : scene, runOrRequest == null ? Map.of() : runOrRequest, request);
         if ("talking_head".equals(generationMode)) {
             return normalizeVideoProvider(avatarProviderFrom(
@@ -7025,7 +6227,7 @@ public class ScreenplayVideoService {
         ));
     }
 
-    private String modelForSceneGeneration(String provider, Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
+    String modelForSceneGeneration(String provider, Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
         String normalizedProvider = normalizeVideoProvider(provider);
         if ("synthesia".equals(normalizedProvider)) {
             return modelForProvider(normalizedProvider, firstText(
@@ -7054,373 +6256,140 @@ public class ScreenplayVideoService {
         ));
     }
 
-    private Map<String, Object> buildProviderRequestForScene(
+    // Ephemeral, request-scoped only - never persisted onto the scene record. Matches the
+    // script's cast mappings (contextPayload.characterCastMappings, populated in the run
+    // assembly step) against this scene's free-text character fields by name, since no
+    // structured "which characters appear in scene N" field exists in the scene JSON today.
+    List<Map<String, Object>> castCharactersForScene(Map<String, Object> scene, Map<String, Object> contextPayload) {
+        List<Map<String, Object>> castMappings = mapListValue(firstValue(
+                contextPayload.get("characterCastMappings"),
+                contextPayload.get("castMappings")
+        ));
+        if (castMappings.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> shotPlanCharacters = shotPlanCharactersForScene(scene);
+        return shotPlanCharacters.isEmpty()
+                ? castCharactersForSceneByFreeText(scene, castMappings)
+                : castCharactersForSceneByShotPlan(shotPlanCharacters, castMappings);
+    }
+
+    private List<Map<String, Object>> shotPlanCharactersForScene(Map<String, Object> scene) {
+        Map<String, Object> storyboardTag = mapValue(scene.get("storyboardTag"));
+        if (storyboardTag.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> characters = new ArrayList<>();
+        characters.addAll(mapListValue(storyboardTag.get("primaryCharacters")));
+        characters.addAll(mapListValue(storyboardTag.get("sideCharacters")));
+        return characters;
+    }
+
+    /**
+     * Preferred path: this shot's own director/DP character specs (storyboardTag's
+     * primaryCharacters/sideCharacters) already carry assignedActorName, which
+     * STORYBOARD_TAG_GENERATE itself resolves from characterCastMappings - so matching
+     * storyCharacterName back against characterCastMappings.characterName here is an exact
+     * structured match on the same source of truth, not a text guess. This is what lets us
+     * tell the video model precisely which uploaded face belongs to which named character.
+     */
+    private List<Map<String, Object>> castCharactersForSceneByShotPlan(
+            List<Map<String, Object>> shotPlanCharacters,
+            List<Map<String, Object>> castMappings
+    ) {
+        List<Map<String, Object>> matched = new ArrayList<>();
+        for (Map<String, Object> character : shotPlanCharacters) {
+            String storyCharacterName = stringValue(character.get("storyCharacterName"), "").trim();
+            String assignedActorName = stringValue(character.get("assignedActorName"), "").trim();
+            if (storyCharacterName.isBlank() && assignedActorName.isBlank()) {
+                continue;
+            }
+            Map<String, Object> mapping = findCastMapping(castMappings, storyCharacterName, assignedActorName);
+            if (mapping == null) {
+                continue;
+            }
+            Map<String, Object> castPayload = firstMap(mapping.get("castPayload"));
+            Map<String, Object> matchedCharacter = new LinkedHashMap<>();
+            matchedCharacter.put("characterKey", mapping.get("characterKey"));
+            matchedCharacter.put("characterName", storyCharacterName.isBlank() ? stringValue(mapping.get("characterName"), "") : storyCharacterName);
+            matchedCharacter.put("characterRole", stringValue(mapping.get("characterRole"), ""));
+            matchedCharacter.put("castDisplayName", stringValue(mapping.get("castDisplayName"), assignedActorName));
+            matchedCharacter.put("referenceImageUrl", stringValue(castPayload.get("referenceImageUrl"), ""));
+            matchedCharacter.put("archetypeLabel", stringValue(character.get("archetypeLabel"), ""));
+            matchedCharacter.put("distinguishingFeatures", stringValue(character.get("distinguishingFeatures"), ""));
+            matchedCharacter.put("wardrobeThisShot", stringValue(character.get("wardrobeThisShot"), ""));
+            matched.add(matchedCharacter);
+        }
+        return matched;
+    }
+
+    private Map<String, Object> findCastMapping(List<Map<String, Object>> castMappings, String storyCharacterName, String assignedActorName) {
+        if (!storyCharacterName.isBlank()) {
+            for (Map<String, Object> mapping : castMappings) {
+                if (storyCharacterName.equalsIgnoreCase(stringValue(mapping.get("characterName"), "").trim())) {
+                    return mapping;
+                }
+            }
+        }
+        if (!assignedActorName.isBlank()) {
+            for (Map<String, Object> mapping : castMappings) {
+                if (assignedActorName.equalsIgnoreCase(stringValue(mapping.get("castDisplayName"), "").trim())) {
+                    return mapping;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Fallback for shots that never went through shot production planning - preserves today's behavior exactly. */
+    private List<Map<String, Object>> castCharactersForSceneByFreeText(Map<String, Object> scene, List<Map<String, Object>> castMappings) {
+        String sceneText = String.join(" ",
+                stringValue(scene.get("characterDetail"), ""),
+                stringValue(scene.get("characterDetails"), ""),
+                stringValue(scene.get("character"), ""),
+                stringValue(scene.get("characters"), ""),
+                stringValue(scene.get("title"), ""),
+                stringValue(scene.get("sceneDetail"), ""),
+                stringValue(scene.get("action"), ""),
+                stringValue(scene.get("dialogue"), "")
+        ).toLowerCase(Locale.ROOT);
+        if (sceneText.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Object>> matched = new ArrayList<>();
+        for (Map<String, Object> mapping : castMappings) {
+            String characterName = stringValue(mapping.get("characterName"), "").trim();
+            if (characterName.isBlank() || !sceneText.contains(characterName.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            Map<String, Object> castPayload = firstMap(mapping.get("castPayload"));
+            Map<String, Object> matchedCharacter = new LinkedHashMap<>();
+            matchedCharacter.put("characterKey", mapping.get("characterKey"));
+            matchedCharacter.put("characterName", characterName);
+            matchedCharacter.put("characterRole", stringValue(mapping.get("characterRole"), ""));
+            matchedCharacter.put("castDisplayName", stringValue(mapping.get("castDisplayName"), characterName));
+            matchedCharacter.put("referenceImageUrl", stringValue(castPayload.get("referenceImageUrl"), ""));
+            matched.add(matchedCharacter);
+        }
+        return matched;
+    }
+
+    /**
+     * Provider-agnostic providerRequest assembly, extracted to ProviderRequestBuilder (Builder
+     * pattern - each resolve*() step is a section of what used to be a single 394-line method) so
+     * this stays a one-line delegation instead of the largest, least-readable method in the class.
+     */
+    Map<String, Object> buildProviderRequestForScene(
             String provider,
             String model,
             Map<String, Object> scene,
             Map<String, Object> request,
             Map<String, Object> contextPayload
     ) {
-        Map<String, Object> providerRequest = new LinkedHashMap<>();
-        providerRequest.put("provider", provider);
-        providerRequest.put("model", model);
-        Map<String, Object> videoDirectorPlan = firstMap(
-                request.get("videoDirectorPlan"),
-                request.get("video_director_plan"),
-                scene.get("videoDirectorPlan"),
-                scene.get("video_director_plan"),
-                scene.get("directorPlan"),
-                scene.get("director_plan")
-        );
-        String requestedPrompt = firstText(
-                request.get("providerPrompt"),
-                request.get("videoPrompt"),
-                request.get("animationPrompt"),
-                request.get("videoMotionPrompt"),
-                request.get("prompt"),
-                scene.get("providerPrompt"),
-                scene.get("videoPrompt"),
-                scene.get("animationPrompt"),
-                scene.get("videoMotionPrompt"),
-                scene.get("prompt"),
-                scene.get("seedancePrompt"),
-                scene.get("action")
-        );
-        String directorPrompt = firstText(
-                videoDirectorPlan.get("generationPrompt"),
-                videoDirectorPlan.get("promptSegment")
-        );
-        String resolvedPrompt = directorPrompt.isBlank()
-                ? requestedPrompt
-                : directorPrompt + (requestedPrompt.isBlank() || requestedPrompt.equals(directorPrompt)
-                ? ""
-                : "\n\nAdditional approved scene direction: " + requestedPrompt);
-        providerRequest.put("prompt", resolvedPrompt);
-        providerRequest.put("videoPrompt", providerRequest.get("prompt"));
-        providerRequest.put("animationPrompt", providerRequest.get("prompt"));
-        providerRequest.put("videoDirectorPlan", videoDirectorPlan);
-        providerRequest.put("masteringResolution", firstText(
-                request.get("masteringResolution"),
-                videoDirectorPlan.get("captureResolution"),
-                videoDirectorPlan.get("masteringResolution"),
-                scene.get("captureResolution"),
-                "4K master minimum"
-        ));
-        providerRequest.put("resolution", firstText(
-                request.get("resolution"),
-                request.get("videoResolution"),
-                scene.get("resolution"),
-                "2160p"
-        ));
-        providerRequest.put("cameraPackage", firstText(videoDirectorPlan.get("cameraPackage"), scene.get("cameraPackage")));
-        providerRequest.put("captureSettings", firstText(videoDirectorPlan.get("captureSettings"), scene.get("captureSettings")));
-        providerRequest.put("lightingPlan", firstText(videoDirectorPlan.get("lightingPlan"), scene.get("lightingPlan"), scene.get("lighting")));
-        providerRequest.put("directorNotes", firstText(videoDirectorPlan.get("directorNotes"), scene.get("directorNotes"), scene.get("creatorDirection")));
-        providerRequest.put("imagePrompt", firstText(scene.get("imagePrompt"), scene.get("storyboardImagePrompt"), scene.get("visualPrompt")));
-        providerRequest.put("shotType", firstText(scene.get("shotType"), scene.get("shot_type")));
-        providerRequest.put("cameraMovement", firstText(scene.get("cameraMovement"), scene.get("cameraMove"), scene.get("motion")));
-        providerRequest.put("hook", firstText(scene.get("hook"), scene.get("openingHook"), scene.get("hookLine"), scene.get("narrativeBeat"), scene.get("beatTitle"), scene.get("title")));
-        providerRequest.put("retentionGoal", firstText(scene.get("retentionGoal"), scene.get("retention_goal")));
-        providerRequest.put("patternInterrupt", firstText(scene.get("patternInterrupt"), scene.get("pattern_interrupt")));
-        providerRequest.put("adFormat", firstText(scene.get("adFormat"), contextPayload.get("adFormat"), contextPayload.get("categoryCode")));
-        providerRequest.put("adFormatKey", firstText(scene.get("adFormatKey"), contextPayload.get("adFormatKey")));
-        providerRequest.put("formatPlaybook", firstMap(scene.get("formatPlaybook"), contextPayload.get("formatPlaybook"), firstMap(contextPayload.get("creativeBrief")).get("formatPlaybook")));
-        providerRequest.put("sceneDetail", firstText(scene.get("sceneDetail"), scene.get("sceneDetails"), scene.get("description"), scene.get("action"), scene.get("visualPrompt")));
-        providerRequest.put("backgroundDetail", firstText(scene.get("backgroundDetail"), scene.get("background"), scene.get("setting"), scene.get("location"), scene.get("environment"), scene.get("setDescription")));
-        providerRequest.put("characterDetail", firstValue(scene.get("characterDetail"), scene.get("characterDetails"), scene.get("character"), scene.get("characters"), contextPayload.get("storyCharacters"), contextPayload.get("characters")));
-        providerRequest.put("visualTreatment", firstMap(scene.get("visualTreatment")));
-        providerRequest.put("cinematicExecution", firstMap(scene.get("cinematicExecution")));
-        providerRequest.put("editingNotes", firstList(scene.get("editingNotes")));
-        providerRequest.put("creatorDirection", firstText(scene.get("creatorDirection"), scene.get("directorNotes")));
-        providerRequest.put("durationSeconds", positiveInt(scene.get("durationSeconds"), intValue(request.get("maxClipSeconds"), 15)));
-        providerRequest.put("maxClipSeconds", intValue(request.get("maxClipSeconds"), positiveInt(scene.get("maxClipSeconds"), defaultMaxClipSecondsForProvider(provider))));
-        providerRequest.put("aspectRatio", "horizontal".equalsIgnoreCase(firstText(request.get("screenType"), contextPayload.get("screenType"))) ? "16:9" : "9:16");
-        providerRequest.put("generationMode", generationModeFor(scene, contextPayload, request));
-        Map<String, Object> founderProfile = founderAvatarProfile(request, contextPayload, firstMap(contextPayload.get("creatorContext")));
-        providerRequest.put("founderAvatarProfile", founderProfile);
-        providerRequest.put("founderKit", founderProfile);
-        providerRequest.put("avatarPortraitAsset", firstMap(
-                request.get("avatarPortraitAsset"),
-                scene.get("avatarPortraitAsset"),
-                founderProfile.get("avatarPortraitAsset")
-        ));
-        providerRequest.put("avatarTestAsset", firstMap(founderProfile.get("avatarTestAsset")));
-        providerRequest.put("avatarProviderMode", avatarProviderFrom(request.get("avatarProviderMode"), scene.get("avatarProviderMode"), contextPayload.get("avatarProviderMode"), founderProfile.get("avatarProviderMode")));
-        providerRequest.put("avatarProvider", providerRequest.get("avatarProviderMode"));
-        providerRequest.put("avatarId", firstText(request.get("avatarId"), scene.get("avatarId"), contextPayload.get("avatarId"), founderProfile.get("avatarId")));
-        providerRequest.put("voiceId", firstText(request.get("voiceId"), scene.get("voiceId"), contextPayload.get("voiceId"), founderProfile.get("voiceId")));
-        providerRequest.put("synthesiaAvatarId", firstText(request.get("synthesiaAvatarId"), founderProfile.get("synthesiaAvatarId"), founderProfile.get("avatarId")));
-        providerRequest.put("synthesiaVoiceId", firstText(request.get("synthesiaVoiceId"), founderProfile.get("synthesiaVoiceId"), founderProfile.get("voiceId")));
-        providerRequest.put("portraitEmbeddingId", firstText(request.get("portraitEmbeddingId"), founderProfile.get("portraitEmbeddingId")));
-        providerRequest.put("facialFeatureEmbeddingId", firstText(request.get("facialFeatureEmbeddingId"), founderProfile.get("facialFeatureEmbeddingId")));
-        providerRequest.put("voiceEmbeddingId", firstText(request.get("voiceEmbeddingId"), founderProfile.get("voiceEmbeddingId")));
-        providerRequest.put("voiceProfileId", firstText(
-                request.get("voiceProfileId"),
-                founderProfile.get("voiceProfileId"),
-                firstMap(founderProfile.get("localModels")).get("voiceProfileId")
-        ));
-        Map<String, Object> localModels = new LinkedHashMap<>(firstMap(
-                request.get("localModels"),
-                request.get("localAvatarModels"),
-                founderProfile.get("localModels")
-        ));
-        String talkingAvatarModel = normalizeLocalTalkingAvatarModel(firstText(
-                request.get("talkingAvatarModel"),
-                request.get("localTalkingAvatarModel"),
-                localModels.get("talkingAvatarModel"),
-                model
-        ));
-        String lipSyncModel = "fal_heygen_avatar4".equals(talkingAvatarModel)
-                ? "avatar_native"
-                : normalizeLocalLipSyncModel(firstText(
-                        request.get("lipSyncModel"),
-                        request.get("localLipSyncModel"),
-                        localModels.get("lipSyncModel")
-                ));
-        localModels.put("talkingAvatarModel", talkingAvatarModel);
-        localModels.put("lipSyncModel", lipSyncModel);
-        localModels.putIfAbsent(
-                "avatarResolution",
-                "fal_heygen_avatar4".equals(talkingAvatarModel) ? "720p" : "1080p"
-        );
-        localModels.putIfAbsent("talkingStyle", "stable");
-        providerRequest.put("localModels", localModels);
-        providerRequest.put("talkingAvatarModel", talkingAvatarModel);
-        providerRequest.put("lipSyncModel", lipSyncModel);
-        providerRequest.put("avatarResolution", firstText(
-                request.get("avatarResolution"),
-                localModels.get("avatarResolution"),
-                "720p"
-        ));
-        providerRequest.put("talkingStyle", firstText(
-                request.get("talkingStyle"),
-                localModels.get("talkingStyle"),
-                founderProfile.get("talkingStyle"),
-                "stable"
-        ));
-        providerRequest.put("expression", firstText(
-                request.get("expression"),
-                request.get("avatarExpression"),
-                scene.get("expression"),
-                scene.get("emotion"),
-                founderProfile.get("avatarExpression")
-        ));
-        providerRequest.put("avatarBackground", firstMap(
-                request.get("avatarBackground"),
-                scene.get("avatarBackground"),
-                founderProfile.get("avatarBackground")
-        ));
-        providerRequest.put("avatarCaption", booleanValue(request.get("avatarCaption"), false));
-        providerRequest.put("manualApprovalRequiredForFallback", booleanValue(firstValue(request.get("manualApprovalRequiredForFallback"), founderProfile.get("manualApprovalRequiredForFallback")), true));
-        providerRequest.put("founderConsentConfirmed", booleanValue(firstValue(request.get("consentConfirmed"), founderProfile.get("consentConfirmed")), false));
-        providerRequest.put("language", firstText(request.get("dialogueLanguage"), founderProfile.get("language"), "Hinglish"));
-        providerRequest.put("languageCode", firstText(request.get("languageCode"), founderProfile.get("languageCode"), "hi-IN"));
-        providerRequest.put("srtFile", firstMap(request.get("srtFile"), contextPayload.get("srtFile")));
-        providerRequest.put("videoPacingProfile", firstMap(request.get("videoPacingProfile"), contextPayload.get("videoPacingProfile")));
-        Map<String, Object> videoFinishingPlan = withAudioMixStandards(firstMap(request.get("videoFinishingPlan"), contextPayload.get("videoFinishingPlan")));
-        Map<String, Object> soundDesignPlan = withAudioMixStandards(firstMap(request.get("soundDesignPlan"), contextPayload.get("soundDesignPlan")));
-        Map<String, Object> imageLedAdPlan = imageLedAdPlan(request, contextPayload, videoFinishingPlan);
-        Map<String, Object> audioProductionPlan = audioProductionPlan(request, contextPayload, soundDesignPlan, videoFinishingPlan);
-        Map<String, Object> editingPlan = editingPlan(request, contextPayload, videoFinishingPlan, soundDesignPlan, imageLedAdPlan, audioProductionPlan);
-        providerRequest.put("videoFinishingPlan", videoFinishingPlan);
-        providerRequest.put("soundDesignPlan", soundDesignPlan);
-        providerRequest.put("imageLedAdPlan", imageLedAdPlan);
-        providerRequest.put("audioProductionPlan", audioProductionPlan);
-        providerRequest.put("editingPlan", editingPlan);
-        providerRequest.put("editorHandoffPlan", editingPlan);
-        providerRequest.put("productCreativeEvidence", firstMap(
-                scene.get("productCreativeEvidence"),
-                request.get("productCreativeEvidence"),
-                contextPayload.get("productCreativeEvidence")
-        ));
-        providerRequest.put("productShotPlan", firstMap(
-                scene.get("productShotPlan"),
-                request.get("productShotPlan")
-        ));
-        providerRequest.put("productStoryBeat", firstText(
-                scene.get("productStoryBeat"),
-                scene.get("narrativeBeat"),
-                scene.get("purpose")
-        ));
-        providerRequest.put("recommendedEditingTools", firstValue(editingPlan.get("recommendedTools"), editingPlan.get("toolsToUse")));
-        String sceneSoundPrompt = firstText(
-                request.get("audioDescription"),
-                request.get("soundPrompt"),
-                request.get("soundDesignPrompt"),
-                scene.get("audioDescription"),
-                scene.get("audio_description"),
-                scene.get("soundPrompt"),
-                scene.get("sound_prompt"),
-                scene.get("soundDescription"),
-                scene.get("sound_description"),
-                firstMap(scene.get("soundDesign"), scene.get("sound_design")).get("description"),
-                firstMap(scene.get("soundDesign"), scene.get("sound_design")).get("prompt"),
-                scene.get("ambientBedDescription"),
-                scene.get("syncHitDescription"),
-                scene.get("backgroundMusicCue")
-        );
-        providerRequest.put("audioDescription", sceneSoundPrompt);
-        providerRequest.put("soundPrompt", sceneSoundPrompt);
-        providerRequest.put("soundDesignPrompt", sceneSoundPrompt);
-        providerRequest.put("soundDesign", firstValue(
-                request.get("soundDesign"),
-                scene.get("soundDesign"),
-                scene.get("sound_design"),
-                Map.of()
-        ));
-        providerRequest.put("ambientBedDescription", firstText(
-                request.get("ambientBedDescription"),
-                scene.get("ambientBedDescription"),
-                scene.get("ambient_bed_description")
-        ));
-        providerRequest.put("syncHitDescription", firstText(
-                request.get("syncHitDescription"),
-                scene.get("syncHitDescription"),
-                scene.get("sync_hit_description")
-        ));
-        providerRequest.put("backgroundMusicCue", firstText(
-                request.get("backgroundMusicCue"),
-                scene.get("backgroundMusicCue"),
-                scene.get("background_music_cue")
-        ));
-        providerRequest.put("generateAudio", booleanValue(firstValue(
-                request.get("generateAudio"),
-                request.get("generate_audio"),
-                scene.get("generateAudio"),
-                scene.get("generate_audio")
-        ), !sceneSoundPrompt.isBlank()));
-        providerRequest.put("audioMixStandards", audioMixStandards(
-                request.get("audioMixStandards"),
-                contextPayload.get("audioMixStandards"),
-                videoFinishingPlan.get("audioMixStandards"),
-                soundDesignPlan.get("audioMixStandards")
-        ));
-        providerRequest.put("storyboardReferenceMode", firstText(request.get("storyboardReferenceMode"), request.get("referenceImageMode"), contextPayload.get("storyboardReferenceMode"), contextPayload.get("referenceImageMode"), videoFinishingPlan.get("referenceImageMode"), imageLedAdPlan.get("referenceImageMode"), "prompt_only"));
-        providerRequest.put("referenceImageMode", firstText(request.get("referenceImageMode"), contextPayload.get("referenceImageMode"), videoFinishingPlan.get("referenceImageMode"), imageLedAdPlan.get("referenceImageMode"), "prompt_only"));
-        providerRequest.put("requireReferenceImage", booleanValue(firstValue(request.get("requireReferenceImage"), request.get("requireImageAnchors"), contextPayload.get("requireImageAnchors"), videoFinishingPlan.get("requireImageAnchors"), imageLedAdPlan.get("requireImageAnchors")), false));
-        String sceneDialogueScript = dialogueTextForScene(scene);
-        providerRequest.put("dialogueScript", sceneDialogueScript);
-        providerRequest.put("exactDialogue", sceneDialogueScript);
-        providerRequest.put("dialogueCoverageRequired", !sceneDialogueScript.isBlank());
-        providerRequest.put("dialogueCoveragePolicy", "speak_every_word_in_order_without_paraphrase_when_native_audio_is_supported");
-        providerRequest.put("referenceImageDetails", firstText(
-                scene.get("referenceImageDetails"),
-                request.get("referenceImageDetails"),
-                request.get("productReferenceDetails"),
-                contextPayload.get("referenceImageDetails")
-        ));
-        Map<String, Object> consistencyBible = enrichedVideoConsistencyBible(scene, request, contextPayload);
-        providerRequest.put("videoConsistencyBible", consistencyBible);
-        Map<String, Object> seedanceStrategy = firstMap(request.get("seedancePromptStrategy"), contextPayload.get("seedancePromptStrategy"));
-        long seriesSeed = longValue(firstValue(request.get("seriesSeed"), contextPayload.get("seriesSeed")), 0);
-        if (seriesSeed <= 0) {
-            seriesSeed = deterministicSeed(firstText(contextPayload.get("runId"), contextPayload.get("scriptId"), contextPayload.get("title")), "series");
-        }
-        long sceneSeed = longValue(firstValue(request.get("seed"), scene.get("seed")), 0);
-        if (sceneSeed <= 0) {
-            sceneSeed = deterministicSeed(String.valueOf(seriesSeed), firstText(scene.get("id"), scene.get("sceneId"), scene.get("sceneNumber")));
-        }
-        boolean noHumans = booleanValue(firstValue(request.get("noHumans"), scene.get("noHumans"), contextPayload.get("noHumans")), false);
-        String negativePrompt = firstText(
-                request.get("negativePrompt"),
-                scene.get("negativePrompt"),
-                consistencyBible.get("negativePrompt"),
-                "no face drift, no wardrobe change, no random new actor, no changed room layout, no wrong aspect ratio, no unreadable text, no watermark, no random subtitles, no extra limbs"
-        );
-        if (noHumans && !negativePrompt.toLowerCase(Locale.ROOT).contains("no people")) {
-            negativePrompt += ", no people, no person, no face, no hands, no arms, no human body, no human silhouette, no human reflection, no presenter, no crowd";
-        }
-        providerRequest.put("noHumans", noHumans);
-        providerRequest.put("seedancePromptStrategy", seedanceStrategy);
-        providerRequest.put("seriesSeed", seriesSeed);
-        providerRequest.put("seed", sceneSeed);
-        providerRequest.put("negativePrompt", negativePrompt);
-        providerRequest.put("visualConsistencyPrompt", firstText(
-                seedanceStrategy.get("globalConsistencyPrompt"),
-                consistencyBible.get("globalConsistencyPrompt"),
-                toJson(consistencyBible)
-        ));
-        providerRequest.put("pacingPrompt", firstText(scene.get("pacingPrompt"), seedanceStrategy.get("fastPacedPrompt"), seedanceStrategy.get("slowPacedPrompt")));
-        providerRequest.put("srtCues", firstList(scene.get("srtCues"), request.get("srtCues"), contextPayload.get("srtCues")));
-        providerRequest.put("captionTrack", firstList(scene.get("captionTrack")));
-        List<String> referenceImageUrls = referenceImageUrlsForScene(scene, request, contextPayload);
-        providerRequest.put("referenceImageUrl", firstText(referenceImageUrls.isEmpty() ? null : referenceImageUrls.get(0)));
-        providerRequest.put("referenceImageUrls", referenceImageUrls);
-        List<Map<String, Object>> productImageAssets = productImageAssetsForScene(scene, request, contextPayload);
-        providerRequest.put("productImageAssets", productImageAssets);
-        providerRequest.put("referenceImageAssets", productImageAssets);
-        List<Map<String, Object>> generatedProductSceneAssets = generatedProductSceneImageAssets(scene, request);
-        List<Map<String, Object>> canonicalProductAssets = canonicalProductImageAssets(request, contextPayload, productImageAssets);
-        List<String> generatedProductSceneUrls = generatedProductSceneImageUrls(scene, request, generatedProductSceneAssets);
-        List<String> canonicalProductUrls = canonicalProductImageUrls(request, contextPayload, canonicalProductAssets);
-        List<Map<String, Object>> seedanceReferenceAssets = new ArrayList<>();
-        generatedProductSceneAssets.forEach(asset -> addProductImageAssets(seedanceReferenceAssets, asset));
-        canonicalProductAssets.forEach(asset -> addProductImageAssets(seedanceReferenceAssets, asset));
-        List<String> seedanceReferenceUrls = new ArrayList<>();
-        generatedProductSceneUrls.forEach(url -> addReferenceImageUrl(seedanceReferenceUrls, url));
-        canonicalProductUrls.forEach(url -> addReferenceImageUrl(seedanceReferenceUrls, url));
-        boolean seedanceProductReferenceMode = noHumans
-                && booleanValue(firstValue(
-                request.get("productLed"),
-                request.get("imageLedAdMode"),
-                imageLedAdPlan.get("enabled"),
-                scene.get("productCgiScene")
-        ), false)
-                && (!generatedProductSceneAssets.isEmpty() || !generatedProductSceneUrls.isEmpty())
-                && (!canonicalProductAssets.isEmpty() || !canonicalProductUrls.isEmpty());
-        providerRequest.put("generatedProductImageAssets", generatedProductSceneAssets);
-        providerRequest.put("generatedProductImageUrls", generatedProductSceneUrls);
-        providerRequest.put("generatedProductImageUrl", firstText(generatedProductSceneUrls.isEmpty() ? null : generatedProductSceneUrls.get(0)));
-        providerRequest.put("canonicalProductImageAssets", canonicalProductAssets);
-        providerRequest.put("canonicalProductImageUrls", canonicalProductUrls);
-        providerRequest.put("seedanceReferenceImageAssets", seedanceReferenceAssets);
-        providerRequest.put("seedanceReferenceImageUrls", seedanceReferenceUrls);
-        providerRequest.put("seedanceReferenceToVideo", seedanceProductReferenceMode);
-        providerRequest.put("seedanceReferenceMode", seedanceProductReferenceMode ? "product_cgi_multi_reference" : "single_frame_or_text");
-        providerRequest.put("seedanceReferencePromptPolicy", seedanceProductReferenceMode
-                ? "@Image1 is the approved CGI shot frame. @Image2 and later images are canonical source-product references used only to lock product identity."
-                : "");
-        providerRequest.put("storyboardVisualPolicy", "Storyboard sketches are planning references only. Never attach, animate, reproduce, or render a storyboard card, sketch, panel, or drawing in the generated video. Use a supplied product visual anchor only when it is explicitly marked product_visual_anchor.");
-        providerRequest.put("consistencyStrategy", Map.of(
-                "seriesSeed", seriesSeed,
-                "sceneSeed", sceneSeed,
-                "strategy", "deterministic_scene_seed_plus_prompt_locks",
-                "locks", List.of("character_identity", "wardrobe", "set_geography", "lighting", "camera_language", "srt_cues", "adjacent_scene_continuity")
-        ));
-        providerRequest.put("rateLimitPolicy", rateLimitPolicy(provider));
-        if ("google_veo".equals(provider)) {
-            providerRequest.put("baseUrl", googleVeoBaseUrl(model));
-            providerRequest.put("apiKeyEnv", "GOOGLE_VEO_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, or CREATOR_GEMINI_API_KEY");
-            providerRequest.put("operation", "predictLongRunning");
-            providerRequest.put("pollOperation", "operations.get");
-        } else if ("gemini_omni".equals(provider)) {
-            providerRequest.put("baseUrl", envString("GEMINI_OMNI_BASE_URL", envString("GOOGLE_OMNI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")));
-            providerRequest.put("apiKeyEnv", "GEMINI_OMNI_API_KEY, GOOGLE_OMNI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEY, or CREATOR_GEMINI_API_KEY");
-            providerRequest.put("operation", "models.generateContent");
-            providerRequest.put("pollOperation", "inline_video_or_file_download");
-        } else if ("synthesia".equals(provider)) {
-            providerRequest.put("baseUrl", envString("SYNTHESIA_BASE_URL", "https://api.synthesia.io"));
-            providerRequest.put("apiKeyEnv", "SYNTHESIA_API_KEY");
-            providerRequest.put("operation", "create_avatar_video");
-            providerRequest.put("pollOperation", "get_video_status");
-        } else if ("dalai_llama".equals(provider)) {
-            providerRequest.put("baseUrl", envString("DALAI_LLAMA_AI_SERVICE_URL", envString("AI_SERVICE_URL", "http://ai-service.apps.svc.cluster.local:8601")));
-            providerRequest.put("apiKeyEnv", "optional DALAI_LLAMA_AI_SERVICE_API_KEY");
-            providerRequest.put("operation", "local_open_source_avatar_scene");
-            providerRequest.put("pollOperation", "get_local_avatar_job");
-        } else if ("seedance".equals(provider)) {
-            providerRequest.put("baseUrl", envString("SEEDANCE_BASE_URL", "https://queue.fal.run"));
-            providerRequest.put("apiKeyEnv", "FAL_KEY or SEEDANCE_API_KEY");
-            providerRequest.put("operation", "fal_queue_submit");
-            providerRequest.put("pollOperation", "fal_queue_status_then_response");
-        } else {
-            providerRequest.put("baseUrl", envString("OMINI_BASE_URL", envString("OMNI_BASE_URL", "")));
-            providerRequest.put("apiKeyEnv", "OMINI_API_KEY");
-        }
-        return providerRequest;
+        return new ProviderRequestBuilder(this, provider, model, scene, request, contextPayload).build();
     }
 
-    private List<Map<String, Object>> sourceScenes(CreatorScript script, Map<String, Object> request) {
+    List<Map<String, Object>> sourceScenes(CreatorScript script, Map<String, Object> request) {
         List<Map<String, Object>> persistedShots = persistedScriptShotScenes(script);
         if (!persistedShots.isEmpty()) {
             return enrichScenesWithStoryboardReferences(script, persistedShots, request);
@@ -7490,7 +6459,7 @@ public class ScreenplayVideoService {
         return scene;
     }
 
-    private void applySceneDialogue(Map<String, Object> scene, String dialogue) {
+    public static void applySceneDialogue(Map<String, Object> scene, String dialogue) {
         String normalized = normalizeDialogueText(dialogue);
         if (scene == null || normalized.isBlank()) {
             return;
@@ -7520,7 +6489,7 @@ public class ScreenplayVideoService {
             return existingScenes;
         }
         boolean avatarDialogueRun = avatarSceneDialogueService != null
-                && isAvatarDialogueRun(run, existingScenes);
+                && avatarDialogueSyncGateway.isAvatarDialogueRun(run, existingScenes);
         UUID videoRunId = uuidValue(run == null ? null : run.get("runId"));
         Map<Integer, CreatorAvatarSceneDialogue> avatarSources = avatarDialogueRun
                 ? avatarSceneDialogueService.currentSources(
@@ -7607,7 +6576,7 @@ public class ScreenplayVideoService {
                     )
                     && !dialogueTextForScene(existing).isBlank();
             if (avatarDialogueRun && selectedAvatarDialogue != null) {
-                applyAvatarDialogueRecord(merged, avatarSource, selectedAvatarDialogue);
+                avatarDialogueSyncGateway.applyRecord(merged, avatarSource, selectedAvatarDialogue);
             } else if (preserveLocalizedDialogue) {
                 copySceneLocalizationState(existing, merged);
             } else {
@@ -7617,7 +6586,7 @@ public class ScreenplayVideoService {
                 merged.put("dialogueLocalizationStatus", "NOT_REQUIRED");
                 merged.put("dialogueTranslationApplied", false);
                 if (avatarSource != null) {
-                    applyAvatarDialogueRecord(merged, avatarSource, avatarSource);
+                    avatarDialogueSyncGateway.applyRecord(merged, avatarSource, avatarSource);
                 } else if (avatarDraft != null) {
                     merged.put("dialogueSpeaker", avatarDraft.speaker());
                     merged.put("dialogueSourceKind", avatarDraft.sourceKind());
@@ -7654,7 +6623,7 @@ public class ScreenplayVideoService {
     }
 
     private void synchronizeAvatarDialogueSources(CreatorScript script, Map<String, Object> run) {
-        if (avatarSceneDialogueService == null || script == null || !isAvatarDialogueRun(run, mapListValue(run.get("scenes")))) {
+        if (avatarSceneDialogueService == null || script == null || !avatarDialogueSyncGateway.isAvatarDialogueRun(run, mapListValue(run.get("scenes")))) {
             return;
         }
         UUID videoRunId = uuidValue(run.get("runId"));
@@ -7693,108 +6662,12 @@ public class ScreenplayVideoService {
                         creatorAiService == null ? null : creatorAiService.providerName(),
                         creatorAiService == null ? null : creatorAiService.modelName()
                 );
-                applyAvatarDialogueRecord(scene, source, translated);
+                avatarDialogueSyncGateway.applyRecord(scene, source, translated);
                 scenes.set(index, scene);
             }
         }
         run.put("scenes", reconcilePreparedRunScenes(script, run, scenes));
         run.put("sceneClips", run.get("scenes"));
-    }
-
-    private CreatorAvatarSceneDialogue currentAvatarSourceDialogue(
-            CreatorScript script,
-            UUID videoRunId,
-            int sceneNumber
-    ) {
-        if (avatarSceneDialogueService == null || script == null || videoRunId == null) {
-            return null;
-        }
-        return avatarSceneDialogueService.currentSources(
-                script.getTenantId(),
-                script.getUserId(),
-                videoRunId
-        ).get(sceneNumber);
-    }
-
-    private void applyAvatarDialogueRecord(
-            Map<String, Object> scene,
-            CreatorAvatarSceneDialogue source,
-            CreatorAvatarSceneDialogue selected
-    ) {
-        if (scene == null || source == null || selected == null) {
-            return;
-        }
-        applySceneDialogue(scene, selected.getDialogueText());
-        applyAvatarDialogueIdentity(scene, source, selected);
-        scene.put("sourceDialogueScript", source.getDialogueText());
-        scene.put("sourceDialogueLanguage", source.getLanguage());
-        scene.put("dialogueLanguage", selected.getLanguage());
-        scene.put("languageCode", selected.getLanguageCode());
-        scene.put(
-                "dialogueLocalizationStatus",
-                Boolean.TRUE.equals(selected.getSource()) ? "NOT_REQUIRED" : "COMPLETED"
-        );
-        scene.put("dialogueTranslationApplied", !Boolean.TRUE.equals(selected.getSource()));
-        scene.put("dialogueSource", "creator_avatar_scene_dialogues");
-        attachAvatarDialogueVariants(scene, source, selected);
-    }
-
-    private void applyAvatarDialogueIdentity(
-            Map<String, Object> scene,
-            CreatorAvatarSceneDialogue source,
-            CreatorAvatarSceneDialogue selected
-    ) {
-        if (scene == null || source == null || selected == null) {
-            return;
-        }
-        scene.put("avatarDialogueId", selected.getId().toString());
-        scene.put("avatarRootDialogueId", source.getRootDialogueId().toString());
-        scene.put("sourceAvatarDialogueId", source.getId().toString());
-        scene.put("dialogueLanguageRecordId", selected.getId().toString());
-        scene.put("dialogueSpeaker", firstText(selected.getSpeaker(), source.getSpeaker()));
-        scene.put("dialogueSourceKind", source.getSourceKind());
-        scene.put("dialogueSourcePath", source.getSourcePath());
-        scene.put("dialogueVersion", selected.getVersionNumber());
-    }
-
-    private void attachAvatarDialogueVariants(
-            Map<String, Object> scene,
-            CreatorAvatarSceneDialogue source,
-            CreatorAvatarSceneDialogue selected
-    ) {
-        if (avatarSceneDialogueService == null || source == null || selected == null) {
-            return;
-        }
-        List<CreatorAvatarSceneDialogue> currentVariants = avatarSceneDialogueService.currentVariants(
-                source.getRootDialogueId()
-        );
-        if (currentVariants.isEmpty()) {
-            currentVariants = List.of(source);
-        }
-        List<Map<String, Object>> variants = currentVariants.stream()
-                .map(row -> avatarDialogueVariant(row, row.getId().equals(selected.getId())))
-                .toList();
-        scene.put("dialogueVariants", variants);
-        scene.put("selectedDialogueId", selected.getId().toString());
-        scene.put("selectedDialogueLanguage", selected.getLanguage());
-    }
-
-    private Map<String, Object> avatarDialogueVariant(
-            CreatorAvatarSceneDialogue row,
-            boolean selected
-    ) {
-        Map<String, Object> variant = new LinkedHashMap<>();
-        variant.put("id", row.getId().toString());
-        variant.put("rootDialogueId", row.getRootDialogueId().toString());
-        variant.put("language", row.getLanguage());
-        variant.put("languageKey", row.getLanguageKey());
-        variant.put("languageCode", row.getLanguageCode());
-        variant.put("dialogueText", row.getDialogueText());
-        variant.put("speaker", row.getSpeaker());
-        variant.put("source", Boolean.TRUE.equals(row.getSource()));
-        variant.put("selected", selected);
-        variant.put("version", row.getVersionNumber());
-        return variant;
     }
 
     private Map<String, Object> draftDialogueVariant(
@@ -7810,30 +6683,6 @@ public class ScreenplayVideoService {
         variant.put("source", true);
         variant.put("selected", selected);
         return variant;
-    }
-
-    private boolean isAvatarDialogueRun(
-            Map<String, Object> run,
-            List<Map<String, Object>> scenes
-    ) {
-        if (run == null || run.isEmpty()) {
-            return false;
-        }
-        if (booleanValue(run.get("founderLedHybridEnabled"), false)
-                || "full_founder".equalsIgnoreCase(firstText(run.get("hybridSceneMode")))
-                || !firstMap(run.get("founderAvatarProfile"), run.get("founderKit")).isEmpty()) {
-            return true;
-        }
-        List<Map<String, Object>> safeScenes = scenes == null ? List.of() : scenes;
-        return safeScenes.stream().anyMatch(scene ->
-                "talking_head".equalsIgnoreCase(firstText(scene.get("generationMode")))
-                        || !firstMap(scene.get("founderAvatarProfile")).isEmpty()
-                        || !firstText(
-                                scene.get("dialogueCloneStatus"),
-                                scene.get("avatarDialogueId"),
-                                scene.get("avatarRootDialogueId")
-                        ).isBlank()
-        );
     }
 
     private void copySceneRuntimeState(Map<String, Object> source, Map<String, Object> target) {
@@ -7887,7 +6736,7 @@ public class ScreenplayVideoService {
         scene.put("providerRequest", providerRequest);
     }
 
-    private List<Map<String, Object>> avatarScriptScenes(
+    List<Map<String, Object>> avatarScriptScenes(
             List<Map<String, Object>> screenplayScenes,
             String avatarScript
     ) {
@@ -7924,7 +6773,7 @@ public class ScreenplayVideoService {
         return List.of(scene);
     }
 
-    private List<Map<String, Object>> splitScenesForModelCapability(List<Map<String, Object>> scenes, int maxClipSeconds) {
+    List<Map<String, Object>> splitScenesForModelCapability(List<Map<String, Object>> scenes, int maxClipSeconds) {
         if (scenes == null || scenes.isEmpty()) {
             return List.of();
         }
@@ -8037,7 +6886,7 @@ public class ScreenplayVideoService {
                 + "\" in order, without paraphrasing or skipping any words.";
     }
 
-    private List<Map<String, Object>> enrichScenesWithStoryboardReferences(
+    List<Map<String, Object>> enrichScenesWithStoryboardReferences(
             CreatorScript script,
             List<Map<String, Object>> scenes,
             Map<String, Object> request
@@ -8045,33 +6894,45 @@ public class ScreenplayVideoService {
         if (script == null || scenes == null || scenes.isEmpty()) {
             return scenes == null ? List.of() : scenes;
         }
+
+        // Video generation is the final layer of this workflow, not an independent pipeline -
+        // it should inherit the same per-shot director/DP planning (storyboardTag/
+        // lightingBuildSheetTag/cameraPlanSheetTag) that storyboard image generation already
+        // uses, not reconstruct a shallower version of it from raw screenplay fields. This is a
+        // separate lookup from the CreatorStoryboard/CreatorStoryboardScene block below - shot
+        // plans exist independent of whether a storyboard record was ever created, so this must
+        // not be gated by the storyboard-presence early return that block used to have.
+        Map<Integer, CreatorScriptShotPlan> shotPlanByShot = new LinkedHashMap<>();
+        for (CreatorScriptShotPlan plan : shotPlanRepository.findByScriptIdOrderByShotNumberAsc(script.getId())) {
+            if (plan.getShotNumber() != null && ProductionPlanTagService.DEFAULT_STYLE_KEY.equals(plan.getStyleKey())) {
+                shotPlanByShot.putIfAbsent(plan.getShotNumber(), plan);
+            }
+        }
+
         CreatorStoryboard storyboard = storyboardForScript(script, request);
-        if (storyboard == null || storyboard.getId() == null) {
-            return scenes;
-        }
-        List<CreatorStoryboardScene> storyboardScenes = storyboardSceneRepository.findByStoryboardIdOrderByShotNumberAsc(storyboard.getId());
-        if (storyboardScenes.isEmpty()) {
-            return scenes;
-        }
-
         Map<Integer, CreatorStoryboardScene> storyboardSceneByShot = new LinkedHashMap<>();
-        List<UUID> assetIds = new ArrayList<>();
-        for (CreatorStoryboardScene storyboardScene : storyboardScenes) {
-            if (storyboardScene.getShotNumber() != null) {
-                storyboardSceneByShot.putIfAbsent(storyboardScene.getShotNumber(), storyboardScene);
+        Map<UUID, CreatorAsset> assetsById = new LinkedHashMap<>();
+        if (storyboard != null && storyboard.getId() != null) {
+            List<CreatorStoryboardScene> storyboardScenes = storyboardSceneRepository.findByStoryboardIdOrderByShotNumberAsc(storyboard.getId());
+            List<UUID> assetIds = new ArrayList<>();
+            for (CreatorStoryboardScene storyboardScene : storyboardScenes) {
+                if (storyboardScene.getShotNumber() != null) {
+                    storyboardSceneByShot.putIfAbsent(storyboardScene.getShotNumber(), storyboardScene);
+                }
+                if (storyboardScene.getImageAssetId() != null) {
+                    assetIds.add(storyboardScene.getImageAssetId());
+                }
+                UUID productionImageAssetId = uuidValue(mapValue(storyboardScene.getMetadata()).get("productionImageAssetId"));
+                if (productionImageAssetId != null) {
+                    assetIds.add(productionImageAssetId);
+                }
             }
-            if (storyboardScene.getImageAssetId() != null) {
-                assetIds.add(storyboardScene.getImageAssetId());
-            }
-            UUID productionImageAssetId = uuidValue(mapValue(storyboardScene.getMetadata()).get("productionImageAssetId"));
-            if (productionImageAssetId != null) {
-                assetIds.add(productionImageAssetId);
+            if (!assetIds.isEmpty()) {
+                assetRepository.findAllById(assetIds).forEach(asset -> assetsById.put(asset.getId(), asset));
             }
         }
-
-        Map<UUID, CreatorAsset> assetsById = new LinkedHashMap<>();
-        if (!assetIds.isEmpty()) {
-            assetRepository.findAllById(assetIds).forEach(asset -> assetsById.put(asset.getId(), asset));
+        if (storyboardSceneByShot.isEmpty() && shotPlanByShot.isEmpty()) {
+            return scenes;
         }
 
         List<Map<String, Object>> enriched = new ArrayList<>();
@@ -8085,11 +6946,12 @@ public class ScreenplayVideoService {
                     scene.get("scene_number")
             ), index + 1);
             CreatorStoryboardScene storyboardScene = storyboardSceneByShot.get(shotNumber);
-            if (storyboardScene != null) {
+            if (storyboard != null && storyboardScene != null) {
                 attachStoryboardReference(storyboard, storyboardScene, assetsById.get(storyboardScene.getImageAssetId()), scene);
                 UUID productionImageAssetId = uuidValue(mapValue(storyboardScene.getMetadata()).get("productionImageAssetId"));
                 attachProductionImageAnchor(assetsById.get(productionImageAssetId), scene);
             }
+            shotPlanTagGateway.attachTo(shotPlanByShot.get(shotNumber), scene);
             Map<String, Object> requestOverride = requestSceneOverride(request, scene, index + 1);
             if (!requestOverride.isEmpty()) {
                 scene.putAll(requestOverride);
@@ -8220,7 +7082,7 @@ public class ScreenplayVideoService {
         putIfBlank(scene, "productImageUrl", imageUrl);
     }
 
-    private CreatorScript loadScript(UUID scriptId, String tenantId, String userId) {
+    CreatorScript loadScript(UUID scriptId, String tenantId, String userId) {
         if (scriptId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Script id is required.");
         }
@@ -8229,7 +7091,7 @@ public class ScreenplayVideoService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Creator script was not found."));
     }
 
-    private RunRecord loadRun(UUID runId, String tenantId, String userId) {
+    RunRecord loadRun(UUID runId, String tenantId, String userId) {
         if (runId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Video run id is required.");
         }
@@ -8730,7 +7592,7 @@ public class ScreenplayVideoService {
         return asset;
     }
 
-    private int findSceneIndex(List<Map<String, Object>> scenes, String sceneId) {
+    int findSceneIndex(List<Map<String, Object>> scenes, String sceneId) {
         if (scenes == null || scenes.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No scenes were found in this video run.");
         }
@@ -8745,7 +7607,7 @@ public class ScreenplayVideoService {
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Scene was not found in this video run.");
     }
 
-    private Map<String, Object> outputPayload(Map<String, Object> run, String message) {
+    Map<String, Object> outputPayload(Map<String, Object> run, String message) {
         Map<String, Object> safeRun = sanitizeProviderStorageMap(run);
         if (safeRun.get("scenes") != null && safeRun.get("scenes").equals(safeRun.get("sceneClips"))) {
             safeRun.remove("sceneClips");
@@ -8851,7 +7713,7 @@ public class ScreenplayVideoService {
         return checked > 0 && valid >= Math.max(1, checked * 98 / 100);
     }
 
-    private String generationModeFor(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
+    String generationModeFor(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
         String productionStyle = normalizeProductionStyle(firstText(
                 request == null ? null : request.get("productionStyle"),
                 runOrRequest == null ? null : runOrRequest.get("productionStyle")
@@ -8884,7 +7746,7 @@ public class ScreenplayVideoService {
         ));
     }
 
-    private boolean shouldAutoAssignFounderAvatarScene(
+    boolean shouldAutoAssignFounderAvatarScene(
             List<Map<String, Object>> scenes,
             Map<String, Object> scene,
             int sceneIndex,
@@ -8951,7 +7813,7 @@ public class ScreenplayVideoService {
         ).isBlank();
     }
 
-    private String normalizeFounderHybridSceneMode(String value) {
+    String normalizeFounderHybridSceneMode(String value) {
         String normalized = defaultString(value, "hybrid")
                 .toLowerCase(Locale.ROOT)
                 .replace('-', '_')
@@ -8983,7 +7845,7 @@ public class ScreenplayVideoService {
         return firstText(overrides.get(id), overrides.get(sceneNumber), overrides.get(shotNumber), overrides.get("scene-" + sceneNumber));
     }
 
-    private String providerPromptFor(Map<String, Object> scene, Map<String, Object> scriptPayload, Map<String, Object> request) {
+    String providerPromptFor(Map<String, Object> scene, Map<String, Object> scriptPayload, Map<String, Object> request) {
         String providerPrompt = firstText(
                 scene.get("providerPrompt"),
                 scene.get("provider_prompt"),
@@ -9019,7 +7881,7 @@ public class ScreenplayVideoService {
         ).trim();
     }
 
-    private Map<String, Object> compactScene(Map<String, Object> scene) {
+    Map<String, Object> compactScene(Map<String, Object> scene) {
         if (scene == null || scene.isEmpty()) {
             return Map.of();
         }
@@ -9091,14 +7953,14 @@ public class ScreenplayVideoService {
         return compact;
     }
 
-    private List<Map<String, Object>> srtCuesForScene(List<Object> cues, Map<String, Object> scene) {
+    List<Map<String, Object>> srtCuesForScene(List<Object> cues, Map<String, Object> scene) {
         if (cues == null || cues.isEmpty()) {
             return List.of();
         }
         int start = intValue(scene.get("startSeconds"), 0);
         int end = intValue(scene.get("endSeconds"), start + positiveInt(scene.get("durationSeconds"), 15));
         return cues.stream()
-                .map(this::mapValue)
+                .map(MapCoercion::mapValue)
                 .filter(cue -> cue.isEmpty()
                         || overlaps(start, end, intValue(firstValue(cue.get("startSeconds"), cue.get("start")), start), intValue(firstValue(cue.get("endSeconds"), cue.get("end")), end)))
                 .limit(6)
@@ -9125,7 +7987,7 @@ public class ScreenplayVideoService {
         return List.of(cue);
     }
 
-    private String dialogueTextForScene(Map<String, Object> scene) {
+    String dialogueTextForScene(Map<String, Object> scene) {
         if (scene == null || scene.isEmpty()) {
             return "";
         }
@@ -9178,17 +8040,17 @@ public class ScreenplayVideoService {
         return firstText(value);
     }
 
-    private String normalizeDialogueText(String value) {
+    public static String normalizeDialogueText(String value) {
         return defaultString(value, "")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
 
-    private int estimatedDialogueSeconds(Map<String, Object> scene) {
+    int estimatedDialogueSeconds(Map<String, Object> scene) {
         return estimatedDialogueSeconds(dialogueTextForScene(scene));
     }
 
-    private int estimatedDialogueSeconds(String dialogue) {
+    int estimatedDialogueSeconds(String dialogue) {
         String text = normalizeDialogueText(dialogue);
         if (text.isBlank()) {
             return 0;
@@ -9201,7 +8063,7 @@ public class ScreenplayVideoService {
         return Math.max(startA, startB) < Math.min(endA, endB);
     }
 
-    private String sceneIdFor(Map<String, Object> scene, int sceneNumber) {
+    String sceneIdFor(Map<String, Object> scene, int sceneNumber) {
         String id = firstText(scene.get("id"), scene.get("sceneId"), scene.get("scene_id"), scene.get("shotId"), scene.get("shot_id"));
         if (!id.isBlank()) {
             return id;
@@ -9209,7 +8071,7 @@ public class ScreenplayVideoService {
         return "scene-" + sceneNumber;
     }
 
-    private Map<String, Object> rateLimitPolicy(String provider) {
+    Map<String, Object> rateLimitPolicy(String provider) {
         Map<String, Object> policy = new LinkedHashMap<>();
         if ("google_veo".equals(provider)) {
             policy.put("maxConcurrentGenerations", envInt("GOOGLE_VEO_MAX_CONCURRENT_GENERATIONS", envInt("GOOGLE_MAX_CONCURRENT_GENERATIONS", 1)));
@@ -9241,7 +8103,7 @@ public class ScreenplayVideoService {
         return policy;
     }
 
-    private Map<String, Object> imageLedAdPlan(
+    Map<String, Object> imageLedAdPlan(
             Map<String, Object> request,
             Map<String, Object> contextPayload,
             Map<String, Object> videoFinishingPlan
@@ -9293,7 +8155,7 @@ public class ScreenplayVideoService {
         return plan;
     }
 
-    private Map<String, Object> audioProductionPlan(
+    Map<String, Object> audioProductionPlan(
             Map<String, Object> request,
             Map<String, Object> contextPayload,
             Map<String, Object> soundDesignPlan,
@@ -9336,7 +8198,7 @@ public class ScreenplayVideoService {
         return plan;
     }
 
-    private Map<String, Object> editingPlan(
+    Map<String, Object> editingPlan(
             Map<String, Object> request,
             Map<String, Object> contextPayload,
             Map<String, Object> videoFinishingPlan,
@@ -9408,7 +8270,7 @@ public class ScreenplayVideoService {
         );
     }
 
-    private List<String> referenceImageUrlsForScene(
+    List<String> referenceImageUrlsForScene(
             Map<String, Object> scene,
             Map<String, Object> request,
             Map<String, Object> contextPayload
@@ -9426,7 +8288,7 @@ public class ScreenplayVideoService {
         return urls;
     }
 
-    private List<String> productReferenceImageUrls(
+    List<String> productReferenceImageUrls(
             Map<String, Object> request,
             Map<String, Object> scriptPayload,
             Map<String, Object> creatorContext
@@ -9458,7 +8320,7 @@ public class ScreenplayVideoService {
         return urls.stream().limit(8).toList();
     }
 
-    private List<Map<String, Object>> productReferenceImageAssets(
+    List<Map<String, Object>> productReferenceImageAssets(
             Map<String, Object> request,
             Map<String, Object> scriptPayload,
             Map<String, Object> creatorContext
@@ -9493,7 +8355,7 @@ public class ScreenplayVideoService {
                 .toList();
     }
 
-    private Map<String, Object> enrichedVideoConsistencyBible(
+    Map<String, Object> enrichedVideoConsistencyBible(
             Map<String, Object> scene,
             Map<String, Object> request,
             Map<String, Object> contextPayload
@@ -9565,7 +8427,7 @@ public class ScreenplayVideoService {
         }
     }
 
-    private List<Map<String, Object>> generatedProductSceneImageAssets(
+    List<Map<String, Object>> generatedProductSceneImageAssets(
             Map<String, Object> scene,
             Map<String, Object> request
     ) {
@@ -9604,7 +8466,7 @@ public class ScreenplayVideoService {
         addProductImageAssets(target, generated);
     }
 
-    private List<Map<String, Object>> canonicalProductImageAssets(
+    List<Map<String, Object>> canonicalProductImageAssets(
             Map<String, Object> request,
             Map<String, Object> contextPayload,
             List<Map<String, Object>> allProductAssets
@@ -9640,7 +8502,7 @@ public class ScreenplayVideoService {
         return role.contains("generated") || role.contains("scene_frame") || role.contains("scene_production") || role.contains("production_image");
     }
 
-    private List<String> generatedProductSceneImageUrls(
+    List<String> generatedProductSceneImageUrls(
             Map<String, Object> scene,
             Map<String, Object> request,
             List<Map<String, Object>> generatedAssets
@@ -9656,7 +8518,7 @@ public class ScreenplayVideoService {
         return urls.stream().limit(1).toList();
     }
 
-    private List<String> canonicalProductImageUrls(
+    List<String> canonicalProductImageUrls(
             Map<String, Object> request,
             Map<String, Object> contextPayload,
             List<Map<String, Object>> canonicalAssets
@@ -9671,7 +8533,7 @@ public class ScreenplayVideoService {
         return urls.stream().limit(8).toList();
     }
 
-    private List<Map<String, Object>> productImageAssetsForScene(
+    List<Map<String, Object>> productImageAssetsForScene(
             Map<String, Object> scene,
             Map<String, Object> request,
             Map<String, Object> contextPayload
@@ -9689,7 +8551,7 @@ public class ScreenplayVideoService {
         return assets;
     }
 
-    private void addProductImageAssets(List<Map<String, Object>> target, Object value) {
+    void addProductImageAssets(List<Map<String, Object>> target, Object value) {
         if (value instanceof Collection<?> collection) {
             collection.forEach(item -> addProductImageAssets(target, item));
             return;
@@ -9741,7 +8603,7 @@ public class ScreenplayVideoService {
         return role.contains("product") || role.contains("packshot") || role.contains("catalog") || role.contains("sku");
     }
 
-    private void addReferenceImageUrl(List<String> urls, Object value) {
+    void addReferenceImageUrl(List<String> urls, Object value) {
         if (value instanceof Map<?, ?> map) {
             addReferenceImageUrl(urls, map.get("storyboardImageUrl"));
             addReferenceImageUrl(urls, map.get("imageUrl"));
@@ -9764,14 +8626,14 @@ public class ScreenplayVideoService {
         return normalized.contains(".mp4") || normalized.contains(".mov") || normalized.contains(".webm") || normalized.contains("video/");
     }
 
-    private Map<String, Object> withAudioMixStandards(Map<String, Object> plan) {
+    Map<String, Object> withAudioMixStandards(Map<String, Object> plan) {
         Map<String, Object> normalized = new LinkedHashMap<>(plan == null ? Map.of() : plan);
         normalized.put("audioMixStandards", audioMixStandards(normalized.get("audioMixStandards"), normalized.get("audio_mix_standards")));
         normalized.put("audioProductionPolicy", "dialogue_first_music_ducked_room_tone_sparse_sfx_scene_reverb_smooth_fades");
         return normalized;
     }
 
-    private Map<String, Object> audioMixStandards(Object... overrides) {
+    Map<String, Object> audioMixStandards(Object... overrides) {
         Map<String, Object> standards = new LinkedHashMap<>();
         standards.put("dialogueLevel", "consistent_speech_first");
         standards.put("backgroundMusicDucking", "duck_under_speech");
@@ -9795,7 +8657,7 @@ public class ScreenplayVideoService {
         return standards;
     }
 
-    private List<Map<String, Object>> providerOptions() {
+    List<Map<String, Object>> providerOptions() {
         return List.of(
                 Map.of("value", "gemini_omni", "label", "Gemini Omni Flash", "maxClipSeconds", 10),
                 Map.of("value", "seedance", "label", "DalaiLlama Video", "maxClipSeconds", 15),
@@ -9803,7 +8665,7 @@ public class ScreenplayVideoService {
         );
     }
 
-    private List<Map<String, Object>> modelOptions(String provider) {
+    List<Map<String, Object>> modelOptions(String provider) {
         if ("google_veo".equals(provider)) {
             return List.of(
                     Map.of("value", envString("GOOGLE_VEO_VIDEO_MODEL", "veo-3.1-generate-preview"), "label", "Veo 3.1"),
@@ -9823,7 +8685,12 @@ public class ScreenplayVideoService {
         }
         return List.of(
                 Map.of("value", envString("SEEDANCE_VIDEO_MODEL", "bytedance/seedance-2.0"), "label", "Seedance 2.0"),
-                Map.of("value", "bytedance/seedance-2.0/fast", "label", "Seedance 2.0 Fast")
+                Map.of("value", "bytedance/seedance-2.0/fast", "label", "Seedance 2.0 Fast"),
+                // Confirmed live against fal.ai (queue.fal.run/bytedance/seedance-2.5/image-to-video -
+                // required fields prompt+image_url, matching https://fal.ai/models/bytedance/seedance-2.5/image-to-video/api).
+                // Single-reference-image model, structurally different from 2.0's multi-image_urls
+                // continuity/cast-face array - see buildFalSeedance25Request.
+                Map.of("value", "bytedance/seedance-2.5/image-to-video", "label", "Seedance 2.5 (single reference image)")
         );
     }
 
@@ -9843,7 +8710,7 @@ public class ScreenplayVideoService {
         return "synthesia";
     }
 
-    private String avatarProviderFrom(Object... values) {
+    String avatarProviderFrom(Object... values) {
         for (Object value : values) {
             String text = firstText(value);
             if (!text.isBlank()) {
@@ -9853,7 +8720,7 @@ public class ScreenplayVideoService {
         return "synthesia";
     }
 
-    private String avatarVoiceProvider(Map<String, Object> profile) {
+    String avatarVoiceProvider(Map<String, Object> profile) {
         String provider = avatarProviderFrom(
                 profile == null ? null : profile.get("avatarProviderMode"),
                 profile == null ? null : profile.get("providerMode")
@@ -9861,7 +8728,7 @@ public class ScreenplayVideoService {
         return "dalai_llama".equals(provider) ? "dalai_llama" : "synthesia";
     }
 
-    private Map<String, Object> founderAvatarProfile(
+    Map<String, Object> founderAvatarProfile(
             Map<String, Object> request,
             Map<String, Object> scriptPayload,
             Map<String, Object> creatorContext
@@ -9978,7 +8845,7 @@ public class ScreenplayVideoService {
         }
     }
 
-    private String normalizeVideoProvider(String provider) {
+    String normalizeVideoProvider(String provider) {
         String normalized = defaultString(provider, DEFAULT_SCREENPLAY_VIDEO_PROVIDER)
                 .toLowerCase(Locale.ROOT)
                 .replace('-', '_')
@@ -10019,7 +8886,7 @@ public class ScreenplayVideoService {
         return normalized.isBlank() ? DEFAULT_SCREENPLAY_VIDEO_PROVIDER : normalized;
     }
 
-    private String modelForProvider(String provider, String requestedModel) {
+    String modelForProvider(String provider, String requestedModel) {
         if (requestedModel != null && !requestedModel.isBlank() && isCompatibleVideoModel(provider, requestedModel)) {
             return requestedModel;
         }
@@ -10085,11 +8952,11 @@ public class ScreenplayVideoService {
         return clampInt(requested, 1, providerMax);
     }
 
-    private int defaultMaxClipSecondsForProvider(String provider) {
+    int defaultMaxClipSecondsForProvider(String provider) {
         return defaultMaxClipSecondsForProvider(provider, "");
     }
 
-    private int defaultMaxClipSecondsForProvider(String provider, String model) {
+    int defaultMaxClipSecondsForProvider(String provider, String model) {
         String normalizedModel = defaultString(model, "").toLowerCase(Locale.ROOT).replace('-', '_');
         if ("google_veo".equals(provider)) {
             return clampInt(envInt("GOOGLE_VEO_MAX_CLIP_SECONDS", envInt("GOOGLE_MAX_CLIP_SECONDS", 8)), 1, 8);
@@ -10112,7 +8979,7 @@ public class ScreenplayVideoService {
         return clampInt(envInt("SEEDANCE_MAX_CLIP_SECONDS", 15), 1, 15);
     }
 
-    private String googleVeoBaseUrl(String model) {
+    String googleVeoBaseUrl(String model) {
         String explicit = envString("GOOGLE_VEO_BASE_URL", envString("GOOGLE_BASE_URL", ""));
         if (!explicit.isBlank()) {
             return explicit;
@@ -10136,7 +9003,7 @@ public class ScreenplayVideoService {
         return backend.equals("vertex") || backend.equals("vertex_ai");
     }
 
-    private String normalizeProductionStyle(String value) {
+    String normalizeProductionStyle(String value) {
         String normalized = defaultString(value, "hybrid").toLowerCase(Locale.ROOT).replace('-', '_').trim();
         if (normalized.equals("full_ai") || normalized.equals("all_ai") || normalized.equals("ai_only") || normalized.equals("seedance_only")) {
             return "full_ai";
@@ -10152,7 +9019,7 @@ public class ScreenplayVideoService {
         return "ai_generated";
     }
 
-    private String srtTime(int seconds) {
+    String srtTime(int seconds) {
         int safe = Math.max(0, seconds);
         int hours = safe / 3600;
         int minutes = (safe % 3600) / 60;
@@ -10160,241 +9027,23 @@ public class ScreenplayVideoService {
         return "%02d:%02d:%02d,000".formatted(hours, minutes, secs);
     }
 
-    private Map<String, Object> copyMap(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return objectMapper.convertValue(map, new TypeReference<LinkedHashMap<String, Object>>() {
-            });
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private Map<String, Object> mapValue(Object value) {
-        return copyMap(value);
-    }
-
-    private List<Map<String, Object>> mapListValue(Object value) {
-        if (!(value instanceof List<?> list)) {
-            return new ArrayList<>();
-        }
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Object item : list) {
-            Map<String, Object> map = copyMap(item);
-            if (!map.isEmpty()) {
-                result.add(map);
-            }
-        }
-        return result;
-    }
-
-    private List<Object> firstList(Object... values) {
-        for (Object value : values) {
-            if (value instanceof List<?> list) {
-                return new ArrayList<>(list);
-            }
-        }
-        return List.of();
-    }
-
-    private Map<String, Object> firstMap(Object... values) {
-        for (Object value : values) {
-            Map<String, Object> map = copyMap(value);
-            if (!map.isEmpty()) {
-                return map;
-            }
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private Map<String, Object> firstNonEmptyMap(Object... values) {
-        return firstMap(values);
-    }
-
-    private Object firstValue(Object... values) {
-        if (values == null) {
-            return null;
-        }
-        for (Object value : values) {
-            if (value != null) {
-                return value;
-            }
-        }
-        return null;
-    }
-
-    private Object firstNonNull(Object... values) {
-        return firstValue(values);
-    }
-
-    private String firstText(Object... values) {
-        if (values == null) {
-            return "";
-        }
-        for (Object value : values) {
-            if (value != null && !String.valueOf(value).isBlank()) {
-                return String.valueOf(value).trim();
-            }
-        }
-        return "";
-    }
-
-    private void putIfBlank(Map<String, Object> target, String key, Object value) {
-        if (target == null || key == null || key.isBlank() || value == null || String.valueOf(value).isBlank()) {
-            return;
-        }
-        if (firstText(target.get(key)).isBlank()) {
-            target.put(key, value);
+    /**
+     * The frontend resubmits the script's full screenplayJson (including its bounded
+     * clientReviewPlanningSnapshots undo history) every time a video generation job is started.
+     * Generation only needs the current shot plan, not the review history, and that history is
+     * already durable in the script's own storyboard/shot-plan tables — so it doesn't need a
+     * second copy riding along on every generation job's input_payload.
+     */
+    @SuppressWarnings("unchecked")
+    private void trimClientReviewHistory(Map<String, Object> inputPayload) {
+        Object screenplayJson = inputPayload == null ? null : inputPayload.get("screenplayJson");
+        if (screenplayJson instanceof Map<?, ?> screenplayMap && screenplayMap.containsKey("clientReviewPlanningSnapshots")) {
+            Map<String, Object> trimmed = new LinkedHashMap<>((Map<String, Object>) screenplayMap);
+            trimmed.remove("clientReviewPlanningSnapshots");
+            inputPayload.put("screenplayJson", trimmed);
         }
     }
 
-    private BigDecimal firstBigDecimal(Object... values) {
-        if (values == null) {
-            return null;
-        }
-        for (Object value : values) {
-            BigDecimal parsed = decimalValue(value);
-            if (parsed != null) {
-                return parsed;
-            }
-        }
-        return null;
-    }
-
-    private BigDecimal decimalValue(Object value) {
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        if (value instanceof Number number) {
-            return new BigDecimal(number.toString());
-        }
-        if (value == null || String.valueOf(value).isBlank()) {
-            return null;
-        }
-        try {
-            return new BigDecimal(String.valueOf(value).trim().replace(",", ""));
-        } catch (NumberFormatException ex) {
-            return null;
-        }
-    }
-
-    private BigDecimal positiveMoney(BigDecimal value) {
-        return value == null || value.signum() < 0 ? BigDecimal.ZERO : value;
-    }
-
-    private String stringValue(Object value, String fallback) {
-        return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value);
-    }
-
-    private String defaultString(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private int positiveInt(Object value, int fallback) {
-        int parsed = intValue(value, fallback);
-        return parsed <= 0 ? fallback : parsed;
-    }
-
-    private int intValue(Object value, int fallback) {
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        if (value == null || String.valueOf(value).isBlank()) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(String.valueOf(value).replace("s", "").trim());
-        } catch (NumberFormatException ex) {
-            return fallback;
-        }
-    }
-
-    private long longValue(Object value, long fallback) {
-        if (value instanceof Number number) {
-            return number.longValue();
-        }
-        if (value == null || String.valueOf(value).isBlank()) {
-            return fallback;
-        }
-        try {
-            return Long.parseLong(String.valueOf(value).trim());
-        } catch (NumberFormatException ex) {
-            return fallback;
-        }
-    }
-
-    private long deterministicSeed(String... parts) {
-        int hash = java.util.Objects.hash((Object[]) parts);
-        long value = Integer.toUnsignedLong(hash);
-        return value == 0 ? 1 : value;
-    }
-
-    private int clampInt(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private boolean booleanValue(Object value, boolean fallback) {
-        if (value instanceof Boolean bool) {
-            return bool;
-        }
-        if (value == null || String.valueOf(value).isBlank()) {
-            return fallback;
-        }
-        return Boolean.parseBoolean(String.valueOf(value));
-    }
-
-    private UUID uuidValue(Object value) {
-        if (value instanceof UUID uuid) {
-            return uuid;
-        }
-        if (value == null || String.valueOf(value).isBlank()) {
-            return null;
-        }
-        try {
-            return UUID.fromString(String.valueOf(value));
-        } catch (IllegalArgumentException ex) {
-            return null;
-        }
-    }
-
-    private String envString(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private int envInt(String name, int fallback) {
-        String value = System.getenv(name);
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException ex) {
-            return fallback;
-        }
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (Exception ex) {
-            return String.valueOf(value);
-        }
-    }
-
-    private String truncate(String value, int maxLength) {
-        if (value == null || value.length() <= maxLength) {
-            return value;
-        }
-        return value.substring(0, Math.max(0, maxLength));
-    }
-
-    private record RunRecord(CreatorGenerationJob job, Map<String, Object> run) {
-    }
-
-    private record AiSceneEditResult(
-            Map<String, Object> scene,
-            UUID promptRunId,
-            Map<String, Object> providerOutput,
-            String errorMessage
-    ) {
+    record RunRecord(CreatorGenerationJob job, Map<String, Object> run) {
     }
 }

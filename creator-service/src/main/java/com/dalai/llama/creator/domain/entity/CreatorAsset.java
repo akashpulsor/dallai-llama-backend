@@ -65,6 +65,39 @@ public class CreatorAsset {
     @Column(nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> metadata = new LinkedHashMap<>();
 
+    @Column(name = "script_id")
+    private UUID scriptId;
+
+    @Column(name = "run_id")
+    private UUID runId;
+
+    @Column(name = "shot_number")
+    private Integer shotNumber;
+
+    @Column(name = "provider", length = 64)
+    private String provider;
+
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
+
+    @Builder.Default
+    @Column(nullable = false, length = 32)
+    private String status = "READY";
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean accepted = false;
+
+    @Column(name = "accepted_at")
+    private OffsetDateTime acceptedAt;
+
+    @Column(name = "accepted_by", length = 128)
+    private String acceptedBy;
+
+    @Builder.Default
+    @Column(name = "is_combined", nullable = false)
+    private boolean combined = false;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -75,6 +108,9 @@ public class CreatorAsset {
         }
         if (metadata == null) {
             metadata = new LinkedHashMap<>();
+        }
+        if (status == null || status.isBlank()) {
+            status = "READY";
         }
         if (createdAt == null) {
             createdAt = OffsetDateTime.now();

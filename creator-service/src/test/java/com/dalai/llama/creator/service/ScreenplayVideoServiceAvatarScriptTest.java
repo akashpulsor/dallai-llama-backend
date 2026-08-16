@@ -4,6 +4,7 @@ import com.dalai.llama.creator.domain.entity.CreatorScript;
 import com.dalai.llama.creator.domain.entity.CreatorScriptShot;
 import com.dalai.llama.creator.repository.CreatorAvatarSceneDialogueRepository;
 import com.dalai.llama.creator.repository.CreatorScriptShotRepository;
+import com.dalai.llama.creator.service.screenplayvideo.AvatarDialogueSyncGatewayImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -107,8 +108,10 @@ class ScreenplayVideoServiceAvatarScriptTest {
 
     @Test
     void reusesPersistedSceneCloneFromTopLevelAssetFingerprint() throws Exception {
-        ScreenplayVideoService service = service();
-        Method matchesClone = ScreenplayVideoService.class.getDeclaredMethod(
+        // matchesPersistedSceneDialogueAudio moved to FounderSceneAudioCloner (same package, owner
+        // back-reference) - reflection now targets that class instead of ScreenplayVideoService.
+        FounderSceneAudioCloner cloner = new FounderSceneAudioCloner(service(), null, null);
+        Method matchesClone = FounderSceneAudioCloner.class.getDeclaredMethod(
                 "matchesPersistedSceneDialogueAudio",
                 Map.class,
                 Map.class,
@@ -130,7 +133,7 @@ class ScreenplayVideoServiceAvatarScriptTest {
         );
 
         assertTrue((Boolean) matchesClone.invoke(
-                service,
+                cloner,
                 scene,
                 storedAsset,
                 "saved-fingerprint",
@@ -139,7 +142,7 @@ class ScreenplayVideoServiceAvatarScriptTest {
                 "client_rvc_english"
         ));
         assertTrue((Boolean) matchesClone.invoke(
-                service,
+                cloner,
                 scene,
                 storedAsset,
                 "different-fingerprint",
@@ -148,7 +151,7 @@ class ScreenplayVideoServiceAvatarScriptTest {
                 "client_rvc_english"
         ));
         assertFalse((Boolean) matchesClone.invoke(
-                service,
+                cloner,
                 scene,
                 storedAsset,
                 "different-fingerprint",
@@ -157,7 +160,7 @@ class ScreenplayVideoServiceAvatarScriptTest {
                 "client_rvc_english"
         ));
         assertTrue((Boolean) matchesClone.invoke(
-                service,
+                cloner,
                 scene,
                 Map.of("objectKey", "screenplay/legacy-scene-1-voice.wav"),
                 "new-fingerprint",
@@ -470,6 +473,7 @@ class ScreenplayVideoServiceAvatarScriptTest {
                 scriptShotRepository,
                 null, // storyboard repository
                 null, // storyboard scene repository
+                null, // shot plan repository
                 null, // asset repository
                 null, // generation job repository
                 null, // prompt run repository
@@ -481,6 +485,10 @@ class ScreenplayVideoServiceAvatarScriptTest {
                 null, // music generation service
                 null, // asset storage service
                 null, // billing wallet service
+                null, // scene asset service
+                null, // shot plan tag gateway
+                null, // scene chat editor
+                new AvatarDialogueSyncGatewayImpl(avatarDialogueService),
                 new ObjectMapper(),
                 BigDecimal.ONE,
                 BigDecimal.ONE,

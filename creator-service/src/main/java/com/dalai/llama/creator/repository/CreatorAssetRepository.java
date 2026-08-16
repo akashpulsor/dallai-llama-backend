@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface CreatorAssetRepository extends JpaRepository<CreatorAsset, UUID> {
@@ -28,5 +29,26 @@ public interface CreatorAssetRepository extends JpaRepository<CreatorAsset, UUID
             @Param("scriptId") UUID scriptId,
             @Param("tenantId") String tenantId,
             @Param("userId") String userId
+    );
+
+    List<CreatorAsset> findByTenantIdAndUserIdAndScriptIdAndAssetTypeOrderByShotNumberAsc(
+            String tenantId,
+            String userId,
+            UUID scriptId,
+            String assetType
+    );
+
+    Optional<CreatorAsset> findByTenantIdAndUserIdAndRunIdAndShotNumberAndAssetType(
+            String tenantId,
+            String userId,
+            UUID runId,
+            Integer shotNumber,
+            String assetType
+    );
+
+    Optional<CreatorAsset> findByTenantIdAndUserIdAndRunIdAndCombinedTrue(
+            String tenantId,
+            String userId,
+            UUID runId
     );
 }
