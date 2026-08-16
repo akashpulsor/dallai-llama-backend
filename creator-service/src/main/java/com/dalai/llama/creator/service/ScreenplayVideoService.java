@@ -1,6 +1,8 @@
 package com.dalai.llama.creator.service;
 
 import com.dalai.llama.creator.domain.PromptTemplateType;
+import com.dalai.llama.creator.dto.screenplay.ScreenplaySceneView;
+import com.dalai.llama.creator.dto.screenplay.SceneViewMapper;
 import com.dalai.llama.creator.service.screenplayvideo.AvatarDialogueSyncGateway;
 import com.dalai.llama.creator.service.screenplayvideo.MapCoercion;
 import com.dalai.llama.creator.service.screenplayvideo.ProviderRequestFactory;
@@ -6051,9 +6053,9 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         }
         String target = defaultString(sceneId, "");
         for (int index = 0; index < scenes.size(); index++) {
-            Map<String, Object> scene = scenes.get(index);
-            String id = firstText(scene.get("id"), scene.get("sceneId"), scene.get("scene_id"), "scene-" + (index + 1));
-            if (target.equals(id) || target.equals(String.valueOf(scene.get("sceneNumber"))) || target.equals(String.valueOf(scene.get("shotNumber")))) {
+            ScreenplaySceneView scene = SceneViewMapper.sceneView(scenes.get(index), objectMapper);
+            String id = defaultString(scene.id(), "scene-" + (index + 1));
+            if (target.equals(id) || target.equals(String.valueOf(scene.sceneNumber())) || target.equals(String.valueOf(scene.shotNumber()))) {
                 return index;
             }
         }
