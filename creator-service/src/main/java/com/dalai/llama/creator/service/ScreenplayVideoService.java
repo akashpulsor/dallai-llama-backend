@@ -1845,262 +1845,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             String tenantId,
             String userId
     ) {
-        String safeTenantId = defaultString(tenantId, "unknown");
-        String safeUserId = defaultString(userId, "anonymous");
-        boolean cloneLockAcquired = generationJobRepository.tryAcquireTransactionalAdvisoryLock(
-                "screenplay-scene-voice:" + safeTenantId + ":" + safeUserId + ":" + runId
-        );
-        if (!cloneLockAcquired) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Wait for the current scene voice cloning process to complete."
-            );
-        }
-        RunRecord record = loadRun(runId, safeTenantId, safeUserId);
-        Map<String, Object> run = copyMap(record.run());
-        CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
-        synchronizeAvatarDialogueSources(script, run);
-        List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
-        int sceneIndex = findSceneIndex(scenes, sceneId);
-        Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
-        int sceneNumber = positiveInt(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), sceneIndex + 1);
-        CreatorAvatarSceneDialogue sourceDialogueRecord = avatarDialogueSyncGateway.currentSource(
-                script,
-                runId,
-                sceneNumber
-        );
-        if (sourceDialogueRecord != null) {
-            avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
-        }
-        Map<String, Object> input = copyMap(request);
-        input.put("runId", runId.toString());
-        input.put("scriptId", script.getId().toString());
-        input.put("sceneId", sceneId);
-        input.put("generationMode", "talking_head");
-        input.put("provider", "dalai_llama");
-
-        CreatorGenerationJob job = generationJobService.startGenerationJob(
-                JOB_SCREENPLAY_VIDEO_SCENE_VOICE,
-                safeTenantId,
-                safeUserId,
-                script.getProjectId(),
-                input
-        );
-        try {
-            String sourceDialogue = dialogueTextForScene(scene);
-            if (sourceDialogue.isBlank()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "This scene has no spoken dialogue to clone.");
-            }
-            Map<String, Object> founderProfile = new LinkedHashMap<>(founderAvatarProfile(
-                    input,
-                    run,
-                    firstMap(run.get("creatorContext"), script.getScriptPayload())
-            ));
-            String selectedVoiceMethod = requireSceneVoiceMethod(firstText(
-                    input.get("voiceModel"),
-                    input.get("localVoiceModel"),
-                    input.get("voiceCloneMethod"),
-                    firstMap(input.get("localModels"), input.get("localAvatarModels")).get("voiceModel"),
-                    firstMap(founderProfile.get("localModels")).get("voiceModel")
-            ));
-            if (!booleanValue(founderProfile.get("consentConfirmed"), false)) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Confirm creator consent before cloning scene dialogue."
-                );
-            }
-            String sourceLanguage = firstText(
-                    sourceDialogueRecord == null ? null : sourceDialogueRecord.getLanguage(),
-                    scene.get("dialogueLanguage"),
-                    scene.get("sourceDialogueLanguage"),
-                    run.get("dialogueLanguage"),
-                    script.getDialogueLanguage(),
-                    firstMap(script.getScriptPayload()).get("dialogueLanguage"),
-                    "English"
-            );
-            String targetLanguage = firstText(
-                    input.get("dialogueLanguage"),
-                    input.get("language"),
-                    sourceLanguage
-            );
-            String targetLanguageCode = firstText(
-                    input.get("languageCode"),
-                    languageCodeFor(targetLanguage)
-            );
-            if ("client_rvc_english".equals(selectedVoiceMethod) && !sameLanguage(targetLanguage, "English")) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "The trained client voice supports English only. Choose English or another voice clone method."
-                );
-            }
-            boolean translationRequired = !sameLanguage(sourceLanguage, targetLanguage);
-            UUID requestedDialogueId = uuidValue(firstValue(
-                    input.get("dialogueRecordId"),
-                    input.get("avatarDialogueId"),
-                    input.get("selectedDialogueId")
-            ));
-            CreatorAvatarSceneDialogue selectedDialogueRecord = sourceDialogueRecord;
-            if (translationRequired && sourceDialogueRecord != null && avatarSceneDialogueService != null) {
-                selectedDialogueRecord = avatarSceneDialogueService.resolveCurrentVariant(
-                        sourceDialogueRecord.getRootDialogueId(),
-                        requestedDialogueId,
-                        targetLanguage
-                ).orElse(null);
-                if (requestedDialogueId != null && selectedDialogueRecord == null) {
-                    throw new ResponseStatusException(
-                            HttpStatus.CONFLICT,
-                            "The selected dialogue translation is no longer current. Refresh the video workspace and choose it again."
-                    );
-                }
-            }
-            if (translationRequired && selectedDialogueRecord != null) {
-                avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
-            } else if (translationRequired) {
-                scene = copyMap(localizeDialogueScenes(
-                        script,
-                        List.of(scene),
-                        sourceLanguage,
-                        targetLanguage,
-                        targetLanguageCode,
-                        job.getId()
-                ).get(0));
-                if (sourceDialogueRecord != null && avatarSceneDialogueService != null) {
-                    selectedDialogueRecord = avatarSceneDialogueService.saveTranslation(
-                            sourceDialogueRecord,
-                            targetLanguage,
-                            targetLanguageCode,
-                            dialogueTextForScene(scene),
-                            uuidValue(scene.get("dialogueLocalizationPromptRunId")),
-                            job.getId(),
-                            creatorAiService.providerName(),
-                            creatorAiService.modelName()
-                    );
-                    avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, selectedDialogueRecord);
-                }
-            } else if (sourceDialogueRecord != null) {
-                avatarDialogueSyncGateway.applyRecord(scene, sourceDialogueRecord, sourceDialogueRecord);
-            }
-            String translatedDialogue = dialogueTextForScene(scene);
-            if (translatedDialogue.isBlank()) {
-                throw new ResponseStatusException(
-                        HttpStatus.BAD_GATEWAY,
-                        "Dialogue translation returned no spoken text. Voice cloning was not submitted."
-                );
-            }
-            Map<String, Object> selectedLocalModels = new LinkedHashMap<>(firstMap(
-                    input.get("localModels"),
-                    input.get("localAvatarModels"),
-                    founderProfile.get("localModels")
-            ));
-            selectedLocalModels.put("voiceModel", selectedVoiceMethod);
-            founderProfile.put("localModels", selectedLocalModels);
-            input.put("voiceModel", selectedVoiceMethod);
-            input.put("localVoiceModel", selectedVoiceMethod);
-            input.put("voiceCloneMethod", selectedVoiceMethod);
-            input.put("localModels", selectedLocalModels);
-            input.put("founderAvatarProfile", founderProfile);
-            input.put("founderKit", founderProfile);
-            scene.put("generationMode", "talking_head");
-            scene.put("dialogueLanguage", targetLanguage);
-            scene.put("languageCode", targetLanguageCode);
-            scene.put("dialogueLocalizationStatus", translationRequired ? "COMPLETED" : "NOT_REQUIRED");
-            scene.put("dialogueTranslationApplied", translationRequired);
-            scene.put("dialogueCloneVoiceModel", selectedVoiceMethod);
-            scene.put("dialogueCloneMethod", selectedVoiceMethod);
-            scene.put("dialogueCloneStatus", "GENERATING");
-            scene.put("dialogueCloneAccepted", false);
-            scene.remove("dialogueCloneError");
-            input.put("dialogueLanguage", targetLanguage);
-            input.put("language", targetLanguage);
-            input.put("languageCode", targetLanguageCode);
-            input.put("dialogueRecordId", selectedDialogueRecord == null ? null : selectedDialogueRecord.getId().toString());
-            input.put("rootDialogueId", sourceDialogueRecord == null ? null : sourceDialogueRecord.getRootDialogueId().toString());
-            Map<String, Object> providerRequest = buildProviderRequest(run, scene, input);
-            providerRequest.put("generationMode", "talking_head");
-            providerRequest.put("language", targetLanguage);
-            providerRequest.put("languageCode", targetLanguageCode);
-            providerRequest.put("voiceModel", selectedVoiceMethod);
-            providerRequest.put("voiceCloneMethod", selectedVoiceMethod);
-            providerRequest.put("localModels", selectedLocalModels);
-            scene.put("providerRequest", providerRequest);
-            scene.put("updatedAt", OffsetDateTime.now().toString());
-            scenes.set(sceneIndex, scene);
-            run.put("scenes", scenes);
-            run.put("sceneClips", scenes);
-            run.put("updatedAt", OffsetDateTime.now().toString());
-            run.put(
-                    "message",
-                    translationRequired
-                            ? "Scene dialogue translated to " + targetLanguage + ". Cloning with " + selectedVoiceMethod + "."
-                            : "Cloning scene dialogue with " + selectedVoiceMethod + "."
-            );
-            generationJobService.updateGenerationJobProgress(
-                    job.getId(),
-                    translationRequired ? 48 : 30,
-                    translationRequired ? "Dialogue translated; cloning selected voice" : "Cloning selected scene voice",
-                    outputPayload(run, stringValue(run.get("message"), "Cloning scene dialogue."))
-            );
-
-            Map<String, Object> asset = prepareFounderSceneAudio(
-                    script,
-                    runId,
-                    job.getId(),
-                    run,
-                    scene,
-                    true
-            );
-            if (asset.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "This scene has no spoken dialogue to clone.");
-            }
-            Map<String, Object> metadata = firstMap(asset.get("metadata"));
-            String audioUrl = firstText(asset.get("assetUrl"), asset.get("signedUrl"), asset.get("publicUrl"));
-            scene.put("dialogueAudio", asset);
-            scene.put("voiceTrack", audioUrl);
-            scene.put("dialogueCloneStatus", "PREVIEW_READY");
-            scene.put("dialogueCloneAccepted", false);
-            scene.put("dialogueCloneText", dialogueTextForScene(scene));
-            scene.put("dialogueCloneLanguage", targetLanguage);
-            scene.put("dialogueCloneLanguageCode", targetLanguageCode);
-            scene.put("dialogueCloneFingerprint", firstText(
-                    asset.get("dialogueFingerprint"),
-                    metadata.get("dialogueFingerprint")
-            ));
-            scene.put("dialogueCloneVoiceModel", selectedVoiceMethod);
-            scene.put("dialogueCloneMethod", selectedVoiceMethod);
-            scene.put("dialogueCloneGeneratedAt", OffsetDateTime.now().toString());
-            scene.put("updatedAt", OffsetDateTime.now().toString());
-            scenes.set(sceneIndex, scene);
-            clearCombinedDialogueAudio(run);
-
-            run.put("scenes", scenes);
-            run.put("sceneClips", scenes);
-            run.put("updatedAt", OffsetDateTime.now().toString());
-            run.put("message", "Cloned dialogue is ready for scene " + firstText(scene.get("sceneNumber"), sceneId) + ".");
-            generationJobService.completeGenerationJob(job.getId(), outputPayload(run, "Scene cloned dialogue ready."));
-
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("status", "PREVIEW_READY");
-            response.put("voiceModel", selectedVoiceMethod);
-            response.put("dialogueLanguage", targetLanguage);
-            response.put("dialogueTranslated", translationRequired);
-            response.put("scene", scene);
-            response.put("dialogueAudio", asset);
-            response.put("videoRun", hydrateVideoRunForResponse(run, safeTenantId, safeUserId));
-            return response;
-        } catch (RuntimeException ex) {
-            String message = defaultString(ex.getMessage(), ex.getClass().getSimpleName());
-            scene.put("dialogueCloneStatus", "FAILED");
-            scene.put("dialogueCloneAccepted", false);
-            scene.put("dialogueCloneError", message);
-            scene.put("updatedAt", OffsetDateTime.now().toString());
-            scenes.set(sceneIndex, scene);
-            run.put("scenes", scenes);
-            run.put("sceneClips", scenes);
-            run.put("updatedAt", OffsetDateTime.now().toString());
-            run.put("message", message);
-            generationJobService.failGenerationJob(job.getId(), message, outputPayload(run, message));
-            throw ex;
-        }
+        return dialogueVoiceCloner().generateSceneDialogueVoice(runId, sceneId, request, tenantId, userId);
     }
 
     @Transactional
@@ -2111,82 +1856,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             String tenantId,
             String userId
     ) {
-        String safeTenantId = defaultString(tenantId, "unknown");
-        String safeUserId = defaultString(userId, "anonymous");
-        // Confirmed fix: this method used to take no advisory lock at all, while its two siblings
-        // (generateSceneDialogueVoice, combineSceneDialogueAudio) both lock this same key - a real
-        // race window against a concurrent generate/combine call on the same scene. Closed by
-        // taking the identical lock here too.
-        boolean decisionLockAcquired = generationJobRepository.tryAcquireTransactionalAdvisoryLock(
-                "screenplay-scene-voice:" + safeTenantId + ":" + safeUserId + ":" + runId
-        );
-        if (!decisionLockAcquired) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Wait for the current scene voice cloning process to complete."
-            );
-        }
-        RunRecord record = loadRun(runId, safeTenantId, safeUserId);
-        Map<String, Object> run = copyMap(record.run());
-        CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
-        List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
-        int sceneIndex = findSceneIndex(scenes, sceneId);
-        Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
-        Map<String, Object> dialogueAudio = firstMap(scene.get("dialogueAudio"));
-        if (dialogueAudio.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Clone this scene dialogue before accepting it.");
-        }
-        String decision = firstText(
-                request == null ? null : request.get("decision"),
-                request == null ? null : request.get("action"),
-                "APPROVE"
-        ).toUpperCase(Locale.ROOT);
-        if (!"APPROVE".equals(decision) && !"REJECT".equals(decision)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Scene dialogue decision must be APPROVE or REJECT.");
-        }
-
-        Map<String, Object> input = copyMap(request);
-        input.put("runId", runId.toString());
-        input.put("scriptId", script.getId().toString());
-        input.put("sceneId", sceneId);
-        input.put("decision", decision);
-        CreatorGenerationJob job = generationJobService.startGenerationJob(
-                JOB_SCREENPLAY_VIDEO_SCENE_VOICE_APPROVAL,
-                safeTenantId,
-                safeUserId,
-                script.getProjectId(),
-                input
-        );
-
-        if ("APPROVE".equals(decision)) {
-            scene.put("dialogueCloneStatus", "APPROVED");
-            scene.put("dialogueCloneAccepted", true);
-            scene.put("dialogueCloneAcceptedAt", OffsetDateTime.now().toString());
-            scene.put("dialogueCloneAcceptedBy", safeUserId);
-        } else {
-            scene.put("dialogueCloneStatus", "REJECTED");
-            scene.put("dialogueCloneAccepted", false);
-            scene.remove("dialogueCloneAcceptedAt");
-            scene.remove("dialogueCloneAcceptedBy");
-            scene.remove("dialogueAudio");
-            scene.remove("voiceTrack");
-            clearCombinedDialogueAudio(run);
-        }
-        scene.put("updatedAt", OffsetDateTime.now().toString());
-        scenes.set(sceneIndex, scene);
-        run.put("scenes", scenes);
-        run.put("sceneClips", scenes);
-        run.put("updatedAt", OffsetDateTime.now().toString());
-        run.put("message", "APPROVE".equals(decision)
-                ? "Scene cloned dialogue accepted."
-                : "Scene cloned dialogue rejected. Generate another clone.");
-        generationJobService.completeGenerationJob(job.getId(), outputPayload(run, stringValue(run.get("message"), "")));
-
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("status", scene.get("dialogueCloneStatus"));
-        response.put("scene", scene);
-        response.put("videoRun", hydrateVideoRunForResponse(run, safeTenantId, safeUserId));
-        return response;
+        return dialogueVoiceCloner().decideSceneDialogueVoice(runId, sceneId, request, tenantId, userId);
     }
 
     @Transactional
@@ -2195,218 +1865,19 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             String tenantId,
             String userId
     ) {
-        String safeTenantId = defaultString(tenantId, "unknown");
-        String safeUserId = defaultString(userId, "anonymous");
-        boolean combineLockAcquired = generationJobRepository.tryAcquireTransactionalAdvisoryLock(
-                "screenplay-scene-voice:" + safeTenantId + ":" + safeUserId + ":" + runId
+        return dialogueVoiceCloner().combineSceneDialogueAudio(runId, tenantId, userId);
+    }
+
+    private DialogueVoiceCloner dialogueVoiceCloner() {
+        return new DialogueVoiceCloner(
+                this,
+                generationJobRepository,
+                generationJobService,
+                avatarDialogueSyncGateway,
+                avatarSceneDialogueService,
+                creatorAiService,
+                assetStorageService
         );
-        if (!combineLockAcquired) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Wait for the current scene voice cloning process to complete."
-            );
-        }
-
-        RunRecord record = loadRun(runId, safeTenantId, safeUserId);
-        Map<String, Object> run = copyMap(record.run());
-        CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
-        List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
-        List<Map<String, Object>> availableInputs = sceneDialogueAudioInputs(scenes);
-        if (availableInputs.isEmpty()) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Clone at least one scene dialogue before combining audio."
-            );
-        }
-
-        String currentFingerprint = sceneDialogueAudioFingerprint(availableInputs, scenes.size());
-        Map<String, Object> existingAsset = firstNonEmptyMap(
-                run.get("combinedDialogueAudio"),
-                run.get("combinedSceneDialogueAudio")
-        );
-        String existingFingerprint = firstText(
-                existingAsset.get("combinedFingerprint"),
-                existingAsset.get("dialogueFingerprint"),
-                firstMap(existingAsset.get("metadata")).get("dialogueFingerprint")
-        );
-        if (hasStoredAssetLocation(existingAsset) && currentFingerprint.equals(existingFingerprint)) {
-            Map<String, Object> refreshedAsset = refreshAudioAssetReference(existingAsset);
-            run.put("combinedDialogueAudio", refreshedAsset);
-            run.put("combinedSceneDialogueAudio", refreshedAsset);
-            run.put("combinedDialogueTrack", firstText(
-                    refreshedAsset.get("assetUrl"),
-                    refreshedAsset.get("signedUrl"),
-                    refreshedAsset.get("publicUrl")
-            ));
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("status", "READY");
-            response.put("reused", true);
-            response.put("combinedDialogueAudio", refreshedAsset);
-            response.put("includedSceneCount", availableInputs.size());
-            response.put("totalSceneCount", scenes.size());
-            response.put("skippedSceneNumbers", missingSceneDialogueAudioNumbers(scenes));
-            response.put("videoRun", hydrateVideoRunForResponse(run, safeTenantId, safeUserId));
-            return response;
-        }
-
-        Map<String, Object> input = new LinkedHashMap<>();
-        input.put("runId", runId.toString());
-        input.put("scriptId", script.getId().toString());
-        input.put("availableSceneCount", availableInputs.size());
-        input.put("totalSceneCount", scenes.size());
-        CreatorGenerationJob job = generationJobService.startGenerationJob(
-                JOB_SCREENPLAY_VIDEO_DIALOGUE_COMBINE,
-                safeTenantId,
-                safeUserId,
-                script.getProjectId(),
-                input
-        );
-
-        Path workDir = null;
-        try {
-            generationJobService.updateGenerationJobProgress(
-                    job.getId(),
-                    20,
-                    "Preparing available scene dialogue audio",
-                    outputPayload(run, "Preparing available scene dialogue audio.")
-            );
-            workDir = Files.createTempDirectory("screenplay-dialogue-" + runId + "-");
-            List<Path> audioPaths = new ArrayList<>();
-            List<Map<String, Object>> includedInputs = new ArrayList<>();
-            List<Integer> skippedSceneNumbers = new ArrayList<>(missingSceneDialogueAudioNumbers(scenes));
-
-            for (int index = 0; index < availableInputs.size(); index++) {
-                Map<String, Object> audioInput = availableInputs.get(index);
-                int sceneNumber = intValue(audioInput.get("sceneNumber"), index + 1);
-                String contentType = firstText(audioInput.get("contentType"), "audio/mpeg");
-                Path audioPath = workDir.resolve(
-                        "%03d-scene-dialogue.%s".formatted(sceneNumber, audioFileExtension(contentType))
-                );
-                try {
-                    assetStorageService.downloadObjectToPath(
-                            firstText(audioInput.get("bucket")),
-                            firstText(audioInput.get("objectKey")),
-                            audioPath
-                    );
-                    if (!Files.isRegularFile(audioPath) || Files.size(audioPath) <= 0) {
-                        throw new IOException("Downloaded audio was empty.");
-                    }
-                    audioPaths.add(audioPath);
-                    includedInputs.add(audioInput);
-                } catch (RuntimeException | IOException ex) {
-                    if (!skippedSceneNumbers.contains(sceneNumber)) {
-                        skippedSceneNumbers.add(sceneNumber);
-                    }
-                    log.warn(
-                            "Skipping unavailable scene dialogue audio runId={} sceneNumber={} objectKey={} errorType={} errorMessage={}",
-                            runId,
-                            sceneNumber,
-                            firstText(audioInput.get("objectKey")),
-                            ex.getClass().getSimpleName(),
-                            ex.getMessage()
-                    );
-                }
-            }
-
-            if (audioPaths.isEmpty()) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "The generated scene audio files are not currently available in storage."
-                );
-            }
-
-            generationJobService.updateGenerationJobProgress(
-                    job.getId(),
-                    55,
-                    "Combining " + audioPaths.size() + " scene dialogue track" + (audioPaths.size() == 1 ? "" : "s"),
-                    outputPayload(run, "Combining available scene dialogue audio.")
-            );
-            Path outputPath = workDir.resolve("all-scene-dialogue.m4a");
-            Path logPath = workDir.resolve("ffmpeg-dialogue-combine.log");
-            runFfmpeg(
-                    sceneDialogueAudioConcatCommand(audioPaths, outputPath),
-                    logPath,
-                    "Could not combine scene dialogue audio"
-            );
-
-            String combinedFingerprint = sceneDialogueAudioFingerprint(includedInputs, scenes.size());
-            List<Integer> includedSceneNumbers = includedInputs.stream()
-                    .map(item -> intValue(item.get("sceneNumber"), 0))
-                    .filter(number -> number > 0)
-                    .toList();
-            Map<String, Object> metadata = new LinkedHashMap<>();
-            metadata.put("provider", "local_ffmpeg");
-            metadata.put("model", "ffmpeg-scene-dialogue-concat-v1");
-            metadata.put("dialogueFingerprint", combinedFingerprint);
-            metadata.put("layerType", "combined-scene-dialogue");
-            metadata.put("includedSceneNumbers", includedSceneNumbers);
-            metadata.put("skippedSceneNumbers", skippedSceneNumbers);
-            metadata.put("totalSceneCount", scenes.size());
-
-            Map<String, Object> asset = storeAudioAssetFromPath(
-                    script,
-                    runId,
-                    outputPath,
-                    "audio/mp4",
-                    "combined-scene-dialogue",
-                    metadata
-            );
-            asset.put("combinedFingerprint", combinedFingerprint);
-            asset.put("includedSceneNumbers", includedSceneNumbers);
-            asset.put("includedSceneCount", includedInputs.size());
-            asset.put("skippedSceneNumbers", skippedSceneNumbers);
-            asset.put("totalSceneCount", scenes.size());
-            asset.put("downloadFilename", safeSlug(firstText(script.getTitle(), "screenplay")) + "-all-dialogue.m4a");
-            asset.put("renderer", "local_ffmpeg");
-            asset.put("model", "ffmpeg-scene-dialogue-concat-v1");
-
-            Map<String, Object> summary = new LinkedHashMap<>();
-            summary.put("status", "READY");
-            summary.put("includedSceneNumbers", includedSceneNumbers);
-            summary.put("includedSceneCount", includedInputs.size());
-            summary.put("skippedSceneNumbers", skippedSceneNumbers);
-            summary.put("skippedSceneCount", skippedSceneNumbers.size());
-            summary.put("totalSceneCount", scenes.size());
-            summary.put("combinedAt", OffsetDateTime.now().toString());
-
-            run.put("combinedDialogueAudio", asset);
-            run.put("combinedSceneDialogueAudio", asset);
-            run.put("combinedDialogueTrack", firstText(
-                    asset.get("assetUrl"),
-                    asset.get("signedUrl"),
-                    asset.get("publicUrl")
-            ));
-            run.put("combinedDialogueSummary", summary);
-            run.put("updatedAt", OffsetDateTime.now().toString());
-            run.put(
-                    "message",
-                    includedInputs.size() == scenes.size()
-                            ? "All scene dialogue audio is combined and ready to download."
-                            : includedInputs.size() + " of " + scenes.size() + " scene dialogue tracks were combined."
-            );
-            generationJobService.completeGenerationJob(
-                    job.getId(),
-                    outputPayload(run, stringValue(run.get("message"), "Combined dialogue audio ready."))
-            );
-
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("status", "READY");
-            response.put("reused", false);
-            response.put("combinedDialogueAudio", asset);
-            response.putAll(summary);
-            response.put("videoRun", hydrateVideoRunForResponse(run, safeTenantId, safeUserId));
-            return response;
-        } catch (RuntimeException ex) {
-            String message = defaultString(ex.getMessage(), ex.getClass().getSimpleName());
-            generationJobService.failGenerationJob(job.getId(), message, outputPayload(run, message));
-            throw ex;
-        } catch (IOException ex) {
-            String message = "Could not prepare scene dialogue audio.";
-            generationJobService.failGenerationJob(job.getId(), message, outputPayload(run, message));
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, message, ex);
-        } finally {
-            deleteQuietly(workDir);
-        }
     }
 
     @Transactional
@@ -3119,7 +2590,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return false;
     }
 
-    private Map<String, Object> prepareFounderSceneAudio(
+    Map<String, Object> prepareFounderSceneAudio(
             CreatorScript script,
             UUID runId,
             UUID jobId,
@@ -4459,12 +3930,12 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return new LinkedHashMap<>();
     }
 
-    private boolean hasStoredAssetLocation(Map<String, Object> asset) {
+    boolean hasStoredAssetLocation(Map<String, Object> asset) {
         return !firstText(asset == null ? null : asset.get("bucket")).isBlank()
                 && !firstText(asset == null ? null : asset.get("objectKey")).isBlank();
     }
 
-    private void runFfmpeg(List<String> command, Path logPath, String failureMessage) {
+    void runFfmpeg(List<String> command, Path logPath, String failureMessage) {
         try {
             Process process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
@@ -4486,7 +3957,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         }
     }
 
-    private List<String> sceneDialogueAudioConcatCommand(List<Path> audioPaths, Path outputPath) {
+    List<String> sceneDialogueAudioConcatCommand(List<Path> audioPaths, Path outputPath) {
         List<String> command = new ArrayList<>(List.of("ffmpeg", "-hide_banner", "-y"));
         for (Path audioPath : audioPaths) {
             command.add("-i");
@@ -4550,7 +4021,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return value.substring(value.length() - maxChars);
     }
 
-    private void deleteQuietly(Path root) {
+    void deleteQuietly(Path root) {
         if (root == null) {
             return;
         }
@@ -4664,7 +4135,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return asset;
     }
 
-    private Map<String, Object> storeAudioAssetFromPath(
+    Map<String, Object> storeAudioAssetFromPath(
             CreatorScript script,
             UUID runId,
             Path sourcePath,
@@ -4789,7 +4260,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         );
     }
 
-    private String audioFileExtension(String contentType) {
+    String audioFileExtension(String contentType) {
         String normalized = defaultString(contentType, "").toLowerCase(Locale.ROOT);
         if (normalized.contains("wav")) {
             return "wav";
@@ -5693,7 +5164,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return "Dialogue and background music plan is ready.";
     }
 
-    private String safeSlug(String value) {
+    String safeSlug(String value) {
         String normalized = defaultString(value, "scene")
                 .toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9._-]+", "-")
@@ -6622,7 +6093,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return reconciled;
     }
 
-    private void synchronizeAvatarDialogueSources(CreatorScript script, Map<String, Object> run) {
+    void synchronizeAvatarDialogueSources(CreatorScript script, Map<String, Object> run) {
         if (avatarSceneDialogueService == null || script == null || !avatarDialogueSyncGateway.isAvatarDialogueRun(run, mapListValue(run.get("scenes")))) {
             return;
         }
@@ -7125,7 +6596,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return new RunRecord(job, run);
     }
 
-    private Map<String, Object> hydrateVideoRunForResponse(Map<String, Object> sourceRun, String tenantId, String userId) {
+    Map<String, Object> hydrateVideoRunForResponse(Map<String, Object> sourceRun, String tenantId, String userId) {
         Map<String, Object> run = copyMap(sourceRun);
         UUID scriptId = uuidValue(run.get("scriptId"));
         if (scriptId != null) {
@@ -7420,7 +6891,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return plan;
     }
 
-    private List<Map<String, Object>> sceneDialogueAudioInputs(List<Map<String, Object>> scenes) {
+    List<Map<String, Object>> sceneDialogueAudioInputs(List<Map<String, Object>> scenes) {
         List<Map<String, Object>> inputs = new ArrayList<>();
         if (scenes == null) {
             return inputs;
@@ -7444,7 +6915,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return inputs;
     }
 
-    private List<Integer> missingSceneDialogueAudioNumbers(List<Map<String, Object>> scenes) {
+    List<Integer> missingSceneDialogueAudioNumbers(List<Map<String, Object>> scenes) {
         List<Integer> missing = new ArrayList<>();
         if (scenes == null) {
             return missing;
@@ -7459,7 +6930,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return missing;
     }
 
-    private String sceneDialogueAudioFingerprint(List<Map<String, Object>> inputs, int totalSceneCount) {
+    String sceneDialogueAudioFingerprint(List<Map<String, Object>> inputs, int totalSceneCount) {
         if (inputs == null || inputs.isEmpty()) {
             return "";
         }
@@ -7506,7 +6977,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         }
     }
 
-    private void clearCombinedDialogueAudio(Map<String, Object> run) {
+    void clearCombinedDialogueAudio(Map<String, Object> run) {
         if (run == null) {
             return;
         }
@@ -7564,7 +7035,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return refreshed;
     }
 
-    private Map<String, Object> refreshAudioAssetReference(Object value) {
+    Map<String, Object> refreshAudioAssetReference(Object value) {
         Map<String, Object> asset = copyMap(value);
         if (asset.isEmpty()) {
             return asset;

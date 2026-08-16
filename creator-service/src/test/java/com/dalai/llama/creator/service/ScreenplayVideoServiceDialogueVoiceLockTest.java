@@ -48,6 +48,53 @@ class ScreenplayVideoServiceDialogueVoiceLockTest {
         verify(generationJobRepository).tryAcquireTransactionalAdvisoryLock(expectedLockKey);
     }
 
+    // generateSceneDialogueVoice and combineSceneDialogueAudio had zero test coverage before the
+    // DialogueVoiceCloner extraction moved them out of ScreenplayVideoService - these two pin the
+    // same lock-key contract the sibling test above already covers for decideSceneDialogueVoice,
+    // now routed through ScreenplayVideoService.dialogueVoiceCloner() -> DialogueVoiceCloner.
+
+    @Test
+    void generateSceneDialogueVoice_acquiresSameLockKeyAsItsSiblingsAndRejectsWhenUnavailable() throws Exception {
+        ScreenplayVideoService service = mock(
+                ScreenplayVideoService.class,
+                withSettings().defaultAnswer(CALLS_REAL_METHODS)
+        );
+        CreatorGenerationJobRepository generationJobRepository = mock(CreatorGenerationJobRepository.class);
+        setField(service, "generationJobRepository", generationJobRepository);
+
+        UUID runId = UUID.randomUUID();
+        String expectedLockKey = "screenplay-scene-voice:tenant-1:user-1:" + runId;
+        when(generationJobRepository.tryAcquireTransactionalAdvisoryLock(eq(expectedLockKey))).thenReturn(false);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+                service.generateSceneDialogueVoice(runId, "scene-1", Map.of(), "tenant-1", "user-1")
+        );
+
+        assertEquals(409, ex.getStatusCode().value());
+        verify(generationJobRepository).tryAcquireTransactionalAdvisoryLock(expectedLockKey);
+    }
+
+    @Test
+    void combineSceneDialogueAudio_acquiresSameLockKeyAsItsSiblingsAndRejectsWhenUnavailable() throws Exception {
+        ScreenplayVideoService service = mock(
+                ScreenplayVideoService.class,
+                withSettings().defaultAnswer(CALLS_REAL_METHODS)
+        );
+        CreatorGenerationJobRepository generationJobRepository = mock(CreatorGenerationJobRepository.class);
+        setField(service, "generationJobRepository", generationJobRepository);
+
+        UUID runId = UUID.randomUUID();
+        String expectedLockKey = "screenplay-scene-voice:tenant-1:user-1:" + runId;
+        when(generationJobRepository.tryAcquireTransactionalAdvisoryLock(eq(expectedLockKey))).thenReturn(false);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+                service.combineSceneDialogueAudio(runId, "tenant-1", "user-1")
+        );
+
+        assertEquals(409, ex.getStatusCode().value());
+        verify(generationJobRepository).tryAcquireTransactionalAdvisoryLock(expectedLockKey);
+    }
+
     private static void setField(Object target, String fieldName, Object value) throws Exception {
         Field field = ScreenplayVideoService.class.getDeclaredField(fieldName);
         field.setAccessible(true);
