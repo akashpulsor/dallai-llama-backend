@@ -3,6 +3,7 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.domain.entity.CreatorAvatarSceneDialogue;
 import com.dalai.llama.creator.domain.entity.CreatorGenerationJob;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
+import com.dalai.llama.creator.dto.screenplay.ScreenplaySceneView;
 import com.dalai.llama.creator.repository.CreatorGenerationJobRepository;
 import com.dalai.llama.creator.service.screenplayvideo.AvatarDialogueSyncGateway;
 import org.slf4j.Logger;
@@ -98,7 +99,8 @@ final class DialogueVoiceCloner {
         List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
         int sceneIndex = owner.findSceneIndex(scenes, sceneId);
         Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
-        int sceneNumber = positiveInt(firstValue(scene.get("sceneNumber"), scene.get("shotNumber")), sceneIndex + 1);
+        ScreenplaySceneView sceneView = owner.sceneView(scene);
+        int sceneNumber = positiveInt(firstValue(sceneView.sceneNumber(), sceneView.shotNumber()), sceneIndex + 1);
         CreatorAvatarSceneDialogue sourceDialogueRecord = avatarDialogueSyncGateway.currentSource(
                 script,
                 runId,
@@ -146,9 +148,9 @@ final class DialogueVoiceCloner {
             }
             String sourceLanguage = firstText(
                     sourceDialogueRecord == null ? null : sourceDialogueRecord.getLanguage(),
-                    scene.get("dialogueLanguage"),
-                    scene.get("sourceDialogueLanguage"),
-                    run.get("dialogueLanguage"),
+                    sceneView.dialogueLanguage(),
+                    sceneView.sourceDialogueLanguage(),
+                    owner.runView(run).dialogueLanguage(),
                     script.getDialogueLanguage(),
                     firstMap(script.getScriptPayload()).get("dialogueLanguage"),
                     "English"
@@ -310,7 +312,7 @@ final class DialogueVoiceCloner {
             run.put("scenes", scenes);
             run.put("sceneClips", scenes);
             run.put("updatedAt", OffsetDateTime.now().toString());
-            run.put("message", "Cloned dialogue is ready for scene " + firstText(scene.get("sceneNumber"), sceneId) + ".");
+            run.put("message", "Cloned dialogue is ready for scene " + firstText(owner.sceneView(scene).sceneNumber(), sceneId) + ".");
             generationJobService.completeGenerationJob(job.getId(), owner.outputPayload(run, "Scene cloned dialogue ready."));
 
             Map<String, Object> response = new LinkedHashMap<>();
@@ -366,7 +368,7 @@ final class DialogueVoiceCloner {
         List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
         int sceneIndex = owner.findSceneIndex(scenes, sceneId);
         Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
-        Map<String, Object> dialogueAudio = firstMap(scene.get("dialogueAudio"));
+        Map<String, Object> dialogueAudio = firstMap(owner.sceneView(scene).dialogueAudio());
         if (dialogueAudio.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Clone this scene dialogue before accepting it.");
         }

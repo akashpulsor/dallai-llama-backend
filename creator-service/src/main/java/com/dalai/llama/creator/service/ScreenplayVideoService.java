@@ -3,6 +3,8 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.domain.PromptTemplateType;
 import com.dalai.llama.creator.dto.screenplay.ScreenplaySceneView;
 import com.dalai.llama.creator.dto.screenplay.SceneViewMapper;
+import com.dalai.llama.creator.dto.screenplay.ScreenplayRunView;
+import com.dalai.llama.creator.dto.screenplay.RunViewMapper;
 import com.dalai.llama.creator.service.screenplayvideo.AvatarDialogueSyncGateway;
 import com.dalai.llama.creator.service.screenplayvideo.MapCoercion;
 import com.dalai.llama.creator.service.screenplayvideo.ProviderRequestFactory;
@@ -5392,6 +5394,14 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             }
         }
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Scene was not found in this video run.");
+    }
+
+    ScreenplaySceneView sceneView(Map<String, Object> scene) {
+        return SceneViewMapper.sceneView(scene, objectMapper);
+    }
+
+    ScreenplayRunView runView(Map<String, Object> run) {
+        return RunViewMapper.runView(run, objectMapper);
     }
 
     Map<String, Object> outputPayload(Map<String, Object> run, String message) {
