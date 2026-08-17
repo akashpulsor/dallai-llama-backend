@@ -81,4 +81,16 @@ class SceneContextCompactorTest {
     void sceneIdFor_fallsBackToSceneNumberWhenNoIdPresent() {
         assertEquals("scene-3", compactor.sceneIdFor(Map.of(), 3));
     }
+
+    @Test
+    void srtTime_formatsSecondsAsHhMmSsWithMillisecondSuffix() {
+        assertEquals("00:00:00,000", compactor.srtTime(0));
+        assertEquals("00:01:05,000", compactor.srtTime(65));
+        assertEquals("01:00:00,000", compactor.srtTime(3600));
+    }
+
+    @Test
+    void srtTime_clampsNegativeSecondsToZero() {
+        assertEquals("00:00:00,000", compactor.srtTime(-10));
+    }
 }

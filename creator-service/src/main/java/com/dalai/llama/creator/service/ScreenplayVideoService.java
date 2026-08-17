@@ -6098,27 +6098,15 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     String normalizeProductionStyle(String value) {
-        String normalized = defaultString(value, "hybrid").toLowerCase(Locale.ROOT).replace('-', '_').trim();
-        if (normalized.equals("full_ai") || normalized.equals("all_ai") || normalized.equals("ai_only") || normalized.equals("seedance_only")) {
-            return "full_ai";
-        }
-        return "hybrid";
+        return videoProviderCatalog().normalizeProductionStyle(value);
     }
 
     private String normalizeGenerationMode(String value) {
-        String normalized = defaultString(value, "ai_generated").toLowerCase(Locale.ROOT).replace('-', '_').trim();
-        if (normalized.contains("talking") || normalized.contains("human") || normalized.contains("record")) {
-            return "talking_head";
-        }
-        return "ai_generated";
+        return videoProviderCatalog().normalizeGenerationMode(value);
     }
 
     String srtTime(int seconds) {
-        int safe = Math.max(0, seconds);
-        int hours = safe / 3600;
-        int minutes = (safe % 3600) / 60;
-        int secs = safe % 60;
-        return "%02d:%02d:%02d,000".formatted(hours, minutes, secs);
+        return sceneContextCompactor().srtTime(seconds);
     }
 
     /**

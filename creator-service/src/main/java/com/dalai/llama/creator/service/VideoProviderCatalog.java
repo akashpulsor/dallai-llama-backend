@@ -267,4 +267,20 @@ final class VideoProviderCatalog {
         }
         return "omini".equals(provider) ? "Omini" : "Seedance";
     }
+
+    String normalizeProductionStyle(String value) {
+        String normalized = defaultString(value, "hybrid").toLowerCase(Locale.ROOT).replace('-', '_').trim();
+        if (normalized.equals("full_ai") || normalized.equals("all_ai") || normalized.equals("ai_only") || normalized.equals("seedance_only")) {
+            return "full_ai";
+        }
+        return "hybrid";
+    }
+
+    String normalizeGenerationMode(String value) {
+        String normalized = defaultString(value, "ai_generated").toLowerCase(Locale.ROOT).replace('-', '_').trim();
+        if (normalized.contains("talking") || normalized.contains("human") || normalized.contains("record")) {
+            return "talking_head";
+        }
+        return "ai_generated";
+    }
 }

@@ -115,4 +115,12 @@ final class SceneContextCompactor {
         }
         return "scene-" + sceneNumber;
     }
+
+    String srtTime(int seconds) {
+        int safe = Math.max(0, seconds);
+        int hours = safe / 3600;
+        int minutes = (safe % 3600) / 60;
+        int secs = safe % 60;
+        return "%02d:%02d:%02d,000".formatted(hours, minutes, secs);
+    }
 }

@@ -139,4 +139,20 @@ class VideoProviderCatalogTest {
         assertEquals("Seedance", catalog.providerLabel("seedance"));
         assertEquals("Seedance", catalog.providerLabel("unknown_provider"));
     }
+
+    @Test
+    void normalizeProductionStyle_collapsesKnownSynonymsAndDefaultsToHybrid() {
+        assertEquals("full_ai", catalog.normalizeProductionStyle("all_ai"));
+        assertEquals("full_ai", catalog.normalizeProductionStyle("seedance-only"));
+        assertEquals("hybrid", catalog.normalizeProductionStyle(null));
+        assertEquals("hybrid", catalog.normalizeProductionStyle("something_else"));
+    }
+
+    @Test
+    void normalizeGenerationMode_collapsesKnownSynonymsAndDefaultsToAiGenerated() {
+        assertEquals("talking_head", catalog.normalizeGenerationMode("talking-head"));
+        assertEquals("talking_head", catalog.normalizeGenerationMode("human_recorded"));
+        assertEquals("ai_generated", catalog.normalizeGenerationMode(null));
+        assertEquals("ai_generated", catalog.normalizeGenerationMode("something_else"));
+    }
 }
