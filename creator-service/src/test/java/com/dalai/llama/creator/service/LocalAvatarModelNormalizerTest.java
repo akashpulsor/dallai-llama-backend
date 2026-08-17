@@ -6,6 +6,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -137,5 +138,39 @@ class LocalAvatarModelNormalizerTest {
         assertEquals("synthesia", normalizer.avatarVoiceProvider(Map.of("avatarProviderMode", "synthesia")));
         assertEquals("synthesia", normalizer.avatarVoiceProvider(Map.of()));
         assertEquals("synthesia", normalizer.avatarVoiceProvider(null));
+    }
+
+    @Test
+    void clearScriptSpecificFounderMedia_removesScriptSpecificKeysButKeepsProfileIdentity() {
+        Map<String, Object> profile = new java.util.LinkedHashMap<>();
+        profile.put("avatarScript", "old script");
+        profile.put("spokenText", "old spoken");
+        profile.put("finalFounderAudioUrl", "https://cdn/old.mp3");
+        profile.put("avatarId", "avatar-1");
+        normalizer.clearScriptSpecificFounderMedia(profile);
+        assertFalse(profile.containsKey("avatarScript"));
+        assertFalse(profile.containsKey("spokenText"));
+        assertFalse(profile.containsKey("finalFounderAudioUrl"));
+        assertEquals("avatar-1", profile.get("avatarId"));
+    }
+
+    @Test
+    void clearScriptSpecificFounderMedia_resetsUploadedFounderAudioVoiceModelToMinimax() {
+        Map<String, Object> profile = new java.util.LinkedHashMap<>();
+        profile.put("localModels", Map.of("voiceModel", "uploaded_founder_audio"));
+        normalizer.clearScriptSpecificFounderMedia(profile);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> localModels = (Map<String, Object>) profile.get("localModels");
+        assertEquals("fal_minimax_voice_clone", localModels.get("voiceModel"));
+    }
+
+    @Test
+    void clearScriptSpecificFounderMedia_leavesOtherVoiceModelsUntouched() {
+        Map<String, Object> profile = new java.util.LinkedHashMap<>();
+        profile.put("localModels", Map.of("voiceModel", "client_rvc_english"));
+        normalizer.clearScriptSpecificFounderMedia(profile);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> localModels = (Map<String, Object>) profile.get("localModels");
+        assertEquals("client_rvc_english", localModels.get("voiceModel"));
     }
 }

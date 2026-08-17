@@ -3,6 +3,8 @@ package com.dalai.llama.creator.service;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -187,5 +189,24 @@ final class LocalAvatarModelNormalizer {
                 profile == null ? null : profile.get("providerMode")
         );
         return "dalai_llama".equals(provider) ? "dalai_llama" : "synthesia";
+    }
+
+    void clearScriptSpecificFounderMedia(Map<String, Object> profile) {
+        List.of(
+                "avatarScript",
+                "avatarScriptOverride",
+                "spokenText",
+                "spoken_text",
+                "fullSpokenText",
+                "exactFounderAudioAsset",
+                "finalFounderAudioAsset",
+                "finalFounderAudioUrl",
+                "finalFounderAudioUploadedAt"
+        ).forEach(profile::remove);
+        Map<String, Object> localModels = new LinkedHashMap<>(firstMap(profile.get("localModels")));
+        if ("uploaded_founder_audio".equals(normalizeLocalVoiceModel(firstText(localModels.get("voiceModel"))))) {
+            localModels.put("voiceModel", "fal_minimax_voice_clone");
+        }
+        profile.put("localModels", localModels);
     }
 }
