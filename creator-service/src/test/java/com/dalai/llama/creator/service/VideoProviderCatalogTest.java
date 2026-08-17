@@ -128,4 +128,15 @@ class VideoProviderCatalogTest {
         String url = catalog.googleVeoBaseUrl("veo-3.1-generate-preview");
         assertFalse(url.isBlank());
     }
+
+    @Test
+    void providerLabel_mapsKnownProvidersAndDefaultsToSeedance() {
+        assertEquals("Google Veo", catalog.providerLabel("google_veo"));
+        assertEquals("Gemini Omni Flash", catalog.providerLabel("gemini_omni"));
+        assertEquals("Synthesia", catalog.providerLabel("synthesia"));
+        assertEquals("Dalai Llama local", catalog.providerLabel("dalai_llama"));
+        assertEquals("Omini", catalog.providerLabel("omini"));
+        assertEquals("Seedance", catalog.providerLabel("seedance"));
+        assertEquals("Seedance", catalog.providerLabel("unknown_provider"));
+    }
 }

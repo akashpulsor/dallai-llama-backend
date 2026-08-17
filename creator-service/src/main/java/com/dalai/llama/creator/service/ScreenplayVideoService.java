@@ -44,7 +44,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.nio.file.Files;
@@ -4379,7 +4378,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     private String urlEncode(String value) {
-        return URLEncoder.encode(defaultString(value, ""), StandardCharsets.UTF_8);
+        return filenameSanitizer().urlEncode(value);
     }
 
     private String audioCompletionMessage(
@@ -4406,27 +4405,15 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     String safeSlug(String value) {
-        String normalized = defaultString(value, "scene")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9._-]+", "-")
-                .replaceAll("^-+|-+$", "");
-        return normalized.isBlank() ? "scene" : normalized;
+        return filenameSanitizer().safeSlug(value);
     }
 
     private String providerLabel(String provider) {
-        if ("google_veo".equals(provider)) {
-            return "Google Veo";
-        }
-        if ("gemini_omni".equals(provider)) {
-            return "Gemini Omni Flash";
-        }
-        if ("synthesia".equals(provider)) {
-            return "Synthesia";
-        }
-        if ("dalai_llama".equals(provider)) {
-            return "Dalai Llama local";
-        }
-        return "omini".equals(provider) ? "Omini" : "Seedance";
+        return videoProviderCatalog().providerLabel(provider);
+    }
+
+    private FilenameSanitizer filenameSanitizer() {
+        return new FilenameSanitizer();
     }
 
     private Map<String, Object> buildInitialRun(

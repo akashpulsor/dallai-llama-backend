@@ -251,4 +251,20 @@ final class VideoProviderCatalog {
                 .replace('-', '_');
         return backend.equals("vertex") || backend.equals("vertex_ai");
     }
+
+    String providerLabel(String provider) {
+        if ("google_veo".equals(provider)) {
+            return "Google Veo";
+        }
+        if ("gemini_omni".equals(provider)) {
+            return "Gemini Omni Flash";
+        }
+        if ("synthesia".equals(provider)) {
+            return "Synthesia";
+        }
+        if ("dalai_llama".equals(provider)) {
+            return "Dalai Llama local";
+        }
+        return "omini".equals(provider) ? "Omini" : "Seedance";
+    }
 }
