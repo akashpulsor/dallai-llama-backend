@@ -5590,89 +5590,11 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     Map<String, Object> compactScene(Map<String, Object> scene) {
-        if (scene == null || scene.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, Object> compact = new LinkedHashMap<>();
-        List.of(
-                "id",
-                "sceneId",
-                "sceneNumber",
-                "shotNumber",
-                "title",
-                "durationSeconds",
-                "startTime",
-                "endTime",
-                "generationMode",
-                "providerPrompt",
-                "prompt",
-                "videoPrompt",
-                "animationPrompt",
-                "videoMotionPrompt",
-                "imagePrompt",
-                "storyboardImagePrompt",
-                "cameraMovement",
-                "negativePrompt",
-                "noHumans",
-                "seedancePrompt",
-                "action",
-                "description",
-                "dialogue",
-                "voiceover",
-                "caption",
-                "captionText",
-                "hook",
-                "openingHook",
-                "hookLine",
-                "retentionGoal",
-                "patternInterrupt",
-                "sceneDetail",
-                "sceneDetails",
-                "background",
-                "backgroundDetail",
-                "setting",
-                "location",
-                "environment",
-                "setDescription",
-                "character",
-                "characters",
-                "characterDetail",
-                "characterDetails",
-                "wardrobe",
-                "props",
-                "lighting",
-                "camera",
-                "shotType",
-                "visualStyle",
-                "brollStyle",
-                "captionStyle",
-                "adFormat",
-                "adFormatKey",
-                "formatStructure",
-                "formatHookStyle",
-                "formatRetentionStyle",
-                "retentionGoal",
-                "patternInterrupt"
-        ).forEach(key -> {
-            if (scene.containsKey(key)) {
-                compact.put(key, scene.get(key));
-            }
-        });
-        return compact;
+        return sceneContextCompactor().compactScene(scene);
     }
 
     List<Map<String, Object>> srtCuesForScene(List<Object> cues, Map<String, Object> scene) {
-        if (cues == null || cues.isEmpty()) {
-            return List.of();
-        }
-        int start = intValue(scene.get("startSeconds"), 0);
-        int end = intValue(scene.get("endSeconds"), start + positiveInt(scene.get("durationSeconds"), 15));
-        return cues.stream()
-                .map(MapCoercion::mapValue)
-                .filter(cue -> cue.isEmpty()
-                        || overlaps(start, end, intValue(firstValue(cue.get("startSeconds"), cue.get("start")), start), intValue(firstValue(cue.get("endSeconds"), cue.get("end")), end)))
-                .limit(6)
-                .toList();
+        return sceneContextCompactor().srtCuesForScene(cues, scene);
     }
 
     private List<Map<String, Object>> fallbackDialogueCuesForScene(Map<String, Object> scene) {
@@ -5768,16 +5690,12 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         return Math.max(1, (int) Math.ceil(words / 2.4d) + 1);
     }
 
-    private boolean overlaps(int startA, int endA, int startB, int endB) {
-        return Math.max(startA, startB) < Math.min(endA, endB);
+    String sceneIdFor(Map<String, Object> scene, int sceneNumber) {
+        return sceneContextCompactor().sceneIdFor(scene, sceneNumber);
     }
 
-    String sceneIdFor(Map<String, Object> scene, int sceneNumber) {
-        String id = firstText(scene.get("id"), scene.get("sceneId"), scene.get("scene_id"), scene.get("shotId"), scene.get("shot_id"));
-        if (!id.isBlank()) {
-            return id;
-        }
-        return "scene-" + sceneNumber;
+    private SceneContextCompactor sceneContextCompactor() {
+        return new SceneContextCompactor();
     }
 
     Map<String, Object> rateLimitPolicy(String provider) {
