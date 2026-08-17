@@ -4333,42 +4333,15 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     boolean sameLanguage(String left, String right) {
-        return normalizeLanguageName(left).equals(normalizeLanguageName(right));
-    }
-
-    private String normalizeLanguageName(String value) {
-        return firstText(value)
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "_")
-                .replaceAll("^_+|_+$", "");
+        return dialogueLanguageCatalog().sameLanguage(left, right);
     }
 
     String languageCodeFor(String language) {
-        return switch (normalizeLanguageName(language)) {
-            case "english" -> "en-IN";
-            case "hindi", "hinglish" -> "hi-IN";
-            case "tamil" -> "ta-IN";
-            case "telugu" -> "te-IN";
-            case "bengali", "bangla" -> "bn-IN";
-            case "marathi" -> "mr-IN";
-            case "spanish" -> "es-ES";
-            case "french" -> "fr-FR";
-            case "german" -> "de-DE";
-            case "portuguese" -> "pt-BR";
-            case "italian" -> "it-IT";
-            case "arabic" -> "ar-SA";
-            case "japanese" -> "ja-JP";
-            case "korean" -> "ko-KR";
-            case "chinese", "mandarin", "chinese_mandarin" -> "zh-CN";
-            case "indonesian" -> "id-ID";
-            case "vietnamese" -> "vi-VN";
-            case "thai" -> "th-TH";
-            case "russian" -> "ru-RU";
-            case "turkish" -> "tr-TR";
-            case "dutch" -> "nl-NL";
-            case "polish" -> "pl-PL";
-            default -> "";
-        };
+        return dialogueLanguageCatalog().languageCodeFor(language);
+    }
+
+    private DialogueLanguageCatalog dialogueLanguageCatalog() {
+        return new DialogueLanguageCatalog();
     }
 
     private Map<String, Object> freeMusicSelectionPlan(
