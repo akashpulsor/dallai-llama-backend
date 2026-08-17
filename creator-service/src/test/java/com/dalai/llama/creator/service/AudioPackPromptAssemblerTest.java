@@ -129,4 +129,35 @@ class AudioPackPromptAssemblerTest {
         String prompt = assembler.audioPackMusicPrompt(Map.of(), Map.of(), Map.of(), run);
         assertTrue(prompt.contains("Maya"));
     }
+
+    @Test
+    void audioMixStandards_returnsDefaultsAndAppliesOverridesInOrder() {
+        Map<String, Object> defaults = assembler.audioMixStandards();
+        assertEquals("consistent_speech_first", defaults.get("dialogueLevel"));
+        assertEquals(-3, defaults.get("dialogueTargetDb"));
+
+        Map<String, Object> withOverride = assembler.audioMixStandards(Map.of("dialogueTargetDb", -6));
+        assertEquals(-6, withOverride.get("dialogueTargetDb"));
+        assertEquals("duck_under_speech", withOverride.get("backgroundMusicDucking"));
+    }
+
+    @Test
+    void audioMixStandards_ignoresBlankOverrides() {
+        Map<String, Object> result = assembler.audioMixStandards((Object) null, Map.of());
+        assertEquals("consistent_speech_first", result.get("dialogueLevel"));
+    }
+
+    @Test
+    void withAudioMixStandards_addsStandardsAndPolicyToPlan() {
+        Map<String, Object> plan = assembler.withAudioMixStandards(Map.of("mood", "confident"));
+        assertEquals("confident", plan.get("mood"));
+        assertTrue(plan.get("audioMixStandards") instanceof Map);
+        assertEquals("dialogue_first_music_ducked_room_tone_sparse_sfx_scene_reverb_smooth_fades", plan.get("audioProductionPolicy"));
+    }
+
+    @Test
+    void withAudioMixStandards_handlesNullPlan() {
+        Map<String, Object> plan = assembler.withAudioMixStandards(null);
+        assertTrue(plan.containsKey("audioMixStandards"));
+    }
 }

@@ -3,6 +3,7 @@ package com.dalai.llama.creator.service;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -388,5 +389,36 @@ final class AudioPackPromptAssembler {
             return "none";
         }
         return "free_licensed";
+    }
+
+    Map<String, Object> withAudioMixStandards(Map<String, Object> plan) {
+        Map<String, Object> normalized = new LinkedHashMap<>(plan == null ? Map.of() : plan);
+        normalized.put("audioMixStandards", audioMixStandards(normalized.get("audioMixStandards"), normalized.get("audio_mix_standards")));
+        normalized.put("audioProductionPolicy", "dialogue_first_music_ducked_room_tone_sparse_sfx_scene_reverb_smooth_fades");
+        return normalized;
+    }
+
+    Map<String, Object> audioMixStandards(Object... overrides) {
+        Map<String, Object> standards = new LinkedHashMap<>();
+        standards.put("dialogueLevel", "consistent_speech_first");
+        standards.put("backgroundMusicDucking", "duck_under_speech");
+        standards.put("ambientRoomTone", "maintain_low_scene_matched_room_tone");
+        standards.put("soundEffectsUse", "small_sfx_sparingly_for_whooshes_clicks_transitions");
+        standards.put("reverbMatch", "match_scene_space_and_camera_distance");
+        standards.put("fades", "smooth_fades_between_audio_segments");
+        standards.put("dialogueTargetDb", -3);
+        standards.put("musicBedDb", -18);
+        standards.put("ambienceBedDb", -22);
+        standards.put("sfxPeakDb", -9);
+        standards.put("fadeMs", 120);
+        if (overrides != null) {
+            for (Object override : overrides) {
+                Map<String, Object> custom = mapValue(override);
+                if (!custom.isEmpty()) {
+                    standards.putAll(custom);
+                }
+            }
+        }
+        return standards;
     }
 }
