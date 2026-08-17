@@ -6155,37 +6155,15 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     private String normalizeAvatarProviderMode(String value) {
-        String normalized = defaultString(value, "synthesia")
-                .toLowerCase(Locale.ROOT)
-                .replace('-', '_')
-                .trim();
-        if (normalized.equals("dalai_llama")
-                || normalized.equals("dallai_llama")
-                || normalized.equals("local")
-                || normalized.equals("local_open_source")
-                || normalized.equals("open_source")
-                || normalized.equals("opensource")) {
-            return "dalai_llama";
-        }
-        return "synthesia";
+        return localAvatarModelNormalizer().normalizeAvatarProviderMode(value);
     }
 
     String avatarProviderFrom(Object... values) {
-        for (Object value : values) {
-            String text = firstText(value);
-            if (!text.isBlank()) {
-                return normalizeAvatarProviderMode(text);
-            }
-        }
-        return "synthesia";
+        return localAvatarModelNormalizer().avatarProviderFrom(values);
     }
 
     String avatarVoiceProvider(Map<String, Object> profile) {
-        String provider = avatarProviderFrom(
-                profile == null ? null : profile.get("avatarProviderMode"),
-                profile == null ? null : profile.get("providerMode")
-        );
-        return "dalai_llama".equals(provider) ? "dalai_llama" : "synthesia";
+        return localAvatarModelNormalizer().avatarVoiceProvider(profile);
     }
 
     Map<String, Object> founderAvatarProfile(

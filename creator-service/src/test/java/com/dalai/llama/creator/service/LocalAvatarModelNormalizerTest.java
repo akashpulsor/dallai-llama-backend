@@ -116,4 +116,26 @@ class LocalAvatarModelNormalizerTest {
         assertEquals("fal_seedance", normalizer.normalizeLocalVideoModel(null));
         assertEquals("fal_seedance", normalizer.normalizeLocalVideoModel("anything"));
     }
+
+    @Test
+    void normalizeAvatarProviderMode_collapsesKnownSynonymsAndDefaultsToSynthesia() {
+        assertEquals("dalai_llama", normalizer.normalizeAvatarProviderMode("local"));
+        assertEquals("dalai_llama", normalizer.normalizeAvatarProviderMode("open-source"));
+        assertEquals("synthesia", normalizer.normalizeAvatarProviderMode(null));
+        assertEquals("synthesia", normalizer.normalizeAvatarProviderMode("something_else"));
+    }
+
+    @Test
+    void avatarProviderFrom_returnsFirstNonBlankNormalizedValueAndDefaultsToSynthesia() {
+        assertEquals("dalai_llama", normalizer.avatarProviderFrom(null, "", "local"));
+        assertEquals("synthesia", normalizer.avatarProviderFrom(null, ""));
+    }
+
+    @Test
+    void avatarVoiceProvider_mirrorsAvatarProviderModeCollapsedToDalaiLlamaOrSynthesia() {
+        assertEquals("dalai_llama", normalizer.avatarVoiceProvider(Map.of("avatarProviderMode", "local")));
+        assertEquals("synthesia", normalizer.avatarVoiceProvider(Map.of("avatarProviderMode", "synthesia")));
+        assertEquals("synthesia", normalizer.avatarVoiceProvider(Map.of()));
+        assertEquals("synthesia", normalizer.avatarVoiceProvider(null));
+    }
 }
