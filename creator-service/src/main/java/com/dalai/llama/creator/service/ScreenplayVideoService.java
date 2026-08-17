@@ -28,7 +28,6 @@ import com.dalai.llama.creator.repository.CreatorScriptShotPlanRepository;
 import com.dalai.llama.creator.repository.CreatorScriptShotRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardRepository;
 import com.dalai.llama.creator.repository.CreatorStoryboardSceneRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
@@ -5414,91 +5413,11 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
     }
 
     private Map<String, Object> sanitizeProviderStorageMap(Map<String, Object> payload) {
-        if (payload == null || payload.isEmpty()) {
-            return new LinkedHashMap<>();
-        }
-        return objectMapper.convertValue(sanitizeProviderStoragePayload(payload, ""), new TypeReference<LinkedHashMap<String, Object>>() {
-        });
+        return providerStoragePayloadSanitizer().sanitizeProviderStorageMap(payload);
     }
 
-    private Object sanitizeProviderStoragePayload(Object value, String key) {
-        String normalizedKey = defaultString(key, "").toLowerCase(Locale.ROOT).replace("_", "").replace("-", "");
-        if (normalizedKey.contains("authorization")
-                || normalizedKey.contains("apikey")
-                || normalizedKey.contains("secret")
-                || normalizedKey.contains("token")) {
-            return "[REDACTED]";
-        }
-        if (value instanceof Map<?, ?> rawMap) {
-            Map<String, Object> sanitized = new LinkedHashMap<>();
-            rawMap.forEach((rawKey, rawValue) -> {
-                String childKey = stringValue(rawKey, "");
-                sanitized.put(childKey, sanitizeProviderStoragePayload(rawValue, childKey));
-            });
-            return sanitized;
-        }
-        if (value instanceof Collection<?> collection) {
-            List<Object> sanitized = new ArrayList<>();
-            for (Object item : collection) {
-                sanitized.add(sanitizeProviderStoragePayload(item, key));
-            }
-            return sanitized;
-        }
-        if (value instanceof byte[] bytes) {
-            return "[binary bytes=" + bytes.length + " stored_in_object_storage]";
-        }
-        if (value instanceof String text) {
-            if (isBase64StoragePayloadKey(normalizedKey) && text.length() > 80) {
-                return "[base64 chars=" + text.length() + " omitted_stored_in_object_storage]";
-            }
-            int dataUrlMarker = text.indexOf(";base64,");
-            if (dataUrlMarker > 0 && text.length() > dataUrlMarker + 80) {
-                return "[data-url chars=" + text.length() + " omitted_stored_in_object_storage]";
-            }
-            if (text.length() > 20000 && looksLikeBase64(text)) {
-                return "[base64-like chars=" + text.length() + " omitted_stored_in_object_storage]";
-            }
-            if (text.length() > 40000) {
-                return truncate(text, 40000);
-            }
-        }
-        return value;
-    }
-
-    private boolean isBase64StoragePayloadKey(String normalizedKey) {
-        return normalizedKey.equals("data")
-                || normalizedKey.equals("audiocontent")
-                || normalizedKey.equals("audio")
-                || normalizedKey.equals("imagebytes")
-                || normalizedKey.equals("bytesbase64encoded")
-                || normalizedKey.equals("b64json")
-                || normalizedKey.equals("base64")
-                || normalizedKey.endsWith("base64");
-    }
-
-    private boolean looksLikeBase64(String value) {
-        if (value == null || value.length() < 512) {
-            return false;
-        }
-        int checked = 0;
-        int valid = 0;
-        int max = Math.min(value.length(), 4096);
-        for (int index = 0; index < max; index++) {
-            char ch = value.charAt(index);
-            if (Character.isWhitespace(ch)) {
-                continue;
-            }
-            checked++;
-            if ((ch >= 'A' && ch <= 'Z')
-                    || (ch >= 'a' && ch <= 'z')
-                    || (ch >= '0' && ch <= '9')
-                    || ch == '+'
-                    || ch == '/'
-                    || ch == '=') {
-                valid++;
-            }
-        }
-        return checked > 0 && valid >= Math.max(1, checked * 98 / 100);
+    private ProviderStoragePayloadSanitizer providerStoragePayloadSanitizer() {
+        return new ProviderStoragePayloadSanitizer(objectMapper);
     }
 
     String generationModeFor(Map<String, Object> scene, Map<String, Object> runOrRequest, Map<String, Object> request) {
