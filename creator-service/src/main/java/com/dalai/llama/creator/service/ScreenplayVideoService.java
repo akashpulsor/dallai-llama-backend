@@ -2463,14 +2463,30 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             ));
             voiceOptions.put("spokenText", voiceText);
             voiceOptions.put("captionText", captionText);
-            voiceOptions.put("pronunciationGuide", firstText(founderProfile.get("pronunciationGuide")));
+            String resolvedLanguageCode = firstText(
+                    inputPayload.get("languageCode"),
+                    run.get("languageCode"),
+                    founderProfile.get("languageCode"),
+                    languageCodeFor(firstText(run.get("dialogueLanguage")))
+            );
+            // Auto-generated phoneme guidance (Deliverable C, prompt-builder priority fix) is a
+            // best-effort addition on top of the founder's own manual guide, never a replacement -
+            // mergePronunciationGuides always keeps manual entries verbatim, and
+            // generatePhonemeGuideViaGemini fails safe to "" whenever Gemini/AI collaborators
+            // aren't available, so this is a no-op when either is absent. captionText (not
+            // voiceText) is the input, since voiceText may already carry the founder's manual
+            // substitutions baked in, which would confuse the auto-generator about what still
+            // needs help.
+            String manualPronunciationGuide = firstText(founderProfile.get("pronunciationGuide"));
+            String autoPhonemeGuide = providerGenerationService.generatePhonemeGuideViaGemini(captionText, resolvedLanguageCode);
+            voiceOptions.put("pronunciationGuide", localAvatarModelNormalizer().mergePronunciationGuides(manualPronunciationGuide, autoPhonemeGuide));
             voiceOptions.put("promptText", firstText(founderProfile.get("referenceTranscript")));
             voiceOptions.put("referenceTranscript", firstText(founderProfile.get("referenceTranscript")));
             voiceOptions.put("elevenLabsVoiceId", firstText(founderProfile.get("elevenLabsVoiceId")));
             voiceOptions.put("sarvamVoiceId", firstText(founderProfile.get("sarvamVoiceId")));
             putIfBlank(voiceOptions, "voiceName", firstText(inputPayload.get("voiceName"), inputPayload.get("voice")));
             putIfBlank(voiceOptions, "language", firstText(inputPayload.get("dialogueLanguage"), inputPayload.get("language"), run.get("dialogueLanguage"), founderProfile.get("language")));
-            putIfBlank(voiceOptions, "languageCode", firstText(inputPayload.get("languageCode"), run.get("languageCode"), founderProfile.get("languageCode"), languageCodeFor(firstText(run.get("dialogueLanguage")))));
+            putIfBlank(voiceOptions, "languageCode", resolvedLanguageCode);
             putIfBlank(voiceOptions, "voiceGender", dialogueVoiceProfile.get("voiceGender"));
             putIfBlank(voiceOptions, "speakerName", dialogueVoiceProfile.get("speakerName"));
             log.info("Generating screenplay dialogue audio scriptId={} runId={} gender={} speaker={} provider={}",

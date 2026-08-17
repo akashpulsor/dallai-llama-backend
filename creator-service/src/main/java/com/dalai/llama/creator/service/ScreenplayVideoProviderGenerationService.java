@@ -1,5 +1,6 @@
 package com.dalai.llama.creator.service;
 
+import com.dalai.llama.creator.domain.PromptTemplateType;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +35,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -42,9 +45,11 @@ import java.util.Base64;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -67,13 +72,33 @@ public class ScreenplayVideoProviderGenerationService {
     private final WebClient webClient;
     private final HttpClient httpClient;
     private final AssetStorageService assetStorageService;
+    private final LocalVideoFrameExtractionService lastFrameExtractionService;
+    private final PromptTemplateService promptTemplateService;
+    private final CreatorAiService creatorAiService;
     private final String dalaiLlamaBaseUrlOverride;
     private final Map<String, Semaphore> providerSemaphores = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> providerNextRequestAtMs = new ConcurrentHashMap<>();
+    // Keyed by a hash of (content + soft limit) so every shot in a run - and every future run
+    // reusing the same videoConsistencyBible/globalConsistencyPrompt - reuses the exact same
+    // compressed phrasing instead of asking Gemini to reword identical shared content
+    // differently per shot. Only successful compressions are cached; failures are retried.
+    private final Map<String, String> compressionCache = new ConcurrentHashMap<>();
+    private static final String LOCKED_BLOCK_TOKEN = "[[LOCKED_CONSISTENCY_BLOCK]]";
+    private static final int CONSISTENCY_LOCK_SOFT_LIMIT = 1200;
+    // Keyed by a hash of (dialogueText + languageCode), mirroring compressionCache, so repeated
+    // regeneration of the same shot's dialogue doesn't re-ask Gemini for the same guide.
+    private final Map<String, String> phonemeGuideCache = new ConcurrentHashMap<>();
 
     @Autowired
-    public ScreenplayVideoProviderGenerationService(ObjectMapper objectMapper, WebClient.Builder webClientBuilder, AssetStorageService assetStorageService) {
-        this(objectMapper, webClientBuilder, assetStorageService, "");
+    public ScreenplayVideoProviderGenerationService(
+            ObjectMapper objectMapper,
+            WebClient.Builder webClientBuilder,
+            AssetStorageService assetStorageService,
+            LocalVideoFrameExtractionService lastFrameExtractionService,
+            PromptTemplateService promptTemplateService,
+            CreatorAiService creatorAiService
+    ) {
+        this(objectMapper, webClientBuilder, assetStorageService, lastFrameExtractionService, promptTemplateService, creatorAiService, "");
     }
 
     ScreenplayVideoProviderGenerationService(
@@ -82,8 +107,23 @@ public class ScreenplayVideoProviderGenerationService {
             AssetStorageService assetStorageService,
             String dalaiLlamaBaseUrlOverride
     ) {
+        this(objectMapper, webClientBuilder, assetStorageService, null, null, null, dalaiLlamaBaseUrlOverride);
+    }
+
+    ScreenplayVideoProviderGenerationService(
+            ObjectMapper objectMapper,
+            WebClient.Builder webClientBuilder,
+            AssetStorageService assetStorageService,
+            LocalVideoFrameExtractionService lastFrameExtractionService,
+            PromptTemplateService promptTemplateService,
+            CreatorAiService creatorAiService,
+            String dalaiLlamaBaseUrlOverride
+    ) {
         this.objectMapper = objectMapper;
         this.assetStorageService = assetStorageService;
+        this.lastFrameExtractionService = lastFrameExtractionService;
+        this.promptTemplateService = promptTemplateService;
+        this.creatorAiService = creatorAiService;
         this.dalaiLlamaBaseUrlOverride = firstText(dalaiLlamaBaseUrlOverride);
         this.httpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -821,7 +861,11 @@ public class ScreenplayVideoProviderGenerationService {
                         ? firstText(envString(prefix + "_AI_SERVICE_API_KEY", ""), envString(prefix + "_API_KEY", ""), envString(altPrefix + "_API_KEY", ""))
                         : falSeedance
                         ? firstText(envString("FAL_KEY", ""), envString(prefix + "_API_KEY", ""), envString(altPrefix + "_API_KEY", ""))
-                        : googleGenerativeApi
+                        // omini reuses the same Gemini/AI Studio key already configured for
+                        // Gemini Flash - it is not a separate provider account, so no
+                        // OMINI_API_KEY should ever need to be provisioned. An explicit
+                        // OMINI_API_KEY/OMNI_API_KEY still wins if someone sets one later.
+                        : (googleGenerativeApi || omini)
                         ? firstText(
                         envString(prefix + "_API_KEY", ""),
                         envString(altPrefix + "_API_KEY", ""),
@@ -919,7 +963,11 @@ public class ScreenplayVideoProviderGenerationService {
                 textValue(request.videoConsistencyBible(), "negativePrompt"),
                 "no face drift, no wardrobe change, no random new actor, no changed room layout, no wrong aspect ratio, no unreadable text, no watermark, no random subtitles, no extra limbs"
         );
-        String prompt = buildConsistencyPrompt(request, seriesSeed, sceneSeed, negativePrompt);
+        // Resolved and (if long) compressed once via the shared cache, then threaded through
+        // unchanged - this is the one piece of the prompt that MUST read identically across
+        // every independently-generated shot in the run for the final video to feel consistent.
+        String consistencyLockText = resolveConsistencyLockText(request);
+        String prompt = buildConsistencyPrompt(request, seriesSeed, sceneSeed, negativePrompt, consistencyLockText);
         log.info(
                 "Screenplay video prompt assembled runId={} scriptId={} sceneId={} provider={} promptBuildMs={} promptChars={} srtCueCount={} previousScenePresent={} nextScenePresent={}",
                 request.runId(),
@@ -946,12 +994,12 @@ public class ScreenplayVideoProviderGenerationService {
             return buildDalaiLlamaAvatarRequest(config, request, prompt, durationSeconds, sceneSeed);
         }
         if ("seedance".equals(config.provider())) {
-            return buildFalSeedanceRequest(config, request, prompt, durationSeconds, sceneSeed);
+            return buildFalSeedanceRequest(config, request, prompt, durationSeconds, sceneSeed, consistencyLockText);
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.model());
-        body.put("prompt", truncate(prompt, envInt(config.prefix() + "_PROMPT_MAX_CHARS", 6000)));
+        body.put("prompt", compressPromptIfNeeded(prompt, envInt(config.prefix() + "_PROMPT_MAX_CHARS", 6000), consistencyLockText));
         body.put("duration", durationSeconds);
         body.put("durationSeconds", durationSeconds);
         body.put("aspect_ratio", firstText(request.aspectRatio(), "9:16"));
@@ -980,13 +1028,43 @@ public class ScreenplayVideoProviderGenerationService {
         return body;
     }
 
+    private record SplicedPrompt(String prompt, String protectedContent) {}
+
+    /**
+     * Places reference-image role text ("@Image1 is...", cast-face role lines) immediately
+     * ahead of the visual consistency lock inside the already-assembled consistency prompt,
+     * and extends compression protection to cover both as one block - previously only
+     * consistencyLockText was protected, so under budget pressure Gemini compression could
+     * reword or drop the text that tells the model which attached image is the product frame
+     * vs. which is a cast member's face. Avoids widening compressPromptIfNeeded's signature
+     * (shared by 3 call sites) by splicing the role text adjacent to the existing anchor and
+     * protecting the combined block instead.
+     */
+    private SplicedPrompt spliceReferenceRoleText(String prompt, String consistencyLockText, String referenceRoleText) {
+        String roles = referenceRoleText == null ? "" : referenceRoleText.trim();
+        if (roles.isEmpty()) {
+            return new SplicedPrompt(prompt, consistencyLockText);
+        }
+        if (consistencyLockText == null || consistencyLockText.isBlank() || prompt == null || !prompt.contains(consistencyLockText)) {
+            // No anchor to splice against - prepend so the role text isn't lost, but it won't
+            // get compression protection in this fallback case.
+            return new SplicedPrompt(roles + "\n\n" + (prompt == null ? "" : prompt), consistencyLockText);
+        }
+        String protectedBlock = roles + "\n\n" + consistencyLockText;
+        return new SplicedPrompt(prompt.replace(consistencyLockText, protectedBlock), protectedBlock);
+    }
+
     private Map<String, Object> buildFalSeedanceRequest(
             ProviderConfig config,
             SceneVideoRequest request,
             String prompt,
             int durationSeconds,
-            long sceneSeed
+            long sceneSeed,
+            String consistencyLockText
     ) {
+        if (isFalSeedance25(config.model())) {
+            return buildFalSeedance25Request(config, request, prompt, durationSeconds, consistencyLockText);
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("resolution", falSeedanceResolution(config.model(), envString("SEEDANCE_FAL_RESOLUTION", "720p")));
         body.put("duration", String.valueOf(falSeedanceDuration(config.model(), durationSeconds)));
@@ -999,33 +1077,185 @@ public class ScreenplayVideoProviderGenerationService {
         body.put("bitrate_mode", falSeedanceBitrateMode(envString("SEEDANCE_FAL_BITRATE_MODE", "standard")));
         body.put("seed", sceneSeed);
 
-        boolean productReferenceToVideo = booleanValue(
+        DownloadedReferenceImage adHocOverrideImage = adHocReferenceImageOverride(request)
+                ? adHocReferenceImage(config, request)
+                : null;
+        boolean productReferenceToVideo = adHocOverrideImage == null && booleanValue(
                 request.providerRequest().get("seedanceReferenceToVideo"),
                 false
         );
-        if (productReferenceToVideo) {
+        // Independent of productReferenceToVideo, not mutually exclusive with it: a product-led
+        // shot with an assigned cast member still needs that person's face. Without this, a
+        // product scene either got the CGI product frame (with whatever face the image stage
+        // happened to render) OR the cast face alone with no product frame at all - never both -
+        // so the video either lost the model's identity or lost the product/dress the frame was
+        // built for.
+        boolean castFaceReferenceMode = adHocOverrideImage == null
+                && booleanValue(request.providerRequest().get("castFaceReferenceMode"), false);
+        String referenceRoleText = "";
+        if (adHocOverrideImage != null) {
+            // "override" priority: the freshly uploaded image replaces every other candidate
+            // outright for this generation - no product/cast/continuity image is attached.
+            body.put("image_url", referenceImageDataUri(adHocOverrideImage));
+            prompt = (prompt == null ? "" : prompt.trim());
+        } else if (productReferenceToVideo) {
             if (!supportsFalSeedanceReferenceToVideo(config.model())) {
                 throw new IllegalStateException("Product CGI multi-reference generation requires Seedance 2.0.");
             }
-            List<DownloadedReferenceImage> referenceImages = seedanceReferenceImages(config, request);
+            List<DownloadedReferenceImage> referenceImages = new ArrayList<>(seedanceReferenceImages(config, request));
             if (referenceImages.size() < 2) {
                 throw new IllegalStateException(
                         "Product CGI generation requires both the approved shot frame and the original product reference before calling Seedance."
                 );
+            }
+            int productImageCount = referenceImages.size();
+            List<DownloadedReferenceImage> castFaces = List.of();
+            if (castFaceReferenceMode) {
+                castFaces = castFaceReferenceImages(config, request);
+                for (DownloadedReferenceImage face : castFaces) {
+                    if (referenceImages.size() >= 9) {
+                        break;
+                    }
+                    referenceImages.add(face);
+                }
             }
             List<String> imageUrls = referenceImages.stream()
                     .limit(9)
                     .map(this::referenceImageDataUri)
                     .toList();
             body.put("image_urls", imageUrls);
-            prompt = seedanceProductReferencePrompt(prompt, imageUrls.size());
+            // "" in place of the real scene prompt yields the role-announcement text alone
+            // (seedanceProductReferencePrompt/castFaceRolesPrompt just append the given prompt
+            // verbatim after building the role lines) - the real prompt is spliced back in below,
+            // adjacent to the consistency lock, instead of being concatenated here.
+            referenceRoleText = seedanceProductReferencePrompt("", Math.min(productImageCount, imageUrls.size()));
+            if (imageUrls.size() > productImageCount) {
+                referenceRoleText = referenceRoleText + " "
+                        + castFaceRolesPrompt(referenceImages.subList(productImageCount, imageUrls.size()), productImageCount);
+            }
         } else {
-            DownloadedReferenceImage referenceImage = firstReferenceImage(config, request);
-            if (referenceImage != null) {
-                body.put("image_url", referenceImageDataUri(referenceImage));
+            // Cast faces, cross-scene continuity, and a "combine"-priority ad-hoc upload are all
+            // additional context, not alternatives to each other - a scene can legitimately need
+            // the previous scene's last frame AND a named character's face at the same time.
+            // Whatever is actually available gets combined into one multi-image call; nothing
+            // here is dropped just because something else was also attached.
+            List<DownloadedReferenceImage> combinedImages = new ArrayList<>();
+            DownloadedReferenceImage continuityFrame = previousSceneContinuityFrame(config, request);
+            if (continuityFrame != null) {
+                combinedImages.add(continuityFrame);
+            }
+            if (castFaceReferenceMode) {
+                combinedImages.addAll(castFaceReferenceImages(config, request));
+            }
+            prependAdHocCombineImage(combinedImages, config, request);
+            combinedImages = dedupeReferenceImages(combinedImages);
+            if (!combinedImages.isEmpty()) {
+                // Always the plural "image_urls" (reference-to-video / multi-image mode), even for
+                // a single cast face - never the singular "image_url", which Seedance 2.0 treats as
+                // a literal starting frame to animate. A lone cast reference photo put there would
+                // hand the model that exact photo's clothing, pose, and background as the video's
+                // first frame, overriding whatever this shot's own plan/composition called for.
+                // Reference images are identity/continuity context only; the shot plan always
+                // drives composition - only a genuine approved production image (the "else" branch
+                // below, via firstReferenceImage) is meant to be animated as a starting frame.
+                List<String> imageUrls = combinedImages.stream()
+                        .limit(9)
+                        .map(this::referenceImageDataUri)
+                        .toList();
+                body.put("image_urls", imageUrls);
+                referenceRoleText = seedanceCombinedReferencePrompt("", combinedImages.subList(0, imageUrls.size()));
+            } else {
+                DownloadedReferenceImage referenceImage = firstReferenceImage(config, request);
+                if (referenceImage != null) {
+                    body.put("image_url", referenceImageDataUri(referenceImage));
+                }
             }
         }
-        body.put("prompt", truncate(prompt, envInt("SEEDANCE_PROMPT_MAX_CHARS", 6000)));
+        // Section-boundary-aware, not a naive hard cut: Seedance is the default/primary
+        // provider and now carries the most context (full Stage 1 planning), so a mid-JSON or
+        // mid-sentence truncation here is the likeliest place to silently corrupt the dialogue
+        // lock or negative prompt if the budget is ever exceeded. Same function Gemini Omni
+        // already uses. The reference-role text (if any) is spliced adjacent to the consistency
+        // lock and protected alongside it, so compression can't reword/drop the "which image is
+        // the product frame vs. whose face this is" instructions either.
+        SplicedPrompt spliced = spliceReferenceRoleText(prompt, consistencyLockText, referenceRoleText);
+        body.put("prompt", compressPromptIfNeeded(spliced.prompt(), envInt("SEEDANCE_PROMPT_MAX_CHARS", 6000), spliced.protectedContent()));
+        String endImageUrl = firstText(
+                textValue(request.providerRequest(), "endImageUrl"),
+                textValue(request.providerRequest(), "end_image_url")
+        );
+        if (!endImageUrl.isBlank()) {
+            body.put("end_image_url", endImageUrl);
+        }
+        return body;
+    }
+
+    /**
+     * Seedance 2.5 (confirmed live: queue.fal.run/bytedance/seedance-2.5/image-to-video, required
+     * fields prompt+image_url) animates a single still into a clip - it has no image_urls
+     * multi-reference field the way 2.0 does, so the product-CGI multi-reference path is not
+     * available here (guarded upstream by supportsFalSeedanceReferenceToVideo, which already
+     * excludes any model that isn't 2.0). This reuses 2.0's exact same reference-image priority
+     * order (ad-hoc override > previous-scene continuity frame > cast face > plain fallback) but
+     * takes only the single highest-priority image instead of an array; anything else that would
+     * have been attached gets folded into the prompt as a note instead of silently disappearing.
+     */
+    private Map<String, Object> buildFalSeedance25Request(
+            ProviderConfig config,
+            SceneVideoRequest request,
+            String prompt,
+            int durationSeconds,
+            String consistencyLockText
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("resolution", falSeedanceResolution(envString("SEEDANCE_FAL_RESOLUTION", "720p")));
+        body.put("duration", String.valueOf(falSeedanceDuration(durationSeconds)));
+        body.put("aspect_ratio", falSeedanceAspectRatio(firstText(request.aspectRatio(), "9:16")));
+        body.put("generate_audio", booleanValue(firstValue(
+                request.providerRequest().get("generateAudio"),
+                request.providerRequest().get("nativeAudioEnabled"),
+                request.providerRequest().get("native_audio_enabled")
+        ), booleanEnv("SEEDANCE_FAL_GENERATE_AUDIO", true)));
+
+        DownloadedReferenceImage adHocOverrideImage = adHocReferenceImageOverride(request)
+                ? adHocReferenceImage(config, request)
+                : null;
+        boolean castFaceReferenceMode = adHocOverrideImage == null
+                && booleanValue(request.providerRequest().get("castFaceReferenceMode"), false);
+        DownloadedReferenceImage selected;
+        String referenceRoleText = "";
+        if (adHocOverrideImage != null) {
+            selected = adHocOverrideImage;
+            prompt = prompt == null ? "" : prompt.trim();
+        } else {
+            List<DownloadedReferenceImage> combinedImages = new ArrayList<>();
+            DownloadedReferenceImage continuityFrame = previousSceneContinuityFrame(config, request);
+            if (continuityFrame != null) {
+                combinedImages.add(continuityFrame);
+            }
+            if (castFaceReferenceMode) {
+                combinedImages.addAll(castFaceReferenceImages(config, request));
+            }
+            prependAdHocCombineImage(combinedImages, config, request);
+            combinedImages = dedupeReferenceImages(combinedImages);
+            if (!combinedImages.isEmpty()) {
+                selected = combinedImages.get(0);
+                referenceRoleText = seedanceCombinedReferencePrompt("", combinedImages.subList(0, 1));
+                if (combinedImages.size() > 1) {
+                    referenceRoleText = referenceRoleText + " (Seedance 2.5 accepts a single reference image only - "
+                            + (combinedImages.size() - 1)
+                            + " additional reference image(s) available for this shot were not attached; "
+                            + "the description above must carry any identity/continuity detail they would have shown.)";
+                }
+            } else {
+                selected = firstReferenceImage(config, request);
+            }
+        }
+        if (selected != null) {
+            body.put("image_url", referenceImageDataUri(selected));
+        }
+        SplicedPrompt spliced = spliceReferenceRoleText(prompt, consistencyLockText, referenceRoleText);
+        body.put("prompt", compressPromptIfNeeded(spliced.prompt(), envInt("SEEDANCE_PROMPT_MAX_CHARS", 6000), spliced.protectedContent()));
         String endImageUrl = firstText(
                 textValue(request.providerRequest(), "endImageUrl"),
                 textValue(request.providerRequest(), "end_image_url")
@@ -1055,6 +1285,124 @@ public class ScreenplayVideoProviderGenerationService {
         roles.append("Never animate a storyboard card, drawing, contact sheet, annotation, or production label. ");
         roles.append(prompt == null ? "" : prompt.trim());
         return roles.toString().trim();
+    }
+
+    /**
+     * Shared by seedanceCombinedReferencePrompt() and the product-reference path
+     * (buildFalSeedanceRequest, when a product-led shot also has an assigned cast member): the
+     * face-identity-only instruction is identical either way, so it's written once here instead
+     * of duplicated per call site.
+     */
+    private void appendFaceRoleLine(StringBuilder roles, String label, String role) {
+        String[] segments = role.substring("face:".length()).split("\\|");
+        String rawName = segments[0].trim();
+        String characterName = rawName.isBlank() ? "this character" : rawName;
+        String wardrobeThisShot = "";
+        for (int segmentIndex = 1; segmentIndex < segments.length; segmentIndex++) {
+            if (segments[segmentIndex].startsWith("wardrobe:")) {
+                wardrobeThisShot = segments[segmentIndex].substring("wardrobe:".length()).trim();
+                break;
+            }
+        }
+        roles.append(label).append(" is a face reference for ").append(characterName)
+                .append(" — use it ONLY to preserve exact facial identity: face shape, features, skin tone, ")
+                .append("hairstyle, and build for ").append(characterName)
+                .append(" in every frame they appear in. Do NOT copy the clothing, outfit, accessories, ")
+                .append("background, lighting, or pose shown in this reference photo — dress and place ")
+                .append(characterName)
+                .append(wardrobeThisShot.isBlank()
+                        ? " according to this shot's own description below."
+                        : " in \"" + wardrobeThisShot + "\" as described for this shot, not whatever they are wearing in the reference photo.");
+        for (int segmentIndex = 1; segmentIndex < segments.length; segmentIndex++) {
+            String segment = segments[segmentIndex];
+            if (segment.startsWith("archetype:")) {
+                roles.append(" Role: ").append(segment.substring("archetype:".length())).append(".");
+            } else if (segment.startsWith("features:")) {
+                roles.append(" Distinguishing features: ").append(segment.substring("features:".length())).append(".");
+            }
+        }
+        roles.append(" ");
+    }
+
+    /**
+     * Appends cast-face role lines for images tacked onto the END of the product-reference
+     * image list (buildFalSeedanceRequest's productReferenceToVideo branch) - startIndex is how
+     * many product images (@Image1..@ImageN) precede them, so the @Image labels here continue
+     * that same numbering instead of restarting at 1.
+     */
+    private String castFaceRolesPrompt(List<DownloadedReferenceImage> faceImages, int startIndex) {
+        StringBuilder roles = new StringBuilder();
+        for (int index = 0; index < faceImages.size(); index++) {
+            String label = "@Image" + (startIndex + index + 1);
+            String role = faceImages.get(index).role();
+            if (role != null && role.startsWith("face:")) {
+                appendFaceRoleLine(roles, label, role);
+            }
+        }
+        return roles.toString().trim();
+    }
+
+    /**
+     * Every reference image this scene ends up attaching - cross-scene continuity frame, one or
+     * more named cast faces, a combine-priority ad-hoc upload - is additional context, not an
+     * alternative to the others. They're all described here, uniformly @Image1.. @ImageN in
+     * array order, in ONE combined prompt instead of separate mutually-exclusive prompt
+     * functions, so nothing already being sent to the model quietly disappears just because
+     * something else was also attached. Rendered from the CAST_FACE_REFERENCE_PROMPT row in the
+     * prompt repository (creator_prompt_templates, seeded by V64) rather than an inline Java
+     * string, per this project's other AI-generation prompts (PromptTemplateService). The
+     * per-image role lines still have to be assembled in Java - the templating system is a flat
+     * {{key}} substitution with no loop construct - but the editable wrapper text (and its
+     * "never animate a storyboard card" guard) lives in the DB, not compiled code.
+     */
+    private String seedanceCombinedReferencePrompt(String prompt, List<DownloadedReferenceImage> images) {
+        StringBuilder roles = new StringBuilder();
+        for (int index = 0; index < images.size(); index++) {
+            DownloadedReferenceImage image = images.get(index);
+            String label = "@Image" + (index + 1);
+            String role = image.role() == null ? "" : image.role();
+            if (role.startsWith("face:")) {
+                appendFaceRoleLine(roles, label, role);
+            } else if ("previous_scene_last_frame".equals(role)) {
+                roles.append(label).append(" is the ending frame of the previous scene in this sequence, supplied ")
+                        .append("only for cross-scene continuity: match this frame's character identity, face, hair, ")
+                        .append("wardrobe, set geography, and lighting style. Do not treat ").append(label)
+                        .append(" as a starting pose or composition to hold — this scene has its own camera angle, ")
+                        .append("blocking, and action described below, and must follow that direction, not the frame's pose. ");
+            } else {
+                roles.append(label).append(" is a user-supplied reference for this generation only. Use it to inform ")
+                        .append("identity, style, or product details as relevant without copying its exact pose or composition. ");
+            }
+        }
+        String scenePrompt = prompt == null ? "" : prompt.trim();
+        if (promptTemplateService != null) {
+            try {
+                var template = promptTemplateService.getActiveTemplate(PromptTemplateType.CAST_FACE_REFERENCE_PROMPT.name());
+                return promptTemplateService.render(template, Map.of(
+                        "castFaceRoles", roles.toString(),
+                        "scenePrompt", scenePrompt
+                )).trim();
+            } catch (RuntimeException ex) {
+                log.warn("Could not load CAST_FACE_REFERENCE_PROMPT template, using built-in fallback errorType={} errorMessage={}",
+                        ex.getClass().getSimpleName(), ex.getMessage());
+            }
+        }
+        roles.append("Never animate a storyboard card, drawing, contact sheet, annotation, or production label. ");
+        roles.append(scenePrompt);
+        return roles.toString().trim();
+    }
+
+    private List<DownloadedReferenceImage> dedupeReferenceImages(List<DownloadedReferenceImage> images) {
+        List<DownloadedReferenceImage> deduped = new ArrayList<>();
+        List<Integer> fingerprints = new ArrayList<>();
+        for (DownloadedReferenceImage image : images) {
+            int fingerprint = java.util.Arrays.hashCode(image.bytes());
+            if (!fingerprints.contains(fingerprint)) {
+                deduped.add(image);
+                fingerprints.add(fingerprint);
+            }
+        }
+        return deduped;
     }
 
     private Map<String, Object> buildSynthesiaRequest(
@@ -1308,6 +1656,13 @@ public class ScreenplayVideoProviderGenerationService {
     ) {
         int omniDurationSeconds = clampInt(durationSeconds, 1, config.maxClipSeconds());
         String aspectRatio = firstText(request.aspectRatio(), "9:16");
+        DownloadedReferenceImage continuityFrame = previousSceneContinuityFrame(config, request);
+        String continuityNote = continuityFrame != null
+                ? "- A reference image is attached: it is the ending frame of the previous scene, supplied only for "
+                        + "character identity, wardrobe, lighting, and set continuity. Do not replicate its exact pose "
+                        + "or camera framing - follow this scene's own camera and action direction from the creative "
+                        + "direction above.\n                "
+                : "";
         String omniPrompt = """
                 Create a finished commercial video shot from this creative direction.
 
@@ -1318,12 +1673,12 @@ public class ScreenplayVideoProviderGenerationService {
                 - Aspect ratio: %s.
                 - Keep dialogue, captions, and action aligned to the screenplay timing.
                 - Preserve product packaging, character identity, wardrobe, background layout, camera language, lighting, and series seed continuity.
-                - Audio mix: dialogue at a consistent level, background music ducked under speech, ambient room tone, sparse transition effects, scene-matched reverb, and smooth fades.
+                %s- Audio mix: dialogue at a consistent level, background music ducked under speech, ambient room tone, sparse transition effects, scene-matched reverb, and smooth fades.
                 - Avoid: %s
-                """.formatted(prompt, omniDurationSeconds, aspectRatio, negativePrompt);
+                """.formatted(prompt, omniDurationSeconds, aspectRatio, continuityNote, negativePrompt);
 
         List<Object> input = new ArrayList<>();
-        DownloadedReferenceImage referenceImage = firstReferenceImage(config, request);
+        DownloadedReferenceImage referenceImage = continuityFrame != null ? continuityFrame : firstReferenceImage(config, request);
         if (referenceImage != null) {
             Map<String, Object> image = new LinkedHashMap<>();
             image.put("type", "image");
@@ -1409,13 +1764,9 @@ public class ScreenplayVideoProviderGenerationService {
             SceneVideoRequest request,
             long seriesSeed,
             long sceneSeed,
-            String negativePrompt
+            String negativePrompt,
+            String consistencyLockText
     ) {
-        String globalPrompt = firstText(
-                textValue(request.providerRequest(), "visualConsistencyPrompt"),
-                textValue(request.providerRequest(), "consistencyLockPrompt"),
-                textValue(request.seedancePromptStrategy(), "globalConsistencyPrompt")
-        );
         String fastPrompt = textValue(request.seedancePromptStrategy(), "fastPacedPrompt");
         String slowPrompt = textValue(request.seedancePromptStrategy(), "slowPacedPrompt");
         String paceKey = firstText(textValue(request.videoPacingProfile(), "paceKey"), "balanced");
@@ -1440,6 +1791,12 @@ public class ScreenplayVideoProviderGenerationService {
         String editingPlan = toJson(mapValue(request.providerRequest().get("editingPlan")));
         String visualTreatment = toJson(mapValue(request.providerRequest().get("visualTreatment")));
         String dialogueLock = dialogueLockText(request);
+        boolean captionsEnabled = booleanValue(request.providerRequest().get("captionsEnabled"), true);
+        String captionLockSection = captionsEnabled
+                ? "Use only these caption/voice cues when text or speech is visible. Do not invent random subtitles. "
+                        + "Caption text must match the exact dialogue when captions are shown.\n" + srtCues
+                : "Do not render any on-screen captions, subtitles, or burned-in caption text in this video, even if "
+                        + "dialogue or SRT cues are supplied below for audio timing only.";
         String referenceDetails = firstText(
                 textValue(request.providerRequest(), "referenceImageDetails"),
                 textValue(request.videoConsistencyBible(), "referenceImageDetails"),
@@ -1449,12 +1806,34 @@ public class ScreenplayVideoProviderGenerationService {
                 "previousScene", request.previousScene(),
                 "nextScene", request.nextScene()
         ));
+        // sceneDetailPacket() (embedded below) IS the compressed representation of Stage 1's
+        // full director/DP/lighting plan for this shot - attachProductionPlanTags() in
+        // ScreenplayVideoService folds every visually-relevant field from storyboardTag/
+        // lightingBuildSheetTag/cameraPlanSheetTag into lighting/camera/emotionalDirection/
+        // characterDetail/creatorDirection/audioDescription/narrativeBeat before this method ever
+        // runs, so this one compact JSON block carries all of it within the model's prompt budget.
+        // Physical-crew-only fields (gear brand names, rig distances in feet, setup minutes,
+        // safety-coordinator flags) are the only things deliberately left out - they have no
+        // video-model translation. Dialogue itself is handled separately below (dialogueLock/
+        // srtCues), not duplicated here.
         String sceneDetailPacket = toJson(sceneDetailPacket(request));
 
+        // Dialogue and caption locks are placed right after the scene prompt, ahead of the
+        // larger context blocks (scene detail packet, adjacent-scene continuity, etc.) - the
+        // truncation above is now section-boundary-safe rather than a raw character cut, but
+        // exact word-for-word dialogue still matters more than any of the supplementary
+        // context, so it stays protected even in the rare case the budget is actually hit.
         return """
                 Generate one production-ready video scene for a larger multi-scene creator video.
 
                 Scene prompt:
+                %s
+
+                Dialogue delivery lock:
+                If this provider generates native speech/audio, speak the full dialogue below word-for-word in order. Do not paraphrase, skip words, summarize, invent new lines, or cut off the final words. If native speech is not supported, keep the visual mouth movement and timing compatible with the same complete line for the later voice mix.
+                %s
+
+                Caption and SRT lock:
                 %s
 
                 Scene detail packet:
@@ -1481,14 +1860,6 @@ public class ScreenplayVideoProviderGenerationService {
                 Adjacent scene continuity:
                 %s
 
-                Dialogue delivery lock:
-                If this provider generates native speech/audio, speak the full dialogue below word-for-word in order. Do not paraphrase, skip words, summarize, invent new lines, or cut off the final words. If native speech is not supported, keep the visual mouth movement and timing compatible with the same complete line for the later voice mix.
-                %s
-
-                Caption and SRT lock:
-                Use only these caption/voice cues when text or speech is visible. Do not invent random subtitles. Caption text must match the exact dialogue when captions are shown.
-                %s
-
                 Audio mix standards:
                 When this provider generates or preserves audio, keep dialogue at a consistent speech-first level, duck background music under speech, maintain scene-matched room tone, use small whooshes/clicks/transitions sparingly, match reverb to the physical space, and use smooth fades between segments.
                 %s
@@ -1513,14 +1884,14 @@ public class ScreenplayVideoProviderGenerationService {
                 %s
                 """.formatted(
                 request.prompt(),
+                dialogueLock,
+                captionLockSection,
                 sceneDetailPacket,
                 visualTreatment,
-                firstText(globalPrompt, toJson(request.videoConsistencyBible())),
+                consistencyLockText,
                 toJson(request.videoPacingProfile()),
                 pacingPrompt,
                 adjacent,
-                dialogueLock,
-                srtCues,
                 audioMixStandards,
                 referenceDetails,
                 imageLedAdPlan,
@@ -1621,6 +1992,14 @@ public class ScreenplayVideoProviderGenerationService {
                 request.videoConsistencyBible().get("storyCharacters"),
                 request.videoConsistencyBible().get("characters")
         ));
+        putIfPresent(details, "castCharacters", mapListValue(request.providerRequest().get("castCharacters")).stream()
+                .map(character -> Map.of(
+                        "characterName", stringValue(character.get("characterName"), ""),
+                        "characterRole", stringValue(character.get("characterRole"), ""),
+                        "hasReferenceImage", !stringValue(character.get("referenceImageUrl"), "").isBlank()
+                ))
+                .toList());
+        putIfPresent(details, "emotionalDirection", request.scene().get("emotionalDirection"));
         putIfPresent(details, "wardrobe", request.scene().get("wardrobe"));
         putIfPresent(details, "props", request.scene().get("props"));
         putIfPresent(details, "lighting", request.scene().get("lighting"));
@@ -2470,7 +2849,115 @@ public class ScreenplayVideoProviderGenerationService {
                     lastFailure
             );
         }
+        prependAdHocCombineImage(images, config, request);
         return images;
+    }
+
+    private List<DownloadedReferenceImage> castFaceReferenceImages(ProviderConfig config, SceneVideoRequest request) {
+        List<Map<String, Object>> castFaces = mapListValue(request.providerRequest().get("castFaces"));
+        List<DownloadedReferenceImage> images = new ArrayList<>();
+        for (Map<String, Object> face : castFaces) {
+            String url = stringValue(face.get("referenceImageUrl"), "");
+            String characterName = stringValue(face.get("characterName"), "Character");
+            if (url.isBlank()) {
+                continue;
+            }
+            try {
+                DownloadedReferenceImage downloaded = downloadReferenceImage(url, config);
+                images.add(new DownloadedReferenceImage(
+                        downloaded.bytes(), downloaded.contentType(), downloaded.redactedSource(), castFaceRole(face, characterName)
+                ));
+            } catch (RuntimeException ex) {
+                log.warn(
+                        "Could not load cast face reference provider={} sceneId={} character={} errorType={} errorMessage={}",
+                        config.provider(), request.sceneId(), characterName, ex.getClass().getSimpleName(), ex.getMessage()
+                );
+            }
+            if (images.size() >= 9) {
+                break;
+            }
+        }
+        prependAdHocCombineImage(images, config, request);
+        return images;
+    }
+
+    /**
+     * Encodes this shot's own director-specified archetype/distinguishing-features/wardrobe for
+     * this character (from storyboardTag's CharacterRenderSpec, threaded through by
+     * ScreenplayVideoService.castCharactersForSceneByShotPlan()) into the DownloadedReferenceImage
+     * role string, so seedanceCombinedReferencePrompt() can fold the same shot-specific detail
+     * Stage 1 already decided into the identity-lock instruction - not just a bare name.
+     */
+    private String castFaceRole(Map<String, Object> face, String characterName) {
+        StringBuilder role = new StringBuilder("face:").append(characterName);
+        String archetype = stringValue(face.get("archetypeLabel"), "");
+        String features = stringValue(face.get("distinguishingFeatures"), "");
+        String wardrobe = stringValue(face.get("wardrobeThisShot"), "");
+        if (!archetype.isBlank()) {
+            role.append("|archetype:").append(archetype);
+        }
+        if (!features.isBlank()) {
+            role.append("|features:").append(features);
+        }
+        if (!wardrobe.isBlank()) {
+            role.append("|wardrobe:").append(wardrobe);
+        }
+        return role.toString();
+    }
+
+    /** Folds a "combine"-priority ad-hoc upload into an already-assembled multi-image list. */
+    private void prependAdHocCombineImage(List<DownloadedReferenceImage> images, ProviderConfig config, SceneVideoRequest request) {
+        if (adHocReferenceImageOverride(request)) {
+            return;
+        }
+        DownloadedReferenceImage adHoc = adHocReferenceImage(config, request);
+        if (adHoc == null) {
+            return;
+        }
+        images.add(0, adHoc);
+        while (images.size() > 9) {
+            images.remove(images.size() - 1);
+        }
+    }
+
+    // Set by ScreenplayVideoService.uploadSceneReferenceImage() when the caller attached a
+    // one-off reference image for this specific generation. "override" replaces every other
+    // candidate outright (handled at the top of buildFalSeedanceRequest()); "combine" (default)
+    // is folded in as an extra candidate by the three list-building methods below, so it
+    // participates in whichever mode (product multi-image, cast-face multi-image, or single
+    // fallback) already applies to this scene instead of requiring its own separate branch.
+    private boolean adHocReferenceImageOverride(SceneVideoRequest request) {
+        return !mapValue(request.providerRequest().get("adHocReferenceImageAsset")).isEmpty()
+                && "override".equalsIgnoreCase(stringValue(request.providerRequest().get("referenceImagePriority"), "combine"));
+    }
+
+    private DownloadedReferenceImage adHocReferenceImage(ProviderConfig config, SceneVideoRequest request) {
+        Map<String, Object> asset = mapValue(request.providerRequest().get("adHocReferenceImageAsset"));
+        if (asset.isEmpty()) {
+            return null;
+        }
+        try {
+            DownloadedReferenceImage image = downloadReferenceImageAsset(asset, config);
+            return new DownloadedReferenceImage(image.bytes(), image.contentType(), image.redactedSource(), "user-supplied for this generation only");
+        } catch (RuntimeException ex) {
+            log.warn("Could not load ad-hoc scene reference image provider={} sceneId={} errorType={} errorMessage={}",
+                    config.provider(), request.sceneId(), ex.getClass().getSimpleName(), ex.getMessage());
+            return null;
+        }
+    }
+
+    private List<Map<String, Object>> mapListValue(Object value) {
+        if (!(value instanceof Collection<?> collection)) {
+            return List.of();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : collection) {
+            Map<String, Object> map = mapValue(item);
+            if (!map.isEmpty()) {
+                result.add(map);
+            }
+        }
+        return result;
     }
 
     private List<Map<String, Object>> seedanceReferenceImageAssetCandidates(SceneVideoRequest request) {
@@ -2490,12 +2977,97 @@ public class ScreenplayVideoProviderGenerationService {
         return urls.stream().limit(9).toList();
     }
 
+    /**
+     * Every scene already gets the full text context (videoConsistencyBible, previous/next scene
+     * description, SRT cues) via buildProviderRequestForScene — that's unchanged. This adds a real
+     * pixel anchor on top of it for Seedance, which drifts scene-to-scene on text alone. Only kicks
+     * in for ordinary narrative/character scenes; product-CGI scenes keep their own tuned
+     * multi-image reference untouched (checked via seedanceReferenceToVideo above this call), and
+     * scene 1 has no previous clip so it naturally stays text-only. Best-effort: any failure here
+     * (ffmpeg unavailable, previous scene not yet generated, etc.) just falls back to whatever
+     * firstReferenceImage() would have resolved anyway, never blocks generation.
+     */
+    private static final Set<String> LAST_FRAME_CONTINUITY_PROVIDERS = Set.of("seedance", "gemini_omni");
+
+    private DownloadedReferenceImage previousSceneContinuityFrame(ProviderConfig config, SceneVideoRequest request) {
+        if (!LAST_FRAME_CONTINUITY_PROVIDERS.contains(config.provider())) {
+            return null;
+        }
+        if (lastFrameExtractionService == null) {
+            return null;
+        }
+        if (!booleanEnv(config.prefix() + "_LAST_FRAME_CONTINUITY_ENABLED", true)) {
+            return null;
+        }
+        if (booleanValue(request.providerRequest().get("seedanceReferenceToVideo"), false)) {
+            // Product-led scene: keep its own reference-image treatment (canonical product
+            // identity) untouched rather than overriding it with the previous scene's frame.
+            return null;
+        }
+        Map<String, Object> previousScene = previousCompletedScene(request);
+        if (previousScene.isEmpty()) {
+            return null;
+        }
+        String bucket = stringValue(previousScene.get("bucket"), "");
+        String objectKey = stringValue(previousScene.get("objectKey"), "");
+        if (bucket.isBlank() || objectKey.isBlank()) {
+            return null;
+        }
+        try {
+            LocalVideoFrameExtractionService.LastFrame frame = lastFrameExtractionService.extractLastFrame(
+                    bucket, objectKey, stringValue(previousScene.get("contentType"), DEFAULT_VIDEO_MIME_TYPE)
+            );
+            log.info(
+                    "Screenplay video continuity frame extracted provider={} sceneId={} fromSceneNumber={} bytes={}",
+                    config.provider(), request.sceneId(), previousScene.get("sceneNumber"), frame.bytes().length
+            );
+            return new DownloadedReferenceImage(frame.bytes(), frame.contentType(), redactStorageSource(bucket, objectKey), "previous_scene_last_frame");
+        } catch (RuntimeException ex) {
+            log.warn(
+                    "Could not extract previous-scene continuity frame provider={} sceneId={} errorType={} errorMessage={}",
+                    config.provider(), request.sceneId(), ex.getClass().getSimpleName(), ex.getMessage()
+            );
+            return null;
+        }
+    }
+
+    private Map<String, Object> previousCompletedScene(SceneVideoRequest request) {
+        Object scenesValue = request.run() == null ? null : request.run().get("scenes");
+        if (!(scenesValue instanceof Collection<?> collection)) {
+            return Map.of();
+        }
+        long targetSceneNumber = request.sceneNumber() - 1L;
+        if (targetSceneNumber < 1) {
+            return Map.of();
+        }
+        for (Object item : collection) {
+            Map<String, Object> candidate = mapValue(item);
+            long candidateNumber = longValue(firstValue(candidate.get("sceneNumber"), candidate.get("shotNumber")), -1);
+            if (candidateNumber != targetSceneNumber) {
+                continue;
+            }
+            if (!"VIDEO_READY".equals(stringValue(candidate.get("status"), ""))) {
+                return Map.of();
+            }
+            return candidate;
+        }
+        return Map.of();
+    }
+
     private DownloadedReferenceImage firstReferenceImage(ProviderConfig config, SceneVideoRequest request) {
         long referenceResolutionStartedNanos = System.nanoTime();
         if (!shouldUseReferenceImage(request)) {
             log.info("Screenplay video reference image skipped provider={} sceneId={} mode={}",
                     config.provider(), request.sceneId(), referenceImageMode(request));
             return null;
+        }
+        // Highest priority on providers with only one image slot (Veo, Gemini Omni, and
+        // Seedance's own continuity/single-reference fallback): an ad-hoc upload wins over the
+        // generic product/storyboard reference regardless of override-vs-combine, since with
+        // only one slot available there's nothing else to combine it with anyway.
+        DownloadedReferenceImage adHoc = adHocReferenceImage(config, request);
+        if (adHoc != null) {
+            return adHoc;
         }
         boolean required = requiresReferenceImage(request);
         RuntimeException lastFailure = null;
@@ -2652,6 +3224,11 @@ public class ScreenplayVideoProviderGenerationService {
 
     private List<String> referenceImageUrlCandidates(SceneVideoRequest request) {
         List<String> urls = new ArrayList<>();
+        // Highest priority: on providers that only accept a single reference image (Veo, Gemini
+        // Omni, and Seedance when its dedicated multi-face branch in buildFalSeedanceRequest()
+        // doesn't apply), the best available cast face still wins over a generic product/
+        // storyboard reference - same identity-locking intent, just one image instead of @FaceN.
+        addReferenceImageUrl(urls, request.providerRequest().get("castFaceImageUrls"));
         addReferenceImageUrl(urls, request.providerRequest().get("referenceImageUrls"));
         addReferenceImageUrl(urls, request.providerRequest().get("referenceImageUrl"));
         addReferenceImageUrl(urls, request.scene().get("productImageUrl"));
@@ -3373,7 +3950,17 @@ public class ScreenplayVideoProviderGenerationService {
         if (normalized.contains("fast")) {
             return "bytedance/seedance-2.0/fast";
         }
+        // Confirmed live against fal.ai (queue.fal.run/bytedance/seedance-2.5/image-to-video,
+        // required fields prompt+image_url) - a genuinely different, single-reference-image
+        // model, not a 2.0 variant. Checked before falling through to the 2.0 default below.
+        if (normalized.contains("2.5") || normalized.contains("2-5")) {
+            return "bytedance/seedance-2.5";
+        }
         return "bytedance/seedance-2.0";
+    }
+
+    static boolean isFalSeedance25(String model) {
+        return normalizeFalSeedanceModel(model).equals("bytedance/seedance-2.5");
     }
 
     static String falSeedanceEndpoint(String model, boolean imageToVideo) {
@@ -3436,6 +4023,13 @@ public class ScreenplayVideoProviderGenerationService {
         }
         if (normalized.contains("v1.5")) {
             return new BigDecimal("0.0520");
+        }
+        if (isFalSeedance25(model)) {
+            // Unconfirmed - fal.ai's published pricing page for 2.5 was not checked (this is only
+            // ever a fallback estimate anyway; FalProviderBillingService resolves the real
+            // per-request cost from fal.ai's billing-events API whenever a request_id is present,
+            // which is the authoritative source - see that class's own doc comment).
+            return new BigDecimal("0.3024");
         }
         return imageToVideo ? new BigDecimal("0.3024") : new BigDecimal("0.3034");
     }
@@ -3613,6 +4207,182 @@ public class ScreenplayVideoProviderGenerationService {
             return value;
         }
         return value.substring(0, Math.max(0, maxLength));
+    }
+
+    /**
+     * Preferred over a blind cut when the assembled prompt exceeds the provider's budget:
+     * asks Gemini to rewrite it more densely - same instructions, facts, dialogue, and locks,
+     * just less redundant - instead of silently dropping whatever falls past the character
+     * limit. Not a billed/metered call (this is an internal fit-the-prompt step, not a
+     * user-facing generation). Falls back to the section-boundary-safe truncate if the model
+     * isn't wired up (promptTemplateService/creatorAiService are both optional, e.g. in tests),
+     * the compression call fails, or the result still doesn't fit - compression is a quality
+     * improvement, it must never be a new way for scene generation to break.
+     */
+    private String compressPromptIfNeeded(String prompt, int maxChars) {
+        return compressPromptIfNeeded(prompt, maxChars, null);
+    }
+
+    /**
+     * Same as {@link #compressPromptIfNeeded(String, int)}, but if protectedContent is a
+     * substring of the prompt, that substring is swapped for a short token before compression
+     * and restored byte-for-byte afterward. This is how the shared visual-consistency-lock text
+     * (already compressed once and cached in {@link #compressSharedContentIfNeeded}) survives
+     * whole-prompt compression unchanged even when a shot's own content pushes the total over
+     * budget - otherwise Gemini could reword that shared block slightly differently on every
+     * shot's independent compression call, and clips generated separately would drift apart.
+     */
+    private String compressPromptIfNeeded(String prompt, int maxChars, String protectedContent) {
+        if (prompt == null || prompt.length() <= maxChars) {
+            return prompt;
+        }
+        boolean hasProtected = protectedContent != null && !protectedContent.isBlank() && prompt.contains(protectedContent);
+        if (!hasProtected) {
+            String compressed = compressViaGemini(prompt, maxChars);
+            return compressed != null ? compressed : truncatePromptAtSectionBoundary(prompt, maxChars);
+        }
+        String workingPrompt = prompt.replace(protectedContent, LOCKED_BLOCK_TOKEN);
+        int effectiveMaxChars = Math.max(500, maxChars - protectedContent.length() + LOCKED_BLOCK_TOKEN.length());
+        String compressedWorking = compressViaGemini(workingPrompt, effectiveMaxChars);
+        if (compressedWorking == null) {
+            compressedWorking = truncatePromptAtSectionBoundary(workingPrompt, effectiveMaxChars);
+        }
+        if (!compressedWorking.contains(LOCKED_BLOCK_TOKEN)) {
+            // Never let the locked block be silently dropped by a bad rewrite or a truncation
+            // cut that landed past the token - reattach it rather than lose consistency content.
+            compressedWorking = compressedWorking + "\n\n" + LOCKED_BLOCK_TOKEN;
+        }
+        return compressedWorking.replace(LOCKED_BLOCK_TOKEN, protectedContent);
+    }
+
+    /**
+     * Compresses shared, run-wide content (currently: the visual consistency lock text) once
+     * per unique value and reuses the identical result for every subsequent shot - keyed by a
+     * content hash so it works across shots and across runs that reuse the same
+     * videoConsistencyBible/globalConsistencyPrompt. Without this, compressing the same shared
+     * text independently per shot could produce different phrasing each time even though the
+     * underlying facts never change, undermining whole-video consistency. Only successful
+     * compressions are cached; a failed attempt is retried on the next call rather than sticking.
+     */
+    private String compressSharedContentIfNeeded(String content, int softLimit) {
+        if (content == null || content.length() <= softLimit) {
+            return content;
+        }
+        String cacheKey = sharedContentCacheKey(content, softLimit);
+        String cached = compressionCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        String compressed = compressViaGemini(content, softLimit);
+        if (compressed == null) {
+            return content;
+        }
+        compressionCache.put(cacheKey, compressed);
+        return compressed;
+    }
+
+    private String sharedContentCacheKey(String content, int softLimit) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
+            return softLimit + ":" + HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException ex) {
+            return softLimit + ":" + content.length() + ":" + content.hashCode();
+        }
+    }
+
+    private String resolveConsistencyLockText(SceneVideoRequest request) {
+        String globalPrompt = firstText(
+                textValue(request.providerRequest(), "visualConsistencyPrompt"),
+                textValue(request.providerRequest(), "consistencyLockPrompt"),
+                textValue(request.seedancePromptStrategy(), "globalConsistencyPrompt")
+        );
+        String combined = firstText(globalPrompt, toJson(request.videoConsistencyBible()));
+        return compressSharedContentIfNeeded(combined, CONSISTENCY_LOCK_SOFT_LIMIT);
+    }
+
+    private String compressViaGemini(String prompt, int maxChars) {
+        if (promptTemplateService == null || creatorAiService == null) {
+            return null;
+        }
+        try {
+            var template = promptTemplateService.getActiveTemplate(PromptTemplateType.SCENE_PROMPT_COMPRESS.name());
+            String renderedPrompt = promptTemplateService.render(template, Map.of(
+                    "maxChars", String.valueOf(maxChars),
+                    "fullPrompt", prompt
+            ));
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("renderedPrompt", renderedPrompt);
+            Map<String, Object> output = creatorAiService.generate(PromptTemplateType.SCENE_PROMPT_COMPRESS.name(), input);
+            String compressed = stringValue(output == null ? null : output.get("compressedPrompt"), "");
+            if (!compressed.isBlank() && compressed.length() <= maxChars) {
+                log.info(
+                        "Screenplay video prompt compressed via Gemini originalChars={} compressedChars={} maxChars={}",
+                        prompt.length(), compressed.length(), maxChars
+                );
+                return compressed;
+            }
+            log.warn(
+                    "Screenplay video prompt compression did not fit budget, falling back to section-boundary truncation compressedChars={} maxChars={}",
+                    compressed.length(), maxChars
+            );
+        } catch (RuntimeException ex) {
+            log.warn(
+                    "Screenplay video prompt compression failed, falling back to section-boundary truncation errorType={} errorMessage={}",
+                    ex.getClass().getSimpleName(), ex.getMessage()
+            );
+        }
+        return null;
+    }
+
+    /**
+     * Auto-generates a per-language pronunciation guide for a scene's dialogue via Gemini,
+     * mirroring compressViaGemini's shape (template render, unmetered creatorAiService.generate,
+     * content-hash cache, graceful fallback). This is a best-effort quality addition to the
+     * founder's own manually-authored pronunciationGuide (merged in by
+     * LocalAvatarModelNormalizer.mergePronunciationGuides), never a required input - any failure
+     * or missing AI collaborators (promptTemplateService/creatorAiService, both optional, e.g. in
+     * tests) returns "" rather than throwing, so dialogue voice generation is never blocked by it.
+     */
+    String generatePhonemeGuideViaGemini(String dialogueText, String languageCode) {
+        if (promptTemplateService == null || creatorAiService == null
+                || dialogueText == null || dialogueText.isBlank()) {
+            return "";
+        }
+        String cacheKey = phonemeGuideCacheKey(dialogueText, languageCode);
+        String cached = phonemeGuideCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            var template = promptTemplateService.getActiveTemplate(PromptTemplateType.PHONEME_PRONUNCIATION_GUIDE.name());
+            String renderedPrompt = promptTemplateService.render(template, Map.of(
+                    "dialogueText", dialogueText,
+                    "languageCode", languageCode == null ? "" : languageCode
+            ));
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("renderedPrompt", renderedPrompt);
+            Map<String, Object> output = creatorAiService.generate(PromptTemplateType.PHONEME_PRONUNCIATION_GUIDE.name(), input);
+            String guide = stringValue(output == null ? null : output.get("pronunciationGuide"), "");
+            phonemeGuideCache.put(cacheKey, guide);
+            return guide;
+        } catch (RuntimeException ex) {
+            log.warn(
+                    "Phoneme guide generation failed, continuing without an auto-generated pronunciation guide errorType={} errorMessage={}",
+                    ex.getClass().getSimpleName(), ex.getMessage()
+            );
+            return "";
+        }
+    }
+
+    private String phonemeGuideCacheKey(String dialogueText, String languageCode) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(((languageCode == null ? "" : languageCode) + ":" + dialogueText).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException ex) {
+            return (languageCode == null ? "" : languageCode) + ":" + dialogueText.length() + ":" + dialogueText.hashCode();
+        }
     }
 
     private String truncatePromptAtSectionBoundary(String value, int maxLength) {

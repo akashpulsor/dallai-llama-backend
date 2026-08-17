@@ -384,6 +384,7 @@ final class ProviderRequestBuilder {
             negativePrompt += ", no people, no person, no face, no hands, no arms, no human body, no human silhouette, no human reflection, no presenter, no crowd";
         }
         providerRequest.put("noHumans", noHumans);
+        providerRequest.put("captionsEnabled", booleanValue(request.get("captionsEnabled"), true));
         providerRequest.put("seedancePromptStrategy", seedanceStrategy);
         providerRequest.put("seriesSeed", seriesSeed);
         providerRequest.put("seed", sceneSeed);

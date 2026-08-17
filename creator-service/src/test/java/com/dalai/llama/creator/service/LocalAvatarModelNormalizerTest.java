@@ -87,6 +87,30 @@ class LocalAvatarModelNormalizerTest {
     }
 
     @Test
+    void mergePronunciationGuides_returnsManualUnchangedWhenAutoBlank() {
+        assertEquals("Dalai Llama=>DAH-lai LAH-ma", normalizer.mergePronunciationGuides("Dalai Llama=>DAH-lai LAH-ma", ""));
+        assertEquals("Dalai Llama=>DAH-lai LAH-ma", normalizer.mergePronunciationGuides("Dalai Llama=>DAH-lai LAH-ma", null));
+    }
+
+    @Test
+    void mergePronunciationGuides_returnsAutoLinesWhenManualBlank() {
+        assertEquals("Jaipur=>JAI-pur", normalizer.mergePronunciationGuides("", "Jaipur=>JAI-pur"));
+        assertEquals("Jaipur=>JAI-pur", normalizer.mergePronunciationGuides(null, "Jaipur=>JAI-pur"));
+    }
+
+    @Test
+    void mergePronunciationGuides_manualEntryWinsOverOverlappingAutoTerm() {
+        String merged = normalizer.mergePronunciationGuides("Jaipur=>jay-PORE", "Jaipur=>JAI-pur\nKurti=>KUR-tee");
+        assertEquals("Jaipur=>jay-PORE\nKurti=>KUR-tee", merged);
+    }
+
+    @Test
+    void mergePronunciationGuides_bothBlank_returnsBlank() {
+        assertEquals("", normalizer.mergePronunciationGuides("", ""));
+        assertEquals("", normalizer.mergePronunciationGuides(null, null));
+    }
+
+    @Test
     void normalizeLocalTalkingAvatarModel_collapsesKnownSynonymsAndDefaultsToSourceVideo() {
         assertEquals("fal_heygen_avatar4", normalizer.normalizeLocalTalkingAvatarModel("heygen-avatar-4"));
         assertEquals("fal_happy_horse_v1_1", normalizer.normalizeLocalTalkingAvatarModel("happy_horse"));

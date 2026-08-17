@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -369,7 +370,8 @@ class ScreenplayVideoProviderGenerationServiceTest {
                         ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
                         String.class,
                         int.class,
-                        long.class
+                        long.class,
+                        String.class
                 );
         requestMethod.setAccessible(true);
         var promptMethod = ScreenplayVideoProviderGenerationService.class
@@ -378,6 +380,7 @@ class ScreenplayVideoProviderGenerationServiceTest {
                         ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
                         long.class,
                         long.class,
+                        String.class,
                         String.class
                 );
         promptMethod.setAccessible(true);
@@ -386,7 +389,8 @@ class ScreenplayVideoProviderGenerationServiceTest {
                 request,
                 101L,
                 202L,
-                "no humans"
+                "no humans",
+                ""
         );
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) requestMethod.invoke(
@@ -395,7 +399,8 @@ class ScreenplayVideoProviderGenerationServiceTest {
                 request,
                 productionPrompt,
                 5,
-                202L
+                202L,
+                ""
         );
 
         @SuppressWarnings("unchecked")
@@ -417,5 +422,343 @@ class ScreenplayVideoProviderGenerationServiceTest {
         assertTrue(String.valueOf(body.get("prompt")).contains("Premium ingredient macro"));
         assertTrue(String.valueOf(body.get("prompt")).contains("Crisp leaf movement"));
         assertTrue(String.valueOf(body.get("prompt")).contains("Match cut from the lemon arc"));
+    }
+
+    /**
+     * Characterization test for prompt-builder priority fix Deliverable A: the product/cast-face
+     * reference-role announcement must survive Gemini-based prompt compression byte-for-byte,
+     * the same guarantee consistencyLockText already had. Proven deterministically, not by luck
+     * of where truncation happens to cut: creatorAiService is mocked to return a "compressed"
+     * prompt that has clearly dropped the role text (simulating a bad/lossy Gemini rewrite), and
+     * the test still asserts the role text is present verbatim in the final request body - which
+     * only holds if the role text was swapped out for a protected token before ever being sent
+     * to Gemini and restored afterward (spliceReferenceRoleText + compressPromptIfNeeded's
+     * existing protectedContent mechanism), not because compression happened not to touch it.
+     */
+    @Test
+    void productReferenceRoleText_survivesGeminiCompressionVerbatim_evenWhenGeminiDropsIt() throws Exception {
+        AssetStorageService storage = mock(AssetStorageService.class);
+        when(storage.creatorAssetsBucket()).thenReturn("creator-assets");
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.io.OutputStream output = invocation.getArgument(2);
+            output.write("generated-shot-frame".getBytes(StandardCharsets.UTF_8));
+            return null;
+        }).when(storage).downloadObjectToOutputStream(eq("creator-assets"), eq("generated/shot-1.jpg"), any(java.io.OutputStream.class));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.io.OutputStream output = invocation.getArgument(2);
+            output.write("canonical-product".getBytes(StandardCharsets.UTF_8));
+            return null;
+        }).when(storage).downloadObjectToOutputStream(eq("creator-assets"), eq("products/source.jpg"), any(java.io.OutputStream.class));
+
+        PromptTemplateService promptTemplateService = mock(PromptTemplateService.class);
+        when(promptTemplateService.render(any(), any())).thenAnswer(invocation -> {
+            Map<String, Object> vars = invocation.getArgument(1);
+            return String.valueOf(vars.get("fullPrompt"));
+        });
+        CreatorAiService creatorAiService = mock(CreatorAiService.class);
+        // Simulates a lossy Gemini rewrite that drops the reference-role announcement entirely -
+        // if the fix works, this "bad" output is never allowed to reach the final prompt for the
+        // protected block, because that block was swapped for a token before this call happened.
+        when(creatorAiService.generate(eq("SCENE_PROMPT_COMPRESS"), any()))
+                .thenReturn(Map.of("compressedPrompt", "Gemini rewrote everything and dropped the reference roles."));
+
+        ScreenplayVideoProviderGenerationService service = new ScreenplayVideoProviderGenerationService(
+                new ObjectMapper(), WebClient.builder(), storage, null, promptTemplateService, creatorAiService, ""
+        );
+
+        Map<String, Object> generated = Map.of(
+                "bucket", "creator-assets", "objectKey", "generated/shot-1.jpg",
+                "contentType", "image/jpeg", "referenceRole", "generated_product_scene_frame"
+        );
+        Map<String, Object> canonical = Map.of(
+                "bucket", "creator-assets", "objectKey", "products/source.jpg",
+                "contentType", "image/jpeg", "referenceRole", "canonical_product_reference"
+        );
+        Map<String, Object> providerRequest = new LinkedHashMap<>();
+        providerRequest.put("seedanceReferenceToVideo", true);
+        providerRequest.put("generatedProductImageAssets", List.of(generated));
+        providerRequest.put("canonicalProductImageAssets", List.of(canonical));
+        providerRequest.put("seedanceReferenceImageAssets", List.of(canonical, generated));
+        Map<String, Object> scene = Map.of("hook", "Open on a lemon slice crossing frame.");
+        // Padded well past SEEDANCE_PROMPT_MAX_CHARS (default 6000) so compressPromptIfNeeded
+        // actually engages the Gemini-compression path instead of returning early.
+        String longScenePrompt = "Slow orbit with a controlled light sweep. ".repeat(300);
+
+        ScreenplayVideoProviderGenerationService.SceneVideoRequest request =
+                new ScreenplayVideoProviderGenerationService.SceneVideoRequest(
+                        "run-1", "script-1", "scene-1", 1, "seedance", "bytedance/seedance-2.0",
+                        longScenePrompt, 5, "9:16", "ai_generated", 101, 202,
+                        Map.of(), scene, providerRequest,
+                        Map.of(), Map.of(), Map.of(), List.of(), Map.of(), Map.of(),
+                        "screenplay-videos/run/scene-1.mp4", Duration.ofDays(7)
+                );
+
+        var configMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod("providerConfig", String.class, String.class);
+        configMethod.setAccessible(true);
+        Object config = configMethod.invoke(service, "seedance", "bytedance/seedance-2.0");
+        var promptMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod(
+                        "buildConsistencyPrompt",
+                        ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
+                        long.class, long.class, String.class, String.class
+                );
+        promptMethod.setAccessible(true);
+        // Must be non-blank and identical in both calls: this is the literal anchor
+        // spliceReferenceRoleText looks for inside the assembled prompt to attach and protect the
+        // reference-role text against. A blank consistencyLockText (as other tests in this file
+        // use, since they never exceed the compression threshold) would make the splice fall back
+        // to its unprotected-prepend path and defeat the point of this test.
+        String consistencyLockText = "LOCK-TEXT-MARKER: preserve identity across scenes.";
+        String productionPrompt = (String) promptMethod.invoke(service, request, 101L, 202L, "no humans", consistencyLockText);
+        assertTrue(productionPrompt.length() > 6000, "test setup must actually exceed the compression threshold");
+
+        var requestMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod(
+                        "buildFalSeedanceRequest",
+                        config.getClass(),
+                        ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
+                        String.class, int.class, long.class, String.class
+                );
+        requestMethod.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) requestMethod.invoke(
+                service, config, request, productionPrompt, 5, 202L, consistencyLockText
+        );
+
+        // The mocked "Gemini" output legitimately becomes the compressed text for the
+        // non-protected portion of the prompt (that's correct compression behavior) - what this
+        // test actually proves is that the reference-role text, despite never being sent to that
+        // mocked call at all (swapped for a token first), still comes back verbatim afterward.
+        String finalPrompt = String.valueOf(body.get("prompt"));
+        assertTrue(finalPrompt.contains("Gemini rewrote everything and dropped the reference roles."),
+                "sanity check: the mocked compression call actually ran");
+        assertTrue(finalPrompt.contains("@Image1 is the approved shot-specific CGI composition"),
+                "reference-role text must survive compression verbatim");
+        assertTrue(finalPrompt.contains("@Image2 is the original canonical product reference"),
+                "reference-role text must survive compression verbatim");
+    }
+
+    /**
+     * Characterization tests for generatePhonemeGuideViaGemini (prompt-builder priority fix
+     * Deliverable C) - this must never throw or block dialogue voice generation when the AI
+     * collaborators aren't wired up, which is the state of most test/edge environments.
+     */
+    @Test
+    void generatePhonemeGuideViaGemini_returnsEmpty_whenAiCollaboratorsUnavailable() {
+        ScreenplayVideoProviderGenerationService service =
+                new ScreenplayVideoProviderGenerationService(new ObjectMapper(), WebClient.builder(), mock(AssetStorageService.class), "");
+        assertEquals("", service.generatePhonemeGuideViaGemini("Jaipur ki shaan, yeh kurti.", "hi-IN"));
+    }
+
+    @Test
+    void generatePhonemeGuideViaGemini_returnsEmpty_whenDialogueTextBlank() {
+        PromptTemplateService promptTemplateService = mock(PromptTemplateService.class);
+        CreatorAiService creatorAiService = mock(CreatorAiService.class);
+        ScreenplayVideoProviderGenerationService service = new ScreenplayVideoProviderGenerationService(
+                new ObjectMapper(), WebClient.builder(), mock(AssetStorageService.class), null, promptTemplateService, creatorAiService, ""
+        );
+        assertEquals("", service.generatePhonemeGuideViaGemini("", "hi-IN"));
+        assertEquals("", service.generatePhonemeGuideViaGemini(null, "hi-IN"));
+    }
+
+    @Test
+    void generatePhonemeGuideViaGemini_returnsGuide_whenAiCollaboratorsAvailable() {
+        PromptTemplateService promptTemplateService = mock(PromptTemplateService.class);
+        when(promptTemplateService.render(any(), any())).thenReturn("rendered");
+        CreatorAiService creatorAiService = mock(CreatorAiService.class);
+        when(creatorAiService.generate(eq("PHONEME_PRONUNCIATION_GUIDE"), any()))
+                .thenReturn(Map.of("pronunciationGuide", "Jaipur=>JAI-pur"));
+        ScreenplayVideoProviderGenerationService service = new ScreenplayVideoProviderGenerationService(
+                new ObjectMapper(), WebClient.builder(), mock(AssetStorageService.class), null, promptTemplateService, creatorAiService, ""
+        );
+        assertEquals("Jaipur=>JAI-pur", service.generatePhonemeGuideViaGemini("Jaipur ki shaan, yeh kurti.", "hi-IN"));
+    }
+
+    @Test
+    void generatePhonemeGuideViaGemini_returnsEmpty_whenAiCallThrows() {
+        PromptTemplateService promptTemplateService = mock(PromptTemplateService.class);
+        when(promptTemplateService.render(any(), any())).thenReturn("rendered");
+        CreatorAiService creatorAiService = mock(CreatorAiService.class);
+        when(creatorAiService.generate(eq("PHONEME_PRONUNCIATION_GUIDE"), any()))
+                .thenThrow(new RuntimeException("Gemini unavailable"));
+        ScreenplayVideoProviderGenerationService service = new ScreenplayVideoProviderGenerationService(
+                new ObjectMapper(), WebClient.builder(), mock(AssetStorageService.class), null, promptTemplateService, creatorAiService, ""
+        );
+        assertEquals("", service.generatePhonemeGuideViaGemini("Jaipur ki shaan, yeh kurti.", "hi-IN"));
+    }
+
+    /**
+     * Characterization tests for the captionsEnabled gate (prompt-builder priority fix
+     * Deliverable B) - pinned before buildConsistencyPrompt's Caption and SRT lock section
+     * changes. Not wired to any provider network calls: pure reflection invocation of the
+     * private prompt-template method, same pattern used throughout this file.
+     */
+    @Test
+    void buildConsistencyPrompt_captionsEnabledAbsent_keepsExistingCaptionInstructions() throws Exception {
+        String prompt = invokeBuildConsistencyPromptForCaptionTest(Map.of());
+        assertTrue(prompt.contains("Use only these caption/voice cues when text or speech is visible."));
+        assertFalse(prompt.contains("Do not render any on-screen captions"));
+    }
+
+    @Test
+    void buildConsistencyPrompt_captionsEnabledFalse_suppressesCaptionInstructions() throws Exception {
+        String prompt = invokeBuildConsistencyPromptForCaptionTest(Map.of("captionsEnabled", false));
+        assertTrue(prompt.contains("Do not render any on-screen captions"));
+        assertFalse(prompt.contains("Use only these caption/voice cues when text or speech is visible."));
+    }
+
+    @Test
+    void buildConsistencyPrompt_captionsEnabledTrue_keepsExistingCaptionInstructions() throws Exception {
+        String prompt = invokeBuildConsistencyPromptForCaptionTest(Map.of("captionsEnabled", true));
+        assertTrue(prompt.contains("Use only these caption/voice cues when text or speech is visible."));
+        assertFalse(prompt.contains("Do not render any on-screen captions"));
+    }
+
+    private String invokeBuildConsistencyPromptForCaptionTest(Map<String, Object> captionFields) throws Exception {
+        ScreenplayVideoProviderGenerationService service =
+                new ScreenplayVideoProviderGenerationService(new ObjectMapper(), WebClient.builder(), mock(AssetStorageService.class), "");
+        Map<String, Object> providerRequest = new LinkedHashMap<>(captionFields);
+        ScreenplayVideoProviderGenerationService.SceneVideoRequest request =
+                new ScreenplayVideoProviderGenerationService.SceneVideoRequest(
+                        "run-1", "script-1", "scene-1", 1, "seedance", "bytedance/seedance-2.0",
+                        "Slow orbit.", 5, "9:16", "ai_generated", 101, 202,
+                        Map.of(), Map.of(), providerRequest,
+                        Map.of(), Map.of(), Map.of(), List.of(), Map.of(), Map.of(),
+                        "screenplay-videos/run/scene-1.mp4", Duration.ofDays(7)
+                );
+        var promptMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod(
+                        "buildConsistencyPrompt",
+                        ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
+                        long.class, long.class, String.class, String.class
+                );
+        promptMethod.setAccessible(true);
+        return (String) promptMethod.invoke(service, request, 101L, 202L, "no humans", "");
+    }
+
+    /**
+     * Dry-run trace against TODAY's code using shot-1's real production data (script "The Colors
+     * of Jaipur: Your New Kurti", run 8f023670-d597-4869-8d1f-a666349557c6, scene shot-1) - pulled
+     * directly from the creator_db JSONB, not fabricated - to answer: does the current
+     * ScreenplayVideoProviderGenerationService still fall back to a generic face reference for a
+     * scene with zero cast-character matches and no continuity frame, or does it now correctly
+     * prefer the run's tagged product reference image? No provider API call, no money spent - this
+     * only exercises the local prompt/image-selection logic via the same reflection path
+     * production's generate() uses internally.
+     */
+    @Test
+    void jaipurKurtiShot1_noCastCharacterMatch_prefersTaggedProductReferenceOverGenericFallback() throws Exception {
+        AssetStorageService storage = mock(AssetStorageService.class);
+        when(storage.creatorAssetsBucket()).thenReturn("creator-assets");
+        String realBucket = "creator-assets";
+        String realObjectKey = "6c039848-bd2c-4d4c-816e-12c4fea1f7b9/b40feb97-da1e-4e0a-8db7-dca6d598eb08/product-references/1d31cb0a-697f-49d0-be9e-e84aef5d691e-image18.jpg";
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.io.OutputStream output = invocation.getArgument(2);
+            output.write("REAL-canonical-product-reference-image18".getBytes(StandardCharsets.UTF_8));
+            return null;
+        }).when(storage).downloadObjectToOutputStream(eq(realBucket), eq(realObjectKey), any(java.io.OutputStream.class));
+
+        ScreenplayVideoProviderGenerationService service =
+                new ScreenplayVideoProviderGenerationService(new ObjectMapper(), WebClient.builder(), storage, "");
+
+        // Real asset entry as stored in run.productImageAssets[0] for this run (pulled from
+        // creator_generation_jobs.output_payload via kubectl exec into the postgres pod).
+        Map<String, Object> canonicalProductAsset = Map.of(
+                "id", "fb81b9c2-1838-4088-af44-6341d5131f42",
+                "bucket", realBucket,
+                "objectKey", realObjectKey,
+                "contentType", "image/jpeg",
+                "assetKind", "original_product_reference",
+                "assetRole", "canonical_product_reference",
+                "referenceRole", "canonical_product_reference",
+                "assetType", "PRODUCT_REFERENCE_IMAGE"
+        );
+
+        Map<String, Object> providerRequest = new LinkedHashMap<>();
+        // castCharactersForScene(scene, contextPayload) resolves to empty for shot-1: its own
+        // storyboardTag has peopleInFrame=0 and sideCharacters=[] and the action text ("Close-up
+        // of wooden block stamping vibrant dye onto premium cotton...") names no character - so
+        // castFaceReferenceMode/castFaceImageUrls are empty exactly as they would be for a real
+        // regenerate call on this scene today.
+        providerRequest.put("castFaceImageUrls", List.of());
+        providerRequest.put("castFaceReferenceMode", false);
+        // imageLedAdPlan.enabled=false and scene.productCgiScene=null for this run (confirmed via
+        // the same DB query) - so seedanceReferenceToVideo is false, same as the real Aug-16 run.
+        providerRequest.put("seedanceReferenceToVideo", false);
+        providerRequest.put("productImageAssets", List.of(canonicalProductAsset));
+        providerRequest.put("referenceImageAssets", List.of(canonicalProductAsset));
+        providerRequest.put("generatedProductImageAssets", List.of());
+        // No generic "narrator" reference URL supplied here on purpose - the point of this test is
+        // whether the product ASSET candidates (tried first in firstReferenceImage()) win before
+        // any URL-based fallback is ever consulted.
+        providerRequest.put("referenceImageUrls", List.of());
+        providerRequest.put("referenceImageUrl", "");
+
+        Map<String, Object> scene = Map.of(
+                "id", "shot-1",
+                "title", "Jaipur's Art Unfolds",
+                "action", "Close-up of wooden block stamping vibrant dye onto premium cotton. Smooth transition to a finished, brightly colored kurti fabric flowing softly.",
+                "durationSeconds", 7
+        );
+
+        ScreenplayVideoProviderGenerationService.SceneVideoRequest request =
+                new ScreenplayVideoProviderGenerationService.SceneVideoRequest(
+                        "8f023670-d597-4869-8d1f-a666349557c6",
+                        "e7cafd4b-7fb2-4ada-88c9-6c8bc2b42d95",
+                        "shot-1",
+                        1,
+                        "seedance",
+                        "bytedance/seedance-2.0",
+                        "Close-up of wooden block stamping vibrant dye onto premium cotton.",
+                        7,
+                        "9:16",
+                        "ai_generated",
+                        101,
+                        202,
+                        Map.of(),
+                        scene,
+                        providerRequest,
+                        Map.of(),
+                        Map.of(),
+                        Map.of(),
+                        List.of(),
+                        Map.of(),
+                        Map.of(),
+                        "screenplay-videos/run/shot-1.mp4",
+                        Duration.ofDays(7)
+                );
+
+        var configMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod("providerConfig", String.class, String.class);
+        configMethod.setAccessible(true);
+        Object config = configMethod.invoke(service, "seedance", "bytedance/seedance-2.0");
+        var requestMethod = ScreenplayVideoProviderGenerationService.class
+                .getDeclaredMethod(
+                        "buildFalSeedanceRequest",
+                        config.getClass(),
+                        ScreenplayVideoProviderGenerationService.SceneVideoRequest.class,
+                        String.class,
+                        int.class,
+                        long.class,
+                        String.class
+                );
+        requestMethod.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) requestMethod.invoke(
+                service,
+                config,
+                request,
+                "Close-up of wooden block stamping vibrant dye onto premium cotton.",
+                7,
+                202L,
+                ""
+        );
+
+        String expectedDataUri = "data:image/jpeg;base64,"
+                + Base64.getEncoder().encodeToString("REAL-canonical-product-reference-image18".getBytes(StandardCharsets.UTF_8));
+        assertEquals(expectedDataUri, body.get("image_url"));
+        assertNull(body.get("image_urls"));
     }
 }

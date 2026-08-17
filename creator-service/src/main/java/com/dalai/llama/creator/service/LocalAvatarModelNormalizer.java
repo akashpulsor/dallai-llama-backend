@@ -119,6 +119,51 @@ final class LocalAvatarModelNormalizer {
         return result;
     }
 
+    /**
+     * Merges an auto-generated (Gemini-produced) pronunciation guide into the founder's own
+     * manually-authored one - manual entries always win, auto only fills in terms the founder
+     * hasn't already covered. Both guides use the same term=replacement / term=&gt;replacement
+     * line format applyPronunciationGuide already parses, so the merged output needs no changes
+     * on the consuming side.
+     */
+    String mergePronunciationGuides(String manualGuide, String autoGuide) {
+        String manual = firstText(manualGuide);
+        String auto = firstText(autoGuide);
+        if (auto.isBlank()) {
+            return manual;
+        }
+        Set<String> manualTerms = new java.util.HashSet<>();
+        for (String line : manual.isBlank() ? new String[0] : manual.split("\\R")) {
+            String term = pronunciationGuideTerm(line);
+            if (!term.isBlank()) {
+                manualTerms.add(term.toLowerCase(Locale.ROOT));
+            }
+        }
+        List<String> mergedAutoLines = new java.util.ArrayList<>();
+        for (String line : auto.split("\\R")) {
+            String term = pronunciationGuideTerm(line);
+            if (term.isBlank() || manualTerms.contains(term.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            mergedAutoLines.add(firstText(line));
+        }
+        if (mergedAutoLines.isEmpty()) {
+            return manual;
+        }
+        String mergedAuto = String.join("\n", mergedAutoLines);
+        return manual.isBlank() ? mergedAuto : manual + "\n" + mergedAuto;
+    }
+
+    private String pronunciationGuideTerm(String line) {
+        String clean = firstText(line);
+        String separator = clean.contains("=>") ? "=>" : "=";
+        int separatorIndex = clean.indexOf(separator);
+        if (separatorIndex <= 0 || separatorIndex + separator.length() >= clean.length()) {
+            return "";
+        }
+        return clean.substring(0, separatorIndex).trim();
+    }
+
     String normalizeLocalTalkingAvatarModel(String value) {
         String normalized = defaultString(value, "fal_heygen_avatar4")
                 .toLowerCase(Locale.ROOT)
