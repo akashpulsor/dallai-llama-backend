@@ -66,7 +66,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
 
     private static final String JOB_SCREENPLAY_VIDEO_GENERATE = "SCREENPLAY_VIDEO_GENERATE";
     private static final String JOB_SCREENPLAY_VIDEO_SCENE_CHAT = "SCREENPLAY_VIDEO_SCENE_CHAT";
-    private static final String JOB_SCREENPLAY_VIDEO_SCENE_REGENERATE = "SCREENPLAY_VIDEO_SCENE_REGENERATE";
     private static final String JOB_SCREENPLAY_VIDEO_SCENE_VOICE = "SCREENPLAY_VIDEO_SCENE_VOICE";
     private static final String JOB_SCREENPLAY_VIDEO_SCENE_VOICE_APPROVAL = "SCREENPLAY_VIDEO_SCENE_VOICE_APPROVAL";
     private static final String JOB_SCREENPLAY_VIDEO_SCENE_PORTRAIT = "SCREENPLAY_VIDEO_SCENE_PORTRAIT";
@@ -1905,77 +1904,7 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
             String tenantId,
             String userId
     ) {
-        String safeTenantId = defaultString(tenantId, "unknown");
-        String safeUserId = defaultString(userId, "anonymous");
-        RunRecord record = loadRun(runId, safeTenantId, safeUserId);
-        Map<String, Object> run = copyMap(record.run());
-        CreatorScript script = loadScript(uuidValue(run.get("scriptId")), safeTenantId, safeUserId);
-        List<Map<String, Object>> scenes = mapListValue(run.get("scenes"));
-        scenes = enrichScenesWithStoryboardReferences(script, scenes, request);
-        Map<String, Object> activeScene = activeSceneGeneration(scenes, sceneId);
-        if (!activeScene.isEmpty()) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Another shot is already generating. Wait for it to finish before starting the next one."
-            );
-        }
-        Map<String, Object> inputPayload = copyMap(request);
-        inputPayload.put("runId", runId.toString());
-        inputPayload.put("scriptId", script.getId().toString());
-        inputPayload.put("sceneId", sceneId);
-        int sceneIndex = findSceneIndex(scenes, sceneId);
-        Map<String, Object> scene = copyMap(scenes.get(sceneIndex));
-        String generationMode = generationModeFor(scene, run, request);
-        String provider = providerForSceneGeneration(scene, run, request);
-        String model = modelForSceneGeneration(provider, scene, run, request);
-        inputPayload.put("provider", provider);
-        inputPayload.put("model", model);
-        inputPayload.put("generationMode", generationMode);
-        boolean replacingGeneratedClip = hasClipAsset(scene);
-        if (replacingGeneratedClip && !booleanValue(inputPayload.get("billingConsent"), false)) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "Regenerating an existing shot is a paid video-model run. Confirm the displayed provider charge and retry with billingConsent=true."
-            );
-        }
-        scene.put("provider", provider);
-        scene.put("targetProvider", provider);
-        scene.put("model", model);
-        scene.put("generationMode", generationMode);
-        scene.put("billingMode", replacingGeneratedClip ? "PAID_SCENE_RERUN" : "INITIAL_OR_RESUMED_SCENE");
-        scene.put("billingConsent", booleanValue(inputPayload.get("billingConsent"), false));
-        scene.put("status", "VIDEO_GENERATION_QUEUED");
-        scene.put("queuedAt", OffsetDateTime.now().toString());
-        scene.put("message", "Shot queued for " + providerLabel(provider) + " generation.");
-        scenes.set(sceneIndex, scene);
-        run.put("scenes", scenes);
-        run.put("sceneClips", scenes);
-        run.put("provider", provider);
-        run.put("model", model);
-        run.put("status", "VIDEO_GENERATION_QUEUED");
-        run.put("updatedAt", OffsetDateTime.now().toString());
-        run.put("lastRegeneratedSceneId", sceneId);
-        run.put("lastBillingAction", Map.of(
-                "type", replacingGeneratedClip ? "PAID_SCENE_RERUN" : "INITIAL_OR_RESUMED_SCENE",
-                "sceneId", sceneId,
-                "billingConsent", booleanValue(inputPayload.get("billingConsent"), false),
-                "recordedAt", OffsetDateTime.now().toString()
-        ));
-        run.put("message", "Shot " + firstText(scene.get("sceneNumber"), sceneId) + " queued for " + providerLabel(provider) + " generation.");
-
-        CreatorGenerationJob job = generationJobService.startGenerationJob(
-                JOB_SCREENPLAY_VIDEO_SCENE_REGENERATE,
-                safeTenantId,
-                safeUserId,
-                script.getProjectId(),
-                inputPayload
-        );
-        return generationJobService.updateGenerationJobProgress(
-                job.getId(),
-                8,
-                "Queued screenplay shot video",
-                outputPayload(run, "Shot " + firstText(scene.get("sceneNumber"), sceneId) + " queued for " + providerLabel(provider) + " generation.")
-        );
+        return new SceneRegenerationJobStarter(this, generationJobService).startRegenerateSceneJob(runId, sceneId, request, tenantId, userId);
     }
 
     @Transactional
@@ -2984,10 +2913,6 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
 
     private boolean isResumableVideoRun(Map<String, Object> run, CreatorGenerationJob latestVideoJob) {
         return videoRunStatusEvaluator().isResumableVideoRun(run, latestVideoJob);
-    }
-
-    private Map<String, Object> activeSceneGeneration(List<Map<String, Object>> scenes, String requestedSceneId) {
-        return videoRunStatusEvaluator().activeSceneGeneration(scenes, requestedSceneId);
     }
 
     private boolean hasClipAsset(Map<String, Object> scene) {
