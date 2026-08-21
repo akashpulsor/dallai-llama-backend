@@ -1791,6 +1791,27 @@ public class ScreenplayVideoProviderGenerationService {
         String editingPlan = toJson(mapValue(request.providerRequest().get("editingPlan")));
         String visualTreatment = toJson(mapValue(request.providerRequest().get("visualTreatment")));
         String dialogueLock = dialogueLockText(request);
+        // Confirmed against a real generation (script "The Colors of Jaipur: Your New Kurti",
+        // runId 8f023670-...): asking Seedance nicely via an inline natural-language pronunciation
+        // note in the prompt does NOT work - the model read the note and still spoke the literal
+        // dialogue text unchanged. Only actually respelling the dialogue text itself changes what
+        // it speaks, since providers with embedded speech synthesis have no separate phonetic
+        // input field the way GoogleChirp's pronunciationGuide is (that path is untouched by this
+        // and keeps getting its own guide via generatePhonemeGuideViaGemini in runAudioPackJob).
+        // Known, accepted tradeoff: Seedance's burned-in captions echo what it actually says, not
+        // the supplied srtCues text, so respelling can make captions show the phonetic spelling
+        // too - captionTrack/srtCues themselves are left untouched (still correctly spelled)
+        // since they're the source of truth for anything that does read them literally.
+        //
+        // Confirmed against two more real generations that a naive whole-prompt substitution goes
+        // too far: request.prompt() also embeds Title/Action/Text-captions/Continuity lines that
+        // are never spoken, and a global replace corrupted those too (a burned-in "Text/captions:"
+        // overlay and continuity notes for adjacent shots both picked up the phonetic respelling).
+        // Only the "Dialogue/VO:" line within that block is ever actually spoken, so only that
+        // line gets respelled - everything else in the scene prompt keeps its real spelling.
+        String pronunciationGuide = generatePhonemeGuideViaGemini(dialogueLock, textValue(request.providerRequest(), "languageCode"));
+        String dialogueLockRespelled = applyPronunciationRespelling(dialogueLock, pronunciationGuide);
+        String scenePromptRespelled = applyPronunciationRespellingToDialogueLine(request.prompt(), pronunciationGuide);
         boolean captionsEnabled = booleanValue(request.providerRequest().get("captionsEnabled"), true);
         String captionLockSection = captionsEnabled
                 ? "Use only these caption/voice cues when text or speech is visible. Do not invent random subtitles. "
@@ -1883,8 +1904,8 @@ public class ScreenplayVideoProviderGenerationService {
                 Negative prompt:
                 %s
                 """.formatted(
-                request.prompt(),
-                dialogueLock,
+                scenePromptRespelled,
+                dialogueLockRespelled,
                 captionLockSection,
                 sceneDetailPacket,
                 visualTreatment,
@@ -2858,12 +2879,22 @@ public class ScreenplayVideoProviderGenerationService {
         List<DownloadedReferenceImage> images = new ArrayList<>();
         for (Map<String, Object> face : castFaces) {
             String url = stringValue(face.get("referenceImageUrl"), "");
+            String bucket = stringValue(face.get("referenceImageBucket"), "");
+            String objectKey = stringValue(face.get("referenceImageObjectKey"), "");
             String characterName = stringValue(face.get("characterName"), "Character");
-            if (url.isBlank()) {
+            if (url.isBlank() && (bucket.isBlank() || objectKey.isBlank())) {
                 continue;
             }
             try {
-                DownloadedReferenceImage downloaded = downloadReferenceImage(url, config);
+                // Prefer internal storage (bucket+objectKey) over the public signed URL - added
+                // after a confirmed live incident where the public URL fetch failed with a
+                // one-shot 403 during a brief infra blip (unrelated Postgres/Kafka connectivity
+                // errors at the same time; the identical URL returned 200 shortly after),
+                // silently dropping the cast face from that generation. Same internal path
+                // product reference images already use (downloadReferenceImageAsset).
+                DownloadedReferenceImage downloaded = !bucket.isBlank() && !objectKey.isBlank()
+                        ? downloadReferenceImageAsset(Map.of("bucket", bucket, "objectKey", objectKey), config)
+                        : downloadReferenceImage(url, config);
                 images.add(new DownloadedReferenceImage(
                         downloaded.bytes(), downloaded.contentType(), downloaded.redactedSource(), castFaceRole(face, characterName)
                 ));
@@ -3298,22 +3329,48 @@ public class ScreenplayVideoProviderGenerationService {
         }
     }
 
+    /**
+     * Retries on any failure (including a 403 - unlike executeWithRetries's retryable(), which
+     * deliberately excludes 403 for paid provider submission calls, a different context with
+     * different risk: retrying an asset GET has no billing/duplicate-submission implications).
+     * Added after a confirmed live incident: a cast-face reference fetch failed with a one-shot
+     * 403 during a brief window that also saw unrelated Postgres/Kafka connectivity errors
+     * (infra-level blip, not an invalid URL - the identical signed URL returned 200 shortly
+     * after), and the caller (castFaceReferenceImages) has always treated any single failure here
+     * as permanent for that generation - silently dropping the cast face with no retry and no
+     * visible error, just a degraded result.
+     */
     private DownloadedReferenceImage downloadReferenceImage(String url, ProviderConfig config) {
-        ResponseEntity<byte[]> response = webClient.get()
-                .uri(URI.create(url))
-                .header("Accept", "image/*,*/*")
-                .retrieve()
-                .toEntity(byte[].class)
-                .block(Duration.ofSeconds(Math.max(15, envInt(config.prefix() + "_REFERENCE_IMAGE_DOWNLOAD_TIMEOUT_SECONDS", 45))));
-        byte[] bytes = response == null ? null : response.getBody();
-        int maxBytes = Math.max(256 * 1024, envInt(config.prefix() + "_REFERENCE_IMAGE_MAX_BYTES", 16 * 1024 * 1024));
-        String contentType = firstText(
-                response == null ? "" : response.getHeaders().getFirst("Content-Type"),
-                inferImageContentType(url),
-                DEFAULT_IMAGE_MIME_TYPE
-        );
-        validateReferenceImageBytes(bytes, maxBytes, contentType, url);
-        return new DownloadedReferenceImage(bytes, contentType, redactUrl(url), "image_anchor");
+        int maxAttempts = Math.max(1, envInt("REFERENCE_IMAGE_DOWNLOAD_MAX_ATTEMPTS", 3));
+        RuntimeException lastFailure = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                ResponseEntity<byte[]> response = webClient.get()
+                        .uri(URI.create(url))
+                        .header("Accept", "image/*,*/*")
+                        .retrieve()
+                        .toEntity(byte[].class)
+                        .block(Duration.ofSeconds(Math.max(15, envInt(config.prefix() + "_REFERENCE_IMAGE_DOWNLOAD_TIMEOUT_SECONDS", 45))));
+                byte[] bytes = response == null ? null : response.getBody();
+                int maxBytes = Math.max(256 * 1024, envInt(config.prefix() + "_REFERENCE_IMAGE_MAX_BYTES", 16 * 1024 * 1024));
+                String contentType = firstText(
+                        response == null ? "" : response.getHeaders().getFirst("Content-Type"),
+                        inferImageContentType(url),
+                        DEFAULT_IMAGE_MIME_TYPE
+                );
+                validateReferenceImageBytes(bytes, maxBytes, contentType, url);
+                return new DownloadedReferenceImage(bytes, contentType, redactUrl(url), "image_anchor");
+            } catch (RuntimeException ex) {
+                lastFailure = ex;
+                if (attempt >= maxAttempts) {
+                    throw ex;
+                }
+                log.warn("Reference image download failed, retrying attempt={}/{} errorType={} errorMessage={}",
+                        attempt, maxAttempts, ex.getClass().getSimpleName(), ex.getMessage());
+                sleep(500L * attempt, "reference image download retry");
+            }
+        }
+        throw lastFailure == null ? new IllegalStateException("Reference image download failed.") : lastFailure;
     }
 
     private void validateVideoBytes(byte[] bytes, String label, String contentType) {
@@ -4383,6 +4440,90 @@ public class ScreenplayVideoProviderGenerationService {
         } catch (NoSuchAlgorithmException ex) {
             return (languageCode == null ? "" : languageCode) + ":" + dialogueText.length() + ":" + dialogueText.hashCode();
         }
+    }
+
+    /**
+     * Converts the term=respelling pronunciation guide (generatePhonemeGuideViaGemini, same
+     * format LocalAvatarModelNormalizer.applyPronunciationGuide already parses for the
+     * GoogleChirp path) into a natural-language instruction sentence for providers whose only
+     * input is the prompt text itself (Seedance's embedded TTS, etc.) - there is no separate
+     * phonetic field to set on those requests, so the only lever is asking in plain language.
+     * Whether the provider's model actually follows it is unproven and provider-dependent, unlike
+     * the GoogleChirp pronunciationGuide field, which is an established provider input. Returns ""
+     * when there's nothing worth asking for (blank dialogue, no guide, or AI collaborators
+     * unavailable), so this is a no-op addition when the underlying Gemini call can't run.
+     */
+    /**
+     * Applies the term=respelling pronunciation guide (generatePhonemeGuideViaGemini) as literal
+     * word-boundary text substitution - the same regex approach
+     * LocalAvatarModelNormalizer.applyPronunciationGuide already uses for the GoogleChirp path.
+     * This exists because the natural-language alternative (asking the model to pronounce a term
+     * a certain way via an inline note, leaving the dialogue text itself unchanged) was tried
+     * first and confirmed NOT to work against a real generation - Seedance read the note and
+     * still spoke the original spelling. Actually changing the text is the only lever that has
+     * been shown to work. Returns the input unchanged when there's no guide, so this is a no-op
+     * whenever generatePhonemeGuideViaGemini can't run (missing AI collaborators, blank dialogue).
+     */
+    private String applyPronunciationRespelling(String text, String guide) {
+        String result = text == null ? "" : text;
+        if (result.isBlank() || guide == null || guide.isBlank()) {
+            return result;
+        }
+        for (String line : guide.split("\\R")) {
+            String clean = line == null ? "" : line.trim();
+            if (clean.isBlank()) {
+                continue;
+            }
+            String separator = clean.contains("=>") ? "=>" : "=";
+            int separatorIndex = clean.indexOf(separator);
+            if (separatorIndex <= 0 || separatorIndex + separator.length() >= clean.length()) {
+                continue;
+            }
+            String term = clean.substring(0, separatorIndex).trim();
+            String respelling = clean.substring(separatorIndex + separator.length()).trim();
+            if (term.isBlank() || respelling.isBlank()) {
+                continue;
+            }
+            result = result.replaceAll(
+                    "(?iu)\\b" + java.util.regex.Pattern.quote(term) + "\\b",
+                    java.util.regex.Matcher.quoteReplacement(respelling)
+            );
+        }
+        return result;
+    }
+
+    /**
+     * Applies applyPronunciationRespelling only to the "Dialogue/VO: ..." line inside the scene
+     * prompt block (an AI-authored, pre-formatted text block - "SCENE 0N PROMPT: Title: ... /
+     * Action: ... / Dialogue/VO: ... / Text/captions: ... / Continuity: ..." - stored on the
+     * scene by an earlier planning stage, not built by string concatenation here), leaving every
+     * other line untouched. Confirmed necessary against two real generations: respelling the
+     * whole block also corrupted the Title, the "Text/captions:" burned-in overlay text, and the
+     * Continuity notes describing adjacent shots - none of which Seedance ever speaks, so none of
+     * them should be respelled. Falls back to leaving the whole prompt untouched if no
+     * "Dialogue/VO:" line is found, matching applyPronunciationRespelling's own no-op behavior.
+     */
+    private String applyPronunciationRespellingToDialogueLine(String scenePrompt, String guide) {
+        if (scenePrompt == null || guide == null || guide.isBlank()) {
+            return scenePrompt;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?m)^(Dialogue/VO:[ \\t]*)(.*)$")
+                .matcher(scenePrompt);
+        StringBuilder result = new StringBuilder();
+        int lastEnd = 0;
+        boolean matched = false;
+        while (matcher.find()) {
+            matched = true;
+            result.append(scenePrompt, lastEnd, matcher.start(2));
+            result.append(applyPronunciationRespelling(matcher.group(2), guide));
+            lastEnd = matcher.end(2);
+        }
+        if (!matched) {
+            return scenePrompt;
+        }
+        result.append(scenePrompt.substring(lastEnd));
+        return result.toString();
     }
 
     private String truncatePromptAtSectionBoundary(String value, int maxLength) {

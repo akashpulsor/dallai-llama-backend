@@ -3,8 +3,10 @@ package com.dalai.llama.creator.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -148,9 +150,27 @@ public class FalProviderBillingService {
             resolved.put("providerUsageResolution", "PER_REQUEST_BILLING_EVENT");
             return resolved;
         } catch (RuntimeException ex) {
-            log.warn("Could not resolve fal.ai billing events for requestIds={}; using current pricing/fallback", requestIds, ex);
+            logResolutionFailure("billing events", requestIds, ex);
             return Map.of();
         }
+    }
+
+    // fal.ai's /v1/models/billing-events and /v1/models/pricing require an Admin-scope
+    // key - a regular inference key (what FAL_KEY normally holds) gets 403 Forbidden here
+    // even though it works fine for actual generation calls. That 403 is expected and
+    // already handled (falls back to local rate-table estimation below), so log it as one
+    // clear line instead of a full stack trace on every single job - a full dump here was
+    // pure noise, not something ops could act on differently from case to case. Set
+    // FAL_ADMIN_KEY to an Admin-scope key from the fal.ai dashboard to get accurate
+    // per-request provider billing instead of the estimated fallback.
+    private void logResolutionFailure(String label, Object context, RuntimeException ex) {
+        if (ex instanceof WebClientResponseException webEx && webEx.getStatusCode() == HttpStatus.FORBIDDEN) {
+            log.warn("fal.ai {} request forbidden (context={}) - FAL_ADMIN_KEY is missing or not Admin-scope; "
+                            + "falling back to local rate-table cost estimation for this job.",
+                    label, context);
+            return;
+        }
+        log.warn("Could not resolve fal.ai {} (context={}); using fallback", label, context, ex);
     }
 
     private Map<String, Object> currentPricing(
@@ -205,7 +225,7 @@ public class FalProviderBillingService {
             resolved.put("providerUsageResolution", "CURRENT_PRICE_TIMES_COMPLETED_OUTPUT");
             return resolved;
         } catch (RuntimeException ex) {
-            log.warn("Could not resolve current fal.ai pricing for endpoints={}; using provider fallback", endpoints, ex);
+            logResolutionFailure("pricing", endpoints, ex);
             return Map.of();
         }
     }

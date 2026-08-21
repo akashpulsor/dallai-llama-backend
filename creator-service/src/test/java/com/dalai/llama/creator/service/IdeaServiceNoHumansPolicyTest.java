@@ -243,7 +243,10 @@ class IdeaServiceNoHumansPolicyTest {
                 null,
                 null,
                 null,
-                new ObjectMapper()
+                new ObjectMapper(),
+                null,
+                null,
+                null
         );
 
         GeneratedStoryScriptResponse response = service.saveStoryScript(
@@ -340,7 +343,10 @@ class IdeaServiceNoHumansPolicyTest {
                 null,
                 null,
                 null,
-                new ObjectMapper()
+                new ObjectMapper(),
+                null,
+                null,
+                null
         );
     }
 }

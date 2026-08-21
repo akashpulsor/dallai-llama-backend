@@ -13,7 +13,7 @@ public record CampaignAngleSuggestionRequest(
         @Size(max = 4000) String ideaText,
         @Size(max = 80) String topicType,
         @Size(max = 80) String adFormat,
-        @Size(max = 240) String campaignObjective,
+        @Size(max = 4000) String campaignObjective,
         @Size(max = 240) String targetAudience,
         @Size(max = 80) String productionStyle,
         @Size(max = 80) String dialogueLanguage,

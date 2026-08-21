@@ -254,7 +254,35 @@ public class StoryboardImageGenerationService {
         return prompt;
     }
 
+    private static final int MAX_COMPRESSION_ATTEMPTS = 2;
+
     private PromptCompressionResult compressCompleteShotPacket(String imagePrompt, long originalInputTokens) {
+        List<String> requiredSections = requiredCompressionSections(imagePrompt);
+        String priorFeedback = "";
+        RuntimeException lastFailure = null;
+        for (int attempt = 1; attempt <= MAX_COMPRESSION_ATTEMPTS; attempt++) {
+            try {
+                return attemptShotPacketCompression(imagePrompt, originalInputTokens, requiredSections, priorFeedback);
+            } catch (ResponseStatusException ex) {
+                lastFailure = ex;
+                priorFeedback = ex.getReason();
+                log.warn("Shot-packet compression attempt {}/{} failed, {} promptCharacters={} reason={}",
+                        attempt, MAX_COMPRESSION_ATTEMPTS, attempt < MAX_COMPRESSION_ATTEMPTS ? "retrying" : "giving up",
+                        imagePrompt.length(), priorFeedback);
+            }
+        }
+        throw lastFailure;
+    }
+
+    private PromptCompressionResult attemptShotPacketCompression(
+            String imagePrompt,
+            long originalInputTokens,
+            List<String> requiredSections,
+            String priorFeedback
+    ) {
+        String feedbackSection = priorFeedback == null || priorFeedback.isBlank()
+                ? ""
+                : "\nA prior compression attempt was REJECTED for this exact reason - fix it this time: " + priorFeedback + "\n";
         String compressionPrompt = """
                 You are a lossless film-production prompt compiler. Compress the COMPLETE SHOT PACKET below for an image-generation model.
 
@@ -273,28 +301,42 @@ public class StoryboardImageGenerationService {
                 - Preserve every client-confirmed revision and all negative constraints.
                 - Do not generalize numerical values, times, percentages, names, copy, colors, settings, or continuity anchors.
                 - Do not add new creative decisions. Do not return a summary. The result must remain directly executable as the complete image prompt.
-                - Keep every bracketed section heading from the source in compressedPrompt so section retention can be verified mechanically.
+                - Keep every bracketed section heading from the source in compressedPrompt so section retention can be verified mechanically - copy each heading character-for-character, do not paraphrase or reformat it.
                 - omittedFacts must be an empty array. If two statements conflict, retain both and label the conflict instead of dropping either.
-
+                %s
                 COMPLETE SHOT PACKET:
                 %s
-                """.formatted(imagePrompt).trim();
+                """.formatted(feedbackSection, imagePrompt).trim();
+        // The compressed output for a near-cap-sized shot packet can itself run to tens of
+        // thousands of tokens, and JSON-escaping inflates that further - the shared 32768 default
+        // is not enough headroom. This is a mechanical, non-creative rewrite (compress without
+        // losing facts), so thinking tokens are disabled to give the full budget to the answer,
+        // and the model's real per-call ceiling is used instead of the shared default.
         Map<String, Object> response = geminiPromptCompressor.generate(
                 "IMAGE_PROMPT_COMPRESS",
-                Map.of("renderedPrompt", compressionPrompt)
+                Map.of(
+                        "renderedPrompt", compressionPrompt,
+                        "maxOutputTokensOverride", 65536,
+                        "disableThinking", true
+                )
         );
         String compressedPrompt = stringValue(response == null ? null : response.get("compressedPrompt"), "").trim();
         boolean omittedFactsDeclared = response != null && response.containsKey("omittedFacts");
         List<?> omittedFacts = response != null && response.get("omittedFacts") instanceof List<?> values
                 ? values
                 : List.of();
-        List<String> missingSections = requiredCompressionSections(imagePrompt).stream()
+        List<String> missingSections = requiredSections.stream()
                 .filter(section -> !compressedPrompt.contains(section))
                 .toList();
         if (compressedPrompt.isBlank() || !omittedFactsDeclared || !omittedFacts.isEmpty() || !missingSections.isEmpty()) {
+            Object finishReason = response == null ? null : response.get("finishReason");
+            String reason = compressedPrompt.isBlank() ? "compressedPrompt was blank (finishReason=" + finishReason + ")"
+                    : !omittedFactsDeclared ? "omittedFacts was not declared in the response"
+                    : !omittedFacts.isEmpty() ? "omittedFacts was not empty: " + omittedFacts
+                    : "these required section headings were missing from the compressed output (they must be copied character-for-character): " + missingSections;
             throw new ResponseStatusException(
                     HttpStatus.PAYLOAD_TOO_LARGE,
-                    "Gemini could not produce a verified lossless shot-packet compression. The paid image request was not sent."
+                    reason
             );
         }
         Map<String, Object> metadata = new LinkedHashMap<>();
@@ -305,7 +347,7 @@ public class StoryboardImageGenerationService {
         metadata.put("compressedCharacters", compressedPrompt.length());
         metadata.put("retainedSections", response.getOrDefault("retainedSections", List.of()));
         metadata.put("omittedFacts", List.of());
-        metadata.put("verifiedRequiredSections", requiredCompressionSections(imagePrompt));
+        metadata.put("verifiedRequiredSections", requiredSections);
         metadata.put("compressionVerified", true);
         metadata.put("tokenUsage", response.getOrDefault("tokenUsage", Map.of()));
         return new PromptCompressionResult(completeProviderPrompt(compressedPrompt), metadata);

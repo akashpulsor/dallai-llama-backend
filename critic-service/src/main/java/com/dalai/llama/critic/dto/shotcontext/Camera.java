@@ -1,0 +1,63 @@
+package com.dalai.llama.critic.dto.shotcontext;
+
+import com.dalai.llama.critic.domain.ShotSize;
+
+/** Wire-contract mirror of pre-production-service's expanded {@code Camera} -- full
+ * cinematography taxonomy the DP critic reasons about. See that class's javadoc for the field
+ * groups. */
+public record Camera(
+        ShotSize shotSize,
+        String cameraNote,
+        String cameraBody,
+        String sensor,
+        String captureFormat,
+        String recordingCharacteristics,
+        String positionHeight,
+        String positionDistance,
+        String positionLateral,
+        String positionElevation,
+        String positionOrientation,
+        String lensFocalLength,
+        String lensType,
+        String lensOpticalFormat,
+        String lensDistortion,
+        String lensCompression,
+        String lensCharacter,
+        String framing,
+        String subjectPlacement,
+        String headroom,
+        String leadRoom,
+        String visualBalance,
+        String focusTarget,
+        String focusDistance,
+        String depthOfField,
+        String rackFocus,
+        String focusBehaviour,
+        String movementType,
+        String movementTrajectory,
+        String movementSpeed,
+        String movementAcceleration,
+        String movementRotation,
+        String movementSubjectRelationship,
+        String support,
+        String aperture,
+        String iso,
+        String shutter,
+        String ndFilter,
+        String dynamicRange,
+        String shutterAngle,
+        String motionBlur,
+        String slowMotion,
+        String filtrationDiffusion,
+        String filtrationNd,
+        String filtrationPolarizer,
+        String filtrationSpecialty,
+        String contrast,
+        String colorResponse,
+        String grain,
+        String halation,
+        String bloom,
+        String sharpness,
+        String flare
+) {
+}

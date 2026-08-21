@@ -97,6 +97,66 @@ class CastCharacterResolverTest {
         assertEquals("https://cdn/riya.jpg", result.get(0).get("referenceImageUrl"));
     }
 
+    /**
+     * Regression tests for referenceImageBucket/referenceImageObjectKey - added after a
+     * confirmed live incident where fetching a cast face via the public signed referenceImageUrl
+     * failed with a one-shot 403 during a brief infra blip, silently dropping the cast face from
+     * that generation. Real production cast_payload data (script "The Colors of Jaipur: Your New
+     * Kurti") confirmed bucket/objectKey live under castPayload.attributes.referenceImage, not
+     * at the top level alongside referenceImageUrl.
+     */
+    @Test
+    void shotPlanPath_extractsReferenceImageBucketAndObjectKeyFromNestedAttributes() {
+        Map<String, Object> castPayload = Map.of(
+                "referenceImageUrl", "https://media.dalaillama.in/creator-assets/cast-profiles/x/reference.jpg?signed",
+                "attributes", Map.of(
+                        "referenceImage", Map.of(
+                                "bucket", "creator-assets",
+                                "objectKey", "tenant/user/cast-profiles/x/reference.jpg",
+                                "contentType", "image/jpeg"
+                        )
+                )
+        );
+        Map<String, Object> castMapping = new LinkedHashMap<>();
+        castMapping.put("characterKey", "anaya-2");
+        castMapping.put("characterName", "Anaya");
+        castMapping.put("castDisplayName", "Tanvi");
+        castMapping.put("castPayload", castPayload);
+
+        Map<String, Object> shotPlanCharacter = new LinkedHashMap<>();
+        shotPlanCharacter.put("storyCharacterName", "Anaya");
+        shotPlanCharacter.put("assignedActorName", "Tanvi");
+
+        Map<String, Object> scene = Map.of("storyboardTag", Map.of("primaryCharacters", List.of(shotPlanCharacter)));
+        Map<String, Object> contextPayload = Map.of("characterCastMappings", List.of(castMapping));
+
+        List<Map<String, Object>> result = resolver.castCharactersForScene(scene, contextPayload);
+
+        assertEquals(1, result.size());
+        assertEquals("creator-assets", result.get(0).get("referenceImageBucket"));
+        assertEquals("tenant/user/cast-profiles/x/reference.jpg", result.get(0).get("referenceImageObjectKey"));
+    }
+
+    @Test
+    void shotPlanPath_referenceImageBucketAndObjectKeyBlankWhenAttributesMissing() {
+        Map<String, Object> castMapping = new LinkedHashMap<>();
+        castMapping.put("characterKey", "riya-1");
+        castMapping.put("characterName", "Riya");
+        castMapping.put("castPayload", Map.of("referenceImageUrl", "https://cdn/riya.jpg"));
+
+        Map<String, Object> shotPlanCharacter = new LinkedHashMap<>();
+        shotPlanCharacter.put("storyCharacterName", "Riya");
+
+        Map<String, Object> scene = Map.of("storyboardTag", Map.of("primaryCharacters", List.of(shotPlanCharacter)));
+        Map<String, Object> contextPayload = Map.of("characterCastMappings", List.of(castMapping));
+
+        List<Map<String, Object>> result = resolver.castCharactersForScene(scene, contextPayload);
+
+        assertEquals(1, result.size());
+        assertEquals("", result.get(0).get("referenceImageBucket"));
+        assertEquals("", result.get(0).get("referenceImageObjectKey"));
+    }
+
     @Test
     void freeTextPath_returnsEmptyWhenNoCharacterNameAppearsInSceneText() {
         Map<String, Object> castMapping = Map.of("characterName", "Riya");

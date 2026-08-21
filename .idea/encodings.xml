@@ -9,20 +9,29 @@
     <file url="file://$PROJECT_DIR$/auth-service1/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/billing-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/blob-manager/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/chat-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/com.dalaillama.auth-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/com.dalaillama.auth-service/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/content/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/content1/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/creative-planning-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/creator-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/critic-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/job-lifecycle-common/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/llm-gateway/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/media-server/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/onboarding-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/pbx-core/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/pbx/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/pbx/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/post-production-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/pre-production-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/prediction-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/product-service/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/tenant-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/trend-intelligence-service/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/video-generation-service/src/main/java" charset="UTF-8" />
   </component>
 </project>

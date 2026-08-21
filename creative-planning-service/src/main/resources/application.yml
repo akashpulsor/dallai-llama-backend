@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: creative-planning-service
+
+  lifecycle:
+    timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
+
+  servlet:
+    multipart:
+      max-file-size: ${CREATIVE_PLANNING_MAX_UPLOAD_SIZE_MB:25}MB
+      max-request-size: ${CREATIVE_PLANNING_MAX_UPLOAD_SIZE_MB:25}MB
+
+  web:
+    cors:
+      mapping: "/**"
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+      allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+      allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+      exposed-headers: Authorization
+      allow-credentials: true
+      max-age: ${CORS_MAX_AGE:86400}
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:creative_planning_db}?sslmode=disable
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:2}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:10000}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    show-sql: ${SHOW_SQL:false}
+    open-in-view: false
+
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalai-llama}
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:8080/realms/dalai-llama/protocol/openid-connect/certs}}
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+creative-planning:
+  llm-gateway:
+    base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
+    timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}
+    default-text-model: ${CREATIVE_PLANNING_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
+  critic:
+    # The marketing-plan pre-flight harness lives in critic-service, not here -- see
+    # MarketingPlanCriticServiceClient. Same mandatory-gate discipline pre-production-service
+    # already uses for shot critiques: no bypass flag.
+    base-url: ${CRITIC_SERVICE_BASE_URL:http://critic-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${CRITIC_SERVICE_TIMEOUT_MS:120000}
+  chat:
+    # Best-effort push of finalized marketing plans into chat-service's central embedding index
+    # -- see ChatServiceClient's javadoc. Unlike critic, never gates generation on success.
+    base-url: ${CHAT_SERVICE_BASE_URL:http://chat-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${CHAT_SERVICE_TIMEOUT_MS:30000}
+  share-token:
+    # How long a project-requirement share link stays live before the public GET/mark-funded
+    # routes refuse it -- refreshShareToken() issues a new one when a client didn't pay in time.
+    ttl-days: ${CREATIVE_PLANNING_SHARE_TOKEN_TTL_DAYS:7}
+  payment-webhook:
+    # Blank by default -- no payment gateway is integrated yet, so the public mark-funded route
+    # rejects every call until this is set to a real secret shared with an actual payment
+    # provider's webhook. The share token itself is never sufficient authorization to mark
+    # something funded (see ProjectRequirementService's javadoc).
+    secret: ${CREATIVE_PLANNING_PAYMENT_WEBHOOK_SECRET:}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET_KEY:}
+    bucket: ${CREATIVE_PLANNING_BUCKET:creator-assets}
+    reference-image-prefix: ${CREATIVE_PLANNING_REFERENCE_IMAGE_PREFIX:creative-planning-reference-images}
+    export-prefix: ${CREATIVE_PLANNING_EXPORT_PREFIX:creative-planning-exports}
+    requirement-attachment-prefix: ${CREATIVE_PLANNING_REQUIREMENT_ATTACHMENT_PREFIX:creative-planning-requirement-attachments}
+    max-upload-size-mb: ${CREATIVE_PLANNING_MAX_UPLOAD_SIZE_MB:25}

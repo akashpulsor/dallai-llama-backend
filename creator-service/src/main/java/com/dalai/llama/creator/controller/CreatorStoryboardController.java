@@ -1,18 +1,24 @@
 package com.dalai.llama.creator.controller;
 
+import com.dalai.llama.creator.dto.request.ConfirmShotProductReferenceRequest;
+import com.dalai.llama.creator.dto.request.EmbedOfflineStoryboardHtmlRequest;
 import com.dalai.llama.creator.dto.request.GenerateProductionPlanRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
+import com.dalai.llama.creator.dto.request.SceneAssetAcceptanceRequest;
 import com.dalai.llama.creator.dto.request.StoryboardClientReviewChatRequest;
 import com.dalai.llama.creator.dto.request.StoryboardClientReviewRequest;
 import com.dalai.llama.creator.dto.request.ShotAiEditRequest;
 import com.dalai.llama.creator.dto.request.ShotTimelineInsertRequest;
 import com.dalai.llama.creator.dto.response.GenerationJobResponse;
+import com.dalai.llama.creator.dto.response.ScreenplaySceneAssetListResponse;
+import com.dalai.llama.creator.dto.response.ScreenplaySceneAssetResponse;
 import com.dalai.llama.creator.dto.response.ShotProductionPlanTagResponse;
 import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
 import com.dalai.llama.creator.dto.response.StoryboardClientReviewResponse;
 import com.dalai.llama.creator.dto.response.StoryboardSceneResponse;
 import com.dalai.llama.creator.dto.response.StoryboardResponse;
 import com.dalai.llama.creator.service.CreatorProductionPlanAsyncService;
+import com.dalai.llama.creator.service.CreatorScreenplaySceneAssetService;
 import com.dalai.llama.creator.service.CreatorScreenplayVideoAsyncService;
 import com.dalai.llama.creator.service.CreatorStoryboardAsyncService;
 import com.dalai.llama.creator.service.FounderAvatarPreviewService;
@@ -22,6 +28,7 @@ import com.dalai.llama.creator.service.ProductionPlanTagService;
 import com.dalai.llama.creator.service.ScreenplayVideoService;
 import com.dalai.llama.creator.service.StoryboardService;
 import com.dalai.llama.creator.service.StoryboardClientReviewService;
+import com.dalai.llama.creator.service.StoryboardOfflineExportService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -56,6 +63,8 @@ public class CreatorStoryboardController {
     private final FounderAvatarPreviewService founderAvatarPreviewService;
     private final FounderAvatarTestService founderAvatarTestService;
     private final StoryboardClientReviewService storyboardClientReviewService;
+    private final CreatorScreenplaySceneAssetService sceneAssetService;
+    private final StoryboardOfflineExportService storyboardOfflineExportService;
 
     public CreatorStoryboardController(
             StoryboardService storyboardService,
@@ -67,7 +76,9 @@ public class CreatorStoryboardController {
             ScreenplayVideoService screenplayVideoService,
             FounderAvatarPreviewService founderAvatarPreviewService,
             FounderAvatarTestService founderAvatarTestService,
-            StoryboardClientReviewService storyboardClientReviewService
+            StoryboardClientReviewService storyboardClientReviewService,
+            CreatorScreenplaySceneAssetService sceneAssetService,
+            StoryboardOfflineExportService storyboardOfflineExportService
     ) {
         this.storyboardService = storyboardService;
         this.productionPlanTagService = productionPlanTagService;
@@ -79,6 +90,8 @@ public class CreatorStoryboardController {
         this.founderAvatarPreviewService = founderAvatarPreviewService;
         this.founderAvatarTestService = founderAvatarTestService;
         this.storyboardClientReviewService = storyboardClientReviewService;
+        this.sceneAssetService = sceneAssetService;
+        this.storyboardOfflineExportService = storyboardOfflineExportService;
     }
 
     @GetMapping("/scripts/{scriptId}/plans")
@@ -115,6 +128,18 @@ public class CreatorStoryboardController {
                 tenantId,
                 userId
         ));
+    }
+
+    @PostMapping("/scripts/{scriptId}/animation/embed-offline-html")
+    public ResponseEntity<Map<String, Object>> embedOfflineAnimatedStoryboardHtml(
+            @PathVariable UUID scriptId,
+            @RequestBody EmbedOfflineStoryboardHtmlRequest request
+    ) {
+        String embeddedHtml = storyboardOfflineExportService.embedOfflineWatermarkedImages(
+                request == null ? null : request.html(),
+                request == null ? null : request.watermarkText()
+        );
+        return ResponseEntity.ok(Map.of("html", embeddedHtml == null ? "" : embeddedHtml));
     }
 
     @PostMapping("/scripts/{scriptId}/client-review/chat")
@@ -499,6 +524,31 @@ public class CreatorStoryboardController {
         ));
     }
 
+    // Normalized, queryable source of truth for scene/combined video assets - reads from
+    // creator_assets rather than reconstructing state from whichever generation job happens
+    // to be "latest", which an unrelated failure (e.g. a billing error after a successful
+    // merge) can silently poison. See CreatorScreenplaySceneAssetService.
+    @GetMapping("/scripts/{scriptId}/scene-assets")
+    public ResponseEntity<ScreenplaySceneAssetListResponse> listScreenplaySceneAssets(
+            @PathVariable UUID scriptId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(sceneAssetService.listSceneAssets(scriptId, tenantId, userId));
+    }
+
+    @PostMapping("/scene-assets/{assetId}/accept")
+    public ResponseEntity<ScreenplaySceneAssetResponse> setSceneAssetAccepted(
+            @PathVariable UUID assetId,
+            @Valid @RequestBody SceneAssetAcceptanceRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(sceneAssetService.setAccepted(assetId, request.accepted(), tenantId, userId));
+    }
+
     @GetMapping("/scripts/{scriptId}/videos/latest")
     public ResponseEntity<Map<String, Object>> getLatestScreenplayVideoRun(
             @PathVariable UUID scriptId,
@@ -601,6 +651,24 @@ public class CreatorStoryboardController {
         );
     }
 
+    @PostMapping(
+            value = "/videos/{runId}/scenes/{sceneId}/reference-image",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ResponseEntity<Map<String, Object>> uploadScreenplaySceneReferenceImage(
+            @PathVariable UUID runId,
+            @PathVariable String sceneId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "priority", required = false, defaultValue = "combine") String priority,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity.ok(
+                screenplayVideoService.uploadSceneReferenceImage(runId, sceneId, file, priority, tenantId, userId)
+        );
+    }
+
     @PostMapping("/videos/{runId}/scenes/{sceneId}/regenerate-async")
     public ResponseEntity<GenerationJobResponse> regenerateScreenplayVideoSceneAsync(
             @PathVariable UUID runId,
@@ -668,6 +736,42 @@ public class CreatorStoryboardController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(storyboardService.generateShotImage(scriptId, shotNumber == null ? 1 : shotNumber, imageKind, request, tenantId, userId));
+    }
+
+    @PostMapping(
+            value = "/scripts/{scriptId}/shots/{shotNumber}/product-reference/analyze",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ResponseEntity<Map<String, Object>> analyzeShotProductReference(
+            @PathVariable UUID scriptId,
+            @PathVariable Integer shotNumber,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("classification") String classification,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(storyboardService.analyzeShotProductReference(
+                        scriptId, shotNumber == null ? 1 : shotNumber, file, classification, tenantId, userId
+                ));
+    }
+
+    @PostMapping("/scripts/{scriptId}/shots/{shotNumber}/product-reference/confirm")
+    public ResponseEntity<Map<String, Object>> confirmShotProductReference(
+            @PathVariable UUID scriptId,
+            @PathVariable Integer shotNumber,
+            @Valid @RequestBody ConfirmShotProductReferenceRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(storyboardService.confirmShotProductReference(
+                        scriptId, shotNumber == null ? 1 : shotNumber, request, tenantId, userId
+                ));
     }
 
     @PostMapping("/scripts/{scriptId}/shots/{shotNumber}/ai-edit")

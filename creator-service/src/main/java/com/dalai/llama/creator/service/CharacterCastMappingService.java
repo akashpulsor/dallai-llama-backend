@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,12 +26,15 @@ import java.util.UUID;
 @Service
 public class CharacterCastMappingService {
 
+    private static final Duration REFERENCE_IMAGE_SIGNED_URL_TTL = Duration.ofDays(7);
+
     private final CreatorCharacterCastMappingRepository mappingRepository;
     private final CreatorIdeaRepository ideaRepository;
     private final CreatorProfileRepository profileRepository;
     private final JdbcTemplate jdbcTemplate;
     private final ScriptStructureService scriptStructureService;
     private final CreatorProjectService projectService;
+    private final AssetStorageService assetStorageService;
 
     public CharacterCastMappingService(
             CreatorCharacterCastMappingRepository mappingRepository,
@@ -38,7 +42,8 @@ public class CharacterCastMappingService {
             CreatorProfileRepository profileRepository,
             JdbcTemplate jdbcTemplate,
             ScriptStructureService scriptStructureService,
-            CreatorProjectService projectService
+            CreatorProjectService projectService,
+            AssetStorageService assetStorageService
     ) {
         this.mappingRepository = mappingRepository;
         this.ideaRepository = ideaRepository;
@@ -46,6 +51,7 @@ public class CharacterCastMappingService {
         this.jdbcTemplate = jdbcTemplate;
         this.scriptStructureService = scriptStructureService;
         this.projectService = projectService;
+        this.assetStorageService = assetStorageService;
     }
 
     @Transactional
@@ -159,8 +165,29 @@ public class CharacterCastMappingService {
             payload.putIfAbsent("displayName", profile.getDisplayName());
             payload.putIfAbsent("roleInShort", profile.getRoleInShort());
             payload.putIfAbsent("attributes", profile.getAttributes() == null ? Map.of() : profile.getAttributes());
+            // The profile only ever stores the durable bucket/objectKey pointer - sign a fresh
+            // URL on every read (same reasoning as CreatorProfileService.toResponse()) so video
+            // generation never gets handed an expired reference image URL.
+            String referenceImageUrl = signedReferenceImageUrl(profile.getAttributes());
+            if (!referenceImageUrl.isBlank()) {
+                payload.put("referenceImageUrl", referenceImageUrl);
+            }
         }
         return payload;
+    }
+
+    private String signedReferenceImageUrl(Map<String, Object> attributes) {
+        if (attributes == null || !(attributes.get("referenceImage") instanceof Map<?, ?> referenceImage)) {
+            return "";
+        }
+        Object bucketValue = referenceImage.get("bucket");
+        Object objectKeyValue = referenceImage.get("objectKey");
+        String bucket = bucketValue == null ? "" : String.valueOf(bucketValue).trim();
+        String objectKey = objectKeyValue == null ? "" : String.valueOf(objectKeyValue).trim();
+        if (bucket.isBlank() || objectKey.isBlank()) {
+            return "";
+        }
+        return assetStorageService.signedUrl(bucket, objectKey, REFERENCE_IMAGE_SIGNED_URL_TTL);
     }
 
     private void attachMappingsToStoryIdea(CreatorIdea storyIdea, List<CreatorCharacterCastMapping> mappings, UUID scriptId) {

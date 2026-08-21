@@ -176,6 +176,56 @@ class SceneViewMapperTest {
     }
 
     @Test
+    void sceneView_captionStyleAsPlainStringDoesNotFallBackToEmpty() {
+        // Regression test: captionStyle was declared as Map<String, Object>, but real scene data
+        // (written by InitialRunAssembler as scene.put("captionStyle", firstText(...))) always
+        // stores it as a plain style-key string ("bold_keyword", "classic", "balanced_social").
+        // Jackson's record conversion fails the WHOLE object on any single field type mismatch, so
+        // this silently collapsed every real scene to the all-null EMPTY view - losing id,
+        // sceneNumber, and shotNumber too, which broke ScreenplayVideoService.findSceneIndex for
+        // every scene in every run (confirmed against real production data for
+        // "The Colors of Jaipur: Your New Kurti", runId 8f023670-d597-4869-8d1f-a666349557c6).
+        Map<String, Object> raw = Map.of(
+                "id", "shot-1",
+                "sceneNumber", 1,
+                "captionStyle", "bold_keyword"
+        );
+        ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
+        assertEquals("bold_keyword", view.captionStyle());
+        assertEquals("shot-1", view.id());
+        assertEquals(1, view.sceneNumber());
+    }
+
+    @Test
+    void sceneView_productionImageAsObjectDoesNotFallBackToEmpty() {
+        // Regression test: productionImage was declared String, but real scene data
+        // (ScreenplayVideoService scene.put("productionImage", asset)) is always an asset Map -
+        // same silent whole-record fallback failure mode as captionStyle, confirmed against real
+        // production data.
+        Map<String, Object> asset = Map.of("url", "https://media.example.com/product.jpg", "bucket", "creator-assets");
+        Map<String, Object> raw = Map.of("id", "shot-1", "productionImage", asset);
+        ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);
+        assertEquals(asset, view.productionImage());
+        assertEquals("shot-1", view.id());
+    }
+
+    @Test
+    void sceneView_characterDetailAcceptsStringOrListShapesWithoutFallingBackToEmpty() {
+        // Regression test: characterDetail was declared String, but real scene data has it as
+        // List<Map<String,Object>> (per-character name/archetype/wardrobeThisShot/
+        // distinguishingFeatures objects) in some scenes and a plain string in others -
+        // ProviderRequestBuilder.resolvePromptAndSceneDetail already reads it via firstValue(...),
+        // not firstText(...), so the existing code never assumed a single scalar type either.
+        List<Map<String, Object>> listShape = List.of(Map.of("name", "Anaya", "archetype", "WOMAN"));
+        ScreenplaySceneView view = SceneViewMapper.sceneView(Map.of("id", "shot-3", "characterDetail", listShape), objectMapper);
+        assertEquals("shot-3", view.id());
+        assertEquals(listShape, view.characterDetail());
+
+        ScreenplaySceneView stringShape = SceneViewMapper.sceneView(Map.of("id", "shot-1", "characterDetail", "A confident narrator."), objectMapper);
+        assertEquals("A confident narrator.", stringShape.characterDetail());
+    }
+
+    @Test
     void sceneView_booleanFieldsCoerceCorrectly() {
         Map<String, Object> raw = Map.of("noHumans", true, "dialogueCloneAccepted", false);
         ScreenplaySceneView view = SceneViewMapper.sceneView(raw, objectMapper);

@@ -21,7 +21,18 @@ public interface CreatorGenerationJobRepository extends JpaRepository<CreatorGen
             from creator_generation_jobs
             where tenant_id = :tenantId
               and user_id = :userId
-              and job_type like 'SCREENPLAY_VIDEO_%'
+              and job_type in (
+                'SCREENPLAY_VIDEO_GENERATE',
+                'SCREENPLAY_VIDEO_SCENE_CHAT',
+                'SCREENPLAY_VIDEO_SCENE_REGENERATE',
+                'SCREENPLAY_VIDEO_SCENE_VOICE',
+                'SCREENPLAY_VIDEO_SCENE_VOICE_APPROVAL',
+                'SCREENPLAY_VIDEO_SCENE_PORTRAIT',
+                'SCREENPLAY_VIDEO_SCENE_IMAGE',
+                'SCREENPLAY_VIDEO_DIALOGUE_COMBINE',
+                'SCREENPLAY_VIDEO_FINAL_RENDER',
+                'SCREENPLAY_VIDEO_AUDIO_PACK'
+              )
               and input_payload ->> 'runId' = :runId
               and (status <> 'RUNNING' or progress > 5)
             order by completed_at desc nulls last, created_at desc
@@ -38,7 +49,18 @@ public interface CreatorGenerationJobRepository extends JpaRepository<CreatorGen
               from creator_generation_jobs
              where tenant_id = :tenantId
                and user_id = :userId
-               and job_type like 'SCREENPLAY_VIDEO_%'
+               and job_type in (
+                'SCREENPLAY_VIDEO_GENERATE',
+                'SCREENPLAY_VIDEO_SCENE_CHAT',
+                'SCREENPLAY_VIDEO_SCENE_REGENERATE',
+                'SCREENPLAY_VIDEO_SCENE_VOICE',
+                'SCREENPLAY_VIDEO_SCENE_VOICE_APPROVAL',
+                'SCREENPLAY_VIDEO_SCENE_PORTRAIT',
+                'SCREENPLAY_VIDEO_SCENE_IMAGE',
+                'SCREENPLAY_VIDEO_DIALOGUE_COMBINE',
+                'SCREENPLAY_VIDEO_FINAL_RENDER',
+                'SCREENPLAY_VIDEO_AUDIO_PACK'
+              )
                and input_payload ->> 'scriptId' = :scriptId
                and (status <> 'RUNNING' or progress > 5)
              order by completed_at desc nulls last, created_at desc

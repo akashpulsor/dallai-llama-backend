@@ -41,7 +41,12 @@ public class StoryboardClientReviewService {
 
     private static final String CLIENT_REVIEW_KEY = "clientReview";
     private static final String CLIENT_REVIEW_SNAPSHOTS_KEY = "clientReviewPlanningSnapshots";
-    private static final int MAX_CLIENT_REVIEW_SNAPSHOTS = 5;
+    // Each snapshot stores storyboardTag/lightingBuildSheetTag/cameraPlanSheetTag in full (undiffed)
+    // per shot - for heavy scripts that's several MB per snapshot, and script_payload is loaded on
+    // every script fetch (client-review, scene analysis, video generation kickoff), not just on
+    // revert. Capped low to keep routine loads fast; the real fix is diffing these fields the same
+    // way inputPayload already is, or moving snapshot history out of script_payload entirely.
+    private static final int MAX_CLIENT_REVIEW_SNAPSHOTS = 2;
     private static final List<String> REVERSIBLE_PLANNING_PAYLOAD_KEYS = List.of(
             "storyline",
             "logline",
@@ -4774,10 +4779,27 @@ public class StoryboardClientReviewService {
                 videoDirectorPlan,
                 propagation,
                 mapValue(firstNonNull(review.get("creativeLearning"), payload.get("creativeLearning"))),
-                shots,
+                stripLargeProviderPromptFields(shots),
                 offsetDateTime(review.get("updatedAt"), hasSavedReview ? script.getUpdatedAt() : null),
                 hasSavedReview ? defaultString(stringValue(review.get("updatedBy")), script.getUserId()) : ""
         );
+    }
+
+    // masterVideoPrompt/perSecondVideoPrompt/seedancePrompt are large (masterVideoPrompt
+    // alone runs ~100KB and is duplicated byte-for-byte across every shot in a script by
+    // the upstream screenplay generator) and are provider-facing render prompts that
+    // ClientReviewPanel.jsx never reads. Returning them here made this endpoint's response
+    // scale with shot-count * 100KB (multi-MB for a 20+ shot script) and was a direct
+    // contributor to slow /client-review responses and heap pressure under concurrent load.
+    private List<Map<String, Object>> stripLargeProviderPromptFields(List<Map<String, Object>> shots) {
+        if (shots == null || shots.isEmpty()) return shots;
+        return shots.stream().map(shot -> {
+            Map<String, Object> trimmed = new LinkedHashMap<>(shot);
+            trimmed.remove("masterVideoPrompt");
+            trimmed.remove("perSecondVideoPrompt");
+            trimmed.remove("seedancePrompt");
+            return trimmed;
+        }).toList();
     }
 
     private Map<Integer, PreviewAssets> loadPreviewAssets(CreatorScript script) {

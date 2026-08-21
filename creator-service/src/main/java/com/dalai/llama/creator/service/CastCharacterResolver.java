@@ -77,6 +77,7 @@ final class CastCharacterResolver {
             matchedCharacter.put("characterRole", stringValue(mapping.get("characterRole"), ""));
             matchedCharacter.put("castDisplayName", stringValue(mapping.get("castDisplayName"), assignedActorName));
             matchedCharacter.put("referenceImageUrl", stringValue(castPayload.get("referenceImageUrl"), ""));
+            putReferenceImageStorageLocation(matchedCharacter, castPayload);
             matchedCharacter.put("archetypeLabel", stringValue(character.get("archetypeLabel"), ""));
             matchedCharacter.put("distinguishingFeatures", stringValue(character.get("distinguishingFeatures"), ""));
             matchedCharacter.put("wardrobeThisShot", stringValue(character.get("wardrobeThisShot"), ""));
@@ -131,8 +132,24 @@ final class CastCharacterResolver {
             matchedCharacter.put("characterRole", stringValue(mapping.get("characterRole"), ""));
             matchedCharacter.put("castDisplayName", stringValue(mapping.get("castDisplayName"), characterName));
             matchedCharacter.put("referenceImageUrl", stringValue(castPayload.get("referenceImageUrl"), ""));
+            putReferenceImageStorageLocation(matchedCharacter, castPayload);
             matched.add(matchedCharacter);
         }
         return matched;
+    }
+
+    /**
+     * bucket/objectKey let the caller fetch this image straight from internal storage
+     * (AssetStorageService, the same path product reference images already use) instead of an
+     * HTTP GET to the public signed referenceImageUrl - added after a confirmed live incident
+     * where that public URL fetch failed with a one-shot 403 during a brief infra blip, silently
+     * dropping the cast face from that generation. bucket/objectKey live under
+     * castPayload.attributes.referenceImage (confirmed against real production cast_payload
+     * data) rather than at the top level alongside referenceImageUrl.
+     */
+    private void putReferenceImageStorageLocation(Map<String, Object> matchedCharacter, Map<String, Object> castPayload) {
+        Map<String, Object> referenceImage = firstMap(firstMap(castPayload.get("attributes")).get("referenceImage"));
+        matchedCharacter.put("referenceImageBucket", stringValue(referenceImage.get("bucket"), ""));
+        matchedCharacter.put("referenceImageObjectKey", stringValue(referenceImage.get("objectKey"), ""));
     }
 }

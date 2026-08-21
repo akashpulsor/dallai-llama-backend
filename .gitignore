@@ -26,3 +26,7 @@ build/
 .env
 .env.*
 !.env.example
+
+# Local-dev-only TLS trust material (mkcert root CA etc.) - machine-specific, never shared
+creator-service/docker/dev-ca/*.crt
+creator-service/docker/dev-ca/*.pem

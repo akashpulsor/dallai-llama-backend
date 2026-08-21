@@ -91,8 +91,18 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
         if (!useGoogleSearch) {
             generationConfig.put("responseMimeType", "application/json");
         }
-        if (properties.getAi().getMaxOutputTokens() != null && properties.getAi().getMaxOutputTokens() > 0) {
-            generationConfig.put("maxOutputTokens", properties.getAi().getMaxOutputTokens());
+        Integer maxOutputTokensOverride = positiveIntOrNull(input.get("maxOutputTokensOverride"));
+        int effectiveMaxOutputTokens = maxOutputTokensOverride != null
+                ? maxOutputTokensOverride
+                : (properties.getAi().getMaxOutputTokens() == null ? 0 : properties.getAi().getMaxOutputTokens());
+        if (effectiveMaxOutputTokens > 0) {
+            generationConfig.put("maxOutputTokens", effectiveMaxOutputTokens);
+        }
+        if (Boolean.TRUE.equals(input.get("disableThinking"))) {
+            // Extended thinking draws from the same output-token budget as the answer itself.
+            // For mechanical, non-creative tasks (e.g. lossless text compression) that budget
+            // should go entirely to the answer, not reasoning the model doesn't need here.
+            generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 0));
         }
         request.put("generationConfig", generationConfig);
 
@@ -471,6 +481,13 @@ public class GeminiCreatorAiProvider implements CreatorAiProvider {
             }
         }
         return "";
+    }
+
+    private Integer positiveIntOrNull(Object value) {
+        if (value instanceof Number number && number.intValue() > 0) {
+            return number.intValue();
+        }
+        return null;
     }
 
     private String truncate(String value, int maxLength) {

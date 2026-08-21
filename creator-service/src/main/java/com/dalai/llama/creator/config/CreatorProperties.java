@@ -133,6 +133,17 @@ public class CreatorProperties {
         private long geminiVideoPollIntervalMs = 10000;
         private long geminiVideoTimeoutMs = 900000;
         private boolean storyboardImageGenerationEnabled = true;
+        // CAST-classified shot production frames: which provider path renders the identity-preserving
+        // frame. FLUX_PULID = single-step fal.ai flux-pulid generation (Path A). FACE_SWAP = Gemini
+        // faceless scene + fal.ai face-swap (Path B). NONE = keep the legacy Gemini-with-reference
+        // attempt (almost always hits IMAGE_OTHER for a real person's face, falls back to generic).
+        // Both paths were built and tested on a real shot: flux-pulid could not hold identity,
+        // product/wardrobe/set, and ad-copy typography simultaneously (fixing framing dropped the
+        // product/overlay; fixing product dropped framing), and face-swap produced a bad blend
+        // whenever the reference photo's pose didn't match the generated scene's pose. Parked as
+        // NONE (safe generic-face fallback) pending further research - see CAST upload UI, which
+        // is disabled with a "beta" message rather than routing into either broken path.
+        private String identityPreservingGenerationPath = "NONE";
         private long timeoutMs = 60000;
         private Integer maxOutputTokens = 32768;
         private int geminiMaxAttempts = 3;
@@ -782,6 +793,14 @@ public class CreatorProperties {
 
         public void setStoryboardImageGenerationEnabled(boolean storyboardImageGenerationEnabled) {
             this.storyboardImageGenerationEnabled = storyboardImageGenerationEnabled;
+        }
+
+        public String getIdentityPreservingGenerationPath() {
+            return identityPreservingGenerationPath;
+        }
+
+        public void setIdentityPreservingGenerationPath(String identityPreservingGenerationPath) {
+            this.identityPreservingGenerationPath = identityPreservingGenerationPath;
         }
 
         public long getTimeoutMs() {

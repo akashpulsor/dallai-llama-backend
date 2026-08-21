@@ -118,7 +118,16 @@ public record ScreenplaySceneView(
         String textOverlay,
         String caption,
         String captionText,
-        Map<String, Object> captionStyle,
+        // A style-key string ("bold_keyword", "classic", "balanced_social" - see
+        // InitialRunAssembler.java scene.put("captionStyle", firstText(...))), not the unrelated,
+        // richer captionStyle Map used by the separate Shorts post-production pipeline
+        // (ShortRenderingService/ShortVisualEnhancementService/ShortVisualCriticService). Was
+        // declared as Map<String, Object> here, which made Jackson's record conversion throw for
+        // every real scene (captionStyle is always a plain string in this shape) and silently
+        // fall back to an all-null EMPTY view - losing id/sceneNumber/shotNumber too, which broke
+        // findSceneIndex for every scene. ScreenplayRunView already types the run-level field as
+        // String; this matches it.
+        String captionStyle,
         String captionSafeArea,
 
         // --- dialogue / voice-clone ---
@@ -143,7 +152,14 @@ public record ScreenplaySceneView(
         String narration,
         String spokenLine,
         String character,
-        String characterDetail,
+        // Untyped on purpose, matching the polymorphic `dialogue` field above: real scene data has
+        // characterDetail as either a plain string or a List<Map<String,Object>> of per-character
+        // detail objects (name/archetype/wardrobeThisShot/distinguishingFeatures - confirmed
+        // against real production scenes). ProviderRequestBuilder.resolvePromptAndSceneDetail
+        // already reads it via firstValue(...), not firstText(...), i.e. the existing code never
+        // assumed a single scalar type either. A String-typed field here made Jackson's record
+        // conversion throw (and silently fall back to EMPTY) for every scene using the list shape.
+        Object characterDetail,
         String characterDetails,
         String characters,
         String sceneDetail,
@@ -190,7 +206,10 @@ public record ScreenplaySceneView(
         String generatedProductImageUrl,
         List<Map<String, Object>> productImageAssets,
         List<Map<String, Object>> generatedProductImageAssets,
-        String productionImage,
+        // Was declared String; real data (ScreenplayVideoService scene.put("productionImage", asset)
+        // / scene.put("productionImage", image)) is always an asset Map, matching sibling
+        // productImageAsset below. Same silent whole-record-fallback failure mode as captionStyle.
+        Map<String, Object> productionImage,
         Map<String, Object> productImageAsset,
 
         // --- reference / provider request ---

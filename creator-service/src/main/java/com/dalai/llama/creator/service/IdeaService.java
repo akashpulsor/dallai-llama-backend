@@ -10,6 +10,7 @@ import com.dalai.llama.creator.domain.entity.CreatorPromptRun;
 import com.dalai.llama.creator.domain.entity.CreatorPromptTemplate;
 import com.dalai.llama.creator.domain.entity.CreatorProject;
 import com.dalai.llama.creator.domain.entity.CreatorScript;
+import com.dalai.llama.creator.domain.entity.CreatorTrendSignal;
 import com.dalai.llama.creator.dto.request.GenerateStoryIdeaScriptRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryScriptRequest;
 import com.dalai.llama.creator.dto.request.SaveGeneratedScriptRequest;
@@ -24,6 +25,7 @@ import com.dalai.llama.creator.repository.CreatorIdeaRepository;
 import com.dalai.llama.creator.repository.CreatorPromptRunRepository;
 import com.dalai.llama.creator.repository.CreatorProfileRepository;
 import com.dalai.llama.creator.repository.CreatorScriptRepository;
+import com.dalai.llama.creator.repository.CreatorTrendSignalRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -133,6 +135,9 @@ public class IdeaService {
     private final CreatorProperties properties;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final HookBeatPlanningService hookBeatPlanningService;
+    private final ScriptCriticService scriptCriticService;
+    private final CreatorTrendSignalRepository trendSignalRepository;
 
     public IdeaService(
             CreatorIdeaRepository ideaRepository,
@@ -149,7 +154,10 @@ public class IdeaService {
             CreatorCreativeLearningService creativeLearningService,
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            HookBeatPlanningService hookBeatPlanningService,
+            ScriptCriticService scriptCriticService,
+            CreatorTrendSignalRepository trendSignalRepository
     ) {
         this.ideaRepository = ideaRepository;
         this.scriptRepository = scriptRepository;
@@ -166,6 +174,9 @@ public class IdeaService {
         this.properties = properties;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.hookBeatPlanningService = hookBeatPlanningService;
+        this.scriptCriticService = scriptCriticService;
+        this.trendSignalRepository = trendSignalRepository;
     }
 
     @Transactional
@@ -648,6 +659,10 @@ public class IdeaService {
         }
 
         CreatorPromptTemplate template = promptTemplateService.getActiveTemplate(PromptTemplateType.STORY_SCRIPT_GENERATE.name());
+        Map<String, Object> beatPlan = hookBeatPlanningService.generateBeatPlan(
+                ideaText, categoryCode, inferredTone, durationSeconds, productBrief,
+                storyIdea.getTenantId(), storyIdea.getUserId(), storyIdea.getProjectId()
+        );
         Map<String, Object> inputSnapshot = new LinkedHashMap<>();
         inputSnapshot.put("duration", durationSeconds);
         inputSnapshot.put("idea", ideaText);
@@ -669,6 +684,7 @@ public class IdeaService {
         inputSnapshot.put("storyIdeaId", storyIdeaId);
         inputSnapshot.put("storyIdea", toPromptIdeaMap(storyIdea));
         inputSnapshot.put("context", request == null || request.context() == null ? Map.of() : request.context());
+        inputSnapshot.put("beatPlan", beatPlan);
 
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "story");
@@ -694,29 +710,70 @@ public class IdeaService {
                     generationJob.getId(),
                     null
             );
-            CreatorAiService.MeteredAiResponse aiResponse =
-                    creatorAiService.generateMetered(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), providerInput, usageContext);
-            Map<String, Object> providerOutput = aiResponse.output();
+            // Critique-and-retry: generate up to 3 attempts, score each against the approved beat
+            // plan/product brief, keep the best-scored attempt rather than blindly taking the last
+            // one - same pattern as every other critic in this graph (CampaignAngleSuggestionService,
+            // ProductionPlanTagService's shot-plan regeneration).
+            CreatorAiService.MeteredAiResponse aiResponse = null;
+            Map<String, Object> providerOutput = null;
+            GeneratedStoryScriptResponse.StoryScript storyScript = null;
+            Map<String, Object> bestAiOutputDiagnostics = new LinkedHashMap<>();
+            double bestScore = -1;
+            String priorFeedback = "";
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                Map<String, Object> attemptProviderInput = new LinkedHashMap<>(providerInput);
+                if (!priorFeedback.isBlank()) {
+                    attemptProviderInput.put("renderedPrompt", renderedPrompt
+                            + "\n\nCRITIC FEEDBACK FROM A PRIOR ATTEMPT - fix these specific issues this time:\n" + priorFeedback);
+                }
+                CreatorAiService.MeteredAiResponse attemptResponse =
+                        creatorAiService.generateMetered(PromptTemplateType.STORY_SCRIPT_GENERATE.name(), attemptProviderInput, usageContext);
+                Map<String, Object> attemptOutput = attemptResponse.output();
+                Map<String, Object> attemptDiagnostics = new LinkedHashMap<>();
+                GeneratedStoryScriptResponse.StoryScript attemptStoryScript = resolveStoryScriptPayload(
+                        attemptOutput,
+                        storyIdea,
+                        durationSeconds,
+                        categoryCode,
+                        inferredTone,
+                        dialogueLanguage,
+                        screenType,
+                        storytellingType,
+                        storytellingGuidance,
+                        hookLens,
+                        hookLensGuidance,
+                        noHumans,
+                        attemptDiagnostics
+                );
+                if (noHumans) {
+                    applyNoHumanProductStoryContract(attemptStoryScript, storyIdea, sourceBrief, durationSeconds);
+                }
+                ScriptCriticService.ScriptCriticResult critique = null;
+                try {
+                    critique = scriptCriticService.critique(
+                            toStoryScriptMap(attemptStoryScript), beatPlan, productBrief,
+                            storyIdea.getTenantId(), storyIdea.getUserId(), storyIdea.getProjectId()
+                    );
+                } catch (RuntimeException ex) {
+                    log.warn("Story script critique failed, accepting this attempt as-is errorType={} errorMessage={}",
+                            ex.getClass().getSimpleName(), ex.getMessage());
+                }
+                double score = critique == null ? 100.0 : critique.averageScore();
+                if (aiResponse == null || score > bestScore) {
+                    aiResponse = attemptResponse;
+                    providerOutput = attemptOutput;
+                    storyScript = attemptStoryScript;
+                    bestAiOutputDiagnostics = attemptDiagnostics;
+                    bestScore = score;
+                }
+                if (critique == null || !critique.isFail()) {
+                    break;
+                }
+                priorFeedback = critique.issues().isEmpty() ? critique.summary() : String.join("; ", critique.issues());
+            }
+            aiOutputDiagnostics.putAll(bestAiOutputDiagnostics);
             providerOutputForDebug = copyDebugMap(providerOutput);
 
-            GeneratedStoryScriptResponse.StoryScript storyScript = resolveStoryScriptPayload(
-                    providerOutput,
-                    storyIdea,
-                    durationSeconds,
-                    categoryCode,
-                    inferredTone,
-                    dialogueLanguage,
-                    screenType,
-                    storytellingType,
-                    storytellingGuidance,
-                    hookLens,
-                    hookLensGuidance,
-                    noHumans,
-                    aiOutputDiagnostics
-            );
-            if (noHumans) {
-                applyNoHumanProductStoryContract(storyScript, storyIdea, sourceBrief, durationSeconds);
-            }
             Map<String, Object> storyScriptMap = toStoryScriptMap(storyScript);
             Map<String, Object> promptOutputPayload = new LinkedHashMap<>(storyScriptMap);
             promptOutputPayload.put("providerOutput", providerOutput);
@@ -1031,6 +1088,17 @@ public class IdeaService {
         inputSnapshot.put("brandContext", brandContext);
         inputSnapshot.put("creatorContext", creatorContext);
         inputSnapshot.put("context", requestContext);
+        // The story script stage already planned+critiqued its own hook/beats (Phase 3a runs there,
+        // not here) - the screenplay stage builds shots from that already-approved structure rather
+        // than generating a second, independent beat plan.
+        Map<String, Object> beatPlan = new LinkedHashMap<>();
+        if (!stringValue(storyScript.getHook()).isBlank()) {
+            beatPlan.put("hookLine", storyScript.getHook());
+        }
+        if (storyBeats != null && !storyBeats.isEmpty()) {
+            beatPlan.put("beats", storyBeats);
+        }
+        inputSnapshot.put("beatPlan", beatPlan);
 
         String renderedPrompt = promptTemplateService.render(template, inputSnapshot);
         renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "screenplay");
@@ -1239,6 +1307,25 @@ public class IdeaService {
             }
             if (!productionPlanResult.debug().isEmpty()) {
                 jobOutput.put("productionPlanDebug", productionPlanResult.debug());
+            }
+            // Post-hoc, non-blocking critique: this stage already has its own parse-failure retry
+            // (shouldRetryScreenplayGeneration above) and ShotPlanCriticService independently scores
+            // beat fidelity/dialogue/emotional arc once shots are planned - this call surfaces a
+            // script-level verdict for visibility/trace purposes without adding a second regeneration
+            // loop on top of an already-complex generation path.
+            try {
+                ScriptCriticService.ScriptCriticResult screenplayCritique = scriptCriticService.critique(
+                        enrichedScriptPayloadMap, beatPlan, productBrief, storyIdea.getTenantId(), storyIdea.getUserId(), storyIdea.getProjectId()
+                );
+                jobOutput.put("scriptCritique", Map.of(
+                        "status", screenplayCritique.status(),
+                        "averageScore", screenplayCritique.averageScore(),
+                        "issues", screenplayCritique.issues(),
+                        "summary", screenplayCritique.summary()
+                ));
+            } catch (RuntimeException ex) {
+                log.warn("Screenplay critique failed, continuing without it scriptId={} errorType={} errorMessage={}",
+                        creatorScript.getId(), ex.getClass().getSimpleName(), ex.getMessage());
             }
             if (manageGenerationJob) {
                 generationJobService.completeGenerationJob(generationJob.getId(), jobOutput);
@@ -1698,6 +1785,7 @@ public class IdeaService {
         renderedPrompt = appendNoHumanProductPrompt(renderedPrompt, noHumans, "idea");
         renderedPrompt = appendProductReferencePrompt(renderedPrompt, sourceBrief, "campaign idea");
         renderedPrompt = appendApprovedCreativeLearningPrompt(renderedPrompt, approvedCreativeLearnings);
+        renderedPrompt = appendTrendContextPrompt(renderedPrompt, recentTrendSignals(sourceBrief));
 
         Map<String, Object> providerInput = new LinkedHashMap<>(inputSnapshot);
         providerInput.put("renderedPrompt", renderedPrompt);
@@ -2139,7 +2227,7 @@ public class IdeaService {
         input.put("toneSelectionMode", "AUTO_FROM_PRODUCT_CONTEXT");
     }
 
-    private List<String> productReferenceImageUrls(Map<String, Object> sourceBrief) {
+    List<String> productReferenceImageUrls(Map<String, Object> sourceBrief) {
         if (!isProductAdBrief(sourceBrief)) {
             return List.of();
         }
@@ -2237,6 +2325,62 @@ public class IdeaService {
                 stringValue(firstValue(productBrief, "campaignObjective")),
                 stage
         );
+    }
+
+    /**
+     * Best-effort lookup of recently observed trend signals for this idea's category/platform/
+     * country - populated by CreatorTrendConnectorScheduler -> SourceConnectorOrchestrationService
+     * when the trend scheduler is enabled. Returns empty (not an error) when the scheduler is off,
+     * the category is unset, or nothing has been observed yet - trend context is inspiration, never
+     * a hard requirement, so idea generation must never depend on it existing.
+     */
+    private List<CreatorTrendSignal> recentTrendSignals(Map<String, Object> sourceBrief) {
+        String category = stringValue(firstValue(sourceBrief, "categoryCode", "category"));
+        if (category.isBlank()) {
+            return List.of();
+        }
+        String platform = stringValue(sourceBrief.get("platformCode"));
+        String country = stringValue(sourceBrief.get("countryCode"));
+        try {
+            return trendSignalRepository.findRecentSignals(
+                    category,
+                    platform.isBlank() ? null : platform,
+                    country.isBlank() ? null : country,
+                    PageRequest.of(0, 6)
+            );
+        } catch (RuntimeException ex) {
+            log.warn("Trend signal lookup failed, continuing without trend context categoryCode={} errorType={} errorMessage={}",
+                    category, ex.getClass().getSimpleName(), ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private String appendTrendContextPrompt(String renderedPrompt, List<CreatorTrendSignal> signals) {
+        if (signals.isEmpty()) {
+            return renderedPrompt;
+        }
+        StringBuilder trendLines = new StringBuilder();
+        for (CreatorTrendSignal signal : signals) {
+            String title = truncate(defaultString(signal.getTitle(), ""), 140);
+            if (title.isBlank()) {
+                continue;
+            }
+            trendLines.append("- ").append(title);
+            String summary = truncate(defaultString(signal.getSummary(), ""), 200);
+            if (!summary.isBlank()) {
+                trendLines.append(" - ").append(summary);
+            }
+            trendLines.append('\n');
+        }
+        if (trendLines.isEmpty()) {
+            return renderedPrompt;
+        }
+        return defaultString(renderedPrompt, "") + """
+
+                CURRENT TREND CONTEXT (optional signal, not a requirement)
+                The following are recently observed trending topics for this category/platform. Use one only if it genuinely fits the brief - never force a trend reference that doesn't serve the idea, and never invent a trend not listed here.
+                %s
+                """.formatted(trendLines.toString().trim());
     }
 
     private void putProductReferencePersistence(

@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: llm-gateway
+
+  lifecycle:
+    # server.shutdown: graceful (below) only stops new connections and waits for in-flight ones --
+    # the default 30s wait is nowhere near a real video-generation call (can run minutes). Must
+    # stay under the pod's terminationGracePeriodSeconds in the Helm chart, or Kubernetes SIGKILLs
+    # before this timeout elapses anyway.
+    timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
+
+  web:
+    cors:
+      mapping: "/**"
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+      allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+      allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+      exposed-headers: Authorization
+      allow-credentials: true
+      max-age: ${CORS_MAX_AGE:86400}
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:llm_gateway_db}?sslmode=disable
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:2}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:10000}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    show-sql: ${SHOW_SQL:false}
+    open-in-view: false
+
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: llm-gateway
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalai-llama}
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:8080/realms/dalai-llama/protocol/openid-connect/certs}}
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+llm-gateway:
+  default-provider: ${LLM_GATEWAY_DEFAULT_PROVIDER:google}
+  default-model: ${LLM_GATEWAY_DEFAULT_MODEL:gemini-2.5-flash}
+  billing-kafka-topic: ${LLM_GATEWAY_KAFKA_BILLING_TOPIC:llm.billing.events}
+  default-tenant-rpm: ${LLM_GATEWAY_DEFAULT_TENANT_RPM:60}
+  default-tenant-tpm: ${LLM_GATEWAY_DEFAULT_TENANT_TPM:100000}
+  default-max-concurrent-per-provider: ${LLM_GATEWAY_DEFAULT_MAX_CONCURRENT_PER_PROVIDER:5}
+  billing:
+    wallet-guard-enabled: ${LLM_GATEWAY_WALLET_GUARD_ENABLED:true}
+    minimum-wallet-balance: ${LLM_GATEWAY_MINIMUM_WALLET_BALANCE:0}
+    wallet-check-timeout-ms: ${LLM_GATEWAY_WALLET_CHECK_TIMEOUT_MS:5000}
+    billing-service-url: ${BILLING_SERVICE_URL:http://billing-service.apps.svc.cluster.local:8080}
+  google:
+    api-key: ${GOOGLE_API_KEY:}
+    base-url: ${LLM_GATEWAY_GOOGLE_BASE_URL:https://generativelanguage.googleapis.com}
+    timeout-ms: ${LLM_GATEWAY_GOOGLE_TIMEOUT_MS:30000}
+  fal:
+    api-key: ${FAL_API_KEY:}
+    base-url: ${LLM_GATEWAY_FAL_BASE_URL:https://queue.fal.run}
+  elevenlabs:
+    api-key: ${ELEVENLABS_API_KEY:}
+    base-url: ${LLM_GATEWAY_ELEVENLABS_BASE_URL:https://api.elevenlabs.io}

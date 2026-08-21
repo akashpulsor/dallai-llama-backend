@@ -7,23 +7,35 @@ import com.dalai.llama.creator.repository.CreatorProfileRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class CreatorProfileService {
 
-    private final CreatorProfileRepository profileRepository;
+    private static final long MAX_REFERENCE_IMAGE_BYTES = 15L * 1024L * 1024L;
+    private static final Duration REFERENCE_IMAGE_SIGNED_URL_TTL = Duration.ofDays(7);
+    private static final Set<String> SUPPORTED_REFERENCE_IMAGE_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
 
-    public CreatorProfileService(CreatorProfileRepository profileRepository) {
+    private final CreatorProfileRepository profileRepository;
+    private final AssetStorageService assetStorageService;
+
+    public CreatorProfileService(CreatorProfileRepository profileRepository, AssetStorageService assetStorageService) {
         this.profileRepository = profileRepository;
+        this.assetStorageService = assetStorageService;
     }
 
     @Transactional
@@ -87,6 +99,74 @@ public class CreatorProfileService {
         return toResponse(profileRepository.save(profile));
     }
 
+    @Transactional
+    public CastProfileResponse uploadReferenceImage(UUID profileId, MultipartFile file, String tenantId, String userId) {
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        CreatorProfile profile = profileRepository
+                .findByIdAndTenantIdAndUserId(profileId, safeTenantId, safeUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cast profile was not found."));
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a reference photo to upload.");
+        }
+        if (file.getSize() > MAX_REFERENCE_IMAGE_BYTES) {
+            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Reference photo must be 15 MB or smaller.");
+        }
+        String contentType = normalizedImageContentType(file.getContentType());
+        if (!SUPPORTED_REFERENCE_IMAGE_TYPES.contains(contentType)) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Reference photo must be JPG, PNG, or WebP.");
+        }
+
+        String objectKey = "%s/%s/cast-profiles/%s/reference%s".formatted(
+                safePath(safeTenantId), safePath(safeUserId), profileId, extensionFor(contentType)
+        );
+        AssetStorageService.StoredObject stored;
+        try (InputStream inputStream = file.getInputStream()) {
+            stored = assetStorageService.uploadCreatorAssetFromStream(objectKey, inputStream, contentType, REFERENCE_IMAGE_SIGNED_URL_TTL);
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not read the uploaded reference photo.", ex);
+        }
+
+        // Store the durable bucket/objectKey pointer, not the signed URL itself - signed URLs
+        // expire and this codebase already tracks the exact bug class that causes (a combined
+        // video asset going stale). toResponse() re-signs a fresh URL on every read instead.
+        Map<String, Object> attributes = new LinkedHashMap<>(profile.getAttributes() == null ? Map.of() : profile.getAttributes());
+        Map<String, Object> referenceImage = new LinkedHashMap<>();
+        referenceImage.put("bucket", stored.bucket());
+        referenceImage.put("objectKey", stored.objectKey());
+        referenceImage.put("contentType", stored.contentType());
+        attributes.put("referenceImage", referenceImage);
+        profile.setAttributes(attributes);
+        profile.setUpdatedAt(OffsetDateTime.now());
+        return toResponse(profileRepository.save(profile));
+    }
+
+    private String normalizedImageContentType(String contentType) {
+        String normalized = defaultString(contentType, "").toLowerCase(Locale.ROOT).trim();
+        int separator = normalized.indexOf(';');
+        if (separator >= 0) {
+            normalized = normalized.substring(0, separator).trim();
+        }
+        return "image/jpg".equals(normalized) ? "image/jpeg" : normalized;
+    }
+
+    private String extensionFor(String contentType) {
+        return switch (contentType) {
+            case "image/png" -> ".png";
+            case "image/webp" -> ".webp";
+            default -> ".jpg";
+        };
+    }
+
+    private String safePath(String value) {
+        String safe = defaultString(value, "unknown")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9._-]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^[.-]+|[.-]+$", "");
+        return safe.isBlank() ? "unknown" : safe;
+    }
+
     private List<CreatorProfile> seedDefaultProfiles(String tenantId, String userId) {
         List<CreatorProfile> defaults = List.of(
                 defaultProfile(tenantId, userId, "Priya", "Main Actor", 27, "Female", List.of("Relatable", "Soft Spoken", "Determined"), "Casual Gym Wear", "Shy", "Everyday casual outfit, natural face, expressive eyes.", "Beginner creator who can carry emotional hesitation and small-win payoff."),
@@ -134,6 +214,15 @@ public class CreatorProfileService {
         List<String> vibe = stringList(attributes.get("vibe"));
         if (vibe.isEmpty()) {
             vibe = stringList(attributes.get("vibes"));
+        }
+        // referenceImage only ever stores the durable bucket/objectKey pointer - sign a fresh
+        // URL on every read so it never goes stale, same pattern as the scene-asset endpoints.
+        if (attributes.get("referenceImage") instanceof Map<?, ?> referenceImage) {
+            String bucket = stringValue(referenceImage.get("bucket"));
+            String objectKey = stringValue(referenceImage.get("objectKey"));
+            if (!bucket.isBlank() && !objectKey.isBlank()) {
+                attributes.put("referenceImageUrl", assetStorageService.signedUrl(bucket, objectKey, REFERENCE_IMAGE_SIGNED_URL_TTL));
+            }
         }
         return CastProfileResponse.builder()
                 .id(profile.getId())

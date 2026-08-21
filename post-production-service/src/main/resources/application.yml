@@ -1,0 +1,129 @@
+spring:
+  application:
+    name: post-production-service
+
+  lifecycle:
+    # Voice-clone + lip-sync dispatch is the same kind of long-blocking call chain as
+    # video-generation-service's own dispatch -- see that service's application.yml for why this
+    # needs to be this long (must stay under the pod's terminationGracePeriodSeconds).
+    timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
+
+  servlet:
+    multipart:
+      # Must stay >= post-production.dubbing.max-upload-size-mb below, or Spring itself rejects
+      # the upload before SourceUploadService's own size check ever runs. Streamed to MinIO, not
+      # buffered into a byte[] (see MinioSourceUploadService) -- this cap protects disk/network,
+      # not JVM heap.
+      max-file-size: ${POST_PROD_MAX_UPLOAD_SIZE_MB:1024}MB
+      max-request-size: ${POST_PROD_MAX_UPLOAD_SIZE_MB:1024}MB
+
+  web:
+    cors:
+      mapping: "/**"
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+      allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}
+      allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+      exposed-headers: Authorization
+      allow-credentials: true
+      max-age: ${CORS_MAX_AGE:86400}
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:post_production_db}?sslmode=disable
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:10}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:2}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:10000}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+    show-sql: ${SHOW_SQL:false}
+    open-in-view: false
+
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalai-llama}
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:8080/realms/dalai-llama/protocol/openid-connect/certs}}
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+post-production:
+  # Not creator-service -- a separate, not-yet-built service with its own DB. Calls here fail
+  # with a connection error until it's stood up; that's expected, not masked (see
+  # HttpPreProductionClient's own comment).
+  pre-production-service:
+    base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
+  video-gen:
+    base-url: ${VIDEO_GEN_BASE_URL:http://video-generation-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${VIDEO_GEN_TIMEOUT_MS:15000}
+  llm-gateway:
+    base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
+    timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:200000}
+    default-voice-clone-model: ${POST_PROD_DEFAULT_VOICE_CLONE_MODEL:voice-clone-v1}
+    default-lip-sync-model: ${POST_PROD_DEFAULT_LIP_SYNC_MODEL:wav2lip-v1}
+    default-tts-model: ${POST_PROD_DEFAULT_TTS_MODEL:tts-v1}
+    default-foley-model: ${POST_PROD_DEFAULT_FOLEY_MODEL:foley-v1}
+    default-music-model: ${POST_PROD_DEFAULT_MUSIC_MODEL:music-gen-v1}
+    default-text-model: ${POST_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
+    default-video-edit-model: ${POST_PROD_DEFAULT_VIDEO_EDIT_MODEL:kling-edit-v1}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET_KEY:}
+    bucket: ${POST_PROD_BUCKET:creator-assets}
+    output-prefix: ${POST_PROD_OUTPUT_PREFIX:post-production-clips}
+  dubbing:
+    source-prefix: ${POST_PROD_DUBBING_SOURCE_PREFIX:dubbing-sources}
+    max-upload-size-mb: ${POST_PROD_MAX_UPLOAD_SIZE_MB:1024}
+    default-transcription-model: ${POST_PROD_DEFAULT_TRANSCRIPTION_MODEL:transcription-v1}
+  job:
+    stale-after-minutes: ${POST_PROD_JOB_STALE_AFTER_MINUTES:15}
+    giveup-after-minutes: ${POST_PROD_JOB_GIVEUP_AFTER_MINUTES:60}
+    reconciliation-interval-ms: ${POST_PROD_JOB_RECONCILIATION_INTERVAL_MS:120000}

@@ -59,6 +59,8 @@ public class ProductionPlanTagService {
     private final GenerationJobService generationJobService;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
+    private final ShotPlanCriticService shotPlanCriticService;
+    private final ContinuityCriticService continuityCriticService;
 
     public ProductionPlanTagService(
             CreatorScriptShotPlanRepository shotPlanRepository,
@@ -68,7 +70,9 @@ public class ProductionPlanTagService {
             CreatorAiService creatorAiService,
             GenerationJobService generationJobService,
             ObjectMapper objectMapper,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            ShotPlanCriticService shotPlanCriticService,
+            ContinuityCriticService continuityCriticService
     ) {
         this.shotPlanRepository = shotPlanRepository;
         this.scriptRepository = scriptRepository;
@@ -78,6 +82,8 @@ public class ProductionPlanTagService {
         this.generationJobService = generationJobService;
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
+        this.shotPlanCriticService = shotPlanCriticService;
+        this.continuityCriticService = continuityCriticService;
     }
 
     @Transactional
@@ -171,126 +177,54 @@ public class ProductionPlanTagService {
         }
         Map<String, Object> projectContext = buildProjectContext(script, scriptPayload, normalizedStyleKey, videoModelCapability);
         List<Map<String, Object>> targetShots = focusedShots(shots, focusedShotNumber);
+        // Computed once against the FULL shot list (not targetShots, which can be a single
+        // focused shot) so a focused single-shot regeneration still gets the assignment that
+        // matches its true position in the whole video - hero-first/pack-last and round-robin
+        // variety only mean anything relative to the complete sequence.
+        List<String> productShotTypeRecipe = computeProductShotTypeRecipe(scriptPayload, shots);
+        boolean noHumansScript = isNoHumansScript(scriptPayload);
         try {
             List<ShotProductionPlanTagResponse> responses = new ArrayList<>();
             List<Map<String, Object>> aiUsageSummaries = new ArrayList<>();
+            List<CreatorScriptShotPlan> savedPlans = new ArrayList<>();
             publishProductionPlanProgress(generationJobId, 7, "Preparing shot production plan context", 0, targetShots.size());
             for (int index = 0; index < targetShots.size(); index++) {
                 Map<String, Object> shot = targetShots.get(index);
                 int shotNumber = intValue(shot.get("shotNumber"), index + 1);
+                shot = withAssignedProductShotType(shot, productShotTypeRecipe, shotIndexInSequence(shots, shotNumber), shots.size(), noHumansScript);
                 Map<String, Object> inputPayload = buildInputPayload(script, projectContext, shot, normalizedStyleKey);
                 if (!forceRegenerate) {
                     CreatorScriptShotPlan existingPlan = completePlanForInput(script, projectContext, shot, normalizedStyleKey);
                     if (existingPlan != null) {
                         responses.add(toResponse(existingPlan));
+                        savedPlans.add(existingPlan);
                         int progress = 10 + (int) Math.round(((index + 1) * 80.0d) / Math.max(1, targetShots.size()));
                         publishProductionPlanProgress(generationJobId, progress, "Reused existing production plan JSON for shot " + shotNumber, index + 1, targetShots.size());
                         continue;
                     }
                 }
 
-                Map<String, Object> storyboardSchemaReference = storyboardTagSchemaReference(script, projectContext, shot);
-                Map<String, Object> lightingSchemaReference = lightingBuildSheetTagSchemaReference(script, projectContext, shot);
-                Map<String, Object> cameraSchemaReference = cameraPlanSheetTagSchemaReference(script, projectContext, shot);
-
-                GeneratedTag storyboardTag = null;
-                GeneratedTag lightingTag = null;
-                GeneratedTag cameraTag = null;
-                CombinedGeneratedTags combinedTags = null;
-                publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 0), "Generating combined storyboard, lighting, and DP camera JSON for shot " + shotNumber, index, targetShots.size());
-                try {
-                    combinedTags = generateCombinedTags(
-                            script,
-                            generationJobId,
-                            inputPayload,
-                            storyboardSchemaReference,
-                            lightingSchemaReference,
-                            cameraSchemaReference,
-                            shotNumber
-                    );
-                    storyboardTag = combinedTags.storyboardTag();
-                    lightingTag = combinedTags.lightingTag();
-                    cameraTag = combinedTags.cameraTag();
-                    appendCombinedUsageSummary(aiUsageSummaries, shotNumber, combinedTags);
-                } catch (CreatorAiOutputException ex) {
-                    log.warn(
-                            "Combined production plan tag output was incomplete; falling back to individual prompts jobId={} scriptId={} shotNumber={} reason={}",
-                            generationJobId,
-                            script == null ? null : script.getId(),
-                            shotNumber,
-                            ex.getMessage()
-                    );
-                    publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 0), "Combined shot plan incomplete; using individual tag prompts for shot " + shotNumber, index, targetShots.size());
-                } catch (RuntimeException ex) {
-                    if (!isTransientProviderFailure(ex)) {
-                        throw ex;
-                    }
-                    log.warn(
-                            "Combined production plan tag provider call was transient; falling back to individual prompts jobId={} scriptId={} shotNumber={} reason={}",
-                            generationJobId,
-                            script == null ? null : script.getId(),
-                            shotNumber,
-                            transientFailureReason(ex)
-                    );
-                    publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 0), "Combined shot plan provider retry exhausted; using individual tag prompts for shot " + shotNumber, index, targetShots.size());
-                }
-
-                if (combinedTags == null) {
-                    publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 0), "Generating storyboard tag JSON for shot " + shotNumber, index, targetShots.size());
-                    storyboardTag = generateTag(
-                            PromptTemplateType.STORYBOARD_TAG_GENERATE.name(),
-                            "storyboardTag",
-                            script,
-                            generationJobId,
-                            inputPayload,
-                            storyboardSchemaReference,
-                            shotNumber
-                    );
-                    publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 1), "Generating lighting tag JSON for shot " + shotNumber, index, targetShots.size());
-                    lightingTag = generateTag(
-                            PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(),
-                            "lightingBuildSheetTag",
-                            script,
-                            generationJobId,
-                            inputPayload,
-                            lightingSchemaReference,
-                            shotNumber
-                    );
-                    publishProductionPlanProgress(generationJobId, productionPlanProgress(index, targetShots.size(), 2), "Generating DP camera tag JSON for shot " + shotNumber, index, targetShots.size());
-                    cameraTag = generateTag(
-                            PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(),
-                            "cameraPlanSheetTag",
-                            script,
-                            generationJobId,
-                            inputPayload,
-                            cameraSchemaReference,
-                            shotNumber
-                    );
-                    appendUsageSummary(aiUsageSummaries, PromptTemplateType.STORYBOARD_TAG_GENERATE.name(), shotNumber, storyboardTag);
-                    appendUsageSummary(aiUsageSummaries, PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(), shotNumber, lightingTag);
-                    appendUsageSummary(aiUsageSummaries, PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(), shotNumber, cameraTag);
-                }
-
-                Map<String, Object> promptRunIds = new LinkedHashMap<>();
-                putIfPresent(promptRunIds, "storyboardTagPromptRunId", storyboardTag.promptRunId());
-                putIfPresent(promptRunIds, "lightingBuildSheetPromptRunId", lightingTag.promptRunId());
-                putIfPresent(promptRunIds, "cameraPlanSheetPromptRunId", cameraTag.promptRunId());
-
-                CreatorScriptShotPlan savedPlan = saveShotPlan(
-                        script,
-                        generationJobId,
-                        shotNumber,
-                        normalizedStyleKey,
-                        storyboardTag.payload(),
-                        lightingTag.payload(),
-                        cameraTag.payload(),
-                        promptRunIds,
-                        inputPayload
+                CreatorScriptShotPlan savedPlan = generateAndSaveShotPlan(
+                        script, projectContext, shot, normalizedStyleKey, inputPayload,
+                        generationJobId, shotNumber, aiUsageSummaries,
+                        productionPlanProgress(index, targetShots.size(), 0)
                 );
                 responses.add(toResponse(savedPlan));
+                savedPlans.add(savedPlan);
 
                 int progress = 10 + (int) Math.round(((index + 1) * 80.0d) / Math.max(1, targetShots.size()));
                 publishProductionPlanProgress(generationJobId, progress, "Generated production plan JSON for shot " + shotNumber, index + 1, targetShots.size());
+            }
+
+            // Post-loop critic pass: scores the whole sequence at once (not one shot in
+            // isolation), then regenerates only the specific shots it flags - never a
+            // whole-video retry. Only runs for product-led scripts; a no-op for the common
+            // (non-product) case since productShotTypeRecipe/isProductLedScript are both empty.
+            if (!productShotTypeRecipe.isEmpty()) {
+                responses = applyShotPlanCritique(
+                        script, projectContext, scriptPayload, shots, targetShots, savedPlans, responses,
+                        normalizedStyleKey, generationJobId, aiUsageSummaries, productShotTypeRecipe, noHumansScript
+                );
             }
 
             Map<String, Object> output = new LinkedHashMap<>();
@@ -331,6 +265,205 @@ public class ProductionPlanTagService {
             );
             throw ex;
         }
+    }
+
+    /**
+     * The full combined-tags-with-individual-fallback generation body for one shot, extracted
+     * so both the main per-script loop and the post-loop critic regeneration pass (see
+     * applyShotPlanCritique) share the exact same generation logic instead of two copies
+     * drifting apart over time.
+     */
+    private CreatorScriptShotPlan generateAndSaveShotPlan(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            Map<String, Object> shot,
+            String normalizedStyleKey,
+            Map<String, Object> inputPayload,
+            UUID generationJobId,
+            int shotNumber,
+            List<Map<String, Object>> aiUsageSummaries,
+            int progressPercent
+    ) {
+        Map<String, Object> storyboardSchemaReference = storyboardTagSchemaReference(script, projectContext, shot);
+        Map<String, Object> lightingSchemaReference = lightingBuildSheetTagSchemaReference(script, projectContext, shot);
+        Map<String, Object> cameraSchemaReference = cameraPlanSheetTagSchemaReference(script, projectContext, shot);
+
+        GeneratedTag storyboardTag = null;
+        GeneratedTag lightingTag = null;
+        GeneratedTag cameraTag = null;
+        CombinedGeneratedTags combinedTags = null;
+        publishProductionPlanProgress(generationJobId, progressPercent, "Generating combined storyboard, lighting, and DP camera JSON for shot " + shotNumber, 0, 1);
+        try {
+            combinedTags = generateCombinedTags(
+                    script,
+                    generationJobId,
+                    inputPayload,
+                    storyboardSchemaReference,
+                    lightingSchemaReference,
+                    cameraSchemaReference,
+                    shotNumber
+            );
+            storyboardTag = combinedTags.storyboardTag();
+            lightingTag = combinedTags.lightingTag();
+            cameraTag = combinedTags.cameraTag();
+            appendCombinedUsageSummary(aiUsageSummaries, shotNumber, combinedTags);
+        } catch (CreatorAiOutputException ex) {
+            log.warn(
+                    "Combined production plan tag output was incomplete; falling back to individual prompts jobId={} scriptId={} shotNumber={} reason={}",
+                    generationJobId,
+                    script == null ? null : script.getId(),
+                    shotNumber,
+                    ex.getMessage()
+            );
+        } catch (RuntimeException ex) {
+            if (!isTransientProviderFailure(ex)) {
+                throw ex;
+            }
+            log.warn(
+                    "Combined production plan tag provider call was transient; falling back to individual prompts jobId={} scriptId={} shotNumber={} reason={}",
+                    generationJobId,
+                    script == null ? null : script.getId(),
+                    shotNumber,
+                    transientFailureReason(ex)
+            );
+        }
+
+        if (combinedTags == null) {
+            storyboardTag = generateTag(
+                    PromptTemplateType.STORYBOARD_TAG_GENERATE.name(),
+                    "storyboardTag",
+                    script,
+                    generationJobId,
+                    inputPayload,
+                    storyboardSchemaReference,
+                    shotNumber
+            );
+            lightingTag = generateTag(
+                    PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(),
+                    "lightingBuildSheetTag",
+                    script,
+                    generationJobId,
+                    inputPayload,
+                    lightingSchemaReference,
+                    shotNumber
+            );
+            cameraTag = generateTag(
+                    PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(),
+                    "cameraPlanSheetTag",
+                    script,
+                    generationJobId,
+                    inputPayload,
+                    cameraSchemaReference,
+                    shotNumber
+            );
+            appendUsageSummary(aiUsageSummaries, PromptTemplateType.STORYBOARD_TAG_GENERATE.name(), shotNumber, storyboardTag);
+            appendUsageSummary(aiUsageSummaries, PromptTemplateType.LIGHTING_BUILD_SHEET_TAG_GENERATE.name(), shotNumber, lightingTag);
+            appendUsageSummary(aiUsageSummaries, PromptTemplateType.CAMERA_PLAN_SHEET_TAG_GENERATE.name(), shotNumber, cameraTag);
+        }
+
+        Map<String, Object> promptRunIds = new LinkedHashMap<>();
+        putIfPresent(promptRunIds, "storyboardTagPromptRunId", storyboardTag.promptRunId());
+        putIfPresent(promptRunIds, "lightingBuildSheetPromptRunId", lightingTag.promptRunId());
+        putIfPresent(promptRunIds, "cameraPlanSheetPromptRunId", cameraTag.promptRunId());
+
+        return saveShotPlan(
+                script,
+                generationJobId,
+                shotNumber,
+                normalizedStyleKey,
+                storyboardTag.payload(),
+                lightingTag.payload(),
+                cameraTag.payload(),
+                promptRunIds,
+                inputPayload
+        );
+    }
+
+    /**
+     * Runs ShotPlanCriticService once against the whole newly-generated sequence, then
+     * regenerates only the specific shots it flags as FAIL - capped at 3 total regenerations for
+     * the whole script (not per-shot), since this is a defense-in-depth pass, not the primary
+     * quality mechanism (the shot-type recipe/hydration already guarantee variety by
+     * construction). Never fails the job if the critic call itself fails - critique is a quality
+     * improvement, not a new way for shot planning to break.
+     */
+    private List<ShotProductionPlanTagResponse> applyShotPlanCritique(
+            CreatorScript script,
+            Map<String, Object> projectContext,
+            Map<String, Object> scriptPayload,
+            List<Map<String, Object>> shots,
+            List<Map<String, Object>> targetShots,
+            List<CreatorScriptShotPlan> savedPlans,
+            List<ShotProductionPlanTagResponse> responses,
+            String normalizedStyleKey,
+            UUID generationJobId,
+            List<Map<String, Object>> aiUsageSummaries,
+            List<String> productShotTypeRecipe,
+            boolean noHumansScript
+    ) {
+        ShotPlanCriticService.ShotPlanCriticResult critique;
+        try {
+            critique = shotPlanCriticService.critique(
+                    savedPlans,
+                    stringValue(scriptPayload == null ? null : scriptPayload.get("ingredientDetails")),
+                    script.getTenantId(),
+                    script.getUserId(),
+                    script.getProjectId()
+            );
+        } catch (RuntimeException ex) {
+            log.warn("Shot plan critique failed, keeping generated plans as-is errorType={} errorMessage={}",
+                    ex.getClass().getSimpleName(), ex.getMessage());
+            return responses;
+        }
+        List<Integer> failedShotNumbers = new ArrayList<>(critique.failedShotNumbers());
+        try {
+            ContinuityCriticService.ContinuityCriticResult continuity = continuityCriticService.critique(savedPlans);
+            for (Integer shotNumber : continuity.failedShotNumbers()) {
+                if (!failedShotNumbers.contains(shotNumber)) {
+                    failedShotNumbers.add(shotNumber);
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Continuity critique failed, keeping generated plans as-is errorType={} errorMessage={}",
+                    ex.getClass().getSimpleName(), ex.getMessage());
+        }
+        if (failedShotNumbers.isEmpty()) {
+            return responses;
+        }
+        Map<Integer, Map<String, Object>> shotByNumber = new LinkedHashMap<>();
+        for (Map<String, Object> shot : targetShots) {
+            shotByNumber.put(intValue(shot.get("shotNumber"), 0), shot);
+        }
+        Map<Integer, Integer> responseIndexByShotNumber = new LinkedHashMap<>();
+        for (int i = 0; i < responses.size(); i++) {
+            responseIndexByShotNumber.put(responses.get(i).shotNumber(), i);
+        }
+        List<ShotProductionPlanTagResponse> updatedResponses = new ArrayList<>(responses);
+        int regenerated = 0;
+        for (Integer shotNumber : failedShotNumbers) {
+            if (regenerated >= 3) {
+                break;
+            }
+            Map<String, Object> originalShot = shotByNumber.get(shotNumber);
+            if (originalShot == null) {
+                continue;
+            }
+            Map<String, Object> shot = withAssignedProductShotType(
+                    originalShot, productShotTypeRecipe, shotIndexInSequence(shots, shotNumber), shots.size(), noHumansScript
+            );
+            Map<String, Object> inputPayload = buildInputPayload(script, projectContext, shot, normalizedStyleKey);
+            publishProductionPlanProgress(generationJobId, 92, "Regenerating shot " + shotNumber + " after quality critique", regenerated, failedShotNumbers.size());
+            CreatorScriptShotPlan regeneratedPlan = generateAndSaveShotPlan(
+                    script, projectContext, shot, normalizedStyleKey, inputPayload,
+                    generationJobId, shotNumber, aiUsageSummaries, 92
+            );
+            Integer responseIndex = responseIndexByShotNumber.get(shotNumber);
+            if (responseIndex != null) {
+                updatedResponses.set(responseIndex, toResponse(regeneratedPlan));
+            }
+            regenerated++;
+        }
+        return updatedResponses;
     }
 
     private CreatorScriptShotPlan saveShotPlan(
@@ -748,10 +881,7 @@ public class ProductionPlanTagService {
         if (scriptId == null) {
             return List.of();
         }
-        return shotPlanRepository.findByScriptIdOrderByShotNumberAsc(scriptId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+        return toResponses(shotPlanRepository.findByScriptIdOrderByShotNumberAsc(scriptId));
     }
 
     @Transactional(readOnly = true)
@@ -1385,6 +1515,10 @@ public class ProductionPlanTagService {
         copyReferenceValue(hydrated, reference, "maxClipSeconds");
         copyReferenceValue(hydrated, reference, "maxDialogueSecondsPerShot");
         copyReferenceValue(hydrated, reference, "dialogueTimingPolicy");
+        // productShotType is a deterministic backend round-robin assignment (see
+        // computeProductShotTypeRecipe), not creative model output - same "policy, not creative
+        // output" reasoning as the values above. Always re-asserted, never trusted from the AI.
+        copyReferenceValue(hydrated, reference, "productShotType");
 
         // Exact card/step counts are UI contracts. If a provider returns a shortened
         // list, use the complete deterministic backend plan instead of spending tokens
@@ -1817,6 +1951,87 @@ public class ProductionPlanTagService {
         return value.substring(0, Math.max(0, maxLength)) + "...";
     }
 
+    /**
+     * A script is product-led if it carries a product intelligence brief or ingredient details -
+     * both are reliably persisted onto script payloads for any product-ad-brief-originated script
+     * by IdeaService.putProductReferencePersistence, independent of the no-humans subset. No new
+     * request-flag plumbing needed - this reads the same fields that already exist.
+     */
+    private boolean isProductLedScript(Map<String, Object> scriptPayload) {
+        Map<String, Object> source = scriptPayload == null ? Map.of() : scriptPayload;
+        return !mapValue(source.get("productIntelligenceBrief")).isEmpty()
+                || !stringValue(source.get("ingredientDetails")).isBlank()
+                || !mapValue(source.get("productIntelligence")).isEmpty();
+    }
+
+    private boolean isNoHumansScript(Map<String, Object> scriptPayload) {
+        Map<String, Object> source = scriptPayload == null ? Map.of() : scriptPayload;
+        Object configured = firstNonNull(source.get("noHumans"), mapValue(source.get("productIntelligenceBrief")).get("noHumans"));
+        if (configured instanceof Boolean bool) {
+            return bool;
+        }
+        return "true".equalsIgnoreCase(stringValue(configured));
+    }
+
+    /**
+     * Computed once per script (not per shot) so every shot's assignment comes from the same
+     * whole-video recipe - see ProductShotTypeRecipes for the round-robin/category-heuristic
+     * logic, ported from the standalone product-ad pipeline's ProductAdResearchService. Returns
+     * an empty list for non-product-led scripts, which is the gate that keeps this entire feature
+     * a no-op for the common (non-product) case.
+     */
+    private List<String> computeProductShotTypeRecipe(Map<String, Object> scriptPayload, List<Map<String, Object>> shots) {
+        if (!isProductLedScript(scriptPayload) || shots == null || shots.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Object> source = scriptPayload == null ? Map.of() : scriptPayload;
+        Map<String, Object> brief = mapValue(source.get("productIntelligenceBrief"));
+        String probe = String.join(" ", List.of(
+                stringValue(brief.get("productCategory")),
+                stringValue(brief.get("category")),
+                stringValue(brief.get("description")),
+                stringValue(source.get("ingredientDetails")),
+                stringValue(brief.get("productName")),
+                stringValue(source.get("projectTitle"))
+        ));
+        List<String> genericFallback = List.of("Hero Shot", "Beauty Shot", "Macro Shot", "Texture Shot", "Pack Shot");
+        return com.dalai.llama.creator.service.support.ProductShotTypeRecipes.computeRecipe(
+                List.of(), probe, genericFallback, isNoHumansScript(scriptPayload)
+        );
+    }
+
+    private int shotIndexInSequence(List<Map<String, Object>> shots, int shotNumber) {
+        for (int i = 0; i < shots.size(); i++) {
+            if (intValue(shots.get(i).get("shotNumber"), 0) == shotNumber) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /** Returns a shallow copy with assignedProductShotType stamped on - shot itself is never mutated. */
+    private Map<String, Object> withAssignedProductShotType(
+            Map<String, Object> shot,
+            List<String> productShotTypeRecipe,
+            int indexInSequence,
+            int totalShots,
+            boolean noHumansScript
+    ) {
+        if (productShotTypeRecipe.isEmpty()) {
+            return shot;
+        }
+        String assigned = com.dalai.llama.creator.service.support.ProductShotTypeRecipes.assignForIndex(
+                productShotTypeRecipe,
+                indexInSequence,
+                totalShots,
+                stringValue(shot.get("adShotType")),
+                noHumansScript
+        );
+        Map<String, Object> enriched = new LinkedHashMap<>(shot == null ? Map.of() : shot);
+        enriched.put("assignedProductShotType", assigned);
+        return enriched;
+    }
+
     private Map<String, Object> buildInputPayload(CreatorScript script, Map<String, Object> projectContext, Map<String, Object> shot, String styleKey) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("scriptId", script.getId().toString());
@@ -1912,6 +2127,12 @@ public class ProductionPlanTagService {
         tag.put("dialogueTimingPolicy", stringValue(context.get("dialogueTimingPolicy")));
         tag.put("shotType", shotTypeCode(shot.get("shotType")));
         tag.put("shotTypeFullName", shotTypeFullName(shot.get("shotType")));
+        // Marketing/creative shot category (Hero Shot, Ingredient Shot, Pack Shot, ...) - a
+        // completely different concept from shotType/shotTypeFullName above (camera framing
+        // size, ECU/CU/MCU/MS/WS). "" when this script isn't product-led - see
+        // computeProductShotTypeRecipe(). Backend-assigned and re-asserted authoritatively in
+        // hydrateRequiredProductionMetadata regardless of what the AI echoes back.
+        tag.put("productShotType", defaultString(stringValue(shot.get("assignedProductShotType")), ""));
         tag.put("cameraAngle", defaultString(stringValue(shot.get("cameraAngle")), "Eye Level"));
         tag.put("cameraMovement", cameraMovement(shot.get("cameraMovement")));
         tag.put("lensSuggestion", defaultString(stringValue(shot.get("lensSuggestion")), "Mobile 1x Wide"));
@@ -2045,10 +2266,33 @@ public class ProductionPlanTagService {
     }
 
     private List<ShotProductionPlanTagResponse> toResponses(List<CreatorScriptShotPlan> plans) {
-        return plans.stream().map(this::toResponse).toList();
+        Map<UUID, CreatorPromptRun> promptRunsById = loadPromptRunsForPlans(plans);
+        return plans.stream().map(plan -> toResponse(plan, promptRunsById)).toList();
+    }
+
+    // Batches every promptRunId referenced across all plans into a single findAllById
+    // instead of one findById per prompt-run-id per plan (each plan has ~3), which was
+    // firing dozens of sequential DB round trips on every screenplay-plans page load.
+    private Map<UUID, CreatorPromptRun> loadPromptRunsForPlans(List<CreatorScriptShotPlan> plans) {
+        List<UUID> promptRunIds = plans.stream()
+                .flatMap(plan -> mapValue(plan.getPromptRunIds()).values().stream())
+                .map(this::uuidValue)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (promptRunIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, CreatorPromptRun> byId = new LinkedHashMap<>();
+        promptRunRepository.findAllById(promptRunIds).forEach(run -> byId.put(run.getId(), run));
+        return byId;
     }
 
     public ShotProductionPlanTagResponse toResponse(CreatorScriptShotPlan plan) {
+        return toResponse(plan, loadPromptRunsForPlans(List.of(plan)));
+    }
+
+    private ShotProductionPlanTagResponse toResponse(CreatorScriptShotPlan plan, Map<UUID, CreatorPromptRun> promptRunsById) {
         return new ShotProductionPlanTagResponse(
                 plan.getId(),
                 plan.getShotNumber(),
@@ -2057,12 +2301,12 @@ public class ProductionPlanTagService {
                 mapValue(plan.getLightingBuildSheetTag()),
                 mapValue(plan.getCameraPlanSheetTag()),
                 mapValue(plan.getPromptRunIds()),
-                rawPromptResponses(mapValue(plan.getPromptRunIds())),
+                rawPromptResponses(mapValue(plan.getPromptRunIds()), promptRunsById),
                 plan.getUpdatedAt()
         );
     }
 
-    private Map<String, Object> rawPromptResponses(Map<String, Object> promptRunIds) {
+    private Map<String, Object> rawPromptResponses(Map<String, Object> promptRunIds, Map<UUID, CreatorPromptRun> promptRunsById) {
         Map<String, Object> responses = new LinkedHashMap<>();
         if (promptRunIds == null || promptRunIds.isEmpty()) {
             return responses;
@@ -2072,10 +2316,12 @@ public class ProductionPlanTagService {
             if (promptRunId == null) {
                 return;
             }
-            promptRunRepository.findById(promptRunId).ifPresent(promptRun -> {
-                String responseKey = defaultString(key, "promptRun").replace("PromptRunId", "RawPromptResponse");
-                responses.put(responseKey, rawPromptResponse(promptRun));
-            });
+            CreatorPromptRun promptRun = promptRunsById.get(promptRunId);
+            if (promptRun == null) {
+                return;
+            }
+            String responseKey = defaultString(key, "promptRun").replace("PromptRunId", "RawPromptResponse");
+            responses.put(responseKey, rawPromptResponse(promptRun));
         });
         return responses;
     }

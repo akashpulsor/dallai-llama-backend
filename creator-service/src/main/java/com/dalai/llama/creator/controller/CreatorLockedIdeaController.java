@@ -4,6 +4,7 @@ import com.dalai.llama.creator.dto.request.CharacterCastMappingRequest;
 import com.dalai.llama.creator.dto.request.CampaignAngleSelectionRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryIdeaScriptRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryScriptRequest;
+import com.dalai.llama.creator.dto.request.GraphPipelineRunRequest;
 import com.dalai.llama.creator.dto.request.LockIdeaSelectionRequest;
 import com.dalai.llama.creator.dto.request.SaveGeneratedScriptRequest;
 import com.dalai.llama.creator.dto.request.SaveStoryScriptRequest;
@@ -14,6 +15,7 @@ import com.dalai.llama.creator.dto.response.GeneratedStoryScriptResponse;
 import com.dalai.llama.creator.dto.response.GenerationJobResponse;
 import com.dalai.llama.creator.dto.response.LockedIdeaSelectionResponse;
 import com.dalai.llama.creator.service.CharacterCastMappingService;
+import com.dalai.llama.creator.service.CreatorGenerationGraphOrchestratorService;
 import com.dalai.llama.creator.service.CreatorIdeaGenerationAsyncService;
 import com.dalai.llama.creator.service.CreatorScreenplayAsyncService;
 import com.dalai.llama.creator.service.GenerationJobService;
@@ -52,6 +54,7 @@ public class CreatorLockedIdeaController {
     private final CreatorIdeaGenerationAsyncService asyncIdeaGenerationService;
     private final CreatorScreenplayAsyncService asyncScreenplayService;
     private final GenerationJobService generationJobService;
+    private final CreatorGenerationGraphOrchestratorService graphOrchestratorService;
 
     public CreatorLockedIdeaController(
             LockedIdeaSelectionService lockedIdeaSelectionService,
@@ -59,7 +62,8 @@ public class CreatorLockedIdeaController {
             CharacterCastMappingService characterCastMappingService,
             CreatorIdeaGenerationAsyncService asyncIdeaGenerationService,
             CreatorScreenplayAsyncService asyncScreenplayService,
-            GenerationJobService generationJobService
+            GenerationJobService generationJobService,
+            CreatorGenerationGraphOrchestratorService graphOrchestratorService
     ) {
         this.lockedIdeaSelectionService = lockedIdeaSelectionService;
         this.ideaService = ideaService;
@@ -67,6 +71,7 @@ public class CreatorLockedIdeaController {
         this.asyncIdeaGenerationService = asyncIdeaGenerationService;
         this.asyncScreenplayService = asyncScreenplayService;
         this.generationJobService = generationJobService;
+        this.graphOrchestratorService = graphOrchestratorService;
     }
 
     @PostMapping("/selection")
@@ -166,6 +171,24 @@ public class CreatorLockedIdeaController {
     ) {
         String userId = authentication == null ? "anonymous" : authentication.getName();
         return ResponseEntity.ok(ideaService.saveStoryIdea(lockedIdeaId, storyIdeaId, tenantId, userId));
+    }
+
+    @PostMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/pipeline/run")
+    public ResponseEntity<GenerationJobResponse> runGraphPipeline(
+            @PathVariable UUID lockedIdeaId,
+            @PathVariable UUID storyIdeaId,
+            @RequestBody(required = false) GraphPipelineRunRequest request,
+            @RequestHeader(value = "X-Tenant-ID", required = false) String tenantId,
+            Authentication authentication
+    ) {
+        String userId = authentication == null ? "anonymous" : authentication.getName();
+        log.info(
+                "Creator graph pipeline run requested lockedIdeaId={} storyIdeaId={} tenantId={} userId={}",
+                lockedIdeaId, storyIdeaId, tenantId, userId
+        );
+        return ResponseEntity
+                .status(HttpStatus.ACCEPTED)
+                .body(generationJobService.toResponse(graphOrchestratorService.startPipeline(lockedIdeaId, storyIdeaId, request, tenantId, userId)));
     }
 
     @PostMapping("/{lockedIdeaId}/story-ideas/{storyIdeaId}/script/generate")

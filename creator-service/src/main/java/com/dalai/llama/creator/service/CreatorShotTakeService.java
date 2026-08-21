@@ -153,17 +153,154 @@ public class CreatorShotTakeService {
     @Transactional(readOnly = true)
     public List<ShotTakeResponse> listTakes(UUID scriptId, String tenantId, String userId) {
         CreatorScript script = loadScript(scriptId, tenantId, userId);
-        return jdbcTemplate.query(
+        // Was: one row-fetching query for the list, then toTakeResponse(id) PER ROW,
+        // which itself re-queried the same take row plus reviews plus variants -
+        // 1 + 3*N queries for N takes on every project open. Now: 1 query for the
+        // rows (already has everything toTakeResponse would have re-fetched) + 2
+        // batched queries for reviews/variants across every take at once.
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 takeSelectSql() + """
                         where t.script_id = ?
                           and t.tenant_id = ?
                           and t.user_id = ?
                         order by t.shot_number asc, t.created_at desc
                         """,
-                (rs, rowNum) -> toTakeResponse(rs.getObject("id", UUID.class)),
                 script.getId(),
                 safeTenantId(tenantId),
                 safeUserId(userId)
+        );
+        List<UUID> takeIds = rows.stream().map(row -> uuidValue(row.get("id"))).toList();
+        Map<UUID, List<ShotTakeReviewResponse>> reviewsByTake = groupById(
+                loadReviewsForTakes(takeIds), ShotTakeReviewResponse::takeId
+        );
+        Map<UUID, List<ShotTakeEnhancementVariantResponse>> variantsByTake = groupById(
+                loadVariantsForTakes(takeIds), ShotTakeEnhancementVariantResponse::takeId
+        );
+        return rows.stream()
+                .map(row -> buildTakeResponseFromRow(row, reviewsByTake, variantsByTake))
+                .toList();
+    }
+
+    private <T> Map<UUID, List<T>> groupById(List<T> items, java.util.function.Function<T, UUID> idExtractor) {
+        Map<UUID, List<T>> grouped = new LinkedHashMap<>();
+        for (T item : items) {
+            grouped.computeIfAbsent(idExtractor.apply(item), key -> new ArrayList<>()).add(item);
+        }
+        return grouped;
+    }
+
+    private ShotTakeResponse buildTakeResponseFromRow(
+            Map<String, Object> row,
+            Map<UUID, List<ShotTakeReviewResponse>> reviewsByTake,
+            Map<UUID, List<ShotTakeEnhancementVariantResponse>> variantsByTake
+    ) {
+        UUID takeId = uuidValue(row.get("id"));
+        UUID assetId = uuidValue(row.get("asset_id"));
+        String assetUrl = signedUrl(stringValue(row.get("bucket"), ""), stringValue(row.get("object_key"), ""), stringValue(row.get("public_url"), ""));
+        UUID referenceFrameAssetId = uuidValue(row.get("reference_frame_asset_id"));
+        String referenceFrameUrl = signedUrl(
+                stringValue(row.get("reference_frame_bucket"), ""),
+                stringValue(row.get("reference_frame_object_key"), ""),
+                stringValue(row.get("reference_frame_public_url"), "")
+        );
+        return new ShotTakeResponse(
+                takeId,
+                uuidValue(row.get("project_id")),
+                uuidValue(row.get("script_id")),
+                numberValue(row.get("shot_number"), 0),
+                assetId,
+                assetUrl,
+                stringValue(row.get("content_type"), ""),
+                longValue(row.get("size_bytes")),
+                referenceFrameAssetId,
+                referenceFrameUrl,
+                stringValue(row.get("reference_frame_content_type"), ""),
+                stringValue(row.get("status"), ""),
+                stringValue(row.get("review_status"), ""),
+                Boolean.TRUE.equals(row.get("accepted")),
+                stringValue(row.get("user_notes"), ""),
+                readMap(stringValue(row.get("media_analysis"), "{}")),
+                readMap(stringValue(row.get("validation_summary"), "{}")),
+                reviewsByTake.getOrDefault(takeId, List.of()),
+                variantsByTake.getOrDefault(takeId, List.of()),
+                offsetDateTime(row.get("created_at")),
+                offsetDateTime(row.get("updated_at"))
+        );
+    }
+
+    private List<ShotTakeReviewResponse> loadReviewsForTakes(List<UUID> takeIds) {
+        if (takeIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = takeIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+        return jdbcTemplate.query(
+                """
+                select id, take_id, generation_job_id, status, score, checks::text as checks,
+                       sound_timeline::text as sound_timeline, message, created_at
+                from creator_shot_take_reviews
+                where take_id in (%s)
+                order by created_at desc
+                """.formatted(placeholders),
+                (rs, rowNum) -> new ShotTakeReviewResponse(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("take_id", UUID.class),
+                        rs.getObject("generation_job_id", UUID.class),
+                        rs.getString("status"),
+                        rs.getBigDecimal("score") == null ? null : rs.getBigDecimal("score").doubleValue(),
+                        readMap(rs.getString("checks")),
+                        readList(rs.getString("sound_timeline")),
+                        rs.getString("message"),
+                        rs.getObject("created_at", OffsetDateTime.class)
+                ),
+                takeIds.toArray()
+        );
+    }
+
+    private List<ShotTakeEnhancementVariantResponse> loadVariantsForTakes(List<UUID> takeIds) {
+        if (takeIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = takeIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(","));
+        return jdbcTemplate.query(
+                """
+                select v.id, v.take_id, v.generation_job_id, v.preview_asset_id, v.status,
+                       v.final_video_asset_id, v.final_audio_asset_id, v.final_render_asset_id, v.provider, v.provider_operation_id,
+                       v.prompt_payload::text as prompt_payload, v.provider_response::text as provider_response,
+                       v.user_feedback, v.created_at, v.updated_at,
+                       a.bucket as preview_bucket, a.object_key as preview_object_key, a.public_url as preview_public_url,
+                       va.bucket as final_video_bucket, va.object_key as final_video_object_key, va.public_url as final_video_public_url,
+                       aa.bucket as final_audio_bucket, aa.object_key as final_audio_object_key, aa.public_url as final_audio_public_url,
+                       fra.bucket as final_render_bucket, fra.object_key as final_render_object_key, fra.public_url as final_render_public_url
+                from creator_shot_enhancement_variants v
+                left join creator_assets a on a.id = v.preview_asset_id
+                left join creator_assets va on va.id = v.final_video_asset_id
+                left join creator_assets aa on aa.id = v.final_audio_asset_id
+                left join creator_assets fra on fra.id = v.final_render_asset_id
+                where v.take_id in (%s)
+                order by v.created_at desc
+                """.formatted(placeholders),
+                (rs, rowNum) -> new ShotTakeEnhancementVariantResponse(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("take_id", UUID.class),
+                        rs.getObject("generation_job_id", UUID.class),
+                        rs.getObject("preview_asset_id", UUID.class),
+                        signedUrl(rs.getString("preview_bucket"), rs.getString("preview_object_key"), rs.getString("preview_public_url")),
+                        rs.getObject("final_video_asset_id", UUID.class),
+                        signedUrl(rs.getString("final_video_bucket"), rs.getString("final_video_object_key"), rs.getString("final_video_public_url")),
+                        rs.getObject("final_audio_asset_id", UUID.class),
+                        signedUrl(rs.getString("final_audio_bucket"), rs.getString("final_audio_object_key"), rs.getString("final_audio_public_url")),
+                        rs.getObject("final_render_asset_id", UUID.class),
+                        signedUrl(rs.getString("final_render_bucket"), rs.getString("final_render_object_key"), rs.getString("final_render_public_url")),
+                        rs.getString("status"),
+                        rs.getString("provider"),
+                        rs.getString("provider_operation_id"),
+                        readMap(rs.getString("prompt_payload")),
+                        readMap(rs.getString("provider_response")),
+                        rs.getString("user_feedback"),
+                        rs.getObject("created_at", OffsetDateTime.class),
+                        rs.getObject("updated_at", OffsetDateTime.class)
+                ),
+                takeIds.toArray()
         );
     }
 

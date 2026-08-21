@@ -1,0 +1,53 @@
+package com.dalai.llama.preprod.dto;
+
+import com.dalai.llama.preprod.domain.AspectRatio;
+import com.dalai.llama.preprod.domain.ExecutionDifficulty;
+import com.dalai.llama.preprod.domain.MoodProfile;
+import com.dalai.llama.preprod.domain.ShotSize;
+import com.dalai.llama.preprod.domain.ShotStatus;
+import com.dalai.llama.preprod.domain.ShotType;
+import com.dalai.llama.preprod.domain.TimeOfDay;
+
+import java.util.UUID;
+
+public record ShotView(
+        UUID id,
+        String shotRef,
+        Integer shotNumber,
+        UUID screenplaySceneId,
+        ShotType shotType,
+        String scriptLine,
+        String primaryCharacterKey,
+        ShotSize cameraShotSize,
+        String cameraNote,
+        String location,
+        TimeOfDay timeOfDay,
+        MoodProfile lightingMood,
+        Integer durationSeconds,
+        AspectRatio aspectRatio,
+        ShotStatus status,
+        String cameraAngle,
+        String cameraMovement,
+        String lensSuggestion,
+        Integer fps,
+        String composition,
+        String expression,
+        String emotion,
+        String bodyLanguage,
+        String action,
+        String voiceOver,
+        String textOverlay,
+        String soundDesign,
+        String editingNotes,
+        String retentionGoal,
+        String creatorDirection,
+        String subtitlePosition,
+        String mobileFocusArea,
+        String safeZoneNotes,
+        ExecutionDifficulty executionDifficulty,
+        String cinematicExecution,
+        String rookieFriendlyGuide,
+        String sketchPrompt,
+        CinematographyView cinematography
+) {
+}

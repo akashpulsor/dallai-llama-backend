@@ -21,6 +21,8 @@ class ProductionPlanTagServiceValidationRepairTest {
             null,
             null,
             new ObjectMapper(),
+            null,
+            null,
             null
     );
 

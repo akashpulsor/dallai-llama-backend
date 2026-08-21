@@ -109,6 +109,50 @@ public class LocalVideoFrameExtractionService {
         }
     }
 
+    /**
+     * Pulls the last frame of an already-generated clip so it can be handed to the next scene's
+     * provider call as a visual continuity anchor (character identity, wardrobe, lighting, set),
+     * on top of the existing text-only consistency bible. Bounded, best-effort: callers should
+     * treat a thrown exception as "no continuity frame available" and fall back to text-only,
+     * not as a hard failure of scene generation.
+     */
+    public LastFrame extractLastFrame(String bucket, String objectKey, String contentType) {
+        if (isBlank(bucket) || isBlank(objectKey)) {
+            throw new IllegalArgumentException("Video storage location is missing for last-frame extraction.");
+        }
+        Path workspace = null;
+        try {
+            workspace = Files.createTempDirectory("creator-last-frame-");
+            Path sourcePath = workspace.resolve("source" + extensionFor(contentType, objectKey));
+            assetStorageService.downloadObjectToPath(bucket, objectKey, sourcePath);
+
+            MediaInfo mediaInfo = probe(sourcePath);
+            double duration = mediaInfo.durationSeconds();
+            double timestamp = duration > 0.2 ? duration - 0.15 : 0;
+            Path framePath = workspace.resolve("last-frame.jpg");
+            run(List.of(
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-y",
+                    "-ss", format(timestamp),
+                    "-i", sourcePath.toString(),
+                    "-frames:v", "1",
+                    "-vf", "scale=1024:-2:force_original_aspect_ratio=decrease",
+                    "-q:v", "3",
+                    framePath.toString()
+            ));
+            byte[] bytes = Files.readAllBytes(framePath);
+            if (bytes.length == 0) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Extracted last frame was empty.");
+            }
+            return new LastFrame(bytes, "image/jpeg", mediaInfo.width(), mediaInfo.height());
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not extract last frame from " + bucket + "/" + objectKey + ".", ex);
+        } finally {
+            deleteQuietly(workspace);
+        }
+    }
+
     private MediaInfo probe(Path sourcePath) {
         try {
             String output = run(List.of(
@@ -230,6 +274,9 @@ public class LocalVideoFrameExtractionService {
     }
 
     public record FrameTimeline(List<Map<String, Object>> frames, Map<String, Object> metadata) {
+    }
+
+    public record LastFrame(byte[] bytes, String contentType, int width, int height) {
     }
 
     private record MediaInfo(int width, int height, double durationSeconds) {

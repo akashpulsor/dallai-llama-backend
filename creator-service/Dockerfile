@@ -55,6 +55,16 @@ COPY --from=rnnoise-build /usr/local/lib/librnnoise.so* /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib
 RUN ldconfig
 
+# Local-dev-only: trust any CA cert dropped in creator-service/docker/dev-ca/ (e.g. a
+# machine's mkcert root CA) so outbound HTTPS calls to *.dalaillama.in succeed against a
+# locally-issued dev certificate. The directory is always present (kept via .gitkeep) but its
+# *.crt contents are gitignored/machine-specific, so this is a safe no-op on any build where
+# the directory is empty (real prod TLS certs need no such override).
+COPY creator-service/docker/dev-ca/ /usr/local/share/ca-certificates/dev/
+RUN (find /usr/local/share/ca-certificates/dev -name '*.crt' -exec keytool -importcert -trustcacerts -noprompt \
+        -alias "dev-ca-$(basename {} .crt)" -file {} -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit \; || true) \
+    && (update-ca-certificates || true)
+
 WORKDIR /app
 
 ENV JAVA_OPTS="\

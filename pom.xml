@@ -29,6 +29,15 @@
       <module>tenant-service</module>
       <module>product-service</module>
       <module>creator-service</module>
+      <module>llm-gateway</module>
+      <module>video-generation-service</module>
+      <module>post-production-service</module>
+      <module>job-lifecycle-common</module>
+      <module>pre-production-service</module>
+      <module>critic-service</module>
+      <module>creative-planning-service</module>
+      <module>trend-intelligence-service</module>
+      <module>chat-service</module>
   </modules>
 
   <properties>

@@ -27,15 +27,21 @@ public class CampaignAngleSuggestionService {
     private final CreatorAiService creatorAiService;
     private final CreatorPromptRunRepository promptRunRepository;
     private final ObjectMapper objectMapper;
+    private final IdeaService ideaService;
+    private final CampaignAngleCriticService campaignAngleCriticService;
 
     public CampaignAngleSuggestionService(
             CreatorAiService creatorAiService,
             CreatorPromptRunRepository promptRunRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            IdeaService ideaService,
+            CampaignAngleCriticService campaignAngleCriticService
     ) {
         this.creatorAiService = creatorAiService;
         this.promptRunRepository = promptRunRepository;
         this.objectMapper = objectMapper;
+        this.ideaService = ideaService;
+        this.campaignAngleCriticService = campaignAngleCriticService;
     }
 
     public CampaignAngleSuggestionResponse suggest(
@@ -55,10 +61,12 @@ public class CampaignAngleSuggestionService {
         String safeTenantId = text(tenantId).isBlank() ? "unknown" : text(tenantId);
         String safeUserId = text(userId).isBlank() ? "anonymous" : text(userId);
         Map<String, Object> snapshot = inputSnapshot(safeRequest, ideaText, productBrief);
-        String renderedPrompt = renderedPrompt(snapshot);
-        Map<String, Object> providerInput = new LinkedHashMap<>(snapshot);
-        providerInput.put("renderedPrompt", renderedPrompt);
-
+        // Product briefs carry their reference photos separately from the text brief -
+        // without this, Gemini only ever sees a JSON description of the product, never
+        // the actual images, and angles end up generic instead of grounded in what the
+        // product actually looks like. Reuses the same extraction IdeaService already
+        // relies on for idea/script generation so all three stay consistent.
+        List<String> referenceImageUrls = ideaService.productReferenceImageUrls(Map.of("productIntelligenceBrief", productBrief));
         CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
                 safeTenantId,
                 safeUserId,
@@ -66,19 +74,72 @@ public class CampaignAngleSuggestionService {
                 null,
                 null
         );
+
+        // Critic-gated retry: a FAIL verdict (generic/off-brief/vague-visual-direction batch)
+        // triggers exactly one regeneration with the critic's issues folded into the prompt,
+        // never more - angle suggestion is a cheap, small output, not worth a bigger budget.
+        AngleAttempt first = generateAndScoreAngles(snapshot, referenceImageUrls, usageContext, safeTenantId, safeUserId, safeRequest.projectId(), "");
+        if (first.angles().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "The AI response did not contain usable campaign angles. Please try again.");
+        }
+        AngleAttempt best = first;
+        if (first.critique() != null && "FAIL".equals(first.critique().status())) {
+            AngleAttempt retry = generateAndScoreAngles(snapshot, referenceImageUrls, usageContext, safeTenantId, safeUserId, safeRequest.projectId(), feedbackText(first.critique()));
+            if (!retry.angles().isEmpty() && retry.averageScore() >= best.averageScore()) {
+                best = retry;
+            }
+        }
+
+        return new CampaignAngleSuggestionResponse(
+                best.angles(),
+                creatorAiService.providerName(),
+                creatorAiService.modelName(),
+                best.promptRunId()
+        );
+    }
+
+    private record AngleAttempt(
+            List<CampaignAngleSuggestionResponse.CampaignAngle> angles,
+            UUID promptRunId,
+            double averageScore,
+            CampaignAngleCriticService.CampaignAngleCriticResult critique
+    ) {
+    }
+
+    /** One generation call + critique + persistence + billing. Each call here is a real, billed AI request. */
+    private AngleAttempt generateAndScoreAngles(
+            Map<String, Object> snapshot,
+            List<String> referenceImageUrls,
+            CreatorAiService.AiUsageContext usageContext,
+            String safeTenantId,
+            String safeUserId,
+            UUID projectId,
+            String priorFeedback
+    ) {
+        String renderedPrompt = renderedPrompt(snapshot, priorFeedback);
+        Map<String, Object> providerInput = new LinkedHashMap<>(snapshot);
+        providerInput.put("renderedPrompt", renderedPrompt);
+        providerInput.put("referenceImageUrls", referenceImageUrls);
+        providerInput.put("productReferenceImageUrls", referenceImageUrls);
+        providerInput.put("attachReferenceImages", !referenceImageUrls.isEmpty());
+
         CreatorAiService.MeteredAiResponse aiResponse = creatorAiService.generateMetered(PROMPT_TYPE, providerInput, usageContext);
         List<CampaignAngleSuggestionResponse.CampaignAngle> angles = anglesFrom(aiResponse.output());
         if (angles.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "The AI response did not contain usable campaign angles. Please try again.");
+            return new AngleAttempt(List.of(), null, 0, null);
         }
+        CampaignAngleCriticService.CampaignAngleCriticResult critique = campaignAngleCriticService.critique(
+                angles, snapshot, safeTenantId, safeUserId, projectId
+        );
 
         Map<String, Object> outputPayload = new LinkedHashMap<>();
         outputPayload.put("angles", angles);
         outputPayload.put("providerOutput", aiResponse.output());
+        outputPayload.put("critique", critique);
         CreatorPromptRun promptRun = promptRunRepository.save(CreatorPromptRun.builder()
                 .tenantId(safeTenantId)
                 .userId(safeUserId)
-                .projectId(safeRequest.projectId())
+                .projectId(projectId)
                 .promptTemplateKey(PROMPT_TYPE)
                 .promptTemplateVersion(1)
                 .renderedPrompt(renderedPrompt)
@@ -93,12 +154,18 @@ public class CampaignAngleSuggestionService {
                 .build());
         creatorAiService.publishBillingDebit(PROMPT_TYPE, aiResponse, usageContext.withPromptRunId(promptRun.getId()));
 
-        return new CampaignAngleSuggestionResponse(
-                angles,
-                creatorAiService.providerName(),
-                creatorAiService.modelName(),
-                promptRun.getId()
-        );
+        return new AngleAttempt(angles, promptRun.getId(), critique.averageScore(), critique);
+    }
+
+    private String feedbackText(CampaignAngleCriticService.CampaignAngleCriticResult critique) {
+        if (critique == null || critique.angleAudits().isEmpty()) {
+            return "";
+        }
+        List<String> issues = new ArrayList<>();
+        for (CampaignAngleCriticService.AngleAudit audit : critique.angleAudits()) {
+            issues.addAll(audit.issues());
+        }
+        return issues.isEmpty() ? critique.summary() : String.join("; ", issues);
     }
 
     private Map<String, Object> inputSnapshot(
@@ -124,11 +191,19 @@ public class CampaignAngleSuggestionService {
         return snapshot;
     }
 
-    private String renderedPrompt(Map<String, Object> snapshot) {
+    private String renderedPrompt(Map<String, Object> snapshot, String priorFeedback) {
+        // priorFeedback is AI-generated critic text and may itself contain a literal '%' -
+        // it must stay a %s ARGUMENT to .formatted(), never get concatenated into the
+        // template string that .formatted() re-scans for directives, or a stray '%' in the
+        // feedback text (e.g. "only 20% off") would throw UnknownFormatConversionException.
+        String feedbackSection = priorFeedback == null || priorFeedback.isBlank()
+                ? ""
+                : "\nA prior attempt at this brief was reviewed and rejected. Fix these specific issues this time:\n%s\n".formatted(priorFeedback);
         return """
                 You are a senior creative strategist. Generate exactly three distinct, practical campaign angles for one short-form video brief.
 
                 Brief JSON:
+                %s
                 %s
 
                 Rules:
@@ -151,7 +226,7 @@ public class CampaignAngleSuggestionService {
                     }
                   ]
                 }
-                """.formatted(toJson(snapshot));
+                """.formatted(toJson(snapshot), feedbackSection);
     }
 
     private List<CampaignAngleSuggestionResponse.CampaignAngle> anglesFrom(Map<String, Object> output) {

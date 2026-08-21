@@ -1547,9 +1547,21 @@ public class ScreenplayVideoService implements ProviderRequestFactory {
         if (editResult.failed()) {
             generationJobService.failGenerationJob(chatJob.getId(), editResult.errorMessage(), outputPayload(run, editResult.errorMessage()));
         } else {
-            generationJobService.completeGenerationJob(chatJob.getId(), outputPayload(run, "Scene edit saved with RAG context."));
+            generationJobService.completeGenerationJob(chatJob.getId(), outputPayload(run, sceneEditResponseMessage(editedScene)));
         }
         return run;
+    }
+
+    // Surfaces the AI editor's own editingNotes (e.g. "All instances of 'Jaipur' were already
+    // correctly spelled - no textual changes were required") instead of a fixed, uninformative
+    // "Scene edit saved" message, plus an explicit next-step pointer - the scene is already
+    // marked NEEDS_REGENERATION above, but nothing told the user that regenerating is the actual
+    // next action, which was confusing when an edit request legitimately required no text change
+    // (e.g. a pronunciation complaint where the underlying dialogue was never misspelled).
+    private String sceneEditResponseMessage(Map<String, Object> editedScene) {
+        String editingNotes = firstText(editedScene.get("editingNotes"));
+        String base = editingNotes.isBlank() ? "Scene edit saved." : "Scene edit saved. " + editingNotes;
+        return base + " Click Regenerate on this shot to apply the change to the video.";
     }
 
     @Transactional

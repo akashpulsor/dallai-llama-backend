@@ -10,7 +10,10 @@ import com.dalai.llama.creator.domain.entity.CreatorScriptShot;
 import com.dalai.llama.creator.domain.entity.CreatorScriptShotPlan;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboard;
 import com.dalai.llama.creator.domain.entity.CreatorStoryboardScene;
+import com.dalai.llama.creator.dto.request.ConfirmShotProductReferenceRequest;
 import com.dalai.llama.creator.dto.request.GenerateStoryboardRequest;
+import com.dalai.llama.creator.dto.shotplan.ShotPlanTagMapper;
+import com.dalai.llama.creator.dto.shotplan.StoryboardTagView;
 import com.dalai.llama.creator.dto.request.ShotAiEditRequest;
 import com.dalai.llama.creator.dto.request.ShotTimelineInsertRequest;
 import com.dalai.llama.creator.dto.response.ShotImageUrlResponse;
@@ -32,6 +35,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -84,6 +88,11 @@ public class StoryboardService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
+    private final ProductFrameCriticService productFrameCriticService;
+    private final EditingPlanningService editingPlanningService;
+    private final SoundDesignPlanningService soundDesignPlanningService;
+    private final FluxPulidImageGenerationService fluxPulidImageGenerationService;
+    private final FaceSwapImageGenerationService faceSwapImageGenerationService;
 
     public StoryboardService(
             CreatorScriptRepository scriptRepository,
@@ -102,7 +111,12 @@ public class StoryboardService {
             CreatorProperties properties,
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
-            WebClient.Builder webClientBuilder
+            WebClient.Builder webClientBuilder,
+            ProductFrameCriticService productFrameCriticService,
+            EditingPlanningService editingPlanningService,
+            SoundDesignPlanningService soundDesignPlanningService,
+            FluxPulidImageGenerationService fluxPulidImageGenerationService,
+            FaceSwapImageGenerationService faceSwapImageGenerationService
     ) {
         this.scriptRepository = scriptRepository;
         this.scriptShotRepository = scriptShotRepository;
@@ -123,6 +137,11 @@ public class StoryboardService {
         this.webClient = webClientBuilder
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                 .build();
+        this.productFrameCriticService = productFrameCriticService;
+        this.editingPlanningService = editingPlanningService;
+        this.soundDesignPlanningService = soundDesignPlanningService;
+        this.fluxPulidImageGenerationService = fluxPulidImageGenerationService;
+        this.faceSwapImageGenerationService = faceSwapImageGenerationService;
     }
 
     @Transactional
@@ -220,7 +239,7 @@ public class StoryboardService {
         String generatedPrompt = "";
 
         if ("production".equals(normalizedKind)) {
-            String prompt = buildProductionImagePrompt(script.getScriptPayload(), shot, sourceTag, screenType, renderSize, request);
+            String prompt = buildProductionImagePrompt(script.getScriptPayload(), shot, sourceTag, plan.getLightingBuildSheetTag(), plan.getCameraPlanSheetTag(), screenType, renderSize, request);
             generatedPrompt = prompt;
             GeneratedAsset generatedAsset = generateProductionImageAsset(script, storyboard.getId(), shot, shotNumber, shotId, screenType, renderSize, signedUrlTtl, prompt, request);
             collectImageUsage(
@@ -323,6 +342,382 @@ public class StoryboardService {
         CreatorAsset responseImageAsset = "production".equals(normalizedKind) ? productionImageAsset : storyboardAsset;
         String responseImageSignedUrl = "production".equals(normalizedKind) ? productionImageSignedUrl : storyboardSignedUrl;
         return toResponse(scene, responseImageAsset, responseImageSignedUrl, lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan);
+    }
+
+    private static final long MAX_PRODUCT_REFERENCE_REFERENCE_BYTES = 10L * 1024 * 1024;
+
+    /**
+     * Explicit, per-shot opt-in for attaching a real cast face or a style/inspiration photo to
+     * product-frame generation. Before this existed, a real cast photo was auto-attached for any
+     * shot whose shot plan referenced a cast-mapped character, which meant every such shot paid
+     * for a Gemini call that was deterministically policy-blocked (IMAGE_OTHER - a real person's
+     * face used as a reference for a new photorealistic generation "of" them) before falling back
+     * to a faceless retry. Requiring an explicit upload here means a shot with no upload simply
+     * generates faceless from the start - no wasted blocked call - and CAST is only ever attached
+     * when the user has deliberately chosen to.
+     *
+     * Upload is a two-step flow (analyze, then confirm) rather than one call, specifically for
+     * INSPIRATION references: an uploaded "Pinterest-style" mood photo can depict a subject that
+     * contradicts the project's actual product (a strawberry photo for a mango product) - if we
+     * attached it blindly, the image model's own "do not invent an ingredient" instruction is the
+     * only thing standing between that mismatch and a visibly wrong frame. analyzeShotProductReference
+     * uploads the file and (for INSPIRATION) scores it against the project's product/ingredient data
+     * WITHOUT touching the shot yet; the caller decides how to proceed (style-only, update planning,
+     * or discard) and only confirmShotProductReference actually attaches it.
+     */
+    @Transactional
+    public Map<String, Object> analyzeShotProductReference(
+            UUID scriptId,
+            int shotNumber,
+            MultipartFile file,
+            String classification,
+            String tenantId,
+            String userId
+    ) {
+        String normalizedClassification = defaultString(classification, "").trim().toUpperCase(Locale.ROOT);
+        if (!"CAST".equals(normalizedClassification) && !"INSPIRATION".equals(normalizedClassification)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "classification must be CAST or INSPIRATION.");
+        }
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        CreatorScript script = scriptRepository.findByIdAndTenantIdAndUserId(scriptId, safeTenantId, safeUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Final script was not found."));
+        Map<String, Object> shot = shotByNumber(scriptShots(script), shotNumber);
+        if (shot.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Shot " + shotNumber + " was not found in the screenplay.");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a reference image.");
+        }
+        if (file.getSize() > MAX_PRODUCT_REFERENCE_REFERENCE_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reference image must be 10 MB or smaller.");
+        }
+        String contentType = defaultString(file.getContentType(), "application/octet-stream").toLowerCase(Locale.ROOT);
+        String extension = switch (contentType) {
+            case "image/jpeg", "image/jpg" -> "jpg";
+            case "image/png" -> "png";
+            case "image/webp" -> "webp";
+            default -> throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Reference must be a JPG, PNG, or WebP image."
+            );
+        };
+        String objectKey = "screenplay-videos/%s/product-references/shot-%04d/%s.%s".formatted(
+                script.getId(), shotNumber, UUID.randomUUID(), extension
+        );
+        AssetStorageService.StoredObject stored;
+        try {
+            stored = assetStorageService.uploadCreatorAsset(objectKey, file.getBytes(), contentType, Duration.ofDays(7));
+        } catch (IOException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not read the uploaded reference image.", ex);
+        }
+        Map<String, Object> pendingReference = new LinkedHashMap<>();
+        pendingReference.put("bucket", stored.bucket());
+        pendingReference.put("objectKey", stored.objectKey());
+        pendingReference.put("url", stored.signedUrl());
+        pendingReference.put("classification", normalizedClassification);
+
+        Map<String, Object> analysis = "CAST".equals(normalizedClassification)
+                ? analyzeCastReference(script, stored, contentType)
+                : analyzeReferenceMismatches(script, shotNumber, stored, contentType);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("reference", pendingReference);
+        result.put("analysis", analysis);
+        return result;
+    }
+
+    /** Writable planning fields a reference-photo mismatch can propose updating, and where to read/write each. */
+    private static final Map<String, String> PRODUCT_REFERENCE_MISMATCH_FIELD_LABELS = Map.of(
+            "ingredientDetails", "Ingredients / materials",
+            "setDesign", "Set & background design",
+            "keyProps", "Key props"
+    );
+
+    /**
+     * One lightweight vision call confirming what's in a CAST reference photo, used to show the
+     * user a plain-language confirmation ("I see a photo of...") before it's attached and the
+     * shot's product frame is regenerated - not a mismatch check (there's no "wrong person"
+     * concept the way there's a "wrong product" one), just a human-readable sanity check.
+     */
+    private Map<String, Object> analyzeCastReference(CreatorScript script, AssetStorageService.StoredObject stored, String contentType) {
+        String renderedPrompt = """
+                Look at the attached reference photo of a person. Return exactly one JSON object:
+                {
+                  "personDescription": "one short, respectful sentence describing who appears to be in the photo (approximate age range, gender presentation, and one or two distinguishing visual traits) - for use in a confirmation prompt, not a caption",
+                  "confirmationMessage": "a short, friendly first-person question asking the user to confirm replacing this shot's character with the exact person shown in the photo, referencing the description naturally - e.g. 'I see a photo of a woman in her mid-20s with long dark hair - replace this shot's character with her?'"
+                }
+                """;
+        Map<String, Object> providerInput = new LinkedHashMap<>();
+        providerInput.put("renderedPrompt", renderedPrompt);
+        providerInput.put("attachReferenceImages", true);
+        providerInput.put("referenceImageAssets", List.of(Map.of(
+                "bucket", stored.bucket(),
+                "objectKey", stored.objectKey(),
+                "contentType", contentType
+        )));
+        CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                script.getTenantId(), script.getUserId(), script.getProjectId(), null, null
+        );
+        Map<String, Object> analysis = new LinkedHashMap<>();
+        try {
+            CreatorAiService.MeteredAiResponse aiResponse = creatorAiService.generateMetered(
+                    "PRODUCT_REFERENCE_CAST_DESCRIBE", providerInput, usageContext
+            );
+            creatorAiService.publishBillingDebit("PRODUCT_REFERENCE_CAST_DESCRIBE", aiResponse, usageContext);
+            Map<String, Object> output = aiResponse.output() == null ? Map.of() : aiResponse.output();
+            analysis.put("personDescription", stringValue(output.get("personDescription")));
+            analysis.put("confirmationMessage", defaultString(
+                    stringValue(output.get("confirmationMessage")),
+                    "Replace this shot's character with the person shown in your uploaded photo?"
+            ));
+        } catch (RuntimeException ex) {
+            log.warn("Cast reference description failed, falling back to a generic confirmation errorType={} errorMessage={}",
+                    ex.getClass().getSimpleName(), ex.getMessage());
+            analysis.put("personDescription", "");
+            analysis.put("confirmationMessage", "Replace this shot's character with the person shown in your uploaded photo?");
+        }
+        return analysis;
+    }
+
+    /**
+     * Scores an uploaded INSPIRATION reference against this project's and this specific shot's
+     * existing planning (product/ingredient facts, this shot's set/background design, this shot's
+     * key props - not just the product) so a mismatch (a strawberry photo for a mango product, or
+     * a bright-studio photo for a shot planned as dark and moody) surfaces to the user before the
+     * reference is attached, instead of silently relying on the image model's own judgment. The
+     * photo can be a product/ingredient variant, a prop, or a background/setting idea - the prompt
+     * does not assume it's about any one of those.
+     */
+    private Map<String, Object> analyzeReferenceMismatches(CreatorScript script, int shotNumber, AssetStorageService.StoredObject stored, String contentType) {
+        Map<String, Object> screenplay = script.getScriptPayload() == null ? Map.of() : script.getScriptPayload();
+        Map<String, Object> product = mapValue(screenplay.get("productIntelligence"));
+        String productName = defaultString(firstNonBlank(product.get("productName"), product.get("name"), screenplay.get("productName"), screenplay.get("projectTitle")), "");
+
+        CreatorScriptShotPlan plan = shotPlanRepository
+                .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, ProductionPlanTagService.DEFAULT_STYLE_KEY)
+                .orElse(null);
+        Map<String, Object> storyboardTag = plan == null ? Map.of() : plan.getStoryboardTag();
+
+        Map<String, String> currentByField = new LinkedHashMap<>();
+        currentByField.put("ingredientDetails", defaultString(firstNonBlank(screenplay.get("ingredientDetails"), product.get("ingredients")), ""));
+        currentByField.put("setDesign", defaultString(firstNonBlank(storyboardTag.get("setDesign"), storyboardTag.get("environment")), ""));
+        currentByField.put("keyProps", defaultString(stringValue(storyboardTag.get("keyProps")), ""));
+
+        String renderedPrompt = """
+                You are checking whether an uploaded reference photo for one specific ad shot is consistent with
+                this project's existing plan, so a mismatch can be caught before it influences image generation.
+                The photo could show a product/ingredient variant, a prop, or a background/setting idea - do not
+                assume it must be about any one of those; judge it on what it actually shows.
+
+                Project product: %s
+                Approved ingredient/material facts: %s
+                This shot's currently planned set/background design: %s
+                This shot's currently planned key props: %s
+
+                Also describe the photo's own camera framing, lighting, and motion/energy - this is used as creative
+                guidance for how to shoot the new image, not compared against planning facts.
+
+                Look at the attached reference photo and return exactly one JSON object:
+                {
+                  "detectedSubject": "the main subject/object/food/prop/setting visible in the photo, in a few words",
+                  "detectedCategory": "a short category label for that subject",
+                  "dominantMood": "color palette, lighting, and composition mood in a few words",
+                  "cameraAngle": "the photo's own camera angle and framing (e.g. 'low angle close-up', 'overhead flat-lay', 'eye-level medium shot') - empty string if not clearly discernible",
+                  "lightingStyle": "the photo's own lighting setup and quality (e.g. 'hard side light with deep shadows', 'soft diffused overcast light') - empty string if not clearly discernible",
+                  "motion": "any implied motion, action, or dynamic energy in the frame (e.g. 'mid-splash, droplets frozen in motion', 'static, still life') - empty string if not applicable",
+                  "mismatches": [
+                    {
+                      "field": "ingredientDetails" or "setDesign" or "keyProps" - whichever this specific mismatch concerns,
+                      "reason": "one sentence explaining why the photo contradicts or meaningfully adds to what's currently planned for that field",
+                      "suggestedUpdate": "the proposed complete new text for that field, incorporating what the photo shows, written as a full replacement (not a diff)"
+                    }
+                  ]
+                }
+                Only add an entry to mismatches when the photo genuinely contradicts or adds something new versus
+                the current planning shown above for that specific field. If the photo is purely a mood/style
+                reference with nothing to reconcile against any of the three fields, return an empty array.
+                """.formatted(
+                        productName.isBlank() ? "not specified" : productName,
+                        currentByField.get("ingredientDetails").isBlank() ? "none recorded" : currentByField.get("ingredientDetails"),
+                        currentByField.get("setDesign").isBlank() ? "none recorded" : currentByField.get("setDesign"),
+                        currentByField.get("keyProps").isBlank() ? "none recorded" : currentByField.get("keyProps")
+                );
+
+        Map<String, Object> providerInput = new LinkedHashMap<>();
+        providerInput.put("renderedPrompt", renderedPrompt);
+        providerInput.put("attachReferenceImages", true);
+        providerInput.put("referenceImageAssets", List.of(Map.of(
+                "bucket", stored.bucket(),
+                "objectKey", stored.objectKey(),
+                "contentType", contentType
+        )));
+
+        CreatorAiService.AiUsageContext usageContext = new CreatorAiService.AiUsageContext(
+                script.getTenantId(), script.getUserId(), script.getProjectId(), null, null
+        );
+        Map<String, Object> analysis = new LinkedHashMap<>();
+        analysis.put("mismatches", List.of());
+        CreatorAiService.MeteredAiResponse aiResponse;
+        try {
+            aiResponse = creatorAiService.generateMetered("PRODUCT_REFERENCE_IMAGE_ANALYZE", providerInput, usageContext);
+        } catch (RuntimeException ex) {
+            log.warn("Product reference image analysis failed, treating as no mismatch by default scriptId={} shotNumber={} errorType={} errorMessage={}",
+                    script.getId(), shotNumber, ex.getClass().getSimpleName(), ex.getMessage());
+            return analysis;
+        }
+        creatorAiService.publishBillingDebit("PRODUCT_REFERENCE_IMAGE_ANALYZE", aiResponse, usageContext);
+        Map<String, Object> output = aiResponse.output() == null ? Map.of() : aiResponse.output();
+        analysis.put("detectedSubject", stringValue(output.get("detectedSubject")));
+        analysis.put("detectedCategory", stringValue(output.get("detectedCategory")));
+        analysis.put("dominantMood", stringValue(output.get("dominantMood")));
+        analysis.put("cameraAngle", stringValue(output.get("cameraAngle")));
+        analysis.put("lightingStyle", stringValue(output.get("lightingStyle")));
+        analysis.put("motion", stringValue(output.get("motion")));
+
+        List<Map<String, Object>> mismatches = new ArrayList<>();
+        if (output.get("mismatches") instanceof List<?> rawMismatches) {
+            for (Object item : rawMismatches) {
+                Map<String, Object> entry = mapValue(item);
+                String field = stringValue(entry.get("field")).trim();
+                // Only ever accept fields we have a real, safe write-path for on confirm - an
+                // unrecognized field name from the model is dropped rather than surfaced, so the
+                // review UI never shows a change it couldn't actually apply.
+                if (!PRODUCT_REFERENCE_MISMATCH_FIELD_LABELS.containsKey(field)) {
+                    continue;
+                }
+                Map<String, Object> mismatch = new LinkedHashMap<>();
+                mismatch.put("field", field);
+                mismatch.put("label", PRODUCT_REFERENCE_MISMATCH_FIELD_LABELS.get(field));
+                mismatch.put("current", currentByField.get(field));
+                mismatch.put("reason", stringValue(entry.get("reason")));
+                mismatch.put("suggestedUpdate", stringValue(entry.get("suggestedUpdate")));
+                mismatches.add(mismatch);
+            }
+        }
+        analysis.put("mismatches", mismatches);
+        return analysis;
+    }
+
+    /**
+     * Attaches a previously-analyzed reference (see analyzeShotProductReference) to the shot, and
+     * applies whichever mismatch updates the user explicitly approved - never automatically, and
+     * never anything the user didn't see in the review panel first.
+     */
+    @Transactional
+    public Map<String, Object> confirmShotProductReference(
+            UUID scriptId,
+            int shotNumber,
+            ConfirmShotProductReferenceRequest request,
+            String tenantId,
+            String userId
+    ) {
+        String normalizedClassification = defaultString(request.classification(), "").trim().toUpperCase(Locale.ROOT);
+        if (!"CAST".equals(normalizedClassification) && !"INSPIRATION".equals(normalizedClassification)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "classification must be CAST or INSPIRATION.");
+        }
+        String safeTenantId = defaultString(tenantId, "unknown");
+        String safeUserId = defaultString(userId, "anonymous");
+        CreatorScript script = scriptRepository.findByIdAndTenantIdAndUserId(scriptId, safeTenantId, safeUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Final script was not found."));
+        List<Map<String, Object>> shots = scriptShots(script);
+        Map<String, Object> shot = shotByNumber(shots, shotNumber);
+        if (shot.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Shot " + shotNumber + " was not found in the screenplay.");
+        }
+
+        Map<String, Object> productReference = new LinkedHashMap<>();
+        productReference.put("bucket", request.bucket());
+        productReference.put("objectKey", request.objectKey());
+        productReference.put("url", request.url());
+        productReference.put("classification", normalizedClassification);
+        productReference.put("uploadedAt", OffsetDateTime.now().toString());
+        if ("CAST".equals(normalizedClassification)) {
+            productReference.put("castProfileId", defaultString(request.castProfileId(), ""));
+            productReference.put("castDisplayName", defaultString(request.castDisplayName(), "the uploaded reference"));
+        } else {
+            // What the vision analysis actually understood about this photo (e.g. "cocoa butter
+            // falling, warm dynamic splash") - persisted so the next product-frame generation can
+            // reinterpret that concrete visual concept instead of a generic "borrow the mood"
+            // instruction with no idea what's actually in the frame.
+            String detectedSubject = defaultString(request.detectedSubject(), "").trim();
+            String dominantMood = defaultString(request.dominantMood(), "").trim();
+            String cameraAngle = defaultString(request.cameraAngle(), "").trim();
+            String lightingStyle = defaultString(request.lightingStyle(), "").trim();
+            String motion = defaultString(request.motion(), "").trim();
+            if (!detectedSubject.isEmpty()) {
+                productReference.put("detectedSubject", detectedSubject);
+            }
+            if (!dominantMood.isEmpty()) {
+                productReference.put("dominantMood", dominantMood);
+            }
+            if (!cameraAngle.isEmpty()) {
+                productReference.put("cameraAngle", cameraAngle);
+            }
+            if (!lightingStyle.isEmpty()) {
+                productReference.put("lightingStyle", lightingStyle);
+            }
+            if (!motion.isEmpty()) {
+                productReference.put("motion", motion);
+            }
+        }
+        if (Boolean.TRUE.equals(request.ignoreSubject())) {
+            productReference.put("ignoreSubject", true);
+        }
+
+        Map<String, Object> updatedShot = new LinkedHashMap<>(shot);
+        updatedShot.put("productReferenceImage", productReference);
+        List<Map<String, Object>> updatedShots = replaceShotByNumber(shots, updatedShot, shotNumber);
+        Map<String, Object> payload = new LinkedHashMap<>(script.getScriptPayload() == null ? Map.of() : script.getScriptPayload());
+        payload.put("shots", updatedShots);
+
+        List<String> updatedFields = new ArrayList<>();
+        List<ConfirmShotProductReferenceRequest.ApprovedUpdate> approvedUpdates =
+                request.approvedUpdates() == null ? List.of() : request.approvedUpdates();
+        boolean shotPlanDirty = false;
+        CreatorScriptShotPlan plan = null;
+        for (ConfirmShotProductReferenceRequest.ApprovedUpdate update : approvedUpdates) {
+            String field = defaultString(update.field(), "").trim();
+            String value = defaultString(update.value(), "").trim();
+            if (value.isEmpty() || !PRODUCT_REFERENCE_MISMATCH_FIELD_LABELS.containsKey(field)) {
+                continue;
+            }
+            if ("ingredientDetails".equals(field)) {
+                payload.put("ingredientDetails", value);
+                updatedFields.add(field);
+                continue;
+            }
+            // setDesign / keyProps live on the shot's plan, not the script payload - load it once
+            // and merge each approved field into a copy of storyboardTag, preserving every other
+            // key exactly as-is (same partial-merge pattern used for productReferenceImage above).
+            if (plan == null) {
+                plan = shotPlanRepository
+                        .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, ProductionPlanTagService.DEFAULT_STYLE_KEY)
+                        .orElse(null);
+            }
+            if (plan == null) {
+                continue;
+            }
+            Map<String, Object> storyboardTag = new LinkedHashMap<>(plan.getStoryboardTag() == null ? Map.of() : plan.getStoryboardTag());
+            storyboardTag.put(field, value);
+            plan.setStoryboardTag(storyboardTag);
+            shotPlanDirty = true;
+            updatedFields.add(field);
+        }
+        if (shotPlanDirty) {
+            shotPlanRepository.save(plan);
+        }
+
+        script.setScriptPayload(payload);
+        script.setShots(updatedShots);
+        script.setUpdatedAt(OffsetDateTime.now());
+        scriptRepository.saveAndFlush(script);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("reference", productReference);
+        result.put("updatedFields", updatedFields);
+        result.put("planningUpdated", !updatedFields.isEmpty());
+        return result;
     }
 
     @Transactional
@@ -603,37 +998,61 @@ public class StoryboardService {
                 productionPlanTagService.generateTagsForScript(script, script.getScriptPayload(), shots, ProductionPlanTagService.DEFAULT_STYLE_KEY, prepared.videoModelCapability());
                 planByShotNumber = loadPlanByShotNumber(script.getId());
             }
-            CreatorStoryboard storyboard = storyboardRepository.saveAndFlush(CreatorStoryboard.builder()
-                    .tenantId(script.getTenantId())
-                    .userId(script.getUserId())
-                    .projectId(script.getProjectId())
-                    .ideaId(script.getStoryIdeaId())
-                    .title(defaultString(script.getTitle(), "Storyboard"))
-                    .durationSeconds(defaultInt(script.getDurationSeconds(), totalDuration(shots)))
-                    .totalShots(shots.size())
-                    .pacingStyle(stringValue(script.getScriptPayload().get("pacingStyle")))
-                    .emotionalArc(stringValue(script.getScriptPayload().get("emotionalArc")))
-                    .hookStrategy(stringValue(script.getScriptPayload().get("hookStrategy")))
-                    .creatorFitReasoning(stringValue(script.getScriptPayload().get("creatorFitReasoning")))
-                    .audienceFitReasoning(stringValue(script.getScriptPayload().get("audienceFitReasoning")))
-                    .overallExecutionDifficulty(stringValue(script.getScriptPayload().get("overallExecutionDifficulty")))
-                    .status("GENERATED")
-                    .metadata(storyboardMetadata(script, generationJobId, screenType, renderSize, prepared.videoModelCapability()))
-                    .build());
+            // findOrCreateStoryboard reuses an in-progress storyboard from a prior failed/partial
+            // attempt on the same script (rather than always creating a fresh row), so the
+            // already-generated, already-billed scenes loaded below can be resumed instead of
+            // regenerated and rebilled.
+            CreatorStoryboard storyboard = findOrCreateStoryboard(script, shots, screenType, renderSize);
+            storyboard.setTitle(defaultString(script.getTitle(), "Storyboard"));
+            storyboard.setDurationSeconds(defaultInt(script.getDurationSeconds(), totalDuration(shots)));
+            storyboard.setTotalShots(shots.size());
+            storyboard.setPacingStyle(stringValue(script.getScriptPayload().get("pacingStyle")));
+            storyboard.setEmotionalArc(stringValue(script.getScriptPayload().get("emotionalArc")));
+            storyboard.setHookStrategy(stringValue(script.getScriptPayload().get("hookStrategy")));
+            storyboard.setCreatorFitReasoning(stringValue(script.getScriptPayload().get("creatorFitReasoning")));
+            storyboard.setAudienceFitReasoning(stringValue(script.getScriptPayload().get("audienceFitReasoning")));
+            storyboard.setOverallExecutionDifficulty(stringValue(script.getScriptPayload().get("overallExecutionDifficulty")));
+            storyboard.setStatus("GENERATED");
+            storyboard.setMetadata(storyboardMetadata(script, generationJobId, screenType, renderSize, prepared.videoModelCapability()));
+            storyboard = storyboardRepository.saveAndFlush(storyboard);
+
+            Map<Integer, CreatorStoryboardScene> existingScenesByShotNumber = new LinkedHashMap<>();
+            for (CreatorStoryboardScene existingScene : sceneRepository.findByStoryboardIdOrderByShotNumberAsc(storyboard.getId())) {
+                if (existingScene.getShotNumber() != null) {
+                    existingScenesByShotNumber.put(existingScene.getShotNumber(), existingScene);
+                }
+            }
 
             Map<Integer, String> shotIdByNumber = loadShotIdByNumber(script.getId());
             List<StoryboardSceneResponse> sceneResponses = new ArrayList<>();
             List<Map<String, Object>> imageCostMetadataItems = new ArrayList<>();
+            List<Integer> failedShotNumbers = new ArrayList<>();
             publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, 8, "Storyboard pack created");
             for (int index = 0; index < shots.size(); index++) {
                 Map<String, Object> shot = shots.get(index);
+                int shotNumberForFailureTracking = intValue(shot.get("shotNumber"), index + 1);
+                try {
+                int shotNumber = intValue(shot.get("shotNumber"), index + 1);
+                CreatorStoryboardScene existingScene = existingScenesByShotNumber.get(shotNumber);
+                if (existingScene != null && existingScene.getImageAssetId() != null) {
+                    // This shot already has a completed, billed image from a prior attempt that
+                    // failed on a LATER shot - reuse it instead of regenerating (and rebilling) it.
+                    Map<String, Object> existingMetadata = existingScene.getMetadata() == null ? Map.of() : existingScene.getMetadata();
+                    CreatorAsset existingAsset = findAsset(existingScene.getImageAssetId());
+                    CreatorAsset existingLightingAsset = findAsset(uuidValue(existingMetadata.get("lightingImageAssetId")));
+                    CreatorAsset existingCameraPlanAsset = findAsset(uuidValue(existingMetadata.get("cameraPlanImageAssetId")));
+                    CreatorScriptShotPlan existingPlan = planByShotNumber.get(shotNumber);
+                    replaceSceneResponse(sceneResponses, toResponse(existingScene, existingAsset, null, existingLightingAsset, null, existingCameraPlanAsset, null, existingPlan));
+                    publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses,
+                            Math.max(9, progressFor(index, shots.size(), 3)), "Shot " + shotNumber + " already generated, reusing");
+                    continue;
+                }
                 List<String> storyboardReferenceUrls = storyboardReferenceImageUrls(script, shot);
                 List<StoryboardImageGenerationService.ReferenceImageInput> storyboardReferences =
                         downloadStoryboardReferenceImages(
                                 storyboardReferenceUrls,
                                 storyboardReferenceImageAssets(script, shot)
                         );
-                int shotNumber = intValue(shot.get("shotNumber"), index + 1);
                 String shotId = defaultString(shotIdByNumber.get(shotNumber), "shot-%04d".formatted(shotNumber));
                 CreatorScriptShotPlan plan = planByShotNumber.get(shotNumber);
                 String prompt = buildStoryboardPrompt(
@@ -646,13 +1065,8 @@ public class StoryboardService {
                         renderSize
                 );
                 publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, Math.max(9, progressFor(index, shots.size(), 0)), "Generating storyboard image for shot " + shotNumber);
-                GeneratedStoryboardImage generatedImage = generateStoryboardImage(
-                        shot,
-                        screenType,
-                        renderSize,
-                        prompt,
-                        storyboardReferences,
-                        storyboardReferenceUrls
+                GeneratedStoryboardImage generatedImage = generateAndCritiqueStoryboardImage(
+                        shot, screenType, renderSize, prompt, storyboardReferences, storyboardReferenceUrls, plan, script
                 );
                 collectImageUsage(
                         "STORYBOARD_IMAGE_GENERATE",
@@ -764,6 +1178,26 @@ public class StoryboardService {
                     replaceSceneResponse(sceneResponses, toResponse(scene, asset, storedObject.signedUrl(), lightingAsset, lightingSignedUrl, cameraPlanAsset, cameraPlanSignedUrl, plan));
                     publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses, progressFor(index, shots.size(), 3), "DP camera plan ready for shot " + shotNumber);
                 }
+                } catch (RuntimeException ex) {
+                    // A single shot's generation can fail for reasons unrelated to the other shots
+                    // (a content-policy block, a prompt-compression failure on an unusually large
+                    // shot, a transient provider error). Every prior shot's images were already
+                    // generated and PAID FOR - letting this exception propagate would roll back this
+                    // whole @Transactional method and silently discard all of that already-completed,
+                    // already-billed work along with it. Skip this shot, keep going, and surface the
+                    // failure in the job output instead - matching the "never lose already-good work
+                    // over one bad shot" principle used everywhere else in this pipeline.
+                    failedShotNumbers.add(shotNumberForFailureTracking);
+                    log.warn("Storyboard shot generation failed, continuing with remaining shots scriptId={} shotNumber={} errorType={} errorMessage={}",
+                            script.getId(), shotNumberForFailureTracking, ex.getClass().getSimpleName(), ex.getMessage());
+                    publishStoryboardProgress(generationJobId, storyboard, script, screenType, renderSize, sceneResponses,
+                            Math.max(9, progressFor(index, shots.size(), 0)), "Shot " + shotNumberForFailureTracking + " failed, continuing with remaining shots");
+                }
+            }
+            if (sceneResponses.isEmpty()) {
+                throw new IllegalStateException(
+                        "All " + shots.size() + " shots failed to generate - no storyboard scenes were produced. Failed shots: " + failedShotNumbers
+                );
             }
 
             linkProjectSelectedStoryboard(storyboard);
@@ -792,12 +1226,39 @@ public class StoryboardService {
             jobOutput.put("renderHeight", renderSize.height());
             jobOutput.put("imageProvider", properties.getAi().isStoryboardImageGenerationEnabled() ? "gemini" : "local");
             jobOutput.put("imageModel", properties.getAi().isStoryboardImageGenerationEnabled() ? properties.getAi().getGeminiImageModel() : "local_storyboard_sketch_v1");
-            jobOutput.put("steps", storyboardGenerationSteps(100, "Storyboard generation complete", sceneResponses, storyboard.getTotalShots()));
+            String completionMessage = failedShotNumbers.isEmpty()
+                    ? "Storyboard generation complete"
+                    : "Storyboard generation complete for " + sceneResponses.size() + " of " + shots.size() + " shots. Shot(s) " + failedShotNumbers + " failed and can be retried individually.";
+            jobOutput.put("steps", storyboardGenerationSteps(100, completionMessage, sceneResponses, storyboard.getTotalShots()));
+            if (!failedShotNumbers.isEmpty()) {
+                jobOutput.put("failedShotNumbers", failedShotNumbers);
+                jobOutput.put("message", completionMessage);
+            }
             Map<String, Object> aggregateImageCostMetadata = aggregateImageCostMetadata(imageCostMetadataItems);
             if (!aggregateImageCostMetadata.isEmpty()) {
                 jobOutput.put("costMetadata", aggregateImageCostMetadata);
             }
             jobOutput.put("storyboard", toMap(response));
+            try {
+                Map<String, Object> editingPlan = editingPlanningService.generateAndSave(
+                        script.getId(), ProductionPlanTagService.DEFAULT_STYLE_KEY, script.getTenantId(), script.getUserId());
+                if (!editingPlan.isEmpty()) {
+                    jobOutput.put("editingPlan", editingPlan);
+                }
+            } catch (RuntimeException ex) {
+                log.warn("Editing plan generation failed after storyboard completion, continuing without it scriptId={} errorType={} errorMessage={}",
+                        script.getId(), ex.getClass().getSimpleName(), ex.getMessage());
+            }
+            try {
+                Map<String, Object> soundDesignPlan = soundDesignPlanningService.generateAndSave(
+                        script.getId(), ProductionPlanTagService.DEFAULT_STYLE_KEY, script.getTenantId(), script.getUserId());
+                if (!soundDesignPlan.isEmpty()) {
+                    jobOutput.put("soundDesignPlan", soundDesignPlan);
+                }
+            } catch (RuntimeException ex) {
+                log.warn("Sound design plan generation failed after storyboard completion, continuing without it scriptId={} errorType={} errorMessage={}",
+                        script.getId(), ex.getClass().getSimpleName(), ex.getMessage());
+            }
             generationJobService.completeGenerationJob(generationJobId, jobOutput);
 
             return response;
@@ -1600,14 +2061,20 @@ public class StoryboardService {
                     .limit(Math.max(0, 9 - storyboardReferenceUrls.size()))
                     .forEach(storyboardReferenceUrls::add);
         }
-        GeneratedStoryboardImage generatedImage = generateStoryboardImage(
-                shot,
-                screenType,
-                renderSize,
-                prompt,
-                downloadStoryboardReferenceImages(storyboardReferenceUrls, storyboardReferenceAssets),
-                storyboardReferenceUrls
-        );
+        List<StoryboardImageGenerationService.ReferenceImageInput> storyboardReferenceImages =
+                downloadStoryboardReferenceImages(storyboardReferenceUrls, storyboardReferenceAssets);
+        GeneratedStoryboardImage generatedImage;
+        try {
+            generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt, storyboardReferenceImages, storyboardReferenceUrls);
+        } catch (RuntimeException ex) {
+            // Same real-person-likeness policy block handled in generateAndCritiqueStoryboardImage
+            // and generateProductionImageAsset - this is the manual per-shot "regenerate
+            // storyboard image" path a user can retry directly from the UI.
+            log.warn("Storyboard-kind image generation failed on first attempt, retrying without reference image shotNumber={} hadReferenceImages={} errorType={} errorMessage={}",
+                    shotNumber, !storyboardReferenceImages.isEmpty() || !storyboardReferenceUrls.isEmpty(), ex.getClass().getSimpleName(), ex.getMessage());
+            String retryPrompt = prompt + "\n\nA prior attempt did not produce a usable image, likely because a reference photo of a real person triggered a content-policy block. This retry has no reference image attached - render the character from the text description above only.";
+            generatedImage = generateStoryboardImage(shot, screenType, renderSize, retryPrompt, List.of(), List.of());
+        }
         String objectKey = objectKey(script, storyboardId, shotId, "storyboard");
         AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
                 objectKey,
@@ -1646,7 +2113,7 @@ public class StoryboardService {
         if (!properties.getAi().isStoryboardImageGenerationEnabled()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gemini image generation must be enabled to create a production video image anchor.");
         }
-        List<String> referenceUrls = new ArrayList<>(storyboardReferenceImageUrls(script, shot));
+        List<String> referenceUrls = new ArrayList<>(productReferenceImageUrls(script, shot));
         List<Map<String, Object>> referenceAssets = storyboardReferenceImageAssets(script, shot);
         if (request != null && request.productReferenceImageUrls() != null) {
             request.productReferenceImageUrls().stream()
@@ -1656,14 +2123,69 @@ public class StoryboardService {
                     .limit(Math.max(0, 9 - referenceUrls.size()))
                     .forEach(referenceUrls::add);
         }
-        GeneratedStoryboardImage generatedImage = generateStoryboardImage(
-                shot,
-                screenType,
-                renderSize,
-                prompt,
-                downloadStoryboardReferenceImages(referenceUrls, referenceAssets),
-                referenceUrls
-        );
+        List<StoryboardImageGenerationService.ReferenceImageInput> referenceImages =
+                downloadStoryboardReferenceImages(referenceUrls, referenceAssets);
+        Map<String, Object> productReference = mapValue(shot == null ? null : shot.get("productReferenceImage"));
+        boolean castReference = "CAST".equals(stringValue(productReference.get("classification")).trim().toUpperCase(Locale.ROOT));
+        String identityPath = defaultString(properties.getAi().getIdentityPreservingGenerationPath(), "NONE").trim().toUpperCase(Locale.ROOT);
+        CreatorAiService.AiUsageContext usageContext = castReference
+                ? new CreatorAiService.AiUsageContext(script.getTenantId(), script.getUserId(), script.getProjectId(), null, null)
+                : null;
+        GeneratedStoryboardImage generatedImage;
+        if (castReference && "FLUX_PULID".equals(identityPath)) {
+            // Path A: skip Gemini entirely for CAST shots - a real person's reference photo
+            // almost always hits Gemini's IMAGE_OTHER policy block there, so this call would be
+            // paid for and discarded anyway. flux-pulid generates the scene and the face
+            // together from this same prompt (already plain natural-language text, no JSON
+            // continuity-bible blocks - see buildProductionImagePrompt), conditioned on the cast
+            // reference photo, so identity comes from the reference-image mechanism, not prompt text.
+            FluxPulidImageGenerationService.GeneratedImage fluxResult = fluxPulidImageGenerationService.generateIdentityPreservingFrame(
+                    prompt,
+                    renderSize.width(),
+                    renderSize.height(),
+                    stringValue(productReference.get("bucket")),
+                    stringValue(productReference.get("objectKey")),
+                    usageContext
+            );
+            generatedImage = new GeneratedStoryboardImage(fluxResult.bytes(), fluxResult.metadata());
+        } else {
+            try {
+                generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt, referenceImages, referenceUrls);
+            } catch (RuntimeException ex) {
+                // Same real-person-likeness policy block handled in generateAndCritiqueStoryboardImage
+                // (finishReason=IMAGE_OTHER, zero output tokens) - this is the manual per-shot
+                // "regenerate production image" path a user can retry directly from the UI, so it
+                // needs the same reference-image-drop fallback or every manual retry hits the
+                // identical block and the user can never get a usable frame for that shot.
+                log.warn("Production image generation failed on first attempt, retrying without reference image shotNumber={} hadReferenceImages={} errorType={} errorMessage={}",
+                        shotNumber, !referenceImages.isEmpty() || !referenceUrls.isEmpty(), ex.getClass().getSimpleName(), ex.getMessage());
+                String retryPrompt = prompt + "\n\nA prior attempt did not produce a usable image, likely because a reference photo of a real person triggered a content-policy block. This retry has no reference image attached - render the character from the text description above only.";
+                generatedImage = generateStoryboardImage(shot, screenType, renderSize, retryPrompt, List.of(), List.of());
+            }
+            if (castReference && "FACE_SWAP".equals(identityPath)) {
+                // Path B stage 2: the frame above is already stage 1 - for a CAST shot Gemini's
+                // reference-attached attempt almost always hits IMAGE_OTHER, so the catch block
+                // just above already dropped the reference and rendered the generic-face frame
+                // from text only. Blend the real cast face into that already-good scene rather
+                // than re-generating it. Never let a swap failure lose an already-good, already-
+                // paid-for stage-1 frame - keep it faceless rather than failing the whole shot.
+                try {
+                    FaceSwapImageGenerationService.GeneratedImage swapped = faceSwapImageGenerationService.generateFaceSwapFrame(
+                            generatedImage.bytes(),
+                            CONTENT_TYPE_JPEG,
+                            stringValue(productReference.get("bucket")),
+                            stringValue(productReference.get("objectKey")),
+                            usageContext
+                    );
+                    Map<String, Object> swappedMetadata = new LinkedHashMap<>(generatedImage.metadata() == null ? Map.of() : generatedImage.metadata());
+                    swappedMetadata.putAll(swapped.metadata());
+                    generatedImage = new GeneratedStoryboardImage(swapped.bytes(), swappedMetadata);
+                } catch (RuntimeException ex) {
+                    log.warn("Face-swap stage failed, keeping faceless stage-1 frame shotNumber={} errorType={} errorMessage={}",
+                            shotNumber, ex.getClass().getSimpleName(), ex.getMessage());
+                }
+            }
+        }
         String objectKey = objectKey(script, storyboardId, shotId, "production");
         AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
                 objectKey,
@@ -1705,7 +2227,7 @@ public class StoryboardService {
             String assetType,
             Map<String, Object> tag
     ) {
-        String prompt = buildProductionSheetPrompt(imageKind, shot, script.getScriptPayload(), tag, screenType, renderSize);
+        String prompt = buildProductionSheetPrompt(imageKind, shot, script.getScriptPayload(), tag, screenType, renderSize, shotNumber);
         GeneratedStoryboardImage generatedImage = generateStoryboardImage(shot, screenType, renderSize, prompt);
         String objectKey = objectKey(script, storyboardId, shotId, imageKind);
         AssetStorageService.StoredObject storedObject = assetStorageService.uploadCreatorAsset(
@@ -1784,6 +2306,97 @@ public class StoryboardService {
         return generateStoryboardImage(shot, screenType, size, prompt, List.of(), List.of());
     }
 
+    /**
+     * Wraps generateStoryboardImage(...) with ProductFrameCriticService - generates once,
+     * scores the actual pixels against a "Pinterest reference" bar, and on a real FAIL
+     * regenerates once more with the critic's issues folded into the prompt (capped at 2 total
+     * attempts, keep the best-scored image). Skips critique entirely for the local-render
+     * fallback (storyboard image generation disabled) - that's an intentional sketch placeholder,
+     * not a photo, and doesn't belong against a professional-photo bar.
+     */
+    private GeneratedStoryboardImage generateAndCritiqueStoryboardImage(
+            Map<String, Object> shot,
+            String screenType,
+            RenderSize size,
+            String prompt,
+            List<StoryboardImageGenerationService.ReferenceImageInput> referenceImages,
+            List<String> referenceImageUrls,
+            CreatorScriptShotPlan plan,
+            CreatorScript script
+    ) {
+        StoryboardTagView storyboardTag = plan == null ? null : ShotPlanTagMapper.storyboardTag(plan.getStoryboardTag(), objectMapper);
+        String shotDescription = defaultString(firstNonBlank(shot.get("visual"), shot.get("description"), shot.get("action")), "");
+        String plannedLighting = storyboardTag == null ? "" : storyboardTag.lightingAtmosphericDescription();
+        String plannedSetDesign = storyboardTag == null ? "" : storyboardTag.setDesign();
+        String castReferenceNote = referenceImageUrls == null || referenceImageUrls.isEmpty() ? "" : "A cast/product reference image was supplied for continuity.";
+        String tenantId = script == null ? null : script.getTenantId();
+        String userId = script == null ? null : script.getUserId();
+        java.util.UUID projectId = script == null ? null : script.getProjectId();
+
+        GeneratedStoryboardImage first;
+        try {
+            first = generateStoryboardImage(shot, screenType, size, prompt, referenceImages, referenceImageUrls);
+        } catch (RuntimeException ex) {
+            // Gemini's image models can hard-refuse (finishReason=IMAGE_OTHER, zero output
+            // tokens - a pre-generation block, not a mid-generation cutoff) when a reference
+            // image contains a real, identifiable human face and the request asks for a new
+            // photorealistic generation "of" that person - a real-person-likeness policy block,
+            // not a transient glitch. Retrying with the SAME reference photo hits the same wall,
+            // so the retry drops the raw reference image/URLs entirely and falls back to the
+            // text-only visual-profile description already embedded in the prompt (name, age,
+            // hair, wardrobe, distinguishing features) - this is a real fallback, not just a
+            // reworded instruction, since the offending signal is the attached image itself.
+            log.warn("Storyboard image generation failed on first attempt, retrying without reference image shotNumber={} hadReferenceImages={} errorType={} errorMessage={}",
+                    shot.get("shotNumber"), !referenceImages.isEmpty() || !referenceImageUrls.isEmpty(), ex.getClass().getSimpleName(), ex.getMessage());
+            String retryPrompt = prompt + "\n\nA prior attempt did not produce a usable image, likely because a reference photo of a real person triggered a content-policy block. This retry has no reference image attached - render the character from the text description above only.";
+            GeneratedStoryboardImage retryAfterFailure = generateStoryboardImage(shot, screenType, size, retryPrompt, List.of(), List.of());
+            return withCritiqueMetadata(retryAfterFailure, skippedProductFrameCritique("Critique skipped after first-attempt generation failure (reference image dropped on retry): " + ex.getMessage()));
+        }
+        if ("local".equals(stringValue(first.metadata().get("provider")))) {
+            return first;
+        }
+
+        ProductFrameCriticService.ProductFrameCriticResult firstCritique = productFrameCriticService.critique(
+                first.bytes(), CONTENT_TYPE_JPEG, shotDescription, plannedLighting, plannedSetDesign, castReferenceNote, tenantId, userId, projectId
+        );
+        if (!firstCritique.isFail()) {
+            return withCritiqueMetadata(first, firstCritique);
+        }
+        String feedback = firstCritique.issues().isEmpty() ? firstCritique.summary() : String.join("; ", firstCritique.issues());
+        String retryPrompt = prompt + "\n\nA prior attempt at this frame was reviewed and rejected. Fix these specific issues: " + feedback;
+        try {
+            GeneratedStoryboardImage retry = generateStoryboardImage(shot, screenType, size, retryPrompt, referenceImages, referenceImageUrls);
+            ProductFrameCriticService.ProductFrameCriticResult retryCritique = productFrameCriticService.critique(
+                    retry.bytes(), CONTENT_TYPE_JPEG, shotDescription, plannedLighting, plannedSetDesign, castReferenceNote, tenantId, userId, projectId
+            );
+            boolean keepRetry = retryCritique.averageScore() >= firstCritique.averageScore();
+            return withCritiqueMetadata(keepRetry ? retry : first, keepRetry ? retryCritique : firstCritique);
+        } catch (RuntimeException ex) {
+            // The retry attempt failed at generation time - we already have a usable (if
+            // imperfect) first image, so keep it rather than failing the whole shot over a
+            // failed improvement attempt.
+            log.warn("Storyboard image regeneration failed after critic FAIL, keeping first attempt shotNumber={} errorType={} errorMessage={}",
+                    shot.get("shotNumber"), ex.getClass().getSimpleName(), ex.getMessage());
+            return withCritiqueMetadata(first, firstCritique);
+        }
+    }
+
+    private ProductFrameCriticService.ProductFrameCriticResult skippedProductFrameCritique(String reason) {
+        return new ProductFrameCriticService.ProductFrameCriticResult("WARN", 0.0, 0, 0, 0, 0, 0, 0, 100, List.of(reason), reason, 0.0);
+    }
+
+    private GeneratedStoryboardImage withCritiqueMetadata(GeneratedStoryboardImage image, ProductFrameCriticService.ProductFrameCriticResult critique) {
+        Map<String, Object> metadata = new LinkedHashMap<>(image.metadata() == null ? Map.of() : image.metadata());
+        Map<String, Object> critiqueMap = new LinkedHashMap<>();
+        critiqueMap.put("status", critique.status());
+        critiqueMap.put("averageScore", critique.averageScore());
+        critiqueMap.put("professionalismScore", critique.professionalismScore());
+        critiqueMap.put("issues", critique.issues());
+        critiqueMap.put("summary", critique.summary());
+        metadata.put("productFrameCritique", critiqueMap);
+        return new GeneratedStoryboardImage(image.bytes(), metadata);
+    }
+
     private GeneratedStoryboardImage generateStoryboardImage(
             Map<String, Object> shot,
             String screenType,
@@ -1828,10 +2441,103 @@ public class StoryboardService {
 
     private List<String> storyboardReferenceImageUrls(CreatorScript script, Map<String, Object> shot) {
         List<String> urls = new ArrayList<>(storyboardReferenceImageUrls(script));
+        addCastFaceReferenceUrls(urls, script, shot);
         Map<String, Object> safeShot = shot == null ? Map.of() : shot;
         addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImageUrls"));
         addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImages"));
         return urls.stream().limit(8).toList();
+    }
+
+    /**
+     * Reference set for product-frame ("production" kind) generation specifically - deliberately
+     * does NOT call addCastFaceReferenceUrls. Auto-attaching a character's real cast photo based
+     * on storyboardTag.primaryCharacters matching was costing a wasted, policy-blocked Gemini
+     * call on every product-led shot with a cast-mapped character (finishReason=IMAGE_OTHER),
+     * paid for and then silently discarded by the retry-without-reference fallback. A cast face
+     * is now only attached when the user explicitly uploads and classifies one for this shot via
+     * shot.productReferenceImage (set by uploadShotProductReference) - see also the matching
+     * "Scene content" instruction this feeds in buildProductionImagePrompt.
+     */
+    private List<String> productReferenceImageUrls(CreatorScript script, Map<String, Object> shot) {
+        List<String> urls = new ArrayList<>(storyboardReferenceImageUrls(script));
+        Map<String, Object> safeShot = shot == null ? Map.of() : shot;
+        addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImageUrls"));
+        addStoryboardReferenceUrls(urls, safeShot.get("visualReferenceImages"));
+        Map<String, Object> productReference = mapValue(safeShot.get("productReferenceImage"));
+        addStoryboardReferenceUrls(urls, productReference.get("url"));
+        return urls.stream().limit(8).toList();
+    }
+
+    /**
+     * Adds this shot's cast-assigned character face photos to the reference set, matching the
+     * shot plan's assignedActorName (storyboardTag.primaryCharacters/sideCharacters, resolved
+     * once during shot production planning) against characterCastMappings the same way
+     * ScreenplayVideoService does for video - so a character's uploaded face is used
+     * consistently for both the storyboard still and the final video, not just video.
+     */
+    private void addCastFaceReferenceUrls(List<String> urls, CreatorScript script, Map<String, Object> shot) {
+        if (script == null || script.getScriptPayload() == null || shot == null) {
+            return;
+        }
+        List<Map<String, Object>> castMappings = mapListValue(script.getScriptPayload().get("characterCastMappings"));
+        if (castMappings.isEmpty()) {
+            return;
+        }
+        int shotNumber = intValue(shot.get("shotNumber"), 0);
+        CreatorScriptShotPlan plan = shotPlanRepository
+                .findByScriptIdAndShotNumberAndStyleKey(script.getId(), shotNumber, ProductionPlanTagService.DEFAULT_STYLE_KEY)
+                .orElse(null);
+        Map<String, Object> storyboardTag = plan == null ? Map.of() : plan.getStoryboardTag();
+        if (storyboardTag == null || storyboardTag.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> characters = new ArrayList<>();
+        characters.addAll(mapListValue(storyboardTag.get("primaryCharacters")));
+        characters.addAll(mapListValue(storyboardTag.get("sideCharacters")));
+        for (Map<String, Object> character : characters) {
+            String storyCharacterName = stringValue(character.get("storyCharacterName")).trim();
+            String assignedActorName = stringValue(character.get("assignedActorName")).trim();
+            if (storyCharacterName.isBlank() && assignedActorName.isBlank()) {
+                continue;
+            }
+            Map<String, Object> mapping = findCastMapping(castMappings, storyCharacterName, assignedActorName);
+            if (mapping == null) {
+                continue;
+            }
+            addStoryboardReferenceUrls(urls, mapValue(mapping.get("castPayload")).get("referenceImageUrl"));
+        }
+    }
+
+    private Map<String, Object> findCastMapping(List<Map<String, Object>> castMappings, String storyCharacterName, String assignedActorName) {
+        if (!storyCharacterName.isBlank()) {
+            for (Map<String, Object> mapping : castMappings) {
+                if (storyCharacterName.equalsIgnoreCase(stringValue(mapping.get("characterName")).trim())) {
+                    return mapping;
+                }
+            }
+        }
+        if (!assignedActorName.isBlank()) {
+            for (Map<String, Object> mapping : castMappings) {
+                if (assignedActorName.equalsIgnoreCase(stringValue(mapping.get("castDisplayName")).trim())) {
+                    return mapping;
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<Map<String, Object>> mapListValue(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : list) {
+            Map<String, Object> map = mapValue(item);
+            if (!map.isEmpty()) {
+                result.add(map);
+            }
+        }
+        return result;
     }
 
     private List<String> storyboardReferenceImageUrls(Map<String, Object> screenplay) {
@@ -2412,10 +3118,72 @@ public class StoryboardService {
         g.fillPolygon(head);
     }
 
+    /**
+     * The facts that describe WHAT is actually in the frame (subject, wardrobe, action,
+     * environment, props, camera framing, lighting) - shared by both buildStoryboardPrompt (the
+     * hand-drawn planning sketch) and buildProductionImagePrompt (the final photoreal frame) so
+     * the two independently-styled generations depict the same scene instead of each
+     * reinterpreting the shot data on its own. Only the STYLE instructions (sketch-diagram vs
+     * photoreal commercial still) are meant to differ between the two prompts - the content
+     * facts below must not.
+     */
+    private record SceneContentBrief(
+            String primaryCharacters,
+            String sideCharacters,
+            String wardrobe,
+            String blockingNotes,
+            String environment,
+            String setDesign,
+            String keyProps,
+            String cameraAngle,
+            String movement,
+            String lens,
+            String shotTypeFullName,
+            String compositionSummary,
+            String lightingAtmosphere,
+            String keyLight,
+            String culturalReferences
+    ) {
+    }
+
+    private SceneContentBrief sceneContentBrief(
+            Map<String, Object> shot,
+            Map<String, Object> storyboardTag,
+            Map<String, Object> lightingBuildSheetTag,
+            Map<String, Object> cameraPlanSheetTag
+    ) {
+        Map<String, Object> tag = storyboardTag == null ? Map.of() : storyboardTag;
+        Map<String, Object> lightingTag = lightingBuildSheetTag == null ? Map.of() : lightingBuildSheetTag;
+        Map<String, Object> cameraTag = cameraPlanSheetTag == null ? Map.of() : cameraPlanSheetTag;
+        Map<String, Object> shotJson = shot == null ? Map.of() : shot;
+        Map<String, Object> primaryCharacter = firstMapValue(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters")));
+
+        String environment = defaultString(storyboardValue(tag, shotJson, "environment", "setDesign", "sceneLocation"), "creator shooting space");
+        return new SceneContentBrief(
+                defaultString(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters"), firstCharacterDescription(tag, shotJson)), "Primary visible character from the shot JSON."),
+                defaultString(firstNonBlank(tag.get("sideCharacters"), shotJson.get("sideCharacters")), "none"),
+                defaultString(firstNonBlank(primaryCharacter.get("wardrobeThisShot"), primaryCharacter.get("wardrobe"), shotJson.get("wardrobeThisShot"), shotJson.get("characterContinuity")), "match character continuity"),
+                defaultString(firstNonBlank(shotJson.get("blockingNotes"), cameraTag.get("blockingMap"), tag.get("directorNote"), storyboardValue(tag, shotJson, "action", "primaryActorAction", "visualDirection", "description")), "show the planned actor blocking clearly"),
+                environment,
+                defaultString(storyboardValue(tag, shotJson, "setDesign", "environment"), environment),
+                defaultString(firstNonBlank(shotJson.get("keyProps"), shotJson.get("props"), nested(cameraTag, "blockingMap", "keyProps"), shotJson.get("resourceRequirements")), "only props specified by the shot"),
+                defaultString(storyboardValue(tag, shotJson, "cameraAngle"), "Eye Level"),
+                defaultString(storyboardValue(tag, shotJson, "cameraMovement"), defaultString(nested(shotJson, "cinematicExecution", "cameraStyle"), "Static")),
+                defaultString(storyboardValue(tag, shotJson, "lensSuggestion"), "Mobile 1x Wide"),
+                defaultString(storyboardValue(tag, shotJson, "shotTypeFullName"), defaultString(storyboardValue(tag, shotJson, "shotType"), "Shot")),
+                defaultString(storyboardValue(tag, shotJson, "compositionSummary", "composition"), "center-safe framing"),
+                defaultString(storyboardValue(tag, shotJson, "lightingAtmosphericDescription", "lighting"), "soft practical light"),
+                defaultString(firstNonBlank(tag.get("keyLightSourceLabel"), lightingTag.get("keyLight"), nested(lightingTag, "floorPlan", "keyLight")), "motivated practical key"),
+                defaultString(firstNonBlank(tag.get("culturalReferences"), shotJson.get("culturalReferences")), "none")
+        );
+    }
+
     private String buildProductionImagePrompt(
             Map<String, Object> screenplayJson,
             Map<String, Object> shot,
             Map<String, Object> storyboardTag,
+            Map<String, Object> lightingBuildSheetTag,
+            Map<String, Object> cameraPlanSheetTag,
             String screenType,
             RenderSize size,
             GenerateStoryboardRequest request
@@ -2433,7 +3201,15 @@ public class StoryboardService {
                 shotJson.get("productName"),
                 screenplay.get("projectTitle")
         ), "the supplied product");
-        String shotType = defaultString(firstNonBlank(shotJson.get("shotType"), storyboardTag == null ? null : storyboardTag.get("shotType")), "Hero Shot");
+        // productShotType (Hero Shot/Ingredient Shot/Pack Shot/...) is a marketing-category
+        // assignment from the shot-type recipe (ProductionPlanTagService), distinct from the
+        // camera-framing shotType/shotTypeCode fallback below - prefer it for product-led shots
+        // when present so the round-robin variety actually reaches the image prompt.
+        String productShotType = storyboardTag == null ? null : stringValue(storyboardTag.get("productShotType"));
+        String shotType = productLed && !defaultString(productShotType, "").isBlank()
+                ? productShotType
+                : defaultString(firstNonBlank(shotJson.get("shotType"), storyboardTag == null ? null : storyboardTag.get("shotType")), "Hero Shot");
+        String ingredientDetails = defaultString(firstNonBlank(screenplay.get("ingredientDetails"), product.get("ingredients")), "");
         String requestedPrompt = request == null ? "" : defaultString(request.imagePrompt(), "");
         String basePrompt = defaultString(firstNonBlank(
                 requestedPrompt,
@@ -2448,7 +3224,10 @@ public class StoryboardService {
         String productionTreatment = productLed
                 ? "Render as premium photoreal CGI product advertising: physically plausible materials, immaculate reflections and shadows, macro surface detail, precise commercial lighting, and a polished global-campaign finish."
                 : "Render as a photoreal production still with cinematic lighting, natural materials, and a finished commercial grade.";
-        String referenceDetails = request == null ? "" : defaultString(request.productReferenceDetails(), "");
+        String referenceDetails = compactPromptParts(
+                request == null ? "" : defaultString(request.productReferenceDetails(), ""),
+                productReferenceInstruction(shotJson)
+        );
         String negativePrompt = defaultString(firstNonBlank(shotJson.get("negativePrompt"), shotJson.get("negative_prompt")),
                 "no package mutation, no logo drift, no label changes, no warped product, no duplicate product, no unreadable text, no watermark");
         boolean noHumans = "true".equalsIgnoreCase(stringValue(firstNonNull(shotJson.get("noHumans"), screenplay.get("noHumans"))));
@@ -2470,6 +3249,11 @@ public class StoryboardService {
                 overlayPlan,
                 typographySystem
         );
+        // Same content facts the storyboard sketch prompt uses (buildStoryboardPrompt), via the
+        // shared sceneContentBrief helper - so this photoreal frame and that sketch depict the
+        // same subject/wardrobe/action/set/props/camera/lighting, not two independent guesses.
+        // Only the rendering STYLE differs between the two prompts.
+        SceneContentBrief brief = sceneContentBrief(shot, storyboardTag, lightingBuildSheetTag, cameraPlanSheetTag);
         return """
                 Create one final, production-quality advertising still that will be used as an image-to-video anchor.
                 This must look like a finished cinematic commercial frame, never a storyboard, sketch, contact sheet, grid, diagram, mood board, or frame with production labels.
@@ -2480,14 +3264,32 @@ public class StoryboardService {
                 Production treatment: %s
                 Product reference notes: %s
 
+                Scene content (must match the approved shot plan exactly - do not reinterpret):
+                - Camera: %s shot, %s angle, %s movement, %s lens, %s.
+                - Subject/cast: %s. Side cast: %s. Wardrobe: %s.
+                - Action/blocking: %s.
+                - Set & environment: %s. Key props: %s. Cultural references (if any): %s.
+                - Lighting: %s, key light %s.
+
                 Output: exact %sx%s, %s composition. Keep the product as the stable focal subject with clean mobile-safe framing and commercial lighting.
                 Preserve exact identity from canonical project references and any client-review reference explicitly marked EXACT_SOURCE.
                 Obey each client-review image's explicit reference intent: INSPIRATION_ONLY supplies mood, composition, lighting, palette, texture, and pacing without copied branding; EXACT_SOURCE is the approved visual source of truth for that shot.
                 Unless EXACT_SOURCE is selected, the product name, packaging, and visible copy must follow this project's approved screenplay and product data.
                 Planned typography direction: %s
                 Do not invent claims, labels, logos, ingredients, accessories, or unplanned text overlays. Render only the approved overlay above when it is enabled. %s
+                %s
                 Negative prompt: %s
-                """.formatted(productName, shotType, basePrompt, productionTreatment, referenceDetails, size.width(), size.height(), aspectRatio, overlayExecution, humanRule, negativePrompt).trim();
+                """.formatted(
+                        productName, shotType, basePrompt, productionTreatment, referenceDetails,
+                        brief.shotTypeFullName(), brief.cameraAngle(), brief.movement(), brief.lens(), brief.compositionSummary(),
+                        brief.primaryCharacters(), brief.sideCharacters(), brief.wardrobe(),
+                        brief.blockingNotes(),
+                        brief.setDesign(), brief.keyProps(), brief.culturalReferences(),
+                        brief.lightingAtmosphere(), brief.keyLight(),
+                        size.width(), size.height(), aspectRatio, overlayExecution, humanRule,
+                        ingredientDetails.isBlank() ? "" : "Ingredient/material evidence: " + ingredientDetails + ". Use only what is listed here; never invent an ingredient not present.",
+                        negativePrompt
+                ).trim();
     }
 
     private String buildStoryboardPrompt(
@@ -2509,7 +3311,6 @@ public class StoryboardService {
         Map<String, Object> lightingTag = lightingBuildSheetTag == null ? Map.of() : lightingBuildSheetTag;
         Map<String, Object> cameraTag = cameraPlanSheetTag == null ? Map.of() : cameraPlanSheetTag;
         Map<String, Object> shotJson = shot == null ? Map.of() : shot;
-        Map<String, Object> primaryCharacter = firstMapValue(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters")));
 
         boolean horizontal = "horizontal".equals(screenType);
         String aspectRatio = horizontal ? "16:9" : "9:16";
@@ -2519,10 +3320,10 @@ public class StoryboardService {
         String title = defaultString(storyboardValue(tag, shotJson, "shotTitle", "title", "description"), "Storyboard Shot " + shotNumber);
         String sceneLocation = defaultString(storyboardValue(tag, shotJson, "sceneLocation", "environment", "setDesign"), "creator shooting space");
         String narrativeBeat = defaultString(storyboardValue(tag, shotJson, "narrativeBeatSummary", "beatTitle", "purpose"), title);
-        String shotTypeFullName = defaultString(storyboardValue(tag, shotJson, "shotTypeFullName"), defaultString(storyboardValue(tag, shotJson, "shotType"), "Shot"));
-        String cameraAngle = defaultString(storyboardValue(tag, shotJson, "cameraAngle"), "Eye Level");
-        String movement = defaultString(storyboardValue(tag, shotJson, "cameraMovement"), defaultString(nested(shotJson, "cinematicExecution", "cameraStyle"), "Static"));
-        String lens = defaultString(storyboardValue(tag, shotJson, "lensSuggestion"), "Mobile 1x Wide");
+        // Shared with buildProductionImagePrompt via sceneContentBrief, so the sketch and the
+        // final photoreal frame depict the same camera framing, cast, wardrobe, action, set,
+        // props, and lighting - only the rendering STYLE differs between the two prompts.
+        SceneContentBrief brief = sceneContentBrief(shot, storyboardTag, lightingBuildSheetTag, cameraPlanSheetTag);
         Map<String, Object> visualTreatment = mapValue(shotJson.get("visualTreatment"));
         String visualTreatmentSummary = compactPromptParts(
                 promptLabel("motion", firstNonBlank(visualTreatment.get("motionStyle"), nested(shotJson, "cinematicExecution", "captureMode"))),
@@ -2530,27 +3331,15 @@ public class StoryboardService {
                 promptLabel("effect", visualTreatment.get("editorialEffect")),
                 promptLabel("notes", visualTreatment.get("notes"))
         );
-        String compositionSummary = defaultString(storyboardValue(tag, shotJson, "compositionSummary", "composition"), "center-safe framing");
-        String environment = defaultString(storyboardValue(tag, shotJson, "environment", "setDesign", "sceneLocation"), sceneLocation);
-        String keyLight = defaultString(firstNonBlank(tag.get("keyLightSourceLabel"), lightingTag.get("keyLight"), nested(lightingTag, "floorPlan", "keyLight")), "motivated practical key");
         String expression = defaultString(storyboardValue(tag, shotJson, "expression"), "natural performance");
-        String emotion = defaultString(storyboardValue(tag, shotJson, "emotion"), "clear intent");
         String emotionIntensity = defaultString(storyboardValue(tag, shotJson, "emotionIntensity"), "0");
         String bodyLanguage = defaultString(storyboardValue(tag, shotJson, "bodyLanguage"), "natural posture");
         String headroom = defaultString(storyboardValue(tag, shotJson, "headroomNote"), "clean headroom");
         String frameLeft = defaultString(storyboardValue(tag, shotJson, "frameLeftNote"), "visible left-frame anchor from shot");
         String frameRight = defaultString(storyboardValue(tag, shotJson, "frameRightNote"), "visible right-frame anchor from shot");
         String target = defaultString(storyboardValue(tag, shotJson, "targetFocalPoint", "retentionGoal"), "TARGET: primary face/action");
-        String lightingAtmosphere = defaultString(storyboardValue(tag, shotJson, "lightingAtmosphericDescription", "lighting"), "soft practical light");
-        String cinematicIntent = defaultString(firstNonBlank(lightingTag.get("cinematicIntent"), lightingAtmosphere), "clear emotional lighting intent");
+        String cinematicIntent = defaultString(firstNonBlank(lightingTag.get("cinematicIntent"), brief.lightingAtmosphere()), "clear emotional lighting intent");
         String inferredTone = defaultString(firstNonBlank(tag.get("inferredTone"), shotJson.get("inferredTone"), screenplay.get("inferredTone"), screenplay.get("emotionalArc")), "cinematic creator tone");
-        String primaryCharacters = defaultString(firstNonBlank(tag.get("primaryCharacters"), shotJson.get("primaryCharacters"), shotJson.get("characters"), firstCharacterDescription(tag, shotJson)), "Primary visible character from the shot JSON.");
-        String sideCharacters = defaultString(firstNonBlank(tag.get("sideCharacters"), shotJson.get("sideCharacters")), "none");
-        String wardrobe = defaultString(firstNonBlank(primaryCharacter.get("wardrobeThisShot"), primaryCharacter.get("wardrobe"), shotJson.get("wardrobeThisShot"), shotJson.get("characterContinuity")), "match character continuity");
-        String blockingNotes = defaultString(firstNonBlank(shotJson.get("blockingNotes"), cameraTag.get("blockingMap"), tag.get("directorNote"), storyboardValue(tag, shotJson, "action", "primaryActorAction", "visualDirection", "description")), "show the planned actor blocking clearly");
-        String setDesign = defaultString(storyboardValue(tag, shotJson, "setDesign", "environment"), environment);
-        String keyProps = defaultString(firstNonBlank(shotJson.get("keyProps"), shotJson.get("props"), nested(cameraTag, "blockingMap", "keyProps"), shotJson.get("resourceRequirements")), "only props specified by the shot");
-        String culturalReferences = defaultString(firstNonBlank(tag.get("culturalReferences"), shotJson.get("culturalReferences")), "none");
         String textOverlay = frameOverlayText(tag, shotJson);
         Map<String, Object> overlayPlan = mapValue(firstNonNull(tag.get("overlayPlan"), shotJson.get("overlayPlan")));
         Map<String, Object> typographySystem = mapValue(firstNonNull(
@@ -2647,13 +3436,13 @@ public class StoryboardService {
                 truncatePromptText(title, 80),
                 truncatePromptText(sceneLocation, 90),
                 truncatePromptText(narrativeBeat, 110),
-                truncatePromptText(shotTypeFullName, 50),
-                truncatePromptText(cameraAngle, 50),
-                truncatePromptText(movement, 50),
-                truncatePromptText(lens, 50),
-                truncatePromptText(compositionSummary, 120),
-                truncatePromptText(environment, 120),
-                truncatePromptText(keyLight, 120),
+                truncatePromptText(brief.shotTypeFullName(), 50),
+                truncatePromptText(brief.cameraAngle(), 50),
+                truncatePromptText(brief.movement(), 50),
+                truncatePromptText(brief.lens(), 50),
+                truncatePromptText(brief.compositionSummary(), 120),
+                truncatePromptText(brief.environment(), 120),
+                truncatePromptText(brief.keyLight(), 120),
                 truncatePromptText(expression, 80),
                 truncatePromptText(emotionIntensity, 20),
                 truncatePromptText(bodyLanguage, 95),
@@ -2661,15 +3450,15 @@ public class StoryboardService {
                 truncatePromptText(frameLeft, 90),
                 truncatePromptText(frameRight, 90),
                 truncatePromptText(target, 110),
-                truncatePromptText(blockingNotes, 280),
-                truncatePromptText(primaryCharacters, 320),
-                truncatePromptText(sideCharacters, 160),
-                truncatePromptText(wardrobe, 160),
-                truncatePromptText(setDesign, 220),
-                truncatePromptText(keyProps, 220),
-                truncatePromptText(culturalReferences, 160),
+                truncatePromptText(brief.blockingNotes(), 280),
+                truncatePromptText(brief.primaryCharacters(), 320),
+                truncatePromptText(brief.sideCharacters(), 160),
+                truncatePromptText(brief.wardrobe(), 160),
+                truncatePromptText(brief.setDesign(), 220),
+                truncatePromptText(brief.keyProps(), 220),
+                truncatePromptText(brief.culturalReferences(), 160),
                 truncatePromptText(inferredTone, 90),
-                truncatePromptText(lightingAtmosphere, 160),
+                truncatePromptText(brief.lightingAtmosphere(), 160),
                 truncatePromptText(cinematicIntent, 180),
                 truncatePromptText(overlayExecution, 520),
                 truncatePromptText(dialogueLanguage, 40),
@@ -2839,6 +3628,107 @@ public class StoryboardService {
         return mapValue(value);
     }
 
+    /**
+     * A bare "render this exact person, matching their real likeness" instruction is too vague for
+     * most image models to actually preserve identity across a different pose/angle/lighting - they
+     * tend to drift toward a generic similar-looking face, or "improve" it toward conventional
+     * attractiveness. This spells out the concrete facial-geometry landmarks that must survive the
+     * transformation, and explicitly deprioritizes attractiveness over accuracy, which is the more
+     * common failure mode. The "vary composition" framing defers to THIS shot's own planned pose/
+     * wardrobe/background/lighting (already specified elsewhere in the full prompt) rather than
+     * inviting the model to copy the reference photo's own scene - only the face must match the
+     * reference, nothing else about that photo should leak into the generated frame.
+     */
+    private String castIdentityInstruction(String castName) {
+        return """
+                A cast reference photo of %s is attached as the PRIMARY IDENTITY REFERENCE. Generate a new, \
+                photorealistic image of this same real person - not someone who merely resembles them.
+
+                Preserve their underlying facial identity and 3D facial structure: overall face shape and \
+                proportions; forehead and hairline; eyebrow shape, thickness, spacing, and position; eye shape, \
+                size, spacing, and relative position; eyelid structure; nose bridge, width, length, tip, and \
+                nostril structure; cheekbone position and facial width; cheek and mid-face structure; mouth width, \
+                lip shape, and position; philtrum and nose-to-lip distance; chin shape and projection; jawline and \
+                mandibular proportions; ear placement where visible; natural facial asymmetries; skin tone and \
+                characteristic skin texture; and any distinctive marks. Treat the reference as defining this \
+                person's underlying 3D facial identity - if this shot's camera angle differs from the reference \
+                photo, reconstruct the same underlying face from that new angle rather than designing a new face \
+                that merely resembles it. Where part of the face is not visible in the reference, infer it \
+                conservatively from the visible structure, staying consistent with the person's identity.
+
+                This shot's own planned pose, expression, wardrobe, background, and lighting (specified elsewhere \
+                in this brief) take priority over the reference photo's own composition - only the person's \
+                facial identity must match the reference; do not copy the reference photo's own clothing, \
+                background, or lighting into this frame.
+
+                Identity consistency is more important than conventional attractiveness - do not alter facial \
+                geometry to make the person more symmetrical, younger, or more conventionally attractive. The \
+                result must be photorealistic, with natural skin texture and realistic facial proportions, and \
+                immediately recognizable as the same real person shown in the reference.
+                """.formatted(castName).trim();
+    }
+
+    /**
+     * Turns this shot's explicitly-uploaded product reference (set by uploadShotProductReference)
+     * into the instruction that tells the image model how to treat the attached reference photo -
+     * CAST means render this exact person as the on-screen talent; INSPIRATION_ONLY means borrow
+     * only mood/composition/lighting/palette and never depict the photographed person. No
+     * instruction is added when the shot has no explicit product reference, matching the "cast
+     * face only on explicit opt-in" decision - a shot with no upload generates faceless.
+     */
+    private String productReferenceInstruction(Map<String, Object> shotJson) {
+        Map<String, Object> productReference = mapValue(shotJson == null ? null : shotJson.get("productReferenceImage"));
+        if (productReference.isEmpty()) {
+            return "";
+        }
+        String classification = stringValue(productReference.get("classification")).trim().toUpperCase(Locale.ROOT);
+        if ("CAST".equals(classification)) {
+            String castName = defaultString(stringValue(productReference.get("castDisplayName")), "the person shown in the attached reference photo");
+            return castIdentityInstruction(castName);
+        }
+        String detectedSubject = defaultString(stringValue(productReference.get("detectedSubject")), "").trim();
+        String dominantMood = defaultString(stringValue(productReference.get("dominantMood")), "").trim();
+        String cameraAngle = defaultString(stringValue(productReference.get("cameraAngle")), "").trim();
+        String lightingStyle = defaultString(stringValue(productReference.get("lightingStyle")), "").trim();
+        String motion = defaultString(stringValue(productReference.get("motion")), "").trim();
+        boolean ignoreSubject = Boolean.TRUE.equals(productReference.get("ignoreSubject"));
+        String base;
+        if (!detectedSubject.isEmpty() && !ignoreSubject) {
+            // Reinterpret the reference's actual visual concept (what the vision analysis saw -
+            // "cocoa butter falling, warm dynamic splash", shot low-angle with hard side light)
+            // rather than a generic "borrow the mood" instruction that gives the model nothing
+            // concrete to work with. Camera angle/lighting/motion are creative guidance for HOW to
+            // shoot the new image, not planning facts to overwrite - they are never offered as an
+            // approvable mismatch the way ingredientDetails/setDesign/keyProps are, since a
+            // reference photo's incidental camera angle isn't a fact worth permanently changing the
+            // shot's plan over.
+            StringBuilder creativeCues = new StringBuilder();
+            if (!cameraAngle.isEmpty()) {
+                creativeCues.append(" Camera framing to emulate: ").append(cameraAngle).append(".");
+            }
+            if (!lightingStyle.isEmpty()) {
+                creativeCues.append(" Lighting to emulate: ").append(lightingStyle).append(".");
+            }
+            if (!motion.isEmpty()) {
+                creativeCues.append(" Motion/energy to emulate: ").append(motion).append(".");
+            }
+            base = "A style reference photo is attached, marked INSPIRATION_ONLY. It shows: " + detectedSubject
+                    + (dominantMood.isEmpty() ? "" : " (" + dominantMood + ").")
+                    + " Reinterpret this same visual concept, action, and energy using this project's actual product as the"
+                    + " subject - keep the composition, motion, and mood, but never depict the reference's own product,"
+                    + " ingredient, or any branding shown in it." + creativeCues;
+        } else {
+            base = "A style reference photo is attached, marked INSPIRATION_ONLY: borrow only its mood, composition, lighting, and palette - never depict the person or any branding shown in it.";
+        }
+        // Set on confirmShotProductReference when the analysis flagged the photographed subject as
+        // inconsistent with this project's product and the user chose to keep it as style-only
+        // anyway - the abstract INSPIRATION_ONLY instruction above isn't strong enough on its own
+        // to stop the subject (e.g. a strawberry) from bleeding into the rendered frame.
+        return ignoreSubject
+                ? base + " The photographed subject itself does not match this project's product - ignore what the photo actually depicts entirely; use only its abstract color, lighting, and composition qualities."
+                : base;
+    }
+
     private String promptLabel(String label, Object value) {
         String text = promptText(value);
         return text.isBlank() ? "" : label + ": " + text;
@@ -2872,7 +3762,8 @@ public class StoryboardService {
             Map<String, Object> screenplayJson,
             Map<String, Object> tag,
             String screenType,
-            RenderSize size
+            RenderSize size,
+            int shotNumber
     ) {
         String override = stringValue(tag == null ? null : tag.get("imageGenerationPromptOverride"));
         if (!override.isBlank()) {
@@ -2882,6 +3773,17 @@ public class StoryboardService {
         String sheetFocus = "lighting".equals(imageKind)
                 ? "show exact light placement, subject position, phone position, practical/window sources, shadows, and quick setup steps"
                 : "show exact camera body position, lens choice, framing box, movement path, subject blocking, and safe-frame notes";
+        // Was previously toJson(screenplayJson) - the ENTIRE script payload (every shot's full
+        // dialogue/captions/sound design/camera notes) dumped into every single shot's sheet
+        // prompt. That scales with total script size, not per-shot size, and as the script grew
+        // through this project's edits it eventually exceeded Gemini's input token budget and
+        // got blocked outright. buildStoryboardPrompt/buildProductionImagePrompt already solved
+        // this the same way for their own prompts - swap in the same curated, per-shot-scoped
+        // continuity context instead of the raw whole-screenplay dump.
+        Map<String, Object> continuity = new LinkedHashMap<>();
+        continuity.put("global", globalImageContinuityContext(screenplayJson));
+        continuity.put("adjacentShots", adjacentShotImageContinuity(screenplayJson, shot, shotNumber));
+        continuity.put("currentShot", currentShotDirectorPacket(screenplayJson, shot, shotNumber));
         return """
                 Professional color production planning sheet, %s, exact %sx%s output, %s composition.
                 This is for one specific screenplay shot, not a generic film diagram. %s.
@@ -2891,7 +3793,7 @@ public class StoryboardService {
                 %s
                 Source production-plan JSON:
                 %s
-                Complete screenplay JSON for continuity:
+                Screenplay continuity context (for this shot only):
                 %s
                 """.formatted(
                 title,
@@ -2901,7 +3803,7 @@ public class StoryboardService {
                 sheetFocus,
                 toJson(shot == null ? Map.of() : shot),
                 toJson(tag == null ? Map.of() : tag),
-                toJson(screenplayJson == null ? Map.of() : screenplayJson)
+                toJson(continuity)
         );
     }
 
