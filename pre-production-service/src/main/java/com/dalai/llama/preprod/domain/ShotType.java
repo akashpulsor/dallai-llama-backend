@@ -7,5 +7,12 @@ public enum ShotType {
     ACTION,
     PRODUCT_HERO,
     B_ROLL,
-    TRANSITION
+    TRANSITION,
+    /** Text/data/graphic-driven beats (kinetic typography, lower-thirds, data callouts) -- planned
+     * via {@code MotionGraphicPlanService} first (concept/on-screen text/visual style/animation
+     * notes), then dispatched to video-generation-service like any other shot via {@code
+     * MotionGraphicShotContextAssemblyStrategy}, which turns that plan into the prompt (and
+     * attaches a reference image the same way PRODUCT_HERO does, when the shot's character key
+     * resolves one). Dispatching before a plan exists fails loud with a clear error. */
+    MOTION_GRAPHIC
 }

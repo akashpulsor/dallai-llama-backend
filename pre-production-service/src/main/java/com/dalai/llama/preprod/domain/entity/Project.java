@@ -55,6 +55,17 @@ public class Project {
     @Column(name = "status", nullable = false, length = 24)
     private ProjectStatus status;
 
+    /** Unguessable token for the client's public review page ({@code GET /v1/public/projects/
+     * {token}}) -- same "possession of the token is the authorization" convention creative-
+     * planning-service's ProjectRequirement.shareToken already uses. Generated lazily the first
+     * time the public page is resolved, not at project creation. */
+    @Column(name = "client_review_token", unique = true, length = 64)
+    private String clientReviewToken;
+
+    /** chat-service session id, created once the client locks the package -- null until then. */
+    @Column(name = "chat_session_id")
+    private UUID chatSessionId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

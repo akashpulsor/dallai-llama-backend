@@ -48,6 +48,14 @@ public record ShotListGenerationResult(
             String cinematicExecution,
             String rookieFriendlyGuide,
             String sketchPrompt,
+            String coverageType,
+            String screenDirection,
+            Integer peopleInFrame,
+            String culturalReferences,
+            String productShotType,
+            String shootDay,
+            String shootBlock,
+            String directorNote,
             CinematographyItem cinematography
     ) {
     }

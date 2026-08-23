@@ -12,5 +12,10 @@ public enum ChatActionType {
     EXPORT_MARKETING_PLAN_PDF,
     /** Requires {@code ChatScopeType.MARKETING_PLAN} -- revises the session's bound plan using
      * model-extracted free-text instructions. */
-    REVISE_MARKETING_PLAN
+    REVISE_MARKETING_PLAN,
+    /** Requires {@code ChatScopeType.PRE_PRODUCTION_PROJECT} -- logs a pending change request
+     * against one piece of the locked project (which piece + what change are both model-extracted
+     * free text); a human on the creator's side reviews and applies it, this action never
+     * regenerates anything itself. */
+    SUGGEST_PRE_PRODUCTION_CHANGE
 }

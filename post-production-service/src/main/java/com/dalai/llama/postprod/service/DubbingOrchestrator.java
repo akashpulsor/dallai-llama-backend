@@ -102,7 +102,7 @@ public class DubbingOrchestrator {
 
             VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
                     tenantId, "dubbing-tts-" + jobId,
-                    cloneResult.providerVoiceId(), translated, targetLanguage, null);
+                    cloneResult.providerVoiceId(), sourceVideoUrl, translated, targetLanguage, null);
 
             var lipSyncResult = lipSyncGenerationService.syncLips(
                     tenantId, "dubbing-lipsync-" + jobId, sourceVideoUrl, synthesis.audioUrl(), null);

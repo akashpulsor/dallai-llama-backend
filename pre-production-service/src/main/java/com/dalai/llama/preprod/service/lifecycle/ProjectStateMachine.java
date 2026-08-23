@@ -9,6 +9,7 @@ import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
 
+import static com.dalai.llama.preprod.domain.ProjectStatus.CLIENT_LOCKED;
 import static com.dalai.llama.preprod.domain.ProjectStatus.DRAFT;
 import static com.dalai.llama.preprod.domain.ProjectStatus.IN_PRODUCTION;
 import static com.dalai.llama.preprod.domain.ProjectStatus.SCREENPLAY_READY;
@@ -52,8 +53,12 @@ public class ProjectStateMachine {
         // back to re-run script generation (the earliest regenerable stage).
         transitions.put(SCRIPT_READY, EnumSet.of(SCREENPLAY_READY));
         transitions.put(SCREENPLAY_READY, EnumSet.of(SCRIPT_READY, SHOT_LIST_READY));
-        transitions.put(SHOT_LIST_READY, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, IN_PRODUCTION));
-        transitions.put(IN_PRODUCTION, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY));
+        transitions.put(SHOT_LIST_READY, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, IN_PRODUCTION, CLIENT_LOCKED));
+        transitions.put(IN_PRODUCTION, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, CLIENT_LOCKED));
+        // Regenerating any stage after the client has locked the package moves status backward,
+        // same as every other stage -- the package is now stale, not un-locked (re-locking is a
+        // fresh POST /v1/public/projects/{token}/lock, not an automatic state change).
+        transitions.put(CLIENT_LOCKED, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, IN_PRODUCTION));
         return transitions;
     }
 }

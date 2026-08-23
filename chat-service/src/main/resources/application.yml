@@ -83,3 +83,6 @@ chat:
   creative-planning:
     base-url: ${CREATIVE_PLANNING_BASE_URL:http://creative-planning-service.apps.svc.cluster.local:8080}
     timeout-ms: ${CREATIVE_PLANNING_TIMEOUT_MS:60000}
+  pre-production:
+    base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:30000}

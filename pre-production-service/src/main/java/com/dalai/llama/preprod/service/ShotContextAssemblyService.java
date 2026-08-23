@@ -6,6 +6,7 @@ import com.dalai.llama.preprod.domain.GenerationJobType;
 import com.dalai.llama.preprod.domain.ShotStatus;
 import com.dalai.llama.preprod.domain.entity.CastAssignment;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
+import com.dalai.llama.preprod.domain.entity.ContinuityLock;
 import com.dalai.llama.preprod.domain.entity.GenerationJob;
 import com.dalai.llama.preprod.domain.entity.Project;
 import com.dalai.llama.preprod.domain.entity.ProjectConfig;
@@ -32,6 +33,7 @@ import com.dalai.llama.preprod.service.critic.CritiqueRequest;
 import com.dalai.llama.preprod.service.critic.CritiqueResult;
 import com.dalai.llama.preprod.service.critic.CritiqueVerdict;
 import com.dalai.llama.preprod.service.videogen.FeatureFlags;
+import com.dalai.llama.preprod.service.videogen.FlagState;
 import com.dalai.llama.preprod.service.videogen.GenerateShotRequest;
 import com.dalai.llama.preprod.service.videogen.GenerateShotResponse;
 import com.dalai.llama.preprod.service.videogen.VideoGenClient;
@@ -67,6 +69,7 @@ public class ShotContextAssemblyService {
     private final VideoGenClient videoGenClient;
     private final CriticServiceClient criticServiceClient;
     private final GenerationThoughtService generationThoughtService;
+    private final ContinuityBibleService continuityBibleService;
 
     public ShotContextAssemblyService(
             ShotRepository shotRepository,
@@ -82,7 +85,8 @@ public class ShotContextAssemblyService {
             ShotContextAssemblyStrategyResolver strategyResolver,
             VideoGenClient videoGenClient,
             CriticServiceClient criticServiceClient,
-            GenerationThoughtService generationThoughtService
+            GenerationThoughtService generationThoughtService,
+            ContinuityBibleService continuityBibleService
     ) {
         this.shotRepository = shotRepository;
         this.projectRepository = projectRepository;
@@ -98,6 +102,7 @@ public class ShotContextAssemblyService {
         this.videoGenClient = videoGenClient;
         this.criticServiceClient = criticServiceClient;
         this.generationThoughtService = generationThoughtService;
+        this.continuityBibleService = continuityBibleService;
     }
 
     /**
@@ -108,6 +113,15 @@ public class ShotContextAssemblyService {
      */
     @Transactional
     public ShotDispatchResponse dispatch(UUID tenantId, UUID shotId, boolean autoApprove) {
+        return dispatch(tenantId, shotId, autoApprove, null, null);
+    }
+
+    /** {@code dialogueOverride}/{@code captionsOverride} are per-call overrides of video-
+     * generation-service's own dialogue/captions flags (see {@code VideoFeatureFlagDefinition}
+     * for the master data a UI renders these choices from) -- null lets video-generation-service
+     * apply the project's configured default instead. */
+    @Transactional
+    public ShotDispatchResponse dispatch(UUID tenantId, UUID shotId, boolean autoApprove, Boolean dialogueOverride, Boolean captionsOverride) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         generationThoughtService.log(tenantId, shotId, "ASSEMBLING", "Assembling shot context for " + shot.getShotRef());
@@ -125,7 +139,7 @@ public class ShotContextAssemblyService {
             shot.setStatus(ShotStatus.NEEDS_REVIEW);
             shot.setUpdatedAt(OffsetDateTime.now());
             shotRepository.save(shot);
-            return new ShotDispatchResponse(null, null, null, null, critique.sessionId(), critique.verdict(), critique.findings(),
+            return new ShotDispatchResponse(null, null, null, null, null, null, null, critique.sessionId(), critique.verdict(), critique.findings(),
                     critique.decompositionRecommended(), critique.suggestedShotCount(), critique.decompositionReason());
         }
         if (critique.decompositionRecommended()) {
@@ -153,17 +167,18 @@ public class ShotContextAssemblyService {
 
         try {
             GenerateShotResponse response = videoGenClient.generateShot(tenantId.toString(),
-                    new GenerateShotRequest(shot.getProjectId(), dispatchPlan, defaultFeatureFlags(), autoApprove));
+                    new GenerateShotRequest(shot.getProjectId(), dispatchPlan, resolveFeatureFlags(dialogueOverride, captionsOverride), autoApprove));
             job = generationJobPersistenceService.finishSuccess(job.getId(), j -> {
                 j.setExternalJobId(response.jobId());
                 j.setExternalPromptId(response.promptId());
             });
-            shot.setStatus(ShotStatus.GENERATED);
+            shot.setStatus(autoApprove ? ShotStatus.GENERATED : ShotStatus.PENDING_APPROVAL);
             shot.setUpdatedAt(OffsetDateTime.now());
             shotRepository.save(shot);
-            generationThoughtService.log(tenantId, shotId, "SHOT_GENERATED",
-                    "Shot generated -- video-generation-service job " + response.jobId());
+            generationThoughtService.log(tenantId, shotId, autoApprove ? "SHOT_GENERATED" : "SHOT_PROMPT_READY",
+                    (autoApprove ? "Shot generated" : "Prompt ready for review") + " -- video-generation-service job " + response.jobId());
             return new ShotDispatchResponse(job.getId(), job.getStatus(), job.getExternalJobId(), job.getExternalPromptId(),
+                    response.recommendedModel(), response.recommendationReasoning(), response.estimatedCost(),
                     critique.sessionId(), critique.verdict(), critique.findings(),
                     critique.decompositionRecommended(), critique.suggestedShotCount(), critique.decompositionReason());
         } catch (RuntimeException ex) {
@@ -176,11 +191,16 @@ public class ShotContextAssemblyService {
         }
     }
 
-    /** Not the doc's full admin-editable feature_flag_definition catalog -- video-generation-service's
-     * own code-level defaults apply when {@code null} is sent, same convention used everywhere
-     * else feature flags come up this session. */
-    private FeatureFlags defaultFeatureFlags() {
-        return null;
+    /** Null (both fields, or the whole object) lets video-generation-service apply the project's
+     * own configured default for whichever flag wasn't overridden -- this never invents a value,
+     * only forwards what the caller actually chose to override. */
+    private FeatureFlags resolveFeatureFlags(Boolean dialogueOverride, Boolean captionsOverride) {
+        if (dialogueOverride == null && captionsOverride == null) {
+            return null;
+        }
+        return new FeatureFlags(
+                dialogueOverride == null ? null : (dialogueOverride ? FlagState.ON : FlagState.OFF),
+                captionsOverride == null ? null : (captionsOverride ? FlagState.ON : FlagState.OFF));
     }
 
     private ShotAssemblyContext buildAssemblyContext(UUID tenantId, Shot shot) {
@@ -188,7 +208,17 @@ public class ShotContextAssemblyService {
                 .orElseThrow(() -> PreProductionException.notFound("No project " + shot.getProjectId()));
         ProjectConfig projectConfig = projectConfigRepository.findByProjectId(project.getId()).orElse(null);
         ScreenplayScene scene = screenplaySceneRepository.findById(shot.getScreenplaySceneId()).orElse(null);
-        EmotionalArcPosition arcPosition = computeArcPosition(shot);
+
+        List<Shot> allShots = shotRepository.findByProjectIdOrderByShotNumberAsc(shot.getProjectId());
+        int index = 0;
+        for (int i = 0; i < allShots.size(); i++) {
+            if (allShots.get(i).getId().equals(shot.getId())) {
+                index = i;
+                break;
+            }
+        }
+        EmotionalArcPosition arcPosition = EmotionalArcPositionCalculator.fromOrdinal(index, Math.max(allShots.size(), 1));
+        Shot previousShot = index > 0 ? allShots.get(index - 1) : null;
 
         CastAssignment castAssignment = null;
         CastProfile castProfile = null;
@@ -203,18 +233,7 @@ public class ShotContextAssemblyService {
                 castProfile = castProfileRepository.findByIdAndTenantId(castAssignment.getCastProfileId(), tenantId).orElse(null);
             }
         }
-        return new ShotAssemblyContext(shot, project, projectConfig, scene, arcPosition, castAssignment, castProfile);
-    }
-
-    private EmotionalArcPosition computeArcPosition(Shot shot) {
-        List<Shot> allShots = shotRepository.findByProjectIdOrderByShotNumberAsc(shot.getProjectId());
-        int index = 0;
-        for (int i = 0; i < allShots.size(); i++) {
-            if (allShots.get(i).getId().equals(shot.getId())) {
-                index = i;
-                break;
-            }
-        }
-        return EmotionalArcPositionCalculator.fromOrdinal(index, Math.max(allShots.size(), 1));
+        List<ContinuityLock> continuityLocks = continuityBibleService.getLocks(project.getId());
+        return new ShotAssemblyContext(shot, project, projectConfig, scene, arcPosition, castAssignment, castProfile, continuityLocks, previousShot);
     }
 }

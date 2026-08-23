@@ -14,18 +14,16 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Dispatches through llm-gateway's fal.ai meta-provider adapter, same principle as
- * video-generation-service's own LlmGatewayVideoGenDispatchService -- this service never talks to
- * fal.ai directly.
+ * Dispatches through llm-gateway's fal.ai meta-provider adapter to fal-ai/minimax/voice-clone --
+ * verified against fal.ai's real, documented schema (not a guess): {@code audio_url} in, {@code
+ * custom_voice_id} out when no {@code text} is given (a bare clone, this call's case). ElevenLabs
+ * does not expose a dedicated instant-voice-clone endpoint on fal.ai (only TTS/voice-changer/
+ * dubbing/music/scribe) -- MiniMax is fal.ai's real cloning model, per explicit direction not to
+ * stand up a separate direct-to-ElevenLabs provider for this.
  *
- * <p><b>Known gap, named not hidden:</b> {@code model_id=voice-clone-v1} is not yet seeded into
- * llm-gateway's model_master table, and FalAiProvider's own request-shaping
- * (toFalRequestBody/falEndpoint) is currently Seedance/video-specific -- it doesn't know how to
- * build a voice-clone payload (reference audio in, cloned-voice-id out) yet. This mirrors exactly
- * the state seedance-v1 was in before Phase A of llm-gateway's build: the call path, job
- * lifecycle, and billing plumbing are all real and correct, but a real dispatch will 404 until
- * both the model_master seed row and FalAiProvider's request-shaping are extended for this model
- * type -- a bounded, named follow-up, not silently swept under.
+ * <p>{@code targetLanguage} is accepted for interface compatibility with existing callers but not
+ * sent to MiniMax -- its voice-clone schema has no language field; language only matters at the
+ * synthesis step (VoiceSynthesisService), where it's carried in the dialogue text itself.
  */
 @Service
 public class LlmGatewayVoiceCloneGenerationService implements VoiceCloneGenerationService {
@@ -48,7 +46,6 @@ public class LlmGatewayVoiceCloneGenerationService implements VoiceCloneGenerati
         }
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("reference_audio_url", referenceAudioUrl);
-        params.put("target_language", targetLanguage);
 
         String modelId = (modelOverride == null || modelOverride.isBlank()) ? defaultModel : modelOverride;
         LlmGatewayChatResponse response = llmGatewayClient.chat(

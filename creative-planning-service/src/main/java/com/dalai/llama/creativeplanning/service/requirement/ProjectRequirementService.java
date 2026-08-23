@@ -92,6 +92,23 @@ public class ProjectRequirementService {
         return toView(applyFunding(requireRequirement(tenantId, requirementId), fundedByUserId));
     }
 
+    /**
+     * The real, event-driven funding path: billing-service confirms a Razorpay payment (via its
+     * webhook, not the client-callback path) and publishes {@code billing.payment.received} with
+     * this requirement's id. Unlike {@link #markFunded}, this is never a self-report -- it only
+     * ever fires because money actually moved. Idempotent under Kafka redelivery: a
+     * requirement that's already funded is left alone rather than re-applying the update or
+     * throwing.
+     */
+    @Transactional
+    public void markFundedFromPayment(UUID tenantId, UUID requirementId, UUID paymentId) {
+        ProjectRequirement requirement = requireRequirement(tenantId, requirementId);
+        if (requirement.isFunded()) {
+            return;
+        }
+        applyFunding(requirement, null);
+    }
+
     /** "Client didn't pay in time, please resend" -- a new token, a new expiry, and the old link
      * stops working. Same brief, same requirement, just a fresh door into it. */
     @Transactional

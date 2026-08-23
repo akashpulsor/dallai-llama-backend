@@ -32,6 +32,7 @@ class DialogueShotContextAssemblyStrategy implements ShotContextAssemblyStrategy
         }
         Character character = new Character(
                 profile.getId().toString(), profile.getFaceRefBucket(), profile.getFaceRefObjectKey(),
+                profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(),
                 assignment.getWardrobeNote(), assignment.getPerformanceDirection());
 
         return new ShotContext(

@@ -25,7 +25,13 @@ public class SecurityConfig {
                         "/api-docs",
                         "/api-docs/**",
                         "/swagger-resources/**",
-                        "/webjars/**"
+                        "/webjars/**",
+                        // Deliberately unauthenticated: PublicProjectController is the client
+                        // review/lock/chat page -- the client has no tenant account here.
+                        // Possession of the project's client_review_token is the authorization,
+                        // not a JWT (same convention as creative-planning-service's
+                        // PublicProjectRequirementController).
+                        "/v1/public/**"
                 )
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

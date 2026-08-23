@@ -47,7 +47,9 @@ public class ShotListController extends BaseController {
     @PostMapping("/v1/shots/{shotId}/generate")
     public ResponseEntity<ShotDispatchResponse> dispatch(@PathVariable UUID shotId, @RequestBody(required = false) DispatchShotRequest request) {
         boolean autoApprove = request != null && request.autoApprove();
-        return ResponseEntity.ok(shotContextAssemblyService.dispatch(tenant().tenantId(), shotId, autoApprove));
+        Boolean dialogue = request == null ? null : request.dialogue();
+        Boolean captions = request == null ? null : request.captions();
+        return ResponseEntity.ok(shotContextAssemblyService.dispatch(tenant().tenantId(), shotId, autoApprove, dialogue, captions));
     }
 
     @GetMapping("/v1/shots/{shotId}/thoughts")

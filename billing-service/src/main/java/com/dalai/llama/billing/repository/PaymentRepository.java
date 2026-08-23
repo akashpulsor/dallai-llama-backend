@@ -18,6 +18,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     List<Payment> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+    /** Backs the per-project funding view -- every payment ever created against one brief,
+     * regardless of status, newest first. */
+    List<Payment> findByProjectRequirementIdOrderByCreatedAtDesc(UUID projectRequirementId);
 
     /** Used by PaymentFailureChecker to expire stale PENDING payments */
     List<Payment> findByStatusAndExpiredAtBefore(PaymentStatus status, Instant time);

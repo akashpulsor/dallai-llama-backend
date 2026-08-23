@@ -8,6 +8,8 @@ import com.dalai.llama.billing.domain.event.WalletDeductedForSubscriptionEvent;
 import com.dalai.llama.billing.domain.exception.InsufficientBalanceException;
 import com.dalai.llama.billing.domain.exception.PaymentFailedException;
 import com.dalai.llama.billing.domain.exception.WalletNotFoundException;
+import com.dalai.llama.billing.dto.response.PaymentResponse;
+import com.dalai.llama.billing.dto.response.ProjectRequirementFundingView;
 import com.dalai.llama.billing.kafka.producer.BillingEventProducer;
 import com.dalai.llama.billing.repository.PaymentEventRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -61,6 +64,26 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public PaymentOrderResult createPaymentOrder(UUID tenantId, String currency, BigDecimal amount,
                                                  String description, UUID subscriptionId) {
+        return createOrder(tenantId, currency, amount, description, subscriptionId, null);
+    }
+
+    @Override
+    @Transactional
+    public PaymentOrderResult createProjectRequirementPaymentOrder(UUID tenantId, UUID projectRequirementId,
+                                                                    String currency, BigDecimal amount,
+                                                                    String description) {
+        if (projectRequirementId == null) {
+            throw new IllegalArgumentException("projectRequirementId is required");
+        }
+        return createOrder(tenantId, currency, amount, description, null, projectRequirementId);
+    }
+
+    /** Single order-creation path both {@link #createPaymentOrder} and
+     * {@link #createProjectRequirementPaymentOrder} delegate to -- Razorpay order creation,
+     * the Payment row, and the audit PaymentEvent only need to exist once. */
+    private PaymentOrderResult createOrder(UUID tenantId, String currency, BigDecimal amount,
+                                           String description, UUID subscriptionId,
+                                           UUID projectRequirementId) {
         BigDecimal rechargeAmount = validateRechargeAmount(amount);
 
         Wallet wallet = walletRepository.findByTenantId(tenantId)
@@ -80,7 +103,7 @@ public class PaymentServiceImpl implements PaymentService {
         Payment payment = Payment.create(
                 tenantId, wallet.getId(), rechargeAmount,
                 paymentCurrency, "RAZORPAY",
-                gatewayOrderId, subscriptionId, description
+                gatewayOrderId, subscriptionId, projectRequirementId, description
         );
 
         paymentRepository.save(payment);
@@ -101,6 +124,49 @@ public class PaymentServiceImpl implements PaymentService {
                 razorpayKeyId,
                 payment.getStatus().name()
         );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ProjectRequirementFundingView getProjectRequirementFunding(UUID tenantId, UUID projectRequirementId) {
+        List<Payment> payments = paymentRepository.findByProjectRequirementIdOrderByCreatedAtDesc(projectRequirementId)
+                .stream()
+                .filter(p -> p.getTenantId().equals(tenantId))
+                .toList();
+
+        BigDecimal totalFunded = payments.stream()
+                .filter(p -> p.getStatus() == PaymentStatus.SUCCESS)
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        String currency = payments.stream()
+                .findFirst()
+                .map(Payment::getCurrency)
+                .orElseGet(() -> walletRepository.findByTenantId(tenantId)
+                        .map(Wallet::getCurrency)
+                        .orElse("INR"));
+
+        return ProjectRequirementFundingView.builder()
+                .projectRequirementId(projectRequirementId)
+                .totalFunded(totalFunded)
+                .currency(currency)
+                .payments(payments.stream().map(this::toPaymentResponse).toList())
+                .build();
+    }
+
+    private PaymentResponse toPaymentResponse(Payment payment) {
+        return PaymentResponse.builder()
+                .paymentId(payment.getId())
+                .amount(payment.getAmount())
+                .currency(payment.getCurrency())
+                .status(payment.getStatus().name())
+                .gateway(payment.getGateway())
+                .gatewayOrderId(payment.getGatewayOrderId())
+                .gatewayPaymentId(payment.getGatewayPaymentId())
+                .failureReason(payment.getFailureReason())
+                .description(payment.getDescription())
+                .createdAt(payment.getCreatedAt())
+                .build();
     }
 
     // =========================

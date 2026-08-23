@@ -7,5 +7,11 @@ package com.dalai.llama.chat.domain;
  * id to act on. */
 public enum ChatScopeType {
     NONE,
-    MARKETING_PLAN
+    MARKETING_PLAN,
+    /** A pre-production-service project once its client has locked the creative package (script,
+     * screenplay, cast, shots, shot images) -- {@code scopeId} is the project id. Retrieval scopes
+     * to everything embedded under that project id; actions target one specific piece of it by a
+     * model-extracted reference, not the scope id itself (a project has many shots/scenes, unlike
+     * MARKETING_PLAN's one-resource-per-session shape). */
+    PRE_PRODUCTION_PROJECT
 }

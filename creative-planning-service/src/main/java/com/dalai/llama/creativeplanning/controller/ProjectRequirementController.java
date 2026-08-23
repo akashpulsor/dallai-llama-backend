@@ -2,9 +2,13 @@ package com.dalai.llama.creativeplanning.controller;
 
 import com.dalai.llama.creativeplanning.dto.CreateRequirementFromIdeaRequest;
 import com.dalai.llama.creativeplanning.dto.CreateStandaloneRequirementRequest;
+import com.dalai.llama.creativeplanning.dto.IdeaOptionView;
+import com.dalai.llama.creativeplanning.dto.LockIdeaOptionRequest;
+import com.dalai.llama.creativeplanning.dto.LockIdeaOptionResponse;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementAttachmentView;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementView;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementAttachmentService;
+import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementIdeaService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -28,13 +32,16 @@ public class ProjectRequirementController extends BaseController {
 
     private final ProjectRequirementService projectRequirementService;
     private final ProjectRequirementAttachmentService projectRequirementAttachmentService;
+    private final ProjectRequirementIdeaService projectRequirementIdeaService;
 
     public ProjectRequirementController(
             ProjectRequirementService projectRequirementService,
-            ProjectRequirementAttachmentService projectRequirementAttachmentService
+            ProjectRequirementAttachmentService projectRequirementAttachmentService,
+            ProjectRequirementIdeaService projectRequirementIdeaService
     ) {
         this.projectRequirementService = projectRequirementService;
         this.projectRequirementAttachmentService = projectRequirementAttachmentService;
+        this.projectRequirementIdeaService = projectRequirementIdeaService;
     }
 
     @PostMapping("/v1/project-requirements/from-locked-idea/{lockedIdeaId}")
@@ -81,5 +88,40 @@ public class ProjectRequirementController extends BaseController {
     @GetMapping("/v1/project-requirements/{requirementId}/attachments")
     public ResponseEntity<List<ProjectRequirementAttachmentView>> listAttachments(@PathVariable UUID requirementId) {
         return ResponseEntity.ok(projectRequirementAttachmentService.list(tenant().tenantId(), requirementId));
+    }
+
+    /** Only callable once {@code funded} is true -- see ProjectRequirementIdeaService. Options
+     * are generated fresh each call, not persisted, so this is safe to call again for a new set. */
+    @PostMapping("/v1/project-requirements/{requirementId}/ideas/generate")
+    public ResponseEntity<List<IdeaOptionView>> generateIdeaOptions(
+            @PathVariable UUID requirementId,
+            @RequestParam(required = false) Integer count) {
+        return ResponseEntity.ok(projectRequirementIdeaService.generateOptions(tenant().tenantId(), requirementId, count));
+    }
+
+    /** What a refreshed page reads instead of losing the generated list -- every option ever
+     * saved for this requirement, newest first. */
+    @GetMapping("/v1/project-requirements/{requirementId}/ideas")
+    public ResponseEntity<List<IdeaOptionView>> listIdeaOptions(@PathVariable UUID requirementId) {
+        return ResponseEntity.ok(projectRequirementIdeaService.listOptions(tenant().tenantId(), requirementId));
+    }
+
+    /** Saves a creator's edit of an existing option as a new row (source=EDITED) rather than
+     * overwriting the original -- see ProjectRequirementIdeaService's javadoc. */
+    @PostMapping("/v1/project-requirements/{requirementId}/ideas/{optionId}/save-edit")
+    public ResponseEntity<IdeaOptionView> saveEditedIdeaOption(
+            @PathVariable UUID requirementId,
+            @PathVariable UUID optionId,
+            @Valid @RequestBody LockIdeaOptionRequest edited) {
+        return ResponseEntity.ok(projectRequirementIdeaService.saveEditedOption(tenant().tenantId(), requirementId, optionId, edited));
+    }
+
+    /** Locks one of the generated options and synchronously hands it to pre-production-service --
+     * this is the funded-brief -> pre-production transition. */
+    @PostMapping("/v1/project-requirements/{requirementId}/ideas/lock")
+    public ResponseEntity<LockIdeaOptionResponse> lockIdeaOption(
+            @PathVariable UUID requirementId,
+            @Valid @RequestBody LockIdeaOptionRequest request) {
+        return ResponseEntity.ok(projectRequirementIdeaService.lockOption(tenant().tenantId(), requirementId, request));
     }
 }

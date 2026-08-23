@@ -62,6 +62,12 @@ public class ScreenplayScene {
     @Column(name = "emotional_purpose", columnDefinition = "text")
     private String emotionalPurpose;
 
+    /** Per-scene pacing estimate, restoring creator-service's StoryBeat.estimatedSeconds -- lets
+     * the screenplay stage show pacing against the script's targetDurationSeconds before shots
+     * exist. Nullable: older versions and hand-added scenes may not set it. */
+    @Column(name = "estimated_seconds")
+    private Integer estimatedSeconds;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

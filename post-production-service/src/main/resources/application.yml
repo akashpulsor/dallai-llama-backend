@@ -94,9 +94,7 @@ management:
       application: ${spring.application.name}
 
 post-production:
-  # Not creator-service -- a separate, not-yet-built service with its own DB. Calls here fail
-  # with a connection error until it's stood up; that's expected, not masked (see
-  # HttpPreProductionClient's own comment).
+  # A separate, dedicated service with its own DB (not creator-service, per explicit direction).
   pre-production-service:
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
     timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
@@ -106,9 +104,18 @@ post-production:
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:200000}
-    default-voice-clone-model: ${POST_PROD_DEFAULT_VOICE_CLONE_MODEL:voice-clone-v1}
-    default-lip-sync-model: ${POST_PROD_DEFAULT_LIP_SYNC_MODEL:wav2lip-v1}
-    default-tts-model: ${POST_PROD_DEFAULT_TTS_MODEL:tts-v1}
+    # fal-ai/minimax/voice-clone is fal.ai's real, documented voice-clone model -- ElevenLabs has
+    # no dedicated instant-voice-clone endpoint on fal.ai, and this system is standardized on
+    # fal.ai for everything rather than a separate direct-to-ElevenLabs provider. MiniMax's
+    # endpoint fuses cloning and synthesis into one call (see VoiceSynthesisService's javadoc), so
+    # default-tts-model points at the SAME model as default-voice-clone-model, not a separate TTS
+    # model -- voice-clone-v1/tts-v1 (fal.ai's original guessed-shape placeholders) remain seeded
+    # for a caller that explicitly asks for them, unused by this service's own defaults.
+    default-voice-clone-model: ${POST_PROD_DEFAULT_VOICE_CLONE_MODEL:fal-ai/minimax/voice-clone}
+    # fal-ai/sync-lipsync is fal.ai's real, documented lip-sync app slug -- wav2lip-v1 (still
+    # seeded, V15) was never a real fal.ai endpoint.
+    default-lip-sync-model: ${POST_PROD_DEFAULT_LIP_SYNC_MODEL:fal-ai/sync-lipsync}
+    default-tts-model: ${POST_PROD_DEFAULT_TTS_MODEL:fal-ai/minimax/voice-clone}
     default-foley-model: ${POST_PROD_DEFAULT_FOLEY_MODEL:foley-v1}
     default-music-model: ${POST_PROD_DEFAULT_MUSIC_MODEL:music-gen-v1}
     default-text-model: ${POST_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}

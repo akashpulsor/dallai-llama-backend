@@ -12,6 +12,7 @@ public record ScreenplaySceneView(
         TimeOfDay timeOfDay,
         String summary,
         String characterFocus,
-        String emotionalPurpose
+        String emotionalPurpose,
+        Integer estimatedSeconds
 ) {
 }

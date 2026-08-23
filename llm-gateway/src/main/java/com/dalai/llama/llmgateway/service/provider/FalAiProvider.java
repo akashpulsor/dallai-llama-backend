@@ -105,7 +105,7 @@ public class FalAiProvider implements LlmProvider {
                                 }
                             });
                 })
-                .map(result -> toLlmResponse(result, safeType(request)))
+                .map(result -> toLlmResponse(result, safeType(request), request.params()))
                 .onErrorMap(WebClientResponseException.class, ex -> new LlmProviderException(
                         "fal.ai call failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()),
                         ex.getStatusCode().is5xxServerError(), ex))
@@ -185,8 +185,24 @@ public class FalAiProvider implements LlmProvider {
             case "foley", "music" -> audioGenerationRequestBody(request);
             case "transcription" -> transcriptionRequestBody(request);
             case "video_edit" -> videoEditRequestBody(request);
+            case "image" -> imageRequestBody(request);
             default -> videoRequestBody(request);
         };
+    }
+
+    /** Identity-preserving image generation (FLUX_PULID and similar face-conditioned apps): one
+     * or two reference image URLs plus a text prompt. Same {@code reference_image_urls} param
+     * name {@link #videoRequestBody} already uses, so a caller conditioning a shot's identity on
+     * a cast reference photo passes the same param shape regardless of image vs. video output. */
+    private Map<String, Object> imageRequestBody(CanonicalRequest request) {
+        Map<String, Object> params = request.params() == null ? Map.of() : request.params();
+        Map<String, Object> body = new LinkedHashMap<>(params);
+        body.putIfAbsent("prompt", promptFromMessages(request));
+        Object referenceImageUrls = params.get("reference_image_urls");
+        if (referenceImageUrls instanceof List<?> urls && !urls.isEmpty()) {
+            body.putIfAbsent(urls.size() == 1 ? "image_url" : "image_urls", urls.size() == 1 ? urls.get(0) : urls);
+        }
+        return body;
     }
 
     private Map<String, Object> transcriptionRequestBody(CanonicalRequest request) {
@@ -227,16 +243,20 @@ public class FalAiProvider implements LlmProvider {
         return body;
     }
 
-    /** Field names are best-effort, not yet verified against a specific fal.ai model's real
-     * schema -- every candidate model (voice-clone, lip-sync, TTS) has its own app-specific input
-     * field names on fal.ai, and none has been confirmed live yet (see doc note on this gap).
-     * Passing params straight through as the body, plus these commonly-used aliases, means wiring
-     * a specific confirmed model later is a matter of confirming/renaming keys here, not
-     * restructuring the call path. */
+    /** Verified against fal.ai's real, documented fal-ai/minimax/voice-clone schema: {@code
+     * audio_url} (required, the reference sample) plus an optional {@code text} that makes the
+     * SAME call also synthesize a preview from the freshly cloned voice -- MiniMax's endpoint
+     * fuses cloning and synthesis into one call rather than "clone once, reuse a voice_id
+     * elsewhere" the way ElevenLabs' two-endpoint model works. Deliberately does NOT default
+     * "text" from the chat messages the way {@link #ttsRequestBody} does -- whether {@code text}
+     * is explicitly present in params is exactly the signal {@link #toLlmResponse} uses to know
+     * whether to read back {@code custom_voice_id} (a bare clone, no text given) or {@code
+     * audio.url} (clone+synthesize, text given). */
     private Map<String, Object> voiceCloneRequestBody(CanonicalRequest request) {
         Map<String, Object> params = request.params() == null ? Map.of() : request.params();
         Map<String, Object> body = new LinkedHashMap<>(params);
         body.putIfAbsent("audio_url", params.get("reference_audio_url"));
+        body.remove("reference_audio_url");
         return body;
     }
 
@@ -248,10 +268,21 @@ public class FalAiProvider implements LlmProvider {
         return body;
     }
 
+    /** Verified against fal.ai's real fal-ai/elevenlabs/tts/multilingual-v2 schema: {@code text}
+     * plus {@code voice} (a voice NAME, e.g. "Rachel" -- not the {@code voice_id} field name/shape
+     * every other provider in this codebase uses). Callers here still pass {@code voice_id} (the
+     * established param name across VoiceSynthesisService et al.), so it's renamed to fal.ai's
+     * real {@code voice} field rather than asking every caller to know fal.ai's specific spelling. */
     private Map<String, Object> ttsRequestBody(CanonicalRequest request) {
         Map<String, Object> params = request.params() == null ? Map.of() : request.params();
         Map<String, Object> body = new LinkedHashMap<>(params);
         body.putIfAbsent("text", promptFromMessages(request));
+        Object voiceId = params.get("voice_id");
+        if (voiceId != null) {
+            body.putIfAbsent("voice", voiceId);
+            body.remove("voice_id");
+        }
+        body.remove("language");
         return body;
     }
 
@@ -292,22 +323,30 @@ public class FalAiProvider implements LlmProvider {
         return request.modelType() == null ? "video" : request.modelType();
     }
 
-    /** Result shapes are best-effort per type, same caveat as the request-body builders above --
-     * not yet verified against a specific confirmed fal.ai model response. video/lip_sync/
-     * video_edit assume a {@code {video: {url}}} envelope (fal's common convention for anything
-     * producing a clip); tts/foley/music assume {@code {audio: {url}}}; voice_clone assumes a
-     * bare {@code voice_id} string, since cloning returns an identifier to reuse, not a playable
-     * asset; transcription assumes a bare {@code text} string, the transcript itself. */
+    /** Result shapes: video/lip_sync/video_edit assume a {@code {video: {url}}} envelope (fal's
+     * common convention for anything producing a clip); tts/foley/music assume {@code {audio:
+     * {url}}}; transcription assumes a bare {@code text} string, the transcript itself -- these
+     * are still best-effort/unverified for the types this pass didn't touch. voice_clone is
+     * verified against fal-ai/minimax/voice-clone's real fused response ({@code custom_voice_id}
+     * always present, {@code audio.url} present only when the request carried an explicit {@code
+     * text} to synthesize) -- {@code requestParams} carries that same signal forward from the
+     * request that produced this result, so a bare clone call reads back the voice id and a
+     * clone+synthesize call reads back the audio URL, from the one fused endpoint. */
     @SuppressWarnings("unchecked")
-    private LlmResponse toLlmResponse(Map<String, Object> result, String modelType) {
+    private LlmResponse toLlmResponse(Map<String, Object> result, String modelType, Map<String, Object> requestParams) {
         String error = firstText(result, "error");
         if (!error.isBlank()) {
             throw new LlmProviderException("fal.ai result contained an error: " + error, false);
         }
+        boolean voiceCloneWantsAudio = requestParams != null && requestParams.get("text") != null
+                && !String.valueOf(requestParams.get("text")).isBlank();
         String content = switch (modelType) {
-            case "voice_clone" -> firstNonBlank(firstText(result, "voice_id"), firstText(result, "voiceId"));
+            case "voice_clone" -> voiceCloneWantsAudio
+                    ? nestedUrl(result, "audio")
+                    : firstNonBlank(firstText(result, "custom_voice_id"), firstText(result, "voice_id"), firstText(result, "voiceId"));
             case "tts", "foley", "music" -> nestedUrl(result, "audio");
             case "transcription" -> firstText(result, "text");
+            case "image" -> firstImageUrl(result);
             default -> nestedUrl(result, "video"); // video, lip_sync, video_edit
         };
         if (content.isBlank()) {
@@ -317,6 +356,20 @@ public class FalAiProvider implements LlmProvider {
         // from duration/characters via the rate card's own convention, not token counts; v1
         // reports 0/0 here and leaves that billing model as a documented follow-up.
         return new LlmResponse(content, 0, 0, "COMPLETED", List.of());
+    }
+
+    /** fal.ai's common image-app envelope is {@code {images: [{url}, ...]}}; some apps return a
+     * single {@code {image: {url}}} instead -- try the array first, fall back to the singular. */
+    @SuppressWarnings("unchecked")
+    private String firstImageUrl(Map<String, Object> result) {
+        Object images = result.get("images");
+        if (images instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof Map<?, ?> first) {
+            Object url = first.get("url");
+            if (url != null) {
+                return String.valueOf(url);
+            }
+        }
+        return nestedUrl(result, "image");
     }
 
     @SuppressWarnings("unchecked")

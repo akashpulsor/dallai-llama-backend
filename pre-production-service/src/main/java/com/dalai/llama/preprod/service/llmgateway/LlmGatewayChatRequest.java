@@ -10,6 +10,9 @@ public record LlmGatewayChatRequest(
         String taskKey,
         Map<String, String> templateVariables
 ) {
-    public record LlmGatewayMessage(String role, String content) {
+    public record LlmGatewayMessage(String role, String content, List<String> imageDataUris) {
+        public LlmGatewayMessage(String role, String content) {
+            this(role, content, null);
+        }
     }
 }

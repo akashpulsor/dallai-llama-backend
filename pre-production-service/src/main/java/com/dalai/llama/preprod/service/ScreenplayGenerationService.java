@@ -1,11 +1,13 @@
 package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.domain.DraftStatus;
+import com.dalai.llama.preprod.domain.GenerationSource;
 import com.dalai.llama.preprod.domain.ProjectStatus;
 import com.dalai.llama.preprod.domain.TimeOfDay;
 import com.dalai.llama.preprod.domain.entity.Screenplay;
 import com.dalai.llama.preprod.domain.entity.ScreenplayScene;
 import com.dalai.llama.preprod.domain.entity.Script;
+import com.dalai.llama.preprod.dto.SaveScreenplayEditRequest;
 import com.dalai.llama.preprod.dto.ScreenplaySceneView;
 import com.dalai.llama.preprod.dto.ScreenplayView;
 import com.dalai.llama.preprod.repository.ProjectRepository;
@@ -30,6 +32,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Screenplay is versioned, not one-row-per-project: every {@link #generate} call and every
+ * {@link #saveEdit} call inserts a NEW {@code Screenplay} row with the next version number
+ * rather than overwriting the previous one. {@link #get} returns the latest version by default;
+ * {@link #listVersions} and {@link #getVersion} are what a version-navigation UI ("next
+ * version" / "previous version") reads. Source (GENERATED vs EDITED) and parentId track lineage
+ * the same way creative-planning-service's {@code idea_option} table does for idea candidates.
+ */
 @Service
 public class ScreenplayGenerationService {
 
@@ -66,42 +76,43 @@ public class ScreenplayGenerationService {
 
     @Transactional
     public ScreenplayView generate(UUID tenantId, UUID projectId) {
+        return generate(tenantId, projectId, null);
+    }
+
+    /** Powers a change request's "apply" -- same generate() flow, with the requested change
+     * folded into the script text the LLM sees, rather than a separate prompt/task key. */
+    @Transactional
+    public ScreenplayView regenerateWithNote(UUID tenantId, UUID projectId, String note) {
+        return generate(tenantId, projectId, note);
+    }
+
+    private ScreenplayView generate(UUID tenantId, UUID projectId, String note) {
         if (projectRepository.findByIdAndTenantId(projectId, tenantId).isEmpty()) {
             throw PreProductionException.notFound("No project " + projectId);
         }
         Script script = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
+        String scriptText = (note == null || note.isBlank())
+                ? script.getScriptText()
+                : script.getScriptText() + "\n\nRequested change for this screenplay: " + note;
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "screenplay-generate-" + projectId,
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("scriptText", script.getScriptText())));
+                        Map.of("scriptText", scriptText)));
 
         ScreenplayGenerationResult parsed = parse(response);
         if (parsed.scenes() == null || parsed.scenes().isEmpty()) {
             throw PreProductionException.upstream("PRE_PROD_SCREENPLAY_GENERATE returned no scenes");
         }
 
-        OffsetDateTime now = OffsetDateTime.now();
-        Screenplay screenplay = screenplayRepository.findByProjectId(projectId).orElseGet(() -> Screenplay.builder()
-                .tenantId(tenantId)
-                .projectId(projectId)
-                .scriptId(script.getId())
-                .createdAt(now)
-                .build());
-        screenplay.setStatus(DraftStatus.DRAFT);
-        screenplay.setUpdatedAt(now);
-        screenplay = screenplayRepository.save(screenplay);
-
-        List<ScreenplayScene> existing = screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId());
-        screenplaySceneRepository.deleteAll(existing);
-        UUID screenplayId = screenplay.getId();
+        Screenplay screenplay = newVersion(tenantId, projectId, script.getId(), GenerationSource.GENERATED, null);
         List<ScreenplayScene> scenes = parsed.scenes().stream()
                 .map(item -> ScreenplayScene.builder()
                         .tenantId(tenantId)
-                        .screenplayId(screenplayId)
+                        .screenplayId(screenplay.getId())
                         .sceneNumber(item.sceneNumber())
                         .slug(item.slug())
                         .location(item.location())
@@ -109,7 +120,8 @@ public class ScreenplayGenerationService {
                         .summary(item.summary())
                         .characterFocus(item.characterFocus())
                         .emotionalPurpose(item.emotionalPurpose())
-                        .createdAt(now)
+                        .estimatedSeconds(item.estimatedSeconds())
+                        .createdAt(screenplay.getCreatedAt())
                         .build())
                 .map(screenplaySceneRepository::save)
                 .collect(Collectors.toList());
@@ -119,11 +131,81 @@ public class ScreenplayGenerationService {
         return toView(screenplay, scenes);
     }
 
+    /** Saves a creator's manual scene edits as a new EDITED version -- no LLM call, a direct
+     * write. {@code parentVersion} is the version the edit started from; the new version becomes
+     * {@code parentVersion + 1} (or the current max + 1 if something else was generated since,
+     * so two edits never collide on the same version number). */
+    @Transactional
+    public ScreenplayView saveEdit(UUID tenantId, UUID projectId, Integer parentVersion, SaveScreenplayEditRequest request) {
+        Screenplay parent = screenplayRepository.findByProjectIdAndVersion(projectId, parentVersion)
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No screenplay version " + parentVersion + " for project " + projectId));
+
+        Screenplay screenplay = newVersion(tenantId, projectId, parent.getScriptId(), GenerationSource.EDITED, parent.getId());
+        List<ScreenplayScene> scenes = request.scenes().stream()
+                .map(item -> ScreenplayScene.builder()
+                        .tenantId(tenantId)
+                        .screenplayId(screenplay.getId())
+                        .sceneNumber(item.sceneNumber())
+                        .slug(item.slug())
+                        .location(item.location())
+                        .timeOfDay(item.timeOfDay() == null ? TimeOfDay.MIDDAY : item.timeOfDay())
+                        .summary(item.summary())
+                        .characterFocus(item.characterFocus())
+                        .emotionalPurpose(item.emotionalPurpose())
+                        .estimatedSeconds(item.estimatedSeconds())
+                        .createdAt(screenplay.getCreatedAt())
+                        .build())
+                .map(screenplaySceneRepository::save)
+                .collect(Collectors.toList());
+
+        return toView(screenplay, scenes);
+    }
+
+    private Screenplay newVersion(UUID tenantId, UUID projectId, UUID scriptId, GenerationSource source, UUID parentId) {
+        int nextVersion = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .map(s -> s.getVersion() + 1)
+                .orElse(1);
+        OffsetDateTime now = OffsetDateTime.now();
+        return screenplayRepository.save(Screenplay.builder()
+                .tenantId(tenantId)
+                .projectId(projectId)
+                .scriptId(scriptId)
+                .status(DraftStatus.DRAFT)
+                .version(nextVersion)
+                .source(source)
+                .parentId(parentId)
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+    }
+
+    /** The latest version -- what a project page reads by default. */
     @Transactional(readOnly = true)
     public ScreenplayView get(UUID tenantId, UUID projectId) {
-        Screenplay screenplay = screenplayRepository.findByProjectId(projectId)
+        Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .filter(s -> s.getTenantId().equals(tenantId))
                 .orElseThrow(() -> PreProductionException.notFound("No screenplay for project " + projectId));
         return toView(screenplay, screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId()));
+    }
+
+    /** One specific version -- what "previous version" / "next version" navigation reads. */
+    @Transactional(readOnly = true)
+    public ScreenplayView getVersion(UUID tenantId, UUID projectId, Integer version) {
+        Screenplay screenplay = screenplayRepository.findByProjectIdAndVersion(projectId, version)
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No screenplay version " + version + " for project " + projectId));
+        return toView(screenplay, screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId()));
+    }
+
+    /** Every version ever saved for this project, oldest first -- what populates a version
+     * picker without fetching every version's full scene list. */
+    @Transactional(readOnly = true)
+    public List<ScreenplayView> listVersions(UUID tenantId, UUID projectId) {
+        return screenplayRepository.findByProjectIdOrderByVersionAsc(projectId).stream()
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .map(s -> toView(s, List.of()))
+                .collect(Collectors.toList());
     }
 
     private ScreenplayGenerationResult parse(LlmGatewayChatResponse response) {
@@ -140,8 +222,9 @@ public class ScreenplayGenerationService {
     private ScreenplayView toView(Screenplay screenplay, List<ScreenplayScene> scenes) {
         List<ScreenplaySceneView> sceneViews = scenes.stream()
                 .map(s -> new ScreenplaySceneView(s.getId(), s.getSceneNumber(), s.getSlug(), s.getLocation(), s.getTimeOfDay(),
-                        s.getSummary(), s.getCharacterFocus(), s.getEmotionalPurpose()))
+                        s.getSummary(), s.getCharacterFocus(), s.getEmotionalPurpose(), s.getEstimatedSeconds()))
                 .collect(Collectors.toList());
-        return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getStatus(), sceneViews);
+        return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getStatus(),
+                screenplay.getVersion(), screenplay.getSource(), screenplay.getParentId(), screenplay.getCreatedAt(), sceneViews);
     }
 }

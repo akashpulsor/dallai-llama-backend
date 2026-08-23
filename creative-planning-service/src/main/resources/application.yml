@@ -45,6 +45,25 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: creative-planning-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: record
+
   security:
     oauth2:
       resourceserver:
@@ -92,6 +111,12 @@ creative-planning:
     # -- see ChatServiceClient's javadoc. Unlike critic, never gates generation on success.
     base-url: ${CHAT_SERVICE_BASE_URL:http://chat-service.apps.svc.cluster.local:8080}
     timeout-ms: ${CHAT_SERVICE_TIMEOUT_MS:30000}
+  pre-production:
+    # Where a locked idea gets handed off to become a real project (POST
+    # /v1/projects/from-locked-idea) -- see PreProductionServiceClient. Unlike chat, this one
+    # gates: a failure here fails the lock request.
+    base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:30000}
   share-token:
     # How long a project-requirement share link stays live before the public GET/mark-funded
     # routes refuse it -- refreshShareToken() issues a new one when a client didn't pay in time.

@@ -11,4 +11,6 @@ public interface LockedIdeaRepository extends JpaRepository<LockedIdea, UUID> {
     Optional<LockedIdea> findByIdAndTenantId(UUID id, UUID tenantId);
 
     Optional<LockedIdea> findBySessionId(UUID sessionId);
+
+    Optional<LockedIdea> findByProjectRequirementId(UUID projectRequirementId);
 }

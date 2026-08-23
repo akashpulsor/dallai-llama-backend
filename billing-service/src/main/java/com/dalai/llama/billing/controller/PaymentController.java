@@ -4,9 +4,11 @@ import com.dalai.llama.billing.domain.entity.Payment;
 import com.dalai.llama.billing.domain.entity.PaymentMethod;
 import com.dalai.llama.billing.dto.request.AddPaymentMethodRequest;
 import com.dalai.llama.billing.dto.request.CreatePaymentRequest;
+import com.dalai.llama.billing.dto.request.CreateProjectRequirementPaymentRequest;
 import com.dalai.llama.billing.dto.request.VerifyPaymentRequest;
 import com.dalai.llama.billing.dto.response.PaymentMethodResponse;
 import com.dalai.llama.billing.dto.response.PaymentResponse;
+import com.dalai.llama.billing.dto.response.ProjectRequirementFundingView;
 import com.dalai.llama.billing.repository.PaymentMethodRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
 import com.dalai.llama.billing.service.PaymentService;
@@ -101,6 +103,42 @@ public class PaymentController {
                 .status("SUCCESS")
                 .message("Payment verified and wallet credited")
                 .build());
+    }
+
+    // ==================== PROJECT REQUIREMENT FUNDING ====================
+
+    /** Starts a Razorpay order for a specific creative-planning-service brief. Same shape and
+     * the same downstream success path (webhook -> wallet credit -> PaymentReceivedEvent) as a
+     * wallet top-up -- only the reference differs. */
+    @PostMapping("/project-requirements/{requirementId}/payments")
+    @Operation(summary = "Fund a project requirement", description = "Create a Razorpay order to fund a specific brief")
+    public ResponseEntity<PaymentOrderResponse> createProjectRequirementPayment(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID requirementId,
+            @Valid @RequestBody CreateProjectRequirementPaymentRequest request
+    ) {
+        PaymentService.PaymentOrderResult order = paymentService.createProjectRequirementPaymentOrder(
+                tenantId, requirementId, request.getCurrency(), request.getAmount(), request.getDescription());
+
+        return ResponseEntity.ok(PaymentOrderResponse.builder()
+                .paymentId(order.paymentId())
+                .gatewayOrderId(order.gatewayOrderId())
+                .amount(order.amount())
+                .currency(order.currency())
+                .keyId(order.keyId())
+                .status(order.status())
+                .build());
+    }
+
+    /** The "how much has this brief actually been funded" view -- what a project's page reads
+     * on load, per a real payment ledger rather than a self-reported flag. */
+    @GetMapping("/project-requirements/{requirementId}/funding")
+    @Operation(summary = "Get project requirement funding", description = "Total funded and payment history for a specific brief")
+    public ResponseEntity<ProjectRequirementFundingView> getProjectRequirementFunding(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID requirementId
+    ) {
+        return ResponseEntity.ok(paymentService.getProjectRequirementFunding(tenantId, requirementId));
     }
 
     // ==================== PAYMENT METHODS ====================
@@ -209,11 +247,12 @@ public class PaymentController {
 
     @lombok.Builder
     @lombok.Getter
-    public static class CreatePaymentResponse {
+    public static class PaymentOrderResponse {
         private UUID paymentId;
         private String gatewayOrderId;
         private java.math.BigDecimal amount;
         private String currency;
+        private String keyId;
         private String status;
     }
 

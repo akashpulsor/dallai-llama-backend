@@ -45,6 +45,7 @@ public class ChatOrchestrator {
     private final ChatMessageRepository chatMessageRepository;
     private final EmbeddedDocumentService embeddedDocumentService;
     private final List<ChatActionExecutor> actionExecutors;
+    private final ActionCatalog actionCatalog;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
@@ -54,6 +55,7 @@ public class ChatOrchestrator {
             ChatMessageRepository chatMessageRepository,
             EmbeddedDocumentService embeddedDocumentService,
             List<ChatActionExecutor> actionExecutors,
+            ActionCatalog actionCatalog,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${chat.llm-gateway.default-text-model}") String defaultModel
@@ -62,6 +64,7 @@ public class ChatOrchestrator {
         this.chatMessageRepository = chatMessageRepository;
         this.embeddedDocumentService = embeddedDocumentService;
         this.actionExecutors = actionExecutors;
+        this.actionCatalog = actionCatalog;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.defaultModel = defaultModel;
@@ -91,7 +94,7 @@ public class ChatOrchestrator {
                         Map.of(
                                 "conversationHistory", conversationHistory(history),
                                 "retrievedContext", retrievedContext(retrieved),
-                                "availableActions", ActionCatalog.describe(session.getScopeType())
+                                "availableActions", actionCatalog.describe(session.getScopeType())
                         )));
 
         ChatCompletionContent completion = parse(response);

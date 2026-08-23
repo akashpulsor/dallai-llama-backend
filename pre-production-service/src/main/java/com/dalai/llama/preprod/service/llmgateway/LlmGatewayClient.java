@@ -5,8 +5,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.core.ParameterizedTypeReference;
 
 import java.time.Duration;
+import java.util.List;
 
 /** llm-gateway is the only place any LLM call is made from -- same principle as every other
  * service in this system. Script/screenplay/shot-list generation all dispatch through this one
@@ -38,6 +40,24 @@ public class LlmGatewayClient {
         } catch (WebClientResponseException ex) {
             throw PreProductionException.upstream(
                     "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
+        }
+    }
+
+    /** llm-gateway's {@code GET /v1/languages} is its own canonical source of truth for what
+     * languages exist (see its {@code language_master}/{@code model_supported_language} tables) --
+     * this is a live proxy, not a copy, so the two never drift. No tenant header: the endpoint is
+     * unauthenticated reference data, same as the chat/estimate calls' underlying model list. */
+    public List<LlmGatewayLanguageSummary> listLanguages() {
+        try {
+            return webClient.get()
+                    .uri("/v1/languages")
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<List<LlmGatewayLanguageSummary>>() {
+                    })
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw PreProductionException.upstream(
+                    "llm-gateway languages failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
         }
     }
 }

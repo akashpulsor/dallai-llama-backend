@@ -20,7 +20,12 @@ import java.util.UUID;
 
 /** The handoff point to pre-production-service: {@code id} is exactly the {@code lockedIdeaId}
  * pre-production-service's {@code POST /v1/projects/from-locked-idea} expects as an external
- * reference -- no local FK back, no synchronous call out. This service's job ends here. */
+ * reference -- no local FK back, no synchronous call out. This service's job ends here.
+ * <p>
+ * Two entry points, same handoff artifact: {@code sessionId} is set when this idea came out of
+ * a campaign-planning chat session; {@code projectRequirementId} is set when it came from the
+ * standalone-brief path's idea generation instead. Exactly one is ever non-null (enforced by
+ * {@code chk_locked_idea_origin}). */
 @Getter
 @Setter
 @Builder
@@ -38,8 +43,16 @@ public class LockedIdea {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "session_id", nullable = false, unique = true)
+    @Column(name = "session_id", unique = true)
     private UUID sessionId;
+
+    @Column(name = "project_requirement_id")
+    private UUID projectRequirementId;
+
+    /** Set once this idea has been synchronously handed to pre-production-service --
+     * see ProjectRequirementIdeaService.lockOption. Null until then. */
+    @Column(name = "project_id")
+    private UUID projectId;
 
     @Column(name = "title", nullable = false, length = 240)
     private String title;

@@ -169,15 +169,6 @@ public class Shot {
     @Column(name = "sketch_prompt", columnDefinition = "text")
     private String sketchPrompt;
 
-    /** Set once {@code POST /v1/shots/{shotId}/storyboard-image} has generated and stored an
-     * image from {@link #sketchPrompt}. Null until then -- one current image per shot in this v1
-     * (regenerating overwrites both columns; version history is a later concern, not this pass). */
-    @Column(name = "storyboard_image_bucket")
-    private String storyboardImageBucket;
-
-    @Column(name = "storyboard_image_object_key")
-    private String storyboardImageObjectKey;
-
     // --- Full cinematography taxonomy (camera/position/lens/composition/focus/movement/support/
     // exposure/temporal/filtration/image-character) -- mirrors ShotContext.Camera's expanded
     // fields exactly, since this is where the DP critic's reasoning material comes from. ---
@@ -334,6 +325,35 @@ public class Shot {
 
     @Column(name = "cine_flare", length = 160)
     private String cineFlare;
+
+    // --- Shot-plan richness restored from creator-service's real StoryboardTag (coverage/
+    // continuity/production-logistics fields that had no equivalent here at all). ---
+
+    @Column(name = "coverage_type", length = 80)
+    private String coverageType;
+
+    @Column(name = "screen_direction", length = 80)
+    private String screenDirection;
+
+    @Column(name = "people_in_frame")
+    private Integer peopleInFrame;
+
+    @Column(name = "cultural_references", columnDefinition = "text")
+    private String culturalReferences;
+
+    /** Marketing sub-category for a PRODUCT_HERO shot, e.g. "Hero Shot"/"Ingredient Shot"/
+     * "Pack Shot" -- free text, not an enum, since the real vocabulary is category-dependent. */
+    @Column(name = "product_shot_type", length = 80)
+    private String productShotType;
+
+    @Column(name = "shoot_day", length = 40)
+    private String shootDay;
+
+    @Column(name = "shoot_block", length = 40)
+    private String shootBlock;
+
+    @Column(name = "director_note", columnDefinition = "text")
+    private String directorNote;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

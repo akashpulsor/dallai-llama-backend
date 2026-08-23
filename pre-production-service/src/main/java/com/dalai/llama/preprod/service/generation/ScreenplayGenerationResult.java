@@ -16,7 +16,8 @@ public record ScreenplayGenerationResult(
             String timeOfDay,
             String summary,
             String characterFocus,
-            String emotionalPurpose
+            String emotionalPurpose,
+            Integer estimatedSeconds
     ) {
     }
 }

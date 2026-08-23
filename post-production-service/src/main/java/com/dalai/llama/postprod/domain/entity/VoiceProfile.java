@@ -49,6 +49,18 @@ public class VoiceProfile {
     @Column(name = "provider_voice_id", nullable = false)
     private String providerVoiceId;
 
+    /** Our own durable copy of the reference sample this clone was made from (see
+     * AssetPersistenceService) -- fal-ai/minimax/voice-clone fuses cloning and synthesis into one
+     * call with no separate "reuse this voice_id" endpoint, so re-synthesizing a new line (or a
+     * preview) for an already-cloned voice needs the reference audio sent again, not just
+     * providerVoiceId. The URL pre-production-service originally supplied was a signed URL, not
+     * durable/re-fetchable later, hence copying it here at clone time. */
+    @Column(name = "reference_audio_bucket", nullable = false)
+    private String referenceAudioBucket;
+
+    @Column(name = "reference_audio_object_key", nullable = false)
+    private String referenceAudioObjectKey;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

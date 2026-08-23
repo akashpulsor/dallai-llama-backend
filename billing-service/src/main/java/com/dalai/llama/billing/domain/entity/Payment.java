@@ -37,6 +37,13 @@ public class Payment {
     @Column(name = "subscription_id")
     private UUID subscriptionId;
 
+    /** Set when this payment funds a specific creative-planning-service ProjectRequirement
+     * rather than (or in addition to) a general wallet top-up. Mutually exclusive with
+     * {@code subscriptionId} in practice, but not enforced at the entity level — a payment
+     * is "about" whichever reference is non-null. */
+    @Column(name = "project_requirement_id")
+    private UUID projectRequirementId;
+
     private UUID paymentMethodId;
 
     @Column(nullable = false, precision = 15, scale = 4)
@@ -82,6 +89,7 @@ public class Payment {
             String gateway,
             String gatewayOrderId,
             UUID subscriptionId, // Optional, for linking to subscription
+            UUID projectRequirementId, // Optional, for linking to a creative-planning-service brief
             String description
     ) {
         if (currency == null || currency.length() != 3) {
@@ -99,6 +107,7 @@ public class Payment {
                 .gateway(gateway)
                 .gatewayOrderId(gatewayOrderId)
                 .subscriptionId(subscriptionId)
+                .projectRequirementId(projectRequirementId)
                 .status(PaymentStatus.PENDING)
                 .description(description)
                 .expiredAt(now.plus(15, ChronoUnit.MINUTES))
@@ -174,6 +183,7 @@ public class Payment {
                 .currency(this.currency)
                 .gateway(this.gateway)
                 .subscriptionId(this.subscriptionId)
+                .projectRequirementId(this.projectRequirementId)
                 .occurredAt(Instant.now())
                 .build();
     }

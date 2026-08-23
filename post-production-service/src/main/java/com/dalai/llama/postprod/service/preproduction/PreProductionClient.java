@@ -8,5 +8,5 @@ import java.util.UUID;
  * DialogueSyncCoordinator changing at all. */
 public interface PreProductionClient {
 
-    PreProductionShotDetails getShotDialogue(UUID projectId, UUID scriptId, String shotRef);
+    PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, UUID scriptId, String shotRef);
 }

@@ -1,13 +1,17 @@
 package com.dalai.llama.preprod.service.assembly;
 
+import com.dalai.llama.preprod.domain.AnchorType;
+import com.dalai.llama.preprod.domain.entity.ContinuityLock;
 import com.dalai.llama.preprod.domain.entity.Shot;
 import com.dalai.llama.preprod.service.videogen.shotcontext.AudioAmbience;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Camera;
+import com.dalai.llama.preprod.service.videogen.shotcontext.ContinuityAnchor;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Environment;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Lighting;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Narrative;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Technical;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /** The parts of a {@code ShotContext} that don't vary by {@link com.dalai.llama.preprod.domain.ShotType}
@@ -58,13 +62,42 @@ final class ShotContextCommonFields {
         return new Technical(shot.getDurationSeconds(), shot.getAspectRatio(), null, preferredModel);
     }
 
+    /** {@code musicMoodNote} stays null -- Shot has no dedicated field for it yet (creator-service's
+     * real "Music mood:" prompt line, tracked as a schema gap in the pending creator-service field
+     * audit, not invented here). {@code ambientDescription} was being silently dropped: {@code
+     * Shot.soundDesign} is a real column, already captured at shot-list generation time -- this
+     * was thrown away instead of reaching video-generation-service's prompt. */
     static AudioAmbience audioAmbience(ShotAssemblyContext ctx) {
-        return new AudioAmbience(null, null);
+        return new AudioAmbience(ctx.shot().getSoundDesign(), null);
     }
 
-    /** Full continuity-anchor propagation (doc §9's ContinuityAnchor system) is deferred past this
-     * v1 slice -- every strategy returns an empty, valid list rather than guessing at anchors. */
-    static List<com.dalai.llama.preprod.service.videogen.shotcontext.ContinuityAnchor> continuityAnchors(ShotAssemblyContext ctx) {
-        return List.of();
+    /** {@code ctx.continuityLocks()} is the project's whole {@code ContinuityBible} (GLOBAL_CAMPAIGN
+     * anchors, one per locked value -- character identity/wardrobe/set-prop/camera-language/
+     * lighting-color, deduped and capped at generation time by {@code ContinuityBibleService}).
+     * {@code ctx.previousShot()} adds PRIOR_SHOT anchors carrying forward the immediately
+     * preceding shot's location/camera/lighting -- creator-service's real videoConsistencyBible +
+     * previousShotContinuityContext propagation, reduced to what a single-hop lookback needs
+     * rather than that system's 3-shot window. */
+    static List<ContinuityAnchor> continuityAnchors(ShotAssemblyContext ctx) {
+        List<ContinuityAnchor> anchors = new ArrayList<>();
+        for (ContinuityLock lock : ctx.continuityLocks()) {
+            anchors.add(new ContinuityAnchor(AnchorType.GLOBAL_CAMPAIGN, lock.getCategory().toString(), lock.getValue(), null));
+        }
+        Shot previous = ctx.previousShot();
+        if (previous != null) {
+            if (previous.getLocation() != null && !previous.getLocation().isBlank()) {
+                anchors.add(new ContinuityAnchor(AnchorType.PRIOR_SHOT, "location",
+                        "Previous shot's location: " + previous.getLocation(), null));
+            }
+            if (previous.getLightingMood() != null) {
+                anchors.add(new ContinuityAnchor(AnchorType.PRIOR_SHOT, "lighting",
+                        "Previous shot's lighting mood: " + previous.getLightingMood(), null));
+            }
+            if (previous.getCameraMovement() != null && !previous.getCameraMovement().isBlank()) {
+                anchors.add(new ContinuityAnchor(AnchorType.PRIOR_SHOT, "camera",
+                        "Previous shot's camera movement: " + previous.getCameraMovement(), null));
+            }
+        }
+        return anchors;
     }
 }

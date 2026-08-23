@@ -54,6 +54,9 @@ public class ShotListGenerationService {
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final ProjectService projectService;
+    private final ProjectConfigService projectConfigService;
+    private final ContinuityBibleService continuityBibleService;
+    private final ShotPlanQualityService shotPlanQualityService;
     private final String defaultModel;
 
     public ShotListGenerationService(
@@ -66,6 +69,9 @@ public class ShotListGenerationService {
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             ProjectService projectService,
+            ProjectConfigService projectConfigService,
+            ContinuityBibleService continuityBibleService,
+            ShotPlanQualityService shotPlanQualityService,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
     ) {
         this.projectRepository = projectRepository;
@@ -77,6 +83,9 @@ public class ShotListGenerationService {
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.projectService = projectService;
+        this.projectConfigService = projectConfigService;
+        this.continuityBibleService = continuityBibleService;
+        this.shotPlanQualityService = shotPlanQualityService;
         this.defaultModel = defaultModel;
     }
 
@@ -87,7 +96,9 @@ public class ShotListGenerationService {
         }
         Script script = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
-        Screenplay screenplay = screenplayRepository.findByProjectId(projectId)
+        // Screenplay is versioned now (see ScreenplayGenerationService) -- shots always build
+        // from the latest version, same as before this only had one version to choose from.
+        Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no screenplay yet"));
         List<ScreenplayScene> scenes = screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId());
         if (scenes.isEmpty()) {
@@ -98,13 +109,20 @@ public class ShotListGenerationService {
         List<String> knownCharacterKeys = scriptCharacterRepository.findByScriptId(script.getId()).stream()
                 .map(ScriptCharacter::getCharacterKey)
                 .collect(Collectors.toList());
+        var projectConfig = projectConfigService.getEntityOrDefault(projectId);
+        AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
+        boolean preferMotionGraphics = projectConfig != null && Boolean.TRUE.equals(projectConfig.getPreferMotionGraphics());
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "shot-list-generate-" + projectId,
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys))));
+                        Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys),
+                                "aspectRatio", configuredAspectRatio == null ? "no preference set -- choose what suits each shot" : configuredAspectRatio.toString(),
+                                "motionGraphicsGuidance", preferMotionGraphics
+                                        ? "This project prefers MOTION_GRAPHIC for any text/data/graphic-driven beat -- classify those shots as MOTION_GRAPHIC rather than ACTION or B_ROLL."
+                                        : "Only use MOTION_GRAPHIC where the beat is clearly a graphic/text/data overlay, not a live-action moment.")));
 
         ShotListGenerationResult parsed = parse(response);
         if (parsed.shots() == null || parsed.shots().isEmpty()) {
@@ -114,11 +132,14 @@ public class ShotListGenerationService {
         OffsetDateTime now = OffsetDateTime.now();
         shotRepository.deleteAll(shotRepository.findByProjectIdOrderByShotNumberAsc(projectId));
 
+        AspectRatio defaultAspectRatio = configuredAspectRatio == null ? AspectRatio.RATIO_9_16 : configuredAspectRatio;
         List<Shot> shots = parsed.shots().stream()
-                .map(item -> toShot(tenantId, projectId, sceneIdByNumber, item, now))
+                .map(item -> toShot(tenantId, projectId, sceneIdByNumber, item, now, defaultAspectRatio))
                 .map(shotRepository::save)
                 .collect(Collectors.toList());
 
+        continuityBibleService.refresh(tenantId, projectId);
+        shotPlanQualityService.refresh(tenantId, projectId);
         projectService.advanceStatus(tenantId, projectId, ProjectStatus.SHOT_LIST_READY);
 
         return shots.stream().map(this::toView).collect(Collectors.toList());
@@ -132,7 +153,7 @@ public class ShotListGenerationService {
     }
 
     private Shot toShot(UUID tenantId, UUID projectId, Map<Integer, UUID> sceneIdByNumber,
-                         ShotListGenerationResult.ShotItem item, OffsetDateTime now) {
+                         ShotListGenerationResult.ShotItem item, OffsetDateTime now, AspectRatio defaultAspectRatio) {
         UUID sceneId = sceneIdByNumber.get(item.sceneNumber());
         if (sceneId == null) {
             throw PreProductionException.upstream(
@@ -154,7 +175,7 @@ public class ShotListGenerationService {
                 .timeOfDay(TolerantEnumParser.parse(TimeOfDay.class, item.timeOfDay(), TimeOfDay.MIDDAY))
                 .lightingMood(TolerantEnumParser.parse(MoodProfile.class, item.lightingMood(), MoodProfile.SOFT))
                 .durationSeconds(item.durationSeconds() == null ? DEFAULT_SHOT_DURATION_SECONDS : item.durationSeconds())
-                .aspectRatio(TolerantEnumParser.parse(AspectRatio.class, item.aspectRatio(), AspectRatio.RATIO_9_16))
+                .aspectRatio(TolerantEnumParser.parse(AspectRatio.class, item.aspectRatio(), defaultAspectRatio))
                 .status(ShotStatus.READY)
                 .cameraAngle(item.cameraAngle())
                 .cameraMovement(item.cameraMovement())
@@ -178,6 +199,14 @@ public class ShotListGenerationService {
                 .cinematicExecution(item.cinematicExecution())
                 .rookieFriendlyGuide(item.rookieFriendlyGuide())
                 .sketchPrompt(item.sketchPrompt())
+                .coverageType(item.coverageType())
+                .screenDirection(item.screenDirection())
+                .peopleInFrame(item.peopleInFrame())
+                .culturalReferences(item.culturalReferences())
+                .productShotType(item.productShotType())
+                .shootDay(item.shootDay())
+                .shootBlock(item.shootBlock())
+                .directorNote(item.directorNote())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -208,6 +237,8 @@ public class ShotListGenerationService {
                 shot.getEditingNotes(), shot.getRetentionGoal(), shot.getCreatorDirection(),
                 shot.getSubtitlePosition(), shot.getMobileFocusArea(), shot.getSafeZoneNotes(),
                 shot.getExecutionDifficulty(), shot.getCinematicExecution(), shot.getRookieFriendlyGuide(),
-                shot.getSketchPrompt(), CinematographyMapper.toView(shot));
+                shot.getSketchPrompt(), shot.getCoverageType(), shot.getScreenDirection(), shot.getPeopleInFrame(),
+                shot.getCulturalReferences(), shot.getProductShotType(), shot.getShootDay(), shot.getShootBlock(),
+                shot.getDirectorNote(), CinematographyMapper.toView(shot));
     }
 }

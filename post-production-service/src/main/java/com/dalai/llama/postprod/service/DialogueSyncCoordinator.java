@@ -65,7 +65,7 @@ public class DialogueSyncCoordinator {
                                 UUID videoGenJobId, String targetLanguage,
                                 String voiceCloneModel, String ttsModel, String lipSyncModel) {
         // 1. Dialogue + cast details from pre-production, by project_id + shot.
-        PreProductionShotDetails shotDetails = preProductionClient.getShotDialogue(projectId, null, shotRef);
+        PreProductionShotDetails shotDetails = preProductionClient.getShotDialogue(tenantId, projectId, null, shotRef);
 
         // 2. The already-generated shot from video-generation-service.
         String sourceVideoUrl = videoGenerationClient.getShotVideoUrl(tenantId, videoGenJobId);
@@ -104,12 +104,20 @@ public class DialogueSyncCoordinator {
                                 tenantId, projectId, safeCharacterRef(shotDetails), effectiveTargetLanguage);
                 String newCloneJobId = null;
                 VoiceProfile voiceProfile;
+                String referenceAudioUrlForSynthesis;
                 if (existing.isPresent()) {
                     voiceProfile = existing.get();
+                    // The original signed URL pre-production-service gave us is long gone -- our
+                    // own durable copy (made below the first time this character+language was
+                    // cloned) is what we re-sign to feed the fused clone+synthesize call again.
+                    referenceAudioUrlForSynthesis = assetPersistenceService.presignedUrl(
+                            voiceProfile.getReferenceAudioBucket(), voiceProfile.getReferenceAudioObjectKey());
                 } else {
                     VoiceCloneResult cloneResult = voiceCloneGenerationService.cloneVoice(
                             tenantId, "post-prod-voiceclone-" + job.getDialogueSyncJobId(),
                             shotDetails.referenceAudioUrl(), effectiveTargetLanguage, voiceCloneModel);
+                    AssetPersistenceService.PersistedAsset referenceAsset =
+                            assetPersistenceService.persist(job.getDialogueSyncJobId(), shotDetails.referenceAudioUrl());
                     voiceProfile = voiceProfileRepository.save(VoiceProfile.builder()
                             .voiceProfileId(UUID.randomUUID())
                             .tenantId(tenantId)
@@ -118,9 +126,12 @@ public class DialogueSyncCoordinator {
                             .language(effectiveTargetLanguage)
                             .providerId(cloneResult.providerId())
                             .providerVoiceId(cloneResult.providerVoiceId())
+                            .referenceAudioBucket(referenceAsset.bucket())
+                            .referenceAudioObjectKey(referenceAsset.objectKey())
                             .createdAt(OffsetDateTime.now())
                             .build());
                     newCloneJobId = cloneResult.llmGatewayJobId() == null ? null : cloneResult.llmGatewayJobId().toString();
+                    referenceAudioUrlForSynthesis = shotDetails.referenceAudioUrl();
                 }
                 dialogueSyncJobPersistenceService.recordVoiceCloneDispatched(
                         job.getDialogueSyncJobId(), voiceProfile.getVoiceProfileId(), newCloneJobId);
@@ -131,7 +142,7 @@ public class DialogueSyncCoordinator {
                 // each time since the line differs per shot.
                 VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
                         tenantId, "post-prod-tts-" + job.getDialogueSyncJobId(),
-                        voiceProfile.getProviderVoiceId(), shotDetails.dialogueScript(), effectiveTargetLanguage, ttsModel);
+                        voiceProfile.getProviderVoiceId(), referenceAudioUrlForSynthesis, shotDetails.dialogueScript(), effectiveTargetLanguage, ttsModel);
                 dialogueAudioUrl = synthesis.audioUrl();
             }
 

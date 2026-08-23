@@ -1,16 +1,21 @@
 package com.dalai.llama.preprod.service.assembly;
 
 import com.dalai.llama.preprod.domain.ShotType;
+import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.service.videogen.shotcontext.ProductBrand;
 import com.dalai.llama.preprod.service.videogen.shotcontext.ShotContext;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/** PRODUCT_ASSIGNMENT (which product, which reference image) is deferred past this v1 slice --
- * {@code productRefBucket}/{@code productRefObjectKey} stay null until that entity exists, but
- * this still produces a valid, dispatchable ShotContext with the hero-shot flag and placement
- * note set from the shot's own fields. */
+/** Which product, which reference image is resolved the exact same way {@link
+ * DialogueShotContextAssemblyStrategy} resolves a speaking character's face: the shot's {@code
+ * primaryCharacterKey} names a PRODUCT-typed {@code ScriptCharacter}, {@code
+ * ShotContextAssemblyService} resolves its {@code CastAssignment} -> {@code CastProfile} (a
+ * PRODUCT profile has a product photo where an ACTOR profile has a face), and {@code
+ * ctx.castProfile()} carries it here. {@code productRefBucket}/{@code productRefObjectKey} stay
+ * null only when the shot has no primary character or that character has no assignment yet --
+ * still a valid, dispatchable ShotContext, just with no product image resolved. */
 @Component
 class ProductHeroShotContextAssemblyStrategy implements ShotContextAssemblyStrategy {
 
@@ -21,7 +26,11 @@ class ProductHeroShotContextAssemblyStrategy implements ShotContextAssemblyStrat
 
     @Override
     public ShotContext assemble(ShotAssemblyContext ctx) {
-        ProductBrand productBrand = new ProductBrand(Boolean.TRUE, ctx.shot().getScriptLine(), null, null);
+        CastProfile productProfile = ctx.castProfile();
+        ProductBrand productBrand = new ProductBrand(
+                Boolean.TRUE, ctx.shot().getScriptLine(),
+                productProfile == null ? null : productProfile.getFaceRefBucket(),
+                productProfile == null ? null : productProfile.getFaceRefObjectKey());
         return new ShotContext(
                 ctx.shot().getShotRef(),
                 ShotContextCommonFields.narrative(ctx),

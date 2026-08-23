@@ -1,6 +1,7 @@
 package com.dalai.llama.preprod.domain.entity;
 
 import com.dalai.llama.preprod.domain.DraftStatus;
+import com.dalai.llama.preprod.domain.GenerationSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -35,7 +36,7 @@ public class Screenplay {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "project_id", nullable = false, unique = true)
+    @Column(name = "project_id", nullable = false)
     private UUID projectId;
 
     @Column(name = "script_id", nullable = false)
@@ -44,6 +45,19 @@ public class Screenplay {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private DraftStatus status;
+
+    /** 1-based, increasing per project -- generate() always inserts a new row with the next
+     * number rather than reusing the existing one, so every version stays readable. */
+    @Column(name = "version", nullable = false)
+    private Integer version;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", nullable = false, length = 16)
+    private GenerationSource source;
+
+    /** Set only for EDITED versions -- the screenplay this one was manually edited from. */
+    @Column(name = "parent_id")
+    private UUID parentId;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

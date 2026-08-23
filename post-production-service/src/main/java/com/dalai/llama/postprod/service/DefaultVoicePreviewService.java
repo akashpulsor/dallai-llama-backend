@@ -32,9 +32,11 @@ public class DefaultVoicePreviewService implements VoicePreviewService {
                 .orElseThrow(() -> PostProductionException.notFound("Unknown voice_profile_id: " + voiceProfileId));
 
         String previewText = (text == null || text.isBlank()) ? DEFAULT_PREVIEW_TEXT : text;
+        String referenceAudioUrl = assetPersistenceService.presignedUrl(
+                profile.getReferenceAudioBucket(), profile.getReferenceAudioObjectKey());
         VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
                 tenantId, "post-prod-preview-" + UUID.randomUUID(),
-                profile.getProviderVoiceId(), previewText, profile.getLanguage(), modelOverride);
+                profile.getProviderVoiceId(), referenceAudioUrl, previewText, profile.getLanguage(), modelOverride);
 
         AssetPersistenceService.PersistedAsset asset = assetPersistenceService.persist(voiceProfileId, synthesis.audioUrl());
         String playableUrl = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());

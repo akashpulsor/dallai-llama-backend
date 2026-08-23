@@ -1,0 +1,12 @@
+ALTER TABLE script_character ADD COLUMN gender VARCHAR(40);
+ALTER TABLE script_character ADD COLUMN age INTEGER;
+ALTER TABLE script_character ADD COLUMN age_range VARCHAR(40);
+ALTER TABLE script_character ADD COLUMN look TEXT;
+ALTER TABLE script_character ADD COLUMN profile TEXT;
+ALTER TABLE script_character ADD COLUMN persona TEXT;
+ALTER TABLE script_character ADD COLUMN backstory TEXT;
+ALTER TABLE script_character ADD COLUMN motivation TEXT;
+ALTER TABLE script_character ADD COLUMN fear_or_block TEXT;
+ALTER TABLE script_character ADD COLUMN relationship_to_story TEXT;
+ALTER TABLE script_character ADD COLUMN speaking_style TEXT;
+ALTER TABLE script_character ADD COLUMN visual_identity TEXT;

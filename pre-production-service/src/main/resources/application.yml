@@ -5,6 +5,11 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  servlet:
+    multipart:
+      max-file-size: ${PRE_PROD_MAX_UPLOAD_SIZE_MB:25}MB
+      max-request-size: ${PRE_PROD_MAX_UPLOAD_SIZE_MB:25}MB
+
   web:
     cors:
       mapping: "/**"
@@ -86,6 +91,7 @@ pre-production:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}
     default-image-model: ${PRE_PROD_DEFAULT_IMAGE_MODEL:gemini-2.5-flash-image}
+    identity-image-model: ${PRE_PROD_IDENTITY_IMAGE_MODEL:flux-pulid-v1}
     default-text-model: ${PRE_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
   video-gen:
     base-url: ${VIDEO_GEN_BASE_URL:http://video-generation-service.apps.svc.cluster.local:8080}
@@ -93,12 +99,17 @@ pre-production:
   critic:
     base-url: ${CRITIC_SERVICE_BASE_URL:http://critic-service.apps.svc.cluster.local:8080}
     timeout-ms: ${CRITIC_SERVICE_TIMEOUT_MS:120000}
+  chat:
+    base-url: ${CHAT_SERVICE_BASE_URL:http://chat-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${CHAT_SERVICE_TIMEOUT_MS:30000}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
     access-key: ${MINIO_ACCESS_KEY:}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${PRE_PROD_BUCKET:creator-assets}
     storyboard-prefix: ${PRE_PROD_STORYBOARD_PREFIX:pre-production-storyboards}
+    cast-media-prefix: ${PRE_PROD_CAST_MEDIA_PREFIX:pre-production-cast-media}
+    export-prefix: ${PRE_PROD_EXPORT_PREFIX:pre-production-exports}
   job:
     stale-after-minutes: ${PRE_PROD_JOB_STALE_AFTER_MINUTES:15}
     reconciliation-interval-ms: ${PRE_PROD_JOB_RECONCILIATION_INTERVAL_MS:120000}

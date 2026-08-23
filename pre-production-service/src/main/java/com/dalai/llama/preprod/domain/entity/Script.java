@@ -56,6 +56,39 @@ public class Script {
     @Column(name = "hook_strategy", columnDefinition = "text")
     private String hookStrategy;
 
+    /** Restores creator-service's real StoryScript.noHumans -- true for a pure product/B-roll ad
+     * with no human performer at all, false (the default) for a narrative with at least one human
+     * character. */
+    @Column(name = "no_humans", nullable = false)
+    @Builder.Default
+    private Boolean noHumans = false;
+
+    // --- Story-structure fields, restoring creator-service's real StoryScript output (these were
+    // present on the old system's generation result but dropped from this service's v1 slice). ---
+
+    @Column(name = "logline", columnDefinition = "text")
+    private String logline;
+
+    @Column(name = "central_conflict", columnDefinition = "text")
+    private String centralConflict;
+
+    @Column(name = "ending_payoff", columnDefinition = "text")
+    private String endingPayoff;
+
+    @Column(name = "setting", columnDefinition = "text")
+    private String setting;
+
+    /** The literal hook line/moment -- distinct from {@link #hookStrategy}, which describes HOW
+     * the hook works, not what it says. */
+    @Column(name = "hook", columnDefinition = "text")
+    private String hook;
+
+    /** e.g. narrator_visual_mix, talking_head_explainer, visual_voiceover, dialogue_scene,
+     * dramatic_scene -- free text, not an enum, since the LLM infers this per-idea rather than
+     * picking from a fixed list (mirrors creator-service's own open-ended inference). */
+    @Column(name = "storytelling_type", length = 80)
+    private String storytellingType;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

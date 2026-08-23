@@ -13,9 +13,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Same fal.ai meta-provider dispatch + named model_master/FalAiProvider-shaping-verification gap
- * as VoiceCloneGenerationService/LipSyncGenerationService -- see their class comments. Routes to
- * {@code model_id=tts-v1} (type=tts, seeded in llm-gateway's V15 migration). */
+/** Dispatches through llm-gateway's fal.ai meta-provider to fal-ai/minimax/voice-clone -- the
+ * same real, verified model VoiceCloneGenerationService uses, since MiniMax fuses cloning and
+ * synthesis into one endpoint (see VoiceSynthesisService's own javadoc). Passing an explicit
+ * {@code text} param (not left to a chat-message default) is what tells FalAiProvider to read
+ * back the synthesized {@code audio.url} instead of the bare {@code custom_voice_id}. */
 @Service
 public class LlmGatewayVoiceSynthesisService implements VoiceSynthesisService {
 
@@ -31,16 +33,16 @@ public class LlmGatewayVoiceSynthesisService implements VoiceSynthesisService {
     }
 
     @Override
-    public VoiceSynthesisResult synthesize(UUID tenantId, String idempotencyKey, String providerVoiceId, String text, String language, String modelOverride) {
-        if (providerVoiceId == null || providerVoiceId.isBlank()) {
-            throw PostProductionException.badRequest("No cloned voice id to synthesize speech with");
+    public VoiceSynthesisResult synthesize(UUID tenantId, String idempotencyKey, String providerVoiceId, String referenceAudioUrl, String text, String language, String modelOverride) {
+        if (referenceAudioUrl == null || referenceAudioUrl.isBlank()) {
+            throw PostProductionException.badRequest("No reference audio available to synthesize this cloned voice's speech");
         }
         if (text == null || text.isBlank()) {
             throw PostProductionException.badRequest("No dialogue text to synthesize");
         }
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("voice_id", providerVoiceId);
-        params.put("language", language);
+        params.put("reference_audio_url", referenceAudioUrl);
+        params.put("text", text);
 
         String modelId = (modelOverride == null || modelOverride.isBlank()) ? defaultModel : modelOverride;
         LlmGatewayChatResponse response = llmGatewayClient.chat(

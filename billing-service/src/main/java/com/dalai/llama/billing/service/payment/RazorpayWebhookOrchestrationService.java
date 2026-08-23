@@ -101,6 +101,10 @@ public class RazorpayWebhookOrchestrationService {
                 .build();
         eventProducer.publishWalletFunded(walletEvent);
 
+        // Payment.toEvent() carries projectRequirementId when this payment funded a specific
+        // creative-planning-service brief -- this is the reliable (webhook-confirmed) trigger
+        // consumers should key project-funded state off, not the client-callback verify path.
+        eventProducer.publishPaymentReceived(payment.toEvent());
     }
 
     /**

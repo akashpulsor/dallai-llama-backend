@@ -10,15 +10,14 @@ import java.time.Duration;
 import java.util.UUID;
 
 /**
- * Real HTTP call against pre-production-service's contract -- that service does not exist in the
- * cluster yet (a separate, dedicated service with its own DB, per explicit direction: this is NOT
- * creator-service and creator-service is not to be touched for this). Until it's stood up, every
- * call here fails with a connection error, which DialogueSyncCoordinator surfaces as a normal
- * dispatch failure -- same shape as any other unreachable dependency, nothing masked.
+ * Real HTTP call against pre-production-service's now-real {@code DialogueController} --
+ * pre-production-service is a separate, dedicated service with its own DB, per explicit direction
+ * (this is NOT creator-service and creator-service is not to be touched for this).
  *
- * <p>Contract (subject to pre-production-service's own finalization): GET
- * /v1/projects/{projectId}/shots/{shotRef}/dialogue, with scriptId as an optional query param for
- * services that key by it instead of/in addition to project_id.
+ * <p>Contract: GET /v1/projects/{projectId}/shots/{shotRef}/dialogue, with scriptId as an optional
+ * query param for services that key by it instead of/in addition to project_id, and X-Tenant-ID
+ * required -- pre-production-service's BaseController.tenant() 401s without it, same convention
+ * every other pre-production-service controller already uses.
  */
 @Component
 public class HttpPreProductionClient implements PreProductionClient {
@@ -36,13 +35,14 @@ public class HttpPreProductionClient implements PreProductionClient {
     }
 
     @Override
-    public PreProductionShotDetails getShotDialogue(UUID projectId, UUID scriptId, String shotRef) {
+    public PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, UUID scriptId, String shotRef) {
         try {
             return webClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/v1/projects/{projectId}/shots/{shotRef}/dialogue")
                             .queryParamIfPresent("scriptId", java.util.Optional.ofNullable(scriptId))
                             .build(projectId, shotRef))
+                    .header("X-Tenant-ID", tenantId.toString())
                     .retrieve()
                     .bodyToMono(PreProductionShotDetails.class)
                     .block(Duration.ofMillis(timeoutMs));

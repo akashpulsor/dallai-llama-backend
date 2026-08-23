@@ -13,6 +13,13 @@ public record ScriptView(
         String pacingStyle,
         String emotionalArc,
         String hookStrategy,
+        Boolean noHumans,
+        String logline,
+        String centralConflict,
+        String endingPayoff,
+        String setting,
+        String hook,
+        String storytellingType,
         List<ScriptCharacterView> characters
 ) {
 }

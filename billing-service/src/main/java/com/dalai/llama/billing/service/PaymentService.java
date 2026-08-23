@@ -1,5 +1,6 @@
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.dto.response.ProjectRequirementFundingView;
 import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
 
 import java.math.BigDecimal;
@@ -14,6 +15,22 @@ public interface PaymentService {
 
     PaymentOrderResult createPaymentOrder(UUID tenantId, String currency, BigDecimal amount,
                                           String description, UUID subscriptionId);
+
+    /**
+     * Same order-creation path as {@link #createPaymentOrder}, scoped to a specific
+     * creative-planning-service ProjectRequirement instead of (or alongside) a subscription.
+     * The wallet is still credited on success like any other payment -- this doesn't create a
+     * second ledger, it tags which brief the money was for.
+     */
+    PaymentOrderResult createProjectRequirementPaymentOrder(UUID tenantId, UUID projectRequirementId,
+                                                             String currency, BigDecimal amount,
+                                                             String description);
+
+    /**
+     * Every payment ever created against one brief, and how much of it actually succeeded.
+     * Derived entirely from {@code payments} rows -- there's nothing else to keep in sync.
+     */
+    ProjectRequirementFundingView getProjectRequirementFunding(UUID tenantId, UUID projectRequirementId);
 
     void handlePaymentSuccess(String gatewayOrderId, String paymentId, String signature);
 

@@ -87,6 +87,62 @@ public class ProjectService {
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
     }
 
+    /** Generates one the first time a project is locked, returns the existing one on every later
+     * call -- same "possession of the token is the authorization" convention creative-planning-
+     * service's ProjectRequirement.shareToken already uses, deliberately non-expiring (unlike that
+     * one) since a locked package's review link is meant to stay usable indefinitely. */
+    @Transactional
+    public String ensureClientReviewToken(UUID tenantId, UUID projectId) {
+        Project project = requireProject(tenantId, projectId);
+        if (project.getClientReviewToken() == null) {
+            project.setClientReviewToken(UUID.randomUUID().toString().replace("-", ""));
+            project.setUpdatedAt(OffsetDateTime.now());
+            projectRepository.save(project);
+        }
+        return project.getClientReviewToken();
+    }
+
+    @Transactional(readOnly = true)
+    public UUID getChatSessionId(UUID tenantId, UUID projectId) {
+        return requireProject(tenantId, projectId).getChatSessionId();
+    }
+
+    @Transactional
+    public void attachChatSession(UUID tenantId, UUID projectId, UUID chatSessionId) {
+        Project project = requireProject(tenantId, projectId);
+        if (project.getChatSessionId() == null) {
+            project.setChatSessionId(chatSessionId);
+            project.setUpdatedAt(OffsetDateTime.now());
+            projectRepository.save(project);
+        }
+    }
+
+    /** Every service backing pre-production-service's public/{token} client review page resolves
+     * the project this way first, then calls the exact same tenant-scoped methods (getScript,
+     * getScreenplay, ...) every authenticated page already uses -- no parallel "public" read path. */
+    @Transactional(readOnly = true)
+    public ProjectIdentity resolveByClientReviewToken(String token) {
+        Project project = requireByClientReviewToken(token);
+        return new ProjectIdentity(project.getTenantId(), project.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public ProjectView getByClientReviewToken(String token) {
+        return toView(requireByClientReviewToken(token));
+    }
+
+    UUID getChatSessionIdByClientReviewToken(String token) {
+        return requireByClientReviewToken(token).getChatSessionId();
+    }
+
+    private Project requireByClientReviewToken(String token) {
+        return projectRepository.findByClientReviewToken(token)
+                .orElseThrow(() -> PreProductionException.notFound("No project for this review link"));
+    }
+
+    public record ProjectIdentity(UUID tenantId, UUID projectId) {
+    }
+
     private ProjectView toView(Project project) {
         return new ProjectView(
                 project.getId(), project.getName(), project.getLockedIdeaId(),
