@@ -1,6 +1,12 @@
 .git
 .idea
 .vscode
+# Without this, stale local Maven build output (e.g. a renamed/deleted migration file that
+# `mvn compile` without `clean` never removes from target/classes) gets copied into every Java
+# service's Docker build context and merged into the fresh in-container build -- this is exactly
+# what caused llm-gateway's "Found more than one migration with version 45" crash-loop: two V45
+# files, one stale from a local rebuild, one from the real renamed source.
+**/target
 **/.venv
 **/__pycache__
 **/.pytest_cache

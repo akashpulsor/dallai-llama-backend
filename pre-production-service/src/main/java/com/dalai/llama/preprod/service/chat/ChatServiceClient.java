@@ -1,6 +1,7 @@
 package com.dalai.llama.preprod.service.chat;
 
 import com.dalai.llama.preprod.service.PreProductionException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -19,6 +20,7 @@ import java.util.UUID;
  * never fail the lock itself over it); session/message calls are NOT best-effort -- those ARE the
  * feature the client is actively using, a silent failure there would just look broken.
  */
+@Slf4j
 @Component
 public class ChatServiceClient {
 
@@ -60,7 +62,12 @@ public class ChatServiceClient {
         } catch (Exception ex) {
             // Best-effort, same convention creative-planning-service's ChatServiceClient already
             // established -- a locked project's embeddings failing to save must never fail the
-            // lock itself.
+            // lock itself. Logged (unlike a truly silent catch) since this was previously the only
+            // way a shot/script/screenplay could go missing from review chat with zero trace --
+            // confirmed live: a client asking about a specific shot got no answer, and there was
+            // no way to tell whether that shot was never ingested or just didn't rank in retrieval.
+            log.warn("chat-service ingestion failed for tenant={} kind={} sourceId={} scopeId={}: {}",
+                    tenantId, kind, sourceId, scopeId, ex.getMessage());
         }
     }
 

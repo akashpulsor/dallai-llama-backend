@@ -48,6 +48,24 @@ public class ProjectConfigService {
         if (request.dialogueLanguage() != null) {
             config.setDialogueLanguage(request.dialogueLanguage());
         }
+        if (request.preferredVoiceModel() != null) {
+            config.setPreferredVoiceModel(request.preferredVoiceModel());
+        }
+        if (request.preferredVideoModel() != null) {
+            config.setPreferredVideoModel(request.preferredVideoModel());
+        }
+        if (request.recommenderEnabled() != null) {
+            config.setRecommenderEnabled(request.recommenderEnabled());
+        }
+        if (request.costPreviewEnabled() != null) {
+            config.setCostPreviewEnabled(request.costPreviewEnabled());
+        }
+        if (request.autoCloneAudioPromptEnabled() != null) {
+            config.setAutoCloneAudioPromptEnabled(request.autoCloneAudioPromptEnabled());
+        }
+        if (request.priceDeltaModalEnabled() != null) {
+            config.setPriceDeltaModalEnabled(request.priceDeltaModalEnabled());
+        }
         config.setUpdatedAt(OffsetDateTime.now());
         return toView(projectConfigRepository.save(config));
     }
@@ -66,6 +84,8 @@ public class ProjectConfigService {
 
     private ProjectConfigView toView(ProjectConfig config) {
         return new ProjectConfigView(config.getAspectRatio(), config.getTargetDurationSeconds(), config.getPreferMotionGraphics(),
-                config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(), config.getDialogueLanguage());
+                config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(), config.getDialogueLanguage(),
+                config.getRecommenderEnabled(), config.getCostPreviewEnabled(),
+                config.getAutoCloneAudioPromptEnabled(), config.getPriceDeltaModalEnabled());
     }
 }

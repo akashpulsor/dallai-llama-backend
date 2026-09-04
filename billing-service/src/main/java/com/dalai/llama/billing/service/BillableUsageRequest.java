@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public record BillableUsageRequest(
         UUID tenantId,
+        UUID projectId,
         UsageMetric metric,
         BigDecimal quantity,
         BillingUnit unit,

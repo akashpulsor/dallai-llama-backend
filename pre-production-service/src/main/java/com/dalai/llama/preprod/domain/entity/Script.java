@@ -38,6 +38,14 @@ public class Script {
     @Column(name = "project_id", nullable = false, unique = true)
     private UUID projectId;
 
+    /** Which idea this was generated from, stamped from {@code project.lockedIdeaId} at
+     * generation time -- same soft-reference convention as {@code projectId} itself (no FK,
+     * creative-planning-service owns the real row). Lets a later idea switch on the project be
+     * detected by comparing this against the project's current value, without this service
+     * tracking anything about the switch itself. */
+    @Column(name = "locked_idea_id")
+    private UUID lockedIdeaId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private DraftStatus status;
@@ -82,6 +90,14 @@ public class Script {
      * the hook works, not what it says. */
     @Column(name = "hook", columnDefinition = "text")
     private String hook;
+
+    /** The approved beat-by-beat structure the script was written from (see
+     * ScriptGenerationService#generateHookBeatPlan) -- generated and fed into the script prompt on
+     * every generation, but previously discarded the moment that call returned. Null when the
+     * hook/beat call itself failed or returned no usable beats (best-effort, never blocks script
+     * generation) -- absence here means "the model got no explicit beat plan," not a rendering gap. */
+    @Column(name = "beat_plan", columnDefinition = "text")
+    private String beatPlan;
 
     /** e.g. narrator_visual_mix, talking_head_explainer, visual_voiceover, dialogue_scene,
      * dramatic_scene -- free text, not an enum, since the LLM infers this per-idea rather than

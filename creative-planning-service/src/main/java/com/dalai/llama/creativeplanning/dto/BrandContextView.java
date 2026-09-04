@@ -10,6 +10,7 @@ public record BrandContextView(
         String brandVoice,
         String targetAudience,
         String brandValues,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        Integer currentVersion
 ) {
 }

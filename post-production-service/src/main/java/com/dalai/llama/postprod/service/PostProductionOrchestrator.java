@@ -88,7 +88,7 @@ public class PostProductionOrchestrator {
         try {
             DialogueSyncJob dialogueSyncJob = dialogueSyncCoordinator.run(
                     tenantId, request.projectId(), job.getJobId(), shot.shotRef(), shot.jobId(), request.targetLanguage(),
-                    request.voiceCloneModel(), request.ttsModel(), request.lipSyncModel());
+                    request.voiceCloneModel(), request.ttsModel(), request.lipSyncModel(), shot.alreadyAutoDubbed());
             if (dialogueSyncJob.getStatus() == PostProductionStatus.COMPLETED) {
                 job = jobPersistenceService.finishSuccess(
                         job.getJobId(), dialogueSyncJob.getDialogueSyncJobId(),

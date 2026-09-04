@@ -21,6 +21,7 @@ public record ShotContext(
         @Valid ProductBrand productBrand,
         @Valid Technical technical,
         List<@Valid ContinuityAnchor> continuityAnchors,
-        @Valid AudioAmbience audioAmbience
+        @Valid AudioAmbience audioAmbience,
+        List<@Valid DialogueBeat> dialogueBeats
 ) {
 }

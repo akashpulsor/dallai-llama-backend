@@ -11,6 +11,11 @@ public class PostProductionException extends RuntimeException {
         this.status = status;
     }
 
+    public PostProductionException(HttpStatus status, String message, Throwable cause) {
+        super(message, cause);
+        this.status = status;
+    }
+
     public HttpStatus getStatus() {
         return status;
     }
@@ -29,5 +34,9 @@ public class PostProductionException extends RuntimeException {
 
     public static PostProductionException upstream(String message) {
         return new PostProductionException(HttpStatus.BAD_GATEWAY, message);
+    }
+
+    public static PostProductionException upstream(String message, Throwable cause) {
+        return new PostProductionException(HttpStatus.BAD_GATEWAY, message, cause);
     }
 }

@@ -7,6 +7,7 @@ public record ProductReferenceImageView(
         UUID productProfileId,
         String bucket,
         String objectKey,
+        String signedUrl,
         ReferenceImageAnalysisView analysis
 ) {
 }

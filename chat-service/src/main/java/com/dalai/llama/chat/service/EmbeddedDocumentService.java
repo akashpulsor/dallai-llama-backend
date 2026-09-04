@@ -83,6 +83,22 @@ public class EmbeddedDocumentService {
                 .toList();
     }
 
+    /** A single project's total embedded documents -- script, screenplay, cast, and one entry per
+     * shot -- is small and bounded (a few dozen short chunks at most), so a scoped chat (see
+     * {@code ChatOrchestrator#mergedContext}) skips similarity ranking entirely and just hands the
+     * model everything: cheaper and far more reliable than betting a specific fact ("what's shot
+     * 3", "tell me about the script") ranks in the top-N of a similarity search against every
+     * other chunk in the project. Confirmed live: a creator asking about a specific shot, the
+     * script, or the characters got "I don't have any details" every time, because none of those
+     * questions reliably ranked high enough under plain cosine similarity. */
+    @Transactional(readOnly = true)
+    public List<EmbeddedDocument> findAllForScope(UUID tenantId, UUID scopeId) {
+        if (scopeId == null) {
+            return List.of();
+        }
+        return embeddedDocumentRepository.findByTenantIdAndScopeIdAndEmbeddingIsNotNull(tenantId, scopeId);
+    }
+
     private double cosineSimilarity(double[] a, double[] b) {
         if (a.length != b.length) {
             return -1;

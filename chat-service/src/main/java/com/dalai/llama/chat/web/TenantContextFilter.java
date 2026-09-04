@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
@@ -16,6 +18,7 @@ import java.util.UUID;
 @Component
 public class TenantContextFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(TenantContextFilter.class);
     private static final String TENANT_HEADER = "X-Tenant-ID";
 
     @Override
@@ -24,6 +27,14 @@ public class TenantContextFilter extends OncePerRequestFilter {
         try {
             UUID tenantId = parseUuidOrNull(request.getHeader(TENANT_HEADER));
             UUID userId = resolveUserId();
+            // Diagnostic: capture what actually arrives on chat-session requests, to root-cause a
+            // reported 403 (whether the tenant header / JWT reach chat-service at all).
+            if (request.getRequestURI() != null && request.getRequestURI().contains("/v1/chat-sessions")) {
+                log.info("CHAT_REQ_DIAG method={} uri={} tenantHeaderPresent={} tenantParsed={} jwtSubjectPresent={} authHeaderPresent={}",
+                        request.getMethod(), request.getRequestURI(),
+                        request.getHeader(TENANT_HEADER) != null, tenantId != null,
+                        userId != null, request.getHeader("Authorization") != null);
+            }
             if (tenantId != null) {
                 TenantContextHolder.set(new TenantContext(tenantId, userId));
             }

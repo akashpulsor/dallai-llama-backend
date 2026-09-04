@@ -11,6 +11,13 @@ public record Technical(
         String targetProvider,
         /** Optional pin -- when set, {@code ModelRecommendationService} is skipped entirely
          * (doc §21.6, "Override & pinning"). */
-        String targetModel
+        String targetModel,
+        /** ProjectConfig.preferredVoiceModel on pre-production-service's side -- a model_id pin
+         * for {@code BeatDubbingService}'s clone+synthesize call, not this shot's own video
+         * model. Null uses that service's own configured default. */
+        String voiceCloneModel,
+        /** The shot's edit-plan text (pre-production's editing notes) -- fed into the composed
+         * prompt so the video model knows the intended cut/transition style. Nullable. */
+        String editingNotes
 ) {
 }

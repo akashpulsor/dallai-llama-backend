@@ -15,9 +15,10 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** One tenant, one brand -- this service's own bounded-context rule (a brand can have many
- * {@link ProductProfile}s, each with its own campaign journey). Persisted, editable "marketing
- * and branding team" memory the chat draws on for every session. */
+/** A tenant can manage more than one brand (an agency running several client brands, a solo
+ * creator with more than one business) -- each with its own {@link ProductProfile}s and campaign
+ * journeys. Persisted, editable "marketing and branding team" memory the chat draws on for every
+ * session, versioned (see {@link BrandContextVersion}). */
 @Getter
 @Setter
 @Builder
@@ -32,7 +33,7 @@ public class BrandContext {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false, unique = true)
+    @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
     @Column(name = "brand_name", nullable = false, length = 200)

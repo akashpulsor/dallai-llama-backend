@@ -21,6 +21,9 @@ public record ChatRequest(
          * system message, ahead of {@code messages} -- callers hold no instruction-text string
          * literals of their own. Optional; a plain {@code messages}-only request is unaffected. */
         String taskKey,
-        Map<String, String> templateVariables
+        Map<String, String> templateVariables,
+        /** Optional project attribution -- when set, persisted on the job row so per-project cost
+         * can be summed. Absent for calls with no project context (estimates, internal calls). */
+        java.util.UUID projectId
 ) {
 }

@@ -1,12 +1,15 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.domain.AspectRatio;
 import com.dalai.llama.preprod.domain.ShotImageKind;
+import com.dalai.llama.preprod.domain.entity.ProjectConfig;
 import com.dalai.llama.preprod.domain.entity.Shot;
 import com.dalai.llama.preprod.domain.entity.ShotImage;
 import com.dalai.llama.preprod.repository.ShotImageRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.minio.http.Method;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,17 +39,33 @@ public class AnimatedPreviewService {
     private static final List<ShotImageKind> KIND_PREFERENCE =
             List.of(ShotImageKind.PRODUCTION, ShotImageKind.STORYBOARD, ShotImageKind.LIGHTING, ShotImageKind.CAMERA_PLAN);
 
+    /** Mirrors the frontend's own ASPECT_RATIO_CSS map (ShotImagesPanel.jsx) -- kept in sync by
+     * hand since one's CSS and the other's a Java constant, but same enum, same 5 values. */
+    private static final Map<AspectRatio, String> ASPECT_RATIO_CSS = Map.of(
+            AspectRatio.RATIO_16_9, "16 / 9",
+            AspectRatio.RATIO_9_16, "9 / 16",
+            AspectRatio.RATIO_1_1, "1 / 1",
+            AspectRatio.RATIO_4_5, "4 / 5",
+            AspectRatio.RATIO_21_9, "21 / 9"
+    );
+
     private final ShotRepository shotRepository;
     private final ShotImageRepository shotImageRepository;
     private final ProjectService projectService;
+    private final ProjectConfigService projectConfigService;
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
 
     public AnimatedPreviewService(
-            ShotRepository shotRepository, ShotImageRepository shotImageRepository, ProjectService projectService, MinioClient minioClient) {
+            ShotRepository shotRepository, ShotImageRepository shotImageRepository, ProjectService projectService,
+            ProjectConfigService projectConfigService,
+            MinioClient minioClient, @Qualifier("publicMinioClient") MinioClient publicMinioClient) {
         this.shotRepository = shotRepository;
         this.shotImageRepository = shotImageRepository;
         this.projectService = projectService;
+        this.projectConfigService = projectConfigService;
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
     }
 
     @Transactional(readOnly = true)
@@ -59,7 +78,12 @@ public class AnimatedPreviewService {
 
         String slides = shots.stream().map(this::renderSlide).collect(Collectors.joining("\n"));
         String thumbs = shots.stream().map(this::renderThumb).collect(Collectors.joining("\n"));
-        return HTML_TEMPLATE.replace("{{SLIDES}}", slides).replace("{{THUMBS}}", thumbs);
+        ProjectConfig config = projectConfigService.getEntityOrDefault(projectId);
+        String ratio = config == null ? null : ASPECT_RATIO_CSS.get(config.getAspectRatio());
+        return HTML_TEMPLATE
+                .replace("{{SLIDES}}", slides)
+                .replace("{{THUMBS}}", thumbs)
+                .replace("{{ASPECT_RATIO}}", ratio == null ? "9 / 16" : ratio);
     }
 
     private String renderSlide(Shot shot) {
@@ -90,7 +114,7 @@ public class AnimatedPreviewService {
 
     private String signedUrl(String bucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)
@@ -114,7 +138,7 @@ public class AnimatedPreviewService {
             <style>
               * { box-sizing: border-box; }
               body { margin: 0; background: #05070d; color: #fff; font-family: -apple-system, Segoe UI, sans-serif; }
-              .stage { position: relative; width: 100vw; height: 78vh; overflow: hidden; background: #000; }
+              .stage { position: relative; aspect-ratio: {{ASPECT_RATIO}}; height: 78vh; max-height: 78vh; width: auto; max-width: 100vw; margin: 0 auto; overflow: hidden; background: #000; }
               .slide { position: absolute; inset: 0; opacity: 0; transition: opacity 0.6s ease; }
               .slide.active { opacity: 1; }
               .slide img { width: 100%; height: 100%; object-fit: cover; animation: kenburns linear forwards; animation-duration: inherit; }

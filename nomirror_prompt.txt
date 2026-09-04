@@ -1,0 +1,14 @@
+Create one final, production-quality advertising still that will be used as an image-to-video anchor. This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.
+
+Shot type: ACTION
+What happens: Protagonist finishes getting ready, smiling gently with quiet self-assurance.
+Line: She completes her look with a quiet smile of self-assurance.
+Camera: MCU shot, Eye level angle, Static movement, Standard 50mm equivalent lens.
+Composition: Protagonist fills the frame, eyes and smile are focal points.
+Location: Protagonist's Personal Space (e.g., bedroom), GOLDEN_HOUR
+Lighting mood: SOFT
+
+Primary subject: Stuti Tripathi -- Software professional, . Using the attached reference photo as the identity reference, generate a photorealistic image of her, adapting her appearance naturally to this shot's pose and camera angle.
+Expression: Quiet, serene smile of self-assurance. Emotion: Confidence, contentment, inner peace. Body language: Slight tilt of head, gentle smile, comfortable posture.
+
+Output: RATIO_9_16 composition, clean mobile-safe framing, commercial lighting, no on-image text or labels.

@@ -92,11 +92,26 @@ public class ContinuityBibleService {
                 .orElse(List.of());
     }
 
-    @Transactional(readOnly = true)
+    /** Self-healing: {@link #refresh} is normally a side effect of real shot-list generation, so a
+     * project whose shots got there some other way (a data migration, a manual DB fix) has real
+     * shots but no bible yet. Since refresh() is a pure, deterministic recompute from already-
+     * persisted Shot/CastAssignment data -- never an LLM call -- computing it here on first read is
+     * safe and cheap, and turns "no bible" from a dead end into just a first-read cost. Only a
+     * project with zero shots at all still 404s: there's nothing yet to derive it from. */
+    @Transactional
     public ContinuityBibleView getView(UUID tenantId, UUID projectId) {
         ContinuityBible bible = continuityBibleRepository.findByProjectId(projectId)
                 .filter(b -> b.getTenantId().equals(tenantId))
-                .orElseThrow(() -> PreProductionException.notFound("No continuity bible for project " + projectId + " yet -- generate the shot list first"));
+                .orElse(null);
+        if (bible == null) {
+            if (shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).isEmpty()) {
+                throw PreProductionException.notFound("No continuity bible for project " + projectId + " yet -- generate the shot list first");
+            }
+            refresh(tenantId, projectId);
+            bible = continuityBibleRepository.findByProjectId(projectId)
+                    .filter(b -> b.getTenantId().equals(tenantId))
+                    .orElseThrow(() -> PreProductionException.upstream("Continuity bible refresh did not produce a bible for project " + projectId));
+        }
         List<ContinuityLockView> locks = continuityLockRepository.findByContinuityBibleId(bible.getId()).stream()
                 .map(lock -> new ContinuityLockView(lock.getCategory().toString(), lock.getValue()))
                 .collect(Collectors.toList());

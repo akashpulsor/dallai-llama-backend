@@ -23,6 +23,12 @@ public class UsageRecord {
     @Column(nullable = false)
     private UUID tenantId;
 
+    /** Null for usage not tied to a specific project (e.g. call minutes, subscription fees) --
+     * populated for LLM/generation usage sourced from llm-gateway's LlmBillingEvent, which is
+     * where the per-project spend cap (VideoPricingService's quoted price vs real accumulated
+     * cost) sums this column from, rather than a separate running-total table. */
+    private UUID projectId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UsageMetric metric;

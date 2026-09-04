@@ -74,6 +74,7 @@ public class CreatorBillingEventConsumer {
 
         usageService.recordBillableUsage(new BillableUsageRequest(
                 event.getTenantId(),
+                null,
                 metric,
                 quantity,
                 unit,

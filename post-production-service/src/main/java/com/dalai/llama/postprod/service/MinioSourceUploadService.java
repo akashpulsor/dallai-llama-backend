@@ -54,7 +54,7 @@ public class MinioSourceUploadService implements SourceUploadService {
                     .contentType(file.getContentType() != null ? file.getContentType() : "video/mp4")
                     .build());
         } catch (Exception ex) {
-            throw PostProductionException.upstream("Could not upload source video for dubbing_job_id=" + dubbingJobId + ": " + ex.getMessage());
+            throw PostProductionException.upstream("Could not upload source video for dubbing_job_id=" + dubbingJobId + ": " + ex.getMessage(), ex);
         }
         return new AssetPersistenceService.PersistedAsset(bucket, objectKey);
     }

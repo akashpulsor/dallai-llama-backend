@@ -13,6 +13,8 @@ public record LightingPlanView(
         String negFillGear,
         String diffuserGear,
         String cameraRigGear,
-        String buildSteps
+        String buildSteps,
+        String source,
+        String critiqueNotes
 ) {
 }

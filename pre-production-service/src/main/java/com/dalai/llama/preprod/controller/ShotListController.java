@@ -36,7 +36,11 @@ public class ShotListController extends BaseController {
 
     @PostMapping("/v1/projects/{projectId}/shots/generate-list")
     public ResponseEntity<List<ShotView>> generateList(@PathVariable UUID projectId) {
-        return ResponseEntity.ok(shotListGenerationService.generate(tenant().tenantId(), projectId));
+        UUID tenantId = tenant().tenantId();
+        List<ShotView> shots = shotListGenerationService.generate(tenantId, projectId);
+        shotListGenerationService.planMotionGraphicShots(tenantId, shots);
+        shotListGenerationService.planLightingAndCameraForShots(tenantId, shots);
+        return ResponseEntity.ok(shots);
     }
 
     @GetMapping("/v1/projects/{projectId}/shots")

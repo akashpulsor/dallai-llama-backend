@@ -11,5 +11,7 @@ public interface IdeaOptionRepository extends JpaRepository<IdeaOption, UUID> {
 
     List<IdeaOption> findByProjectRequirementIdOrderByCreatedAtDesc(UUID projectRequirementId);
 
+    List<IdeaOption> findByProjectIdOrderByCreatedAtDesc(UUID projectId);
+
     Optional<IdeaOption> findByIdAndTenantId(UUID id, UUID tenantId);
 }

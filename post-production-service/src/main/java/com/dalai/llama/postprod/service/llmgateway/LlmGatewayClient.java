@@ -44,7 +44,7 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "llm-gateway /v1/chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
+                    "llm-gateway /v1/chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 
@@ -62,7 +62,7 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "llm-gateway /v1/models failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
+                    "llm-gateway /v1/models failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 }

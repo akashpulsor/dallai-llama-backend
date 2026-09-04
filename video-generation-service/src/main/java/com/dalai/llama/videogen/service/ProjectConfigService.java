@@ -12,4 +12,9 @@ public interface ProjectConfigService {
     ProjectConfig updateDefaults(UUID tenantId, UUID projectId, FeatureFlags defaultFlags, boolean autoApprove);
 
     boolean isAutoApprove(UUID tenantId, UUID projectId);
+
+    /** null/blank clears the override, back to {@code BeatDubbingService}'s configured default. */
+    ProjectConfig updateVoiceCloneModel(UUID tenantId, UUID projectId, String modelId);
+
+    String getPreferredVoiceCloneModel(UUID tenantId, UUID projectId);
 }

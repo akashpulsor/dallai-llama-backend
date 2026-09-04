@@ -81,6 +81,7 @@ public class UsageServiceImpl implements UsageService {
         UsageRecord record = UsageRecord.builder()
                 .id(UUID.randomUUID())
                 .tenantId(request.tenantId())
+                .projectId(request.projectId())
                 .metric(request.metric())
                 .quantity(defaultAmount(request.quantity()))
                 .unit(request.unit())

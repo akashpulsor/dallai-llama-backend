@@ -1,10 +1,12 @@
 package com.dalai.llama.creativeplanning.service.storage;
 
 import com.dalai.llama.creativeplanning.service.CreativePlanningException;
+import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.http.Method;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,10 +23,16 @@ import java.util.concurrent.TimeUnit;
 public class MinioObjectStorage {
 
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
     private final String bucket;
 
-    public MinioObjectStorage(MinioClient minioClient, @Value("${creative-planning.minio.bucket}") String bucket) {
+    public MinioObjectStorage(
+            MinioClient minioClient,
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
+            @Value("${creative-planning.minio.bucket}") String bucket
+    ) {
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
         this.bucket = bucket;
     }
 
@@ -58,9 +66,23 @@ public class MinioObjectStorage {
         }
     }
 
+    /** Re-fetches a previously uploaded object's bytes -- used by the deferred reference-image
+     * analysis flow, which stores an image at creation time but only reads it back (to build the
+     * vision LLM's data URI) once the requirement is funded. */
+    public byte[] downloadBytes(String objectKey) {
+        try (var stream = minioClient.getObject(GetObjectArgs.builder()
+                .bucket(bucket)
+                .object(objectKey)
+                .build())) {
+            return stream.readAllBytes();
+        } catch (Exception ex) {
+            throw CreativePlanningException.upstream("Could not download from MinIO: " + ex.getMessage());
+        }
+    }
+
     public String signedUrl(String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)

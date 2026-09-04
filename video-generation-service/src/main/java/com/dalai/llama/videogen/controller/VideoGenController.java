@@ -105,7 +105,8 @@ public class VideoGenController {
         TenantContext ctx = tenant();
         var flags = projectConfigService.getEffectiveFlags(ctx.tenantId(), projectId);
         boolean autoApprove = projectConfigService.isAutoApprove(ctx.tenantId(), projectId);
-        return ResponseEntity.ok(new ProjectConfigView(projectId, flags, autoApprove));
+        String voiceCloneModel = projectConfigService.getPreferredVoiceCloneModel(ctx.tenantId(), projectId);
+        return ResponseEntity.ok(new ProjectConfigView(projectId, flags, autoApprove, voiceCloneModel));
     }
 
     @PutMapping("/v1/projects/{projectId}/config")
@@ -117,8 +118,25 @@ public class VideoGenController {
         return ResponseEntity.ok(new ProjectConfigView(
                 projectId,
                 new com.dalai.llama.videogen.dto.FeatureFlags(config.getDefaultDialogueFlag(), config.getDefaultCaptionsFlag()),
-                Boolean.TRUE.equals(config.getAutoApprove())
+                Boolean.TRUE.equals(config.getAutoApprove()),
+                config.getPreferredVoiceCloneModel()
         ));
+    }
+
+    /** Separate from {@link #updateProjectConfig} so picking a voice-clone model never has to
+     * also resend the dialogue/captions flags it knows nothing about. */
+    @PutMapping("/v1/projects/{projectId}/config/voice-clone-model")
+    public ResponseEntity<ProjectConfigView> updateVoiceCloneModel(
+            @PathVariable UUID projectId, @RequestBody UpdateVoiceCloneModelRequest request
+    ) {
+        TenantContext ctx = tenant();
+        var config = projectConfigService.updateVoiceCloneModel(ctx.tenantId(), projectId, request.modelId());
+        var flags = projectConfigService.getEffectiveFlags(ctx.tenantId(), projectId);
+        return ResponseEntity.ok(new ProjectConfigView(projectId, flags, Boolean.TRUE.equals(config.getAutoApprove()),
+                config.getPreferredVoiceCloneModel()));
+    }
+
+    public record UpdateVoiceCloneModelRequest(String modelId) {
     }
 
     @PostMapping("/v1/exports")

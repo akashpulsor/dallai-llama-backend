@@ -17,6 +17,10 @@ public record ShotPromptView(
          * caller listing a shot's prompt history see, per version, whether it was approved
          * without a second call per prompt. */
         String approvalStatus,
-        String jobStatus
+        String jobStatus,
+        /** Signed URLs for this prompt's saved character-face/product-hero references, in the
+         * same order sent to the model -- what the video was actually conditioned on, not just
+         * the text. Empty when the shot had none. */
+        List<String> referenceImageUrls
 ) {
 }

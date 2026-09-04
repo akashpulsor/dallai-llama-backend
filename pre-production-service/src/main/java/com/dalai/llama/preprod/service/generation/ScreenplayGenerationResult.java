@@ -17,7 +17,10 @@ public record ScreenplayGenerationResult(
             String summary,
             String characterFocus,
             String emotionalPurpose,
-            Integer estimatedSeconds
+            Integer estimatedSeconds,
+            /** Real character keys (from the script's characters[]) present in this scene -- empty
+             * or absent means a pure motion-graphic/B-roll beat with no character in it. */
+            List<String> characterKeys
     ) {
     }
 }

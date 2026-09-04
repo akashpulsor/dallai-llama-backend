@@ -30,4 +30,10 @@ public class VideoGenException extends RuntimeException {
     public static VideoGenException upstream(String message) {
         return new VideoGenException(HttpStatus.BAD_GATEWAY, message);
     }
+
+    public static VideoGenException upstream(String message, Throwable cause) {
+        VideoGenException ex = new VideoGenException(HttpStatus.BAD_GATEWAY, message);
+        ex.initCause(cause);
+        return ex;
+    }
 }

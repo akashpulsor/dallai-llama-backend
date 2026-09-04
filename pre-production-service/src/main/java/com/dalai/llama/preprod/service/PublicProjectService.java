@@ -4,6 +4,7 @@ import com.dalai.llama.preprod.dto.CastAssignmentView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ProjectView;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView;
+import com.dalai.llama.preprod.service.revenue.BillingClient;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView.PublicCastMemberView;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView.PublicShotView;
 import com.dalai.llama.preprod.dto.ScreenplayView;
@@ -12,8 +13,10 @@ import com.dalai.llama.preprod.dto.ScriptView;
 import com.dalai.llama.preprod.dto.ShotImageView;
 import com.dalai.llama.preprod.dto.ShotView;
 import com.dalai.llama.preprod.service.chat.ChatServiceClient;
+import com.dalai.llama.preprod.service.videogen.VideoGenClient;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.minio.http.Method;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +46,11 @@ public class PublicProjectService {
     private final CastProfileService castProfileService;
     private final ChatServiceClient chatServiceClient;
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
+    private final com.dalai.llama.preprod.service.revenue.BillingClient billingClient;
+    private final ClientReviewSessionService reviewSessionService;
+    private final ReviewCommentService reviewCommentService;
+    private final VideoGenClient videoGenClient;
 
     public PublicProjectService(
             ProjectService projectService,
@@ -54,8 +62,15 @@ public class PublicProjectService {
             CastAssignmentService castAssignmentService,
             CastProfileService castProfileService,
             ChatServiceClient chatServiceClient,
-            MinioClient minioClient
+            MinioClient minioClient,
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
+            com.dalai.llama.preprod.service.revenue.BillingClient billingClient,
+            ClientReviewSessionService reviewSessionService,
+            ReviewCommentService reviewCommentService,
+            VideoGenClient videoGenClient
     ) {
+        this.reviewSessionService = reviewSessionService;
+        this.reviewCommentService = reviewCommentService;
         this.projectService = projectService;
         this.projectLockService = projectLockService;
         this.scriptGenerationService = scriptGenerationService;
@@ -66,6 +81,9 @@ public class PublicProjectService {
         this.castProfileService = castProfileService;
         this.chatServiceClient = chatServiceClient;
         this.minioClient = minioClient;
+        this.videoGenClient = videoGenClient;
+        this.publicMinioClient = publicMinioClient;
+        this.billingClient = billingClient;
     }
 
     @Transactional(readOnly = true)
@@ -81,9 +99,30 @@ public class PublicProjectService {
         return new PublicProjectPackageView(project.id(), project.name(), project.status(), script, screenplay, cast, shots);
     }
 
-    @Transactional
-    public PublicProjectPackageView lock(String token) {
+    /** The client's price to lock this package: the platform's base + the creator's own margin.
+     * Read-only -- shown before the client pays. */
+    public BillingClient.Quote quote(String token) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return billingClient.quote(identity.tenantId(), identity.projectId());
+    }
+
+    /** Starts a Razorpay order for the lock payment (via billing-service). Nothing locks yet --
+     * the client pays, then {@link #verifyPaymentAndLock} runs on a verified payment. */
+    public BillingClient.OrderResult startLockPayment(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return billingClient.createOrder(identity.tenantId(), identity.projectId(), token);
+    }
+
+    /** The pay-gate: billing verifies the Razorpay signature and credits the creator's margin to
+     * their wallet; only then does the project actually lock. The bare lock endpoint was removed so
+     * this is the only path to a locked package. */
+    @Transactional
+    public PublicProjectPackageView verifyPaymentAndLock(String token, String gatewayOrderId, String gatewayPaymentId, String gatewaySignature) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        BillingClient.VerifyResult result = billingClient.verify(identity.tenantId(), gatewayOrderId, gatewayPaymentId, gatewaySignature);
+        if (!result.success()) {
+            throw PreProductionException.badRequest("Payment could not be verified -- the package was not locked");
+        }
         projectLockService.lock(identity.tenantId(), identity.projectId());
         return view(token);
     }
@@ -95,8 +134,108 @@ public class PublicProjectService {
         if (sessionId == null) {
             throw PreProductionException.badRequest("This project hasn't been locked yet -- there's no chat to send to");
         }
+        // Reviews are transactional: a message only counts as part of a review that's been opened,
+        // so all the changes batched in one review apply to the storyboard together.
+        reviewSessionService.requireOpenReview(identity.projectId());
         return chatServiceClient.sendMessage(identity.tenantId(), sessionId, content);
     }
+
+    // ---- Transactional client reviews (open -> batch changes via chat -> close/apply) ----
+
+    /** Allowance, reviews used so far, the open review (if any), and whether starting another needs payment. */
+    @Transactional(readOnly = true)
+    public ClientReviewSessionService.ReviewStatus reviewStatus(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return reviewSessionService.status(identity.tenantId(), identity.projectId());
+    }
+
+    /** Opens a review (402 if the free allowance is used up -- the client then pays to start one). */
+    @Transactional
+    public ClientReviewSessionService.ReviewStatus startReview(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        reviewSessionService.start(identity.tenantId(), identity.projectId(), false);
+        return reviewSessionService.status(identity.tenantId(), identity.projectId());
+    }
+
+    /** Closes the open review; satisfied = apply the batched changes to the storyboard. */
+    @Transactional
+    public ClientReviewSessionService.ReviewStatus endReview(String token, boolean satisfied) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        reviewSessionService.end(identity.tenantId(), identity.projectId(), satisfied);
+        return reviewSessionService.status(identity.tenantId(), identity.projectId());
+    }
+
+    /** Price of an extra review (billing owns the number). Shown before the client pays. */
+    public BillingClient.Quote reviewQuote(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return billingClient.reviewQuote(identity.tenantId(), identity.projectId());
+    }
+
+    /** Razorpay order for an extra-review payment. */
+    public BillingClient.OrderResult startReviewPayment(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return billingClient.createReviewOrder(identity.tenantId(), identity.projectId(), token);
+    }
+
+    /** Verifies the extra-review payment, then opens a paid review. */
+    @Transactional
+    public ClientReviewSessionService.ReviewStatus verifyReviewPaymentAndStart(
+            String token, String gatewayOrderId, String gatewayPaymentId, String gatewaySignature) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        BillingClient.VerifyResult result = billingClient.verify(identity.tenantId(), gatewayOrderId, gatewayPaymentId, gatewaySignature);
+        if (!result.success()) {
+            throw PreProductionException.badRequest("Payment could not be verified -- no extra review was started");
+        }
+        reviewSessionService.start(identity.tenantId(), identity.projectId(), true);
+        return reviewSessionService.status(identity.tenantId(), identity.projectId());
+    }
+
+    // ---- Review comments (feedback the client leaves inside an open review) ----
+
+    /** {@code image} is optional. Requires an open review -- same "batched into a review round"
+     * discipline the chat above already has. */
+    @Transactional
+    public com.dalai.llama.preprod.dto.ReviewCommentView addReviewComment(
+            String token, String content, org.springframework.web.multipart.MultipartFile image) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        UUID reviewId = reviewSessionService.requireOpenReview(identity.projectId());
+        return reviewCommentService.add(identity.tenantId(), identity.projectId(), reviewId, content, image);
+    }
+
+    @Transactional(readOnly = true)
+    public List<com.dalai.llama.preprod.dto.ReviewCommentView> reviewComments(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return reviewCommentService.list(identity.tenantId(), identity.projectId());
+    }
+
+    /** The client's view of the assembled final video. Video is always previewable when
+     * available; the {@code videoUrl} field is stripped to null server-side when the creator
+     * has not flipped {@link com.dalai.llama.preprod.domain.entity.Project#isFinalVideoDownloadUnlocked}
+     * -- the URL never even reaches a locked client. */
+    @Transactional(readOnly = true)
+    public PublicFinalVideoView finalVideo(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        ProjectView project = projectService.getByClientReviewToken(token);
+        var maybe = videoGenClient.getLatestFinalVideo(identity.tenantId(), identity.projectId());
+        if (maybe.isEmpty()) {
+            return new PublicFinalVideoView(false, null, null, project.finalVideoDownloadUnlocked(), null);
+        }
+        VideoGenClient.LatestFinalVideoView view = maybe.get();
+        boolean unlocked = project.finalVideoDownloadUnlocked();
+        String url = unlocked ? view.videoUrl() : null;
+        return new PublicFinalVideoView(view.videoUrl() != null, view.status(), url, unlocked, view.completedAt());
+    }
+
+    /** Client-facing view of the project's assembled final video -- see
+     * {@link #finalVideo}. {@code available}=true means an assembly exists and is playable;
+     * {@code videoUrl} is populated when download is unlocked (server-enforced), null otherwise. */
+    public record PublicFinalVideoView(
+            boolean available,
+            String status,
+            String videoUrl,
+            boolean downloadUnlocked,
+            java.time.OffsetDateTime completedAt
+    ) {}
 
     @Transactional(readOnly = true)
     public List<ChatServiceClient.ChatMessageView> chatHistory(String token) {
@@ -149,7 +288,7 @@ public class PublicProjectService {
 
     private String signedUrl(String bucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)

@@ -118,7 +118,12 @@ llm-gateway:
   google:
     api-key: ${GOOGLE_API_KEY:}
     base-url: ${LLM_GATEWAY_GOOGLE_BASE_URL:https://generativelanguage.googleapis.com}
-    timeout-ms: ${LLM_GATEWAY_GOOGLE_TIMEOUT_MS:30000}
+    # 90s, not 30s: large structured-JSON generations (a full shot list -- many shots, each with
+    # a detailed editing/continuity/cinematography breakdown) routinely need more than 30s from
+    # Gemini. Every caller into llm-gateway already budgets 120s for the whole round trip (see
+    # e.g. pre-production-service's llm-gateway.timeout-ms), so this had room to grow without
+    # becoming the new tightest link.
+    timeout-ms: ${LLM_GATEWAY_GOOGLE_TIMEOUT_MS:90000}
   fal:
     api-key: ${FAL_API_KEY:}
     base-url: ${LLM_GATEWAY_FAL_BASE_URL:https://queue.fal.run}

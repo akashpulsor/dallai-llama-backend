@@ -55,7 +55,7 @@ public class BrandPlanExportService {
                 .orElseThrow(() -> CreativePlanningException.notFound("No locked idea " + lockedIdeaId));
         CampaignPlanningSession session = campaignPlanningSessionRepository.findByIdAndTenantId(idea.getSessionId(), tenantId)
                 .orElseThrow(() -> CreativePlanningException.notFound("No campaign session for locked idea " + lockedIdeaId));
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, session.getBrandContextId());
         ProductProfile product = session.getProductProfileId() == null ? null
                 : productProfileRepository.findByIdAndTenantId(session.getProductProfileId(), tenantId).orElse(null);
 

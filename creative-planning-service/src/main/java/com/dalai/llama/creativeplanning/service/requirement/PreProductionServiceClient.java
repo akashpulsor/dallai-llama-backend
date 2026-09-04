@@ -36,6 +36,9 @@ class PreProductionServiceClient {
     private record ProjectView(UUID id) {
     }
 
+    private record SwitchLockedIdeaRequest(UUID lockedIdeaId) {
+    }
+
     private final WebClient webClient;
     private final int timeoutMs;
 
@@ -70,6 +73,27 @@ class PreProductionServiceClient {
             throw ex;
         } catch (Exception ex) {
             log.error("pre-production-service call failed for locked idea {}: {}", lockedIdeaId, ex.getMessage(), ex);
+            throw CreativePlanningException.upstream("pre-production-service is unreachable: " + ex.getMessage());
+        }
+    }
+
+    /** Repoints an already-created project's current idea -- see ProjectIdeaService#switchToOption.
+     * Not best-effort for the same reason {@link #createProjectFromLockedIdea} isn't: the creator
+     * needs to know if the switch didn't actually take. */
+    void switchLockedIdea(UUID tenantId, UUID projectId, UUID lockedIdeaId) {
+        try {
+            webClient.post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/switch-locked-idea", tenantId, projectId)
+                    .bodyValue(new SwitchLockedIdeaRequest(lockedIdeaId))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            log.error("pre-production-service rejected idea switch for project {} status={} body={}",
+                    projectId, ex.getStatusCode(), ex.getResponseBodyAsString());
+            throw CreativePlanningException.upstream("pre-production-service could not switch the idea: " + ex.getStatusCode());
+        } catch (Exception ex) {
+            log.error("pre-production-service call failed switching idea for project {}: {}", projectId, ex.getMessage(), ex);
             throw CreativePlanningException.upstream("pre-production-service is unreachable: " + ex.getMessage());
         }
     }

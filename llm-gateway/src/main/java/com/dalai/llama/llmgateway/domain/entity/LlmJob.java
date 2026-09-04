@@ -71,6 +71,25 @@ public class LlmJob {
     @Column(name = "result_content")
     private String resultContent;
 
+    /** The fully-rendered messages actually sent to the provider (system prompt template already
+     * substituted in) -- recorded at dispatch time, before the call, so it's there to inspect
+     * regardless of how the call turns out. Debugging a malformed response means comparing this
+     * against {@link #resultContent}; without it there's only the answer, never the question. */
+    @Column(name = "request_content")
+    private String requestContent;
+
     @Column(name = "callback_url")
     private String callbackUrl;
+
+    /** Raw cost of this call in USD, persisted at completion (real-time, per usage) -- the source
+     * of truth a per-project cost rollup reads. Null until the job completes (or for a job that
+     * never produced a billable result). llm-gateway records the number; it does not price it. */
+    @Column(name = "cost", precision = 18, scale = 6)
+    private java.math.BigDecimal cost;
+
+    /** The project this call belongs to, forwarded by the caller -- lets costs be summed per
+     * project without llm-gateway knowing anything about what a project is. Null for calls with
+     * no project context (estimates, internal/non-project calls). */
+    @Column(name = "project_id")
+    private UUID projectId;
 }

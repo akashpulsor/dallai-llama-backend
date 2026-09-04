@@ -53,9 +53,9 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
             return null;
         }
 
-        String userMessage = "Shot signature: hasFace=%s, isMotionOnly=%s, requiresLipSync=%s, durationBucket=%s, qualityTier=%s%n"
+        String userMessage = "Shot signature: hasFace=%s, isMotionOnly=%s, requiresLipSync=%s, hasDialogueBeats=%s, durationBucket=%s, qualityTier=%s%n"
                 .formatted(shotSignature.hasFace(), shotSignature.isMotionOnly(), shotSignature.requiresLipSync(),
-                        shotSignature.durationBucket(), shotSignature.qualityTier())
+                        shotSignature.hasDialogueBeats(), shotSignature.durationBucket(), shotSignature.qualityTier())
                 + "Available models: " + videoModels.stream().map(LlmGatewayModelSummary::modelId).toList();
 
         LlmGatewayChatResponse response;

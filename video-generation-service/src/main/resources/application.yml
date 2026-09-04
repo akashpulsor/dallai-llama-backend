@@ -7,6 +7,14 @@ spring:
     # the pod's terminationGracePeriodSeconds in the Helm chart, or Kubernetes SIGKILLs first.
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  codec:
+    # Spring WebFlux's injected WebClient.Builder defaults to a 256KB in-memory response buffer --
+    # LlmGatewayClient's chat() responses can carry base64-encoded generated video/image media
+    # that routinely exceeds that, silently truncating instead of decoding the real response
+    # (confirmed as the real cause of an equivalent bug in pre-production-service's image
+    # generation). 16MB matches creator-service's own GoogleGenAiClientFactory.
+    max-in-memory-size: 16MB
+
   web:
     cors:
       mapping: "/**"
@@ -101,10 +109,21 @@ management:
       application: ${spring.application.name}
 
 video-gen:
+  # Prepare-scene stage reads pre-production's shot/cast/plan/image material via its
+  # /api/v1/internal/** aliases (InternalShotAssemblyController) -- tenantId in the path, no JWT.
+  pre-production:
+    base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
+  # Prepare-scene max prompt length -- the fallback for models the strategy resolver has no
+  # dedicated ProviderPromptStrategy for. Per-model strategies override this.
+  provider:
+    default-max-prompt-length: ${VIDEO_GEN_DEFAULT_MAX_PROMPT_LENGTH:2000}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}
     default-compression-model: ${VIDEO_GEN_COMPRESSION_MODEL:gemini-2.5-flash}
+    default-voice-clone-model: ${VIDEO_GEN_VOICE_CLONE_MODEL:fal-ai/minimax/voice-clone}
+    default-audio-video-merge-model: ${VIDEO_GEN_AUDIO_VIDEO_MERGE_MODEL:fal-ai/ffmpeg-api/merge-audio-video}
     timeout-ms: ${VIDEO_GEN_LLM_GATEWAY_TIMEOUT_MS:200000}
   job:
     # Generous on purpose vs. the ~200s gateway timeout above -- also covers the MinIO
@@ -119,6 +138,11 @@ video-gen:
     giveup-after-minutes: ${VIDEO_GEN_JOB_GIVEUP_AFTER_MINUTES:60}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    # Presigned URLs handed to fal.ai (reference/source) or the browser (<video src>) sign
+    # against this hostname -- must be a route reachable from outside the cluster. Blank
+    # falls back to `endpoint` for local/dev. See MinioConfig.publicMinioClient for why the
+    # endpoint can't be swapped after signing.
+    public-url: ${MINIO_PUBLIC_URL:}
     access-key: ${MINIO_ACCESS_KEY:}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${VIDEO_GEN_EXPORT_BUCKET:creator-assets}

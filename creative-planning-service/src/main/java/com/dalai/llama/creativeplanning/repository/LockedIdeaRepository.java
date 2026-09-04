@@ -13,4 +13,6 @@ public interface LockedIdeaRepository extends JpaRepository<LockedIdea, UUID> {
     Optional<LockedIdea> findBySessionId(UUID sessionId);
 
     Optional<LockedIdea> findByProjectRequirementId(UUID projectRequirementId);
+
+    Optional<LockedIdea> findTopByProjectIdOrderByCreatedAtDesc(UUID projectId);
 }

@@ -7,6 +7,7 @@ import com.dalai.llama.preprod.dto.CastMediaUploadView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.CreateCastAssignmentRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
+import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
 import com.dalai.llama.preprod.service.CastAssignmentService;
 import com.dalai.llama.preprod.service.CastMediaUploadService;
 import com.dalai.llama.preprod.service.CastProfileService;
@@ -15,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,6 +48,12 @@ public class CastController extends BaseController {
     @PostMapping("/v1/cast-profiles")
     public ResponseEntity<CastProfileView> createProfile(@Valid @RequestBody CreateCastProfileRequest request) {
         return ResponseEntity.ok(castProfileService.create(tenant().tenantId(), request));
+    }
+
+    @PutMapping("/v1/cast-profiles/{castProfileId}/voice")
+    public ResponseEntity<CastProfileView> updateVoice(
+            @PathVariable UUID castProfileId, @Valid @RequestBody UpdateCastProfileVoiceRequest request) {
+        return ResponseEntity.ok(castProfileService.updateVoice(tenant().tenantId(), castProfileId, request));
     }
 
     @GetMapping("/v1/cast-profiles")

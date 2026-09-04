@@ -66,7 +66,7 @@ public class MarketingPlanRevisionService {
     @Transactional
     public MarketingPlanGenerationResultView revise(UUID tenantId, UUID planId, ReviseMarketingPlanRequest request) {
         MarketingPlan plan = marketingPlanGenerationService.require(tenantId, planId);
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, plan.getBrandContextId());
         ProductProfile product = plan.getProductProfileId() == null ? null
                 : productProfileService.requireProduct(tenantId, plan.getProductProfileId());
         List<MarketingPlanMessage> history = marketingPlanMessageRepository.findByPlanIdOrderByCreatedAtAsc(planId);

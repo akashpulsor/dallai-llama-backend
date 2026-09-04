@@ -45,6 +45,7 @@ class DialogueShotContextAssemblyStrategy implements ShotContextAssemblyStrategy
                 null,
                 ShotContextCommonFields.technical(ctx),
                 ShotContextCommonFields.continuityAnchors(ctx),
-                ShotContextCommonFields.audioAmbience(ctx));
+                ShotContextCommonFields.audioAmbience(ctx),
+                List.of());
     }
 }

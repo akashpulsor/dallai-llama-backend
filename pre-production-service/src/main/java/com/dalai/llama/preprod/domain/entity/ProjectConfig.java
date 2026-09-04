@@ -73,6 +73,25 @@ public class ProjectConfig {
     @Builder.Default
     private Boolean preferMotionGraphics = false;
 
+    /** Feature-flag gates for the video-workspace UI's optional enrichments (see V48 migration
+     * for the per-flag intent). Default matches the migration defaults; toggled via the same
+     * {@code updateProjectConfig} endpoint every other preference on this row uses. */
+    @Column(name = "recommender_enabled", nullable = false)
+    @Builder.Default
+    private Boolean recommenderEnabled = true;
+
+    @Column(name = "cost_preview_enabled", nullable = false)
+    @Builder.Default
+    private Boolean costPreviewEnabled = false;
+
+    @Column(name = "auto_clone_audio_prompt_enabled", nullable = false)
+    @Builder.Default
+    private Boolean autoCloneAudioPromptEnabled = true;
+
+    @Column(name = "price_delta_modal_enabled", nullable = false)
+    @Builder.Default
+    private Boolean priceDeltaModalEnabled = true;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

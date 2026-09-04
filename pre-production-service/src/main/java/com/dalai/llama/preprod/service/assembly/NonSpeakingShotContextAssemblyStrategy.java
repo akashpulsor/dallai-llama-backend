@@ -28,6 +28,7 @@ class NonSpeakingShotContextAssemblyStrategy implements ShotContextAssemblyStrat
                 null,
                 ShotContextCommonFields.technical(ctx),
                 ShotContextCommonFields.continuityAnchors(ctx),
-                ShotContextCommonFields.audioAmbience(ctx));
+                ShotContextCommonFields.audioAmbience(ctx),
+                List.of());
     }
 }

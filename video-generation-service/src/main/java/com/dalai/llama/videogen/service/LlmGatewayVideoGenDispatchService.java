@@ -35,6 +35,20 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
         if (params != null && params.aspectRatio() != null) {
             videoParams.put("aspect_ratio", params.aspectRatio());
         }
+        if (params != null && params.generateAudio() != null) {
+            videoParams.put("generate_audio", params.generateAudio());
+        }
+        if (params != null && params.referenceImageUrls() != null && !params.referenceImageUrls().isEmpty()) {
+            videoParams.put("reference_image_urls", params.referenceImageUrls());
+        }
+        // Deterministic seed forwarded to fal.ai / whichever underlying provider. Same seed for
+        // every shot in the same project (derived from locked_idea_id in ShotGenerationOrchestrator
+        // .resolveSeed) is the primary continuity lever: character faces, set details, lighting
+        // stay coherent shot-to-shot. Not sending it means fal.ai rolls fresh randomness each
+        // call, which is exactly why continuity drifted across shots before.
+        if (params != null && params.seed() != null) {
+            videoParams.put("seed", params.seed());
+        }
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId,
@@ -44,7 +58,8 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
                         List.of(new LlmGatewayMessage("user", positivePrompt)),
                         videoParams,
                         null,
-                        null
+                        null,
+                        job.getProjectId()
                 )
         );
         if (response == null) {

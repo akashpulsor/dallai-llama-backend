@@ -56,6 +56,27 @@ public class ProductReferenceImageService {
     @Transactional
     public ProductReferenceImageView upload(UUID tenantId, UUID productId, MultipartFile file) {
         ProductProfile product = productProfileService.requireProduct(tenantId, productId);
+        ProductReferenceImage image = store(tenantId, productId, file);
+        BrandContext brand = brandContextService.requireBrand(tenantId, product.getBrandContextId());
+        String dataUri = toDataUri(file, UploadValidation.contentTypeOrDefault(file, "image/jpeg"));
+        var analysis = referenceImageAnalysisService.analyze(tenantId, image.getId(), dataUri, brand);
+        return new ProductReferenceImageView(image.getId(), image.getProductProfileId(), image.getBucket(), image.getObjectKey(),
+                minioObjectStorage.signedUrl(image.getObjectKey()), analysis);
+    }
+
+    /** Stores the image without analyzing it -- used when a product is created inline while
+     * starting a standalone requirement, where analysis is deferred until the requirement is
+     * funded (see {@code ReferenceMaterialAnalysisService}), unlike {@link #upload} above which
+     * analyzes synchronously for the full brand/campaign journey. */
+    @Transactional
+    public ProductReferenceImageView storeWithoutAnalysis(UUID tenantId, UUID productId, MultipartFile file) {
+        ProductReferenceImage image = store(tenantId, productId, file);
+        return new ProductReferenceImageView(image.getId(), image.getProductProfileId(), image.getBucket(), image.getObjectKey(),
+                minioObjectStorage.signedUrl(image.getObjectKey()), null);
+    }
+
+    private ProductReferenceImage store(UUID tenantId, UUID productId, MultipartFile file) {
+        ProductProfile product = productProfileService.requireProduct(tenantId, productId);
         UploadValidation.requireNonEmpty(file, "image");
         UploadValidation.requireWithinSize(file, maxUploadSizeBytes);
         String contentType = UploadValidation.contentTypeOrDefault(file, "image/jpeg");
@@ -64,19 +85,13 @@ public class ProductReferenceImageService {
 
         minioObjectStorage.uploadMultipart(objectKey, file, contentType);
 
-        ProductReferenceImage image = productReferenceImageRepository.save(ProductReferenceImage.builder()
+        return productReferenceImageRepository.save(ProductReferenceImage.builder()
                 .tenantId(tenantId)
                 .productProfileId(product.getId())
                 .bucket(minioObjectStorage.bucket())
                 .objectKey(objectKey)
                 .createdAt(OffsetDateTime.now())
                 .build());
-
-        BrandContext brand = brandContextService.requireBrand(tenantId);
-        String dataUri = toDataUri(file, contentType);
-        var analysis = referenceImageAnalysisService.analyze(tenantId, image.getId(), dataUri, brand);
-
-        return new ProductReferenceImageView(image.getId(), image.getProductProfileId(), image.getBucket(), image.getObjectKey(), analysis);
     }
 
     @Transactional(readOnly = true)
@@ -84,7 +99,8 @@ public class ProductReferenceImageService {
         productProfileService.requireProduct(tenantId, productId);
         return productReferenceImageRepository.findByProductProfileId(productId).stream()
                 .map(image -> new ProductReferenceImageView(image.getId(), image.getProductProfileId(), image.getBucket(),
-                        image.getObjectKey(), referenceImageAnalysisService.getIfPresent(image.getId())))
+                        image.getObjectKey(), minioObjectStorage.signedUrl(image.getObjectKey()),
+                        referenceImageAnalysisService.getIfPresent(image.getId())))
                 .collect(Collectors.toList());
     }
 

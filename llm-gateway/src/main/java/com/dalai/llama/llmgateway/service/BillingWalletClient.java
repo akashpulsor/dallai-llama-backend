@@ -38,21 +38,40 @@ public class BillingWalletClient {
     }
 
     public BigDecimal getWalletBalance(UUID tenantId) {
+        return check(tenantId, null).balance();
+    }
+
+    /** projectId is optional -- when present, billing-service also evaluates the per-project
+     * spend cap on this same synchronous call (piggybacking on the wallet-balance check already
+     * in the hot dispatch path) rather than a second network hop. {@link
+     * WalletCheck#projectSpendOk} is null when projectId was omitted, or when the project has no
+     * quoted price to cap against. */
+    public WalletCheck check(UUID tenantId, UUID projectId) {
         try {
             WalletBalanceResponse response = webClient.get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/balance", tenantId)
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/internal/tenants/{tenantId}/wallet/balance")
+                            .queryParamIfPresent("projectId", java.util.Optional.ofNullable(projectId))
+                            .build(tenantId))
                     .retrieve()
                     .bodyToMono(WalletBalanceResponse.class)
                     .block(Duration.ofMillis(timeoutMs));
-            return response == null || response.balance() == null ? BigDecimal.ZERO : response.balance();
+            if (response == null) {
+                return new WalletCheck(BigDecimal.ZERO, null, null);
+            }
+            BigDecimal balance = response.balance() == null ? BigDecimal.ZERO : response.balance();
+            return new WalletCheck(balance, response.projectSpendOk(), response.projectSpendTotal());
         } catch (WebClientResponseException.NotFound ex) {
-            return BigDecimal.ZERO;
+            return new WalletCheck(BigDecimal.ZERO, null, null);
         } catch (RuntimeException ex) {
             throw new WalletBalanceCheckException("Unable to verify wallet balance for tenantId=" + tenantId, ex);
         }
     }
 
-    public record WalletBalanceResponse(BigDecimal balance, String currency) {
+    public record WalletBalanceResponse(BigDecimal balance, String currency, Boolean projectSpendOk, BigDecimal projectSpendTotal) {
+    }
+
+    public record WalletCheck(BigDecimal balance, Boolean projectSpendOk, BigDecimal projectSpendTotal) {
     }
 
     public static class WalletBalanceCheckException extends RuntimeException {

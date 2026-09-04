@@ -11,6 +11,9 @@ import java.util.UUID;
 public record CreateProjectRequest(
         @NotNull UUID lockedIdeaId,
         @NotBlank String name,
-        @NotNull BudgetTier budgetTier
+        @NotNull BudgetTier budgetTier,
+        // Optional: how many client review rounds are included before the paywall. Set on the
+        // new-project tab; null -> the default (2) applied in ProjectService.createFromLockedIdea.
+        Integer reviewAllowance
 ) {
 }

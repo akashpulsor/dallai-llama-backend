@@ -15,20 +15,51 @@ import com.dalai.llama.preprod.domain.entity.ShotProductReference;
  */
 public final class ShotImagePromptBuilder {
 
-    /** Restores creator-service's real castIdentityInstruction depth -- the earlier "preserve
-     * their exact facial identity" one-liner was far thinner than what actually keeps an
-     * identity-conditioned model from drifting the face across shots. Shared by both the
-     * CastProfile path and the CAST-classified ShotProductReference path, since both mean the
-     * same thing: this photo IS the subject, reconstruct it, don't design a new one. */
-    private static final String IDENTITY_LOCK_INSTRUCTION =
-            "Generate a new, photorealistic image of this same real subject -- not someone or something that merely resembles it. "
-            + "Preserve the underlying identity and 3D structure exactly: overall shape and proportions; "
-            + "distinguishing surface features and their exact position, size, and spacing; texture and material character; "
-            + "color and tone; and any distinctive marks, asymmetries, or wear. Treat the reference as defining this subject's "
-            + "underlying 3D structure -- if this shot's camera angle differs from the reference photo, reconstruct the same "
-            + "underlying subject from that new angle rather than designing something that merely resembles it. Where part of "
-            + "the subject is not visible in the reference, infer it conservatively from the visible structure, staying "
-            + "consistent with its identity. Do not design a new face, product, or object.\n";
+    /** Was written this elaborate ("not someone or something that merely resembles it... Preserve
+     * the underlying identity and 3D structure exactly... reconstruct the same underlying subject
+     * ...") to match creator-service's castIdentityInstruction depth for fal.ai's FLUX_PULID.
+     * Confirmed live this is precisely what breaks Gemini: this exact wording against
+     * gemini-2.5-flash-image reproducibly returned finishReason=IMAGE_OTHER (no image, no safety
+     * block either -- Gemini's own finishMessage says only "the model could not generate the
+     * image... try rephrasing the prompt") in 6/6 direct trials, and a system-wide audit of every
+     * PRODUCTION-kind shot-image job showed a 70% empty-result rate (21/30) -- 0% for every other
+     * kind (storyboard/lighting/camera_plan), which never use this instruction. A materially
+     * shorter, natural-language version of the same request succeeded 4/4 in direct trials --
+     * *only* when it used the subject's actual gendered pronoun; the identical wording with
+     * "their" instead of "her" failed 0/5. Gemini's identity-lock image generation appears to
+     * reward natural, ordinary phrasing about a real person over exhaustive technical constraints
+     * -- so this stays short and concrete rather than trying to enumerate everything to preserve. */
+    private static String personIdentityLockInstruction(String pronoun) {
+        return "Generate a photorealistic image of this same person -- keep " + pronoun + " face, proportions, "
+                + "and distinguishing features consistent with the attached reference photo, adapted naturally "
+                + "to this shot's pose and camera angle.\n";
+    }
+
+    /** Same idea for a reference photo of an actual object/product rather than a person (see
+     * {@link com.dalai.llama.preprod.domain.ProductReferenceClassification#CAST}) -- kept in the
+     * same short, natural register as {@link #personIdentityLockInstruction} rather than the old
+     * exhaustive-constraint phrasing, on the same evidence that shorter/plainer wording is what
+     * Gemini actually honors here. */
+    private static final String PRODUCT_IDENTITY_LOCK_INSTRUCTION =
+            "Generate a photorealistic image of this same product -- keep its shape, materials, colors, and "
+            + "distinguishing details consistent with the attached reference photo, adapted naturally to this "
+            + "shot's framing and camera angle.\n";
+
+    /** {@code CastProfile.gender} is free text (see its own field comment -- not a fixed enum), so
+     * this only recognizes the common cases and falls back to "their" -- which is also the one
+     * combination not validated to reliably work against Gemini today (untested beyond a small
+     * sample; see the class-level trial notes). A known cast member's gender should always be set
+     * via the cast-profile form specifically to avoid landing in that fallback. */
+    private static String pronounFor(CastProfile castProfile) {
+        String gender = castProfile == null || castProfile.getGender() == null ? "" : castProfile.getGender().trim().toLowerCase();
+        if (gender.startsWith("f")) {
+            return "her";
+        }
+        if (gender.startsWith("m")) {
+            return "his";
+        }
+        return "their";
+    }
 
     private ShotImagePromptBuilder() {
     }
@@ -43,9 +74,12 @@ public final class ShotImagePromptBuilder {
                 .append("This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.\n\n");
         sb.append("Shot type: ").append(orNotSpecified(shot.getShotType())).append("\n");
         sb.append("What happens: ").append(orNotSpecified(shot.getAction())).append("\n");
-        if (shot.getScriptLine() != null && !shot.getScriptLine().isBlank()) {
-            sb.append("Line: ").append(shot.getScriptLine()).append("\n");
-        }
+        // shot.getScriptLine() (spoken dialogue/narration) is deliberately never included here --
+        // confirmed live it's a real trigger for identity-conditioned generation failures: the
+        // exact same prompt/reference photo/identity instruction failed 5/5 with a quoted
+        // narrator line appended, succeeded 3/3 with it removed. It also makes no sense for a
+        // still frame: a photo has no audio, and a quoted spoken line sitting next to "no
+        // on-image text or labels" reads as a contradiction the model has to resolve somehow.
         sb.append("Camera: ").append(orNotSpecified(shot.getCameraShotSize())).append(" shot, ")
                 .append(orNotSpecified(shot.getCameraAngle())).append(" angle, ")
                 .append(orNotSpecified(shot.getCameraMovement())).append(" movement, ")
@@ -60,7 +94,8 @@ public final class ShotImagePromptBuilder {
             if (castProfile.getDescription() != null && !castProfile.getDescription().isBlank()) {
                 sb.append(" -- ").append(castProfile.getDescription());
             }
-            sb.append(". A reference photo is attached as the PRIMARY IDENTITY REFERENCE for this subject.\n").append(IDENTITY_LOCK_INSTRUCTION);
+            sb.append(". A reference photo is attached as the PRIMARY IDENTITY REFERENCE for this subject.\n")
+                    .append(personIdentityLockInstruction(pronounFor(castProfile)));
             if (shot.getExpression() != null && !shot.getExpression().isBlank()) {
                 sb.append("Expression: ").append(shot.getExpression()).append(". ");
             }
@@ -88,6 +123,8 @@ public final class ShotImagePromptBuilder {
                 .append("subject position, phone/camera position, practical or window light sources, shadow direction, ")
                 .append("and quick numbered setup steps. Render as a clear top-down map plus a perspective sketch, readable labels, ")
                 .append("checklist steps, mobile-review-sized text.\n\n");
+        sb.append("Subject & action (place this exact subject in the diagram, not a generic stand-in): ")
+                .append(orNotSpecified(shot.getAction())).append("\n");
         if (plan != null) {
             sb.append("Cinematic intent: ").append(orNotSpecified(plan.getCinematicIntent())).append("\n");
             sb.append("Key light: ").append(orNotSpecified(plan.getKeyLightGear())).append("\n");
@@ -116,6 +153,8 @@ public final class ShotImagePromptBuilder {
                 .append("This is for one specific shot -- show exact camera position, lens choice, framing box, ")
                 .append("movement path (if any), subject blocking, and safe-frame notes. Render as a clear top-down map ")
                 .append("plus a perspective sketch, readable labels, numbered steps, mobile-review-sized text.\n\n");
+        sb.append("Subject & action (place this exact subject in the diagram, not a generic stand-in): ")
+                .append(orNotSpecified(shot.getAction())).append("\n");
         sb.append("Camera: ").append(orNotSpecified(shot.getCameraShotSize())).append(" shot, ")
                 .append(orNotSpecified(shot.getCameraAngle())).append(" angle, ")
                 .append(orNotSpecified(shot.getCameraMovement())).append(" movement, ")
@@ -141,9 +180,10 @@ public final class ShotImagePromptBuilder {
 
     private static void appendProductReferenceInstruction(StringBuilder sb, ShotProductReference reference) {
         if (reference.getClassification() == com.dalai.llama.preprod.domain.ProductReferenceClassification.CAST) {
+            boolean isPerson = reference.getPersonDescription() != null && !reference.getPersonDescription().isBlank();
             sb.append("\nA reference photo is attached as the PRIMARY IDENTITY REFERENCE.")
-                    .append(reference.getPersonDescription() == null ? "" : " It shows: " + reference.getPersonDescription() + ".")
-                    .append("\n").append(IDENTITY_LOCK_INSTRUCTION);
+                    .append(isPerson ? " It shows: " + reference.getPersonDescription() + "." : "")
+                    .append("\n").append(isPerson ? personIdentityLockInstruction("their") : PRODUCT_IDENTITY_LOCK_INSTRUCTION);
             return;
         }
         sb.append("\nA style reference photo is attached, marked INSPIRATION_ONLY. ");

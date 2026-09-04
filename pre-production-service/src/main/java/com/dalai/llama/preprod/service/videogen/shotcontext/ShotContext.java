@@ -14,6 +14,7 @@ public record ShotContext(
         ProductBrand productBrand,
         Technical technical,
         List<ContinuityAnchor> continuityAnchors,
-        AudioAmbience audioAmbience
+        AudioAmbience audioAmbience,
+        List<DialogueBeat> dialogueBeats
 ) {
 }

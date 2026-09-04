@@ -14,6 +14,7 @@ import com.dalai.llama.creativeplanning.service.llmgateway.LlmGatewayClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -45,7 +46,15 @@ public class ReferenceImageAnalysisService {
         this.defaultModel = defaultModel;
     }
 
-    @Transactional
+    /** REQUIRES_NEW -- {@link com.dalai.llama.creativeplanning.service.requirement.ReferenceMaterialAnalysisService}
+     * calls this once per image from inside a broader funding transaction; without its own
+     * transaction, an LLM/parse failure here marks that OUTER transaction rollback-only (Spring
+     * does this at the proxy boundary regardless of whether the caller catches the exception),
+     * which then throws {@code UnexpectedRollbackException} when the funding transaction tries to
+     * commit -- surfacing as an unrelated 500 on the next request, and (via the Kafka listener
+     * never acking) an infinite redelivery loop of the same payment event on every pod restart.
+     * A dedicated transaction per image means one bad image can only ever roll back its own row. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ReferenceImageAnalysisView analyze(UUID tenantId, UUID referenceImageId, String imageDataUri, BrandContext brand) {
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),

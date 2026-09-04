@@ -39,8 +39,15 @@ public class IdeaOption {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "project_requirement_id", nullable = false)
+    /** Exactly one of {@code projectRequirementId}/{@code projectId} is set (enforced by
+     * {@code chk_idea_option_origin}) -- pre-project-creation candidates are scoped to the
+     * requirement; candidates generated for an already-created project (switching to a different
+     * idea) are scoped directly to it instead. */
+    @Column(name = "project_requirement_id")
     private UUID projectRequirementId;
+
+    @Column(name = "project_id")
+    private UUID projectId;
 
     @Column(name = "title", nullable = false, length = 240)
     private String title;
@@ -66,6 +73,28 @@ public class IdeaOption {
 
     @Column(name = "parent_id")
     private UUID parentId;
+
+    /** Everything below is null for an option generated before the idea-critique feature shipped,
+     * or when critic-service was unreachable at generation time (see {@code
+     * IdeaCriticServiceClient} -- best-effort, never blocks generation) -- absence just means "no
+     * score available," not "failed review." */
+    @Column(name = "critic_verdict", length = 16)
+    private String criticVerdict;
+
+    @Column(name = "completeness_score")
+    private Integer completenessScore;
+
+    @Column(name = "story_score")
+    private Integer storyScore;
+
+    @Column(name = "distinctiveness_score")
+    private Integer distinctivenessScore;
+
+    @Column(name = "critic_strengths", columnDefinition = "text")
+    private String criticStrengths;
+
+    @Column(name = "critic_concerns", columnDefinition = "text")
+    private String criticConcerns;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

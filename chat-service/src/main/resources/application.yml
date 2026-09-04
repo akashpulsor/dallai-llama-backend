@@ -5,6 +5,13 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  codec:
+    # Spring WebFlux's injected WebClient.Builder defaults to a 256KB in-memory response buffer --
+    # raised repo-wide alongside every other LlmGatewayClient after finding this was the real cause
+    # of a silent image-generation failure in pre-production-service. 16MB matches creator-service's
+    # own GoogleGenAiClientFactory.
+    max-in-memory-size: 16MB
+
   web:
     cors:
       mapping: "/**"
@@ -76,7 +83,11 @@ chat:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}
     default-text-model: ${CHAT_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
-    default-embedding-model: ${CHAT_DEFAULT_EMBEDDING_MODEL:text-embedding-004}
+    # text-embedding-004 was shut down by Google on 2026-01-14 -- every embedContent call against
+    # it 404s. gemini-embedding-001 is its replacement (see llm-gateway's model_master); nothing
+    # here stores a fixed-width vector (embedded_document.embedding is double precision[], not a
+    # sized pgvector column), so the dimension change (768 -> 3072) needs no migration.
+    default-embedding-model: ${CHAT_DEFAULT_EMBEDDING_MODEL:gemini-embedding-001}
   trend-intelligence:
     base-url: ${TREND_INTELLIGENCE_BASE_URL:http://trend-intelligence-service.apps.svc.cluster.local:8080}
     timeout-ms: ${TREND_INTELLIGENCE_TIMEOUT_MS:60000}

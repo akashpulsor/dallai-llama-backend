@@ -37,6 +37,13 @@ public class ProductProfile {
     @Column(name = "brand_context_id", nullable = false)
     private UUID brandContextId;
 
+    /** Set only when this product was created inline while starting a standalone brief (see
+     * {@code ProjectRequirementCreationManager}), as opposed to via the full brand/campaign
+     * journey ({@code ProductController}) -- same dual-origin shape as {@code LockedIdea}'s
+     * {@code sessionId}/{@code projectRequirementId} pair. Null for the latter. */
+    @Column(name = "project_requirement_id")
+    private UUID projectRequirementId;
+
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 

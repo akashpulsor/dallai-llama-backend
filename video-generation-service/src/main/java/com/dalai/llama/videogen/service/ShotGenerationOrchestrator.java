@@ -9,6 +9,7 @@ import com.dalai.llama.videogen.domain.entity.FoleyCue;
 import com.dalai.llama.videogen.domain.entity.ShotPrompt;
 import com.dalai.llama.videogen.domain.entity.ShotPromptReference;
 import com.dalai.llama.videogen.domain.entity.VideoGenJob;
+import com.dalai.llama.videogen.domain.entity.VideoGenJobDialogueBeat;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.FoleyCueView;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
@@ -17,10 +18,12 @@ import com.dalai.llama.videogen.dto.RejectRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
 import com.dalai.llama.videogen.dto.VideoGenJobView;
 import com.dalai.llama.videogen.dto.shotcontext.Character;
+import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.repository.FoleyCueRepository;
 import com.dalai.llama.videogen.repository.ShotPromptReferenceRepository;
 import com.dalai.llama.videogen.repository.ShotPromptRepository;
+import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
 import com.dalai.llama.videogen.web.TenantContext;
 import lombok.extern.slf4j.Slf4j;
@@ -48,11 +51,12 @@ public class ShotGenerationOrchestrator {
     private final VideoGenJobRepository videoGenJobRepository;
     private final ShotPromptRepository shotPromptRepository;
     private final ShotPromptReferenceRepository shotPromptReferenceRepository;
+    private final VideoGenJobDialogueBeatRepository videoGenJobDialogueBeatRepository;
     private final FoleyCueRepository foleyCueRepository;
     private final VideoAssetPersistenceService videoAssetPersistenceService;
     private final VideoGenJobPersistenceService jobPersistenceService;
+    private final BeatDubbingService beatDubbingService;
     private final String defaultModel;
-    private final int maxPromptLength;
 
     public ShotGenerationOrchestrator(
             ModelRecommendationService modelRecommendationService,
@@ -65,11 +69,12 @@ public class ShotGenerationOrchestrator {
             VideoGenJobRepository videoGenJobRepository,
             ShotPromptRepository shotPromptRepository,
             ShotPromptReferenceRepository shotPromptReferenceRepository,
+            VideoGenJobDialogueBeatRepository videoGenJobDialogueBeatRepository,
             FoleyCueRepository foleyCueRepository,
             VideoAssetPersistenceService videoAssetPersistenceService,
             VideoGenJobPersistenceService jobPersistenceService,
-            @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel,
-            @Value("${video-gen.provider.default-max-prompt-length:2000}") int maxPromptLength
+            BeatDubbingService beatDubbingService,
+            @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
         this.modelRecommendationService = modelRecommendationService;
         this.promptBuilderService = promptBuilderService;
@@ -81,14 +86,47 @@ public class ShotGenerationOrchestrator {
         this.videoGenJobRepository = videoGenJobRepository;
         this.shotPromptRepository = shotPromptRepository;
         this.shotPromptReferenceRepository = shotPromptReferenceRepository;
+        this.videoGenJobDialogueBeatRepository = videoGenJobDialogueBeatRepository;
         this.foleyCueRepository = foleyCueRepository;
         this.videoAssetPersistenceService = videoAssetPersistenceService;
         this.jobPersistenceService = jobPersistenceService;
+        this.beatDubbingService = beatDubbingService;
         this.defaultModel = defaultModel;
-        this.maxPromptLength = maxPromptLength;
     }
 
     public GenerateShotResponse generate(TenantContext tenantContext, GenerateShotRequest request) {
+        PreparedShot prepared = prepareShot(tenantContext, request);
+        boolean autoApprove = request.autoApprove()
+                || projectConfigService.isAutoApprove(tenantContext.tenantId(), request.projectId());
+        VideoGenJobView jobView = autoApprove ? approve(tenantContext, prepared.job().getJobId()) : toJobView(prepared.job());
+        return new GenerateShotResponse(
+                prepared.job().getJobId(),
+                prepared.prompt().getPromptId(),
+                jobView.status(),
+                prepared.effectiveFlags(),
+                prepared.estimatedCost(),
+                prepared.recommendedModel(),
+                prepared.recommendationReasoning(),
+                toFoleyCueViews(prepared.foleyCues())
+        );
+    }
+
+    /** Everything {@code generate()} did except the auto-approve/dispatch step -- extracted for
+     * the prepare-scene flow ({@code PrepareSceneController.POST /v1/scenes/.../prepare}) which
+     * needs the same assembled/built/persisted result but stops here so the user can review and
+     * edit the prompt before dispatch. {@code generate()} then wraps this with the same
+     * auto-approve-then-approve dispatch step it always did -- the external {@code POST
+     * /v1/shots/generate} contract is unchanged. */
+    public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request) {
+        return prepareShot(tenantContext, request, null);
+    }
+
+    /** Full form: {@code sources} carries the pre-prod row ids that fed this composed prompt.
+     * Persisted on {@code ShotPrompt} so a debugger can walk back to the exact source-of-truth
+     * rows (see {@code shot_prompt}'s source-id columns, V20 migration). Null when the caller
+     * doesn't know the ids -- the row still saves, just without the audit pointers. */
+    public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request,
+                                    ShotContextAssemblyService.ShotPromptSources sources) {
         UUID tenantId = tenantContext.tenantId();
         UUID projectId = request.projectId();
         ShotContext shotContext = request.shotContext();
@@ -106,11 +144,17 @@ public class ShotGenerationOrchestrator {
                     : defaultModel;
         }
 
-        BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags);
+        // modelId is now resolved -- pass it through so the strategy resolver picks the right
+        // per-model composition shape and prompt-length limit, instead of the pre-refactor single
+        // global default.
+        BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
         List<DerivedFoleyCue> cues = foleyCueService.deriveCues(shotContext);
-        CompressionResult compression = promptCompressionService.compressIfNeeded(builtPrompt.positive(), maxPromptLength);
+        CompressionResult compression = promptCompressionService.compressIfNeeded(
+                builtPrompt.positive(), promptBuilderService.maxPromptLengthFor(modelId));
         CostEstimate estimate = costEstimationService.estimate(
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId);
+
+        boolean muteAudio = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
 
         VideoGenJob job = VideoGenJob.builder()
                 .jobId(UUID.randomUUID())
@@ -120,6 +164,11 @@ public class ShotGenerationOrchestrator {
                 .shotRef(shotContext.shotRef())
                 .providerId(resolveProviderId(modelId))
                 .modelId(modelId)
+                .durationSeconds(shotContext.technical() != null ? shotContext.technical().durationSeconds() : null)
+                .aspectRatio(shotContext.technical() != null && shotContext.technical().aspectRatio() != null
+                        ? shotContext.technical().aspectRatio().wireValue() : null)
+                .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
+                .muteAudio(muteAudio)
                 .status(JobStatus.PENDING_APPROVAL)
                 .approvalStatus(ApprovalStatus.PENDING)
                 .estimatedCost(estimate.estimatedCost())
@@ -127,6 +176,9 @@ public class ShotGenerationOrchestrator {
                 .createdAt(OffsetDateTime.now())
                 .build();
         videoGenJobRepository.save(job);
+        if (muteAudio) {
+            saveDialogueBeats(job.getJobId(), shotContext.dialogueBeats());
+        }
 
         ShotPrompt prompt = ShotPrompt.builder()
                 .promptId(UUID.randomUUID())
@@ -144,6 +196,13 @@ public class ShotGenerationOrchestrator {
                 .dialogueFlag(effectiveFlags.dialogue())
                 .captionsFlag(effectiveFlags.captions())
                 .shipped(false)
+                .shotId(sources == null ? null : sources.shotId())
+                .cameraPlanId(sources == null ? null : sources.cameraPlanId())
+                .lightingPlanId(sources == null ? null : sources.lightingPlanId())
+                .productReferenceId(sources == null ? null : sources.productReferenceId())
+                .backgroundMusicId(sources == null ? null : sources.backgroundMusicId())
+                .recommendedModelId(recommendation == null ? null : recommendation.recommendedModel())
+                .promptBundleSnapshotAt(sources == null ? null : sources.bundleSnapshotAt())
                 .createdAt(OffsetDateTime.now())
                 .build();
         shotPromptRepository.save(prompt);
@@ -151,24 +210,59 @@ public class ShotGenerationOrchestrator {
         saveReferences(prompt.getPromptId(), shotContext);
         saveFoleyCues(prompt.getPromptId(), cues);
 
-        boolean autoApprove = request.autoApprove() || projectConfigService.isAutoApprove(tenantId, projectId);
-        VideoGenJobView jobView;
-        if (autoApprove) {
-            jobView = approve(tenantContext, job.getJobId());
-        } else {
-            jobView = toJobView(job);
-        }
-
-        return new GenerateShotResponse(
-                job.getJobId(),
-                prompt.getPromptId(),
-                jobView.status(),
+        return new PreparedShot(
+                job,
+                prompt,
                 effectiveFlags,
                 estimate.estimatedCost(),
+                cues,
                 recommendation != null ? recommendation.recommendedModel() : null,
-                recommendation != null ? recommendation.reasoning() : null,
-                toFoleyCueViews(cues)
+                recommendation != null ? recommendation.reasoning() : null
         );
+    }
+
+    /** Result of the assembly/build/persist stage extracted from {@code generate()}. */
+    public record PreparedShot(
+            VideoGenJob job,
+            ShotPrompt prompt,
+            FeatureFlags effectiveFlags,
+            BigDecimal estimatedCost,
+            List<DerivedFoleyCue> foleyCues,
+            String recommendedModel,
+            String recommendationReasoning
+    ) {}
+
+    /** User edited a prepared prompt -- save a NEW ShotPrompt row with parent_prompt_id pointing
+     * back at {@code promptId}, everything else copied. Uses ShotPrompt's existing versioning
+     * columns; {@code listPromptsForShot} already returns newest-first, so history is preserved. */
+    public ShotPromptView saveEditedPrompt(UUID tenantId, UUID promptId, String editedPositive) {
+        ShotPrompt parent = shotPromptRepository.findById(promptId)
+                .filter(p -> p.getTenantId().equals(tenantId))
+                .orElseThrow(() -> VideoGenException.notFound("Unknown prompt_id: " + promptId));
+        if (Boolean.TRUE.equals(parent.getShipped())) {
+            throw VideoGenException.conflict("Prompt " + promptId + " has already shipped; editing is no longer permitted");
+        }
+        ShotPrompt edited = ShotPrompt.builder()
+                .promptId(UUID.randomUUID())
+                .jobId(parent.getJobId())
+                .tenantId(parent.getTenantId())
+                .projectId(parent.getProjectId())
+                .createdBy(parent.getCreatedBy())
+                .parentPromptId(parent.getPromptId())
+                .variantLabel("user-edit")
+                .promptOriginal(editedPositive)
+                .compressionApplied(false)
+                .originalLength(editedPositive == null ? 0 : editedPositive.length())
+                .compressedLength(null)
+                .namedEntitiesValidated(null)
+                .negativePrompt(parent.getNegativePrompt())
+                .dialogueFlag(parent.getDialogueFlag())
+                .captionsFlag(parent.getCaptionsFlag())
+                .shipped(false)
+                .createdAt(OffsetDateTime.now())
+                .build();
+        shotPromptRepository.save(edited);
+        return toPromptView(edited);
     }
 
     /** Doc §4.3: runs the full generate() pipeline once per shot, using project-level flag
@@ -202,15 +296,49 @@ public class ShotGenerationOrchestrator {
 
         try {
             String positive = prompt.getCompressionApplied() ? prompt.getPromptCompressed() : prompt.getPromptOriginal();
-            VideoDispatchParams params = new VideoDispatchParams(null, null);
+            List<String> referenceImageUrls = resolveReferenceImageUrls(prompt.getPromptId());
+            long seed = deriveSeed(job.getProjectId());
+            job.setSeedUsed(seed);
+            videoGenJobRepository.save(job);
+            VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
+                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed);
             DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
+
+            String outputUri = result.outputUri();
+            BigDecimal actualCost = result.actualCost();
+            if (job.isMuteAudio()) {
+                // Auto-dub: mux a beat-matched cloned-voice track onto the silent video Seedance
+                // just returned -- see BeatDubbingService's class comment for why this is a
+                // best-effort bet, not a guarantee, and what the fallback is when it misses.
+                List<DialogueBeat> beats = loadDialogueBeats(job.getJobId());
+                boolean dubSucceeded;
+                try {
+                    BeatDubbingService.DubResult dub = beatDubbingService.dub(
+                            job.getTenantId().toString(), job.getJobId(), job.getProjectId(), beats, outputUri, job.getVoiceCloneModel());
+                    outputUri = dub.finalVideoUrl();
+                    actualCost = actualCost.add(dub.cost());
+                    dubSucceeded = true;
+                } catch (RuntimeException dubEx) {
+                    // Silent video still exists and is still usable -- a failed auto-dub degrades
+                    // to "no dialogue audio" rather than failing the whole job. Post-production's
+                    // fallback path is for sync QUALITY, not for recovering a failed dub call.
+                    log.warn("Auto-dub failed jobId={} errorMessage={} -- keeping the silent video", jobId, dubEx.getMessage());
+                    dubSucceeded = false;
+                }
+                // Direct save, not through jobPersistenceService -- finishSuccess() below re-fetches
+                // the job fresh by id rather than reusing this instance, so dubSucceeded has to be
+                // committed before that call for it to still be there afterward.
+                job.setDubSucceeded(dubSucceeded);
+                videoGenJobRepository.save(job);
+            }
+
             // Copy the provider's own hosted result into our MinIO -- durable, and this is what
             // GET /v1/jobs/{id}/video (the UI-facing endpoint) actually serves.
-            VideoAssetPersistenceService.PersistedAsset asset = videoAssetPersistenceService.persist(job.getJobId(), result.outputUri());
+            VideoAssetPersistenceService.PersistedAsset asset = videoAssetPersistenceService.persist(job.getJobId(), outputUri);
             job = jobPersistenceService.finishSuccess(
                     jobId,
                     result.llmGatewayJobId() == null ? null : result.llmGatewayJobId().toString(),
-                    result.outputUri(), result.actualCost(), asset.bucket(), asset.objectKey());
+                    outputUri, actualCost, asset.bucket(), asset.objectKey());
         } catch (RuntimeException ex) {
             log.warn("Dispatch failed jobId={} errorMessage={}", jobId, ex.getMessage());
             job = jobPersistenceService.finishFailure(jobId, ex.getMessage());
@@ -288,7 +416,8 @@ public class ShotGenerationOrchestrator {
                 prompt.getParentPromptId(),
                 cues,
                 job.map(j -> j.getApprovalStatus().name()).orElse(null),
-                job.map(j -> j.getStatus().name()).orElse(null)
+                job.map(j -> j.getStatus().name()).orElse(null),
+                resolveReferenceImageUrls(prompt.getPromptId())
         );
     }
 
@@ -323,6 +452,19 @@ public class ShotGenerationOrchestrator {
                             .slotIndex(slot++)
                             .build());
                 }
+                // Voice reference is a persisted asset the downstream mux step (BeatDubbingService)
+                // reads from ShotPromptReference to attach to the fal.ai/ElevenLabs voice-clone
+                // call -- kept alongside face references so a prompt's full set of "what conditions
+                // this character" attachments lives in one place.
+                if (character.voiceRefBucket() != null && character.voiceRefObjectKey() != null) {
+                    references.add(ShotPromptReference.builder()
+                            .promptId(promptId)
+                            .refKind(ReferenceKind.CHARACTER_VOICE)
+                            .bucket(character.voiceRefBucket())
+                            .objectKey(character.voiceRefObjectKey())
+                            .slotIndex(slot++)
+                            .build());
+                }
             }
         }
         if (shotContext.productBrand() != null
@@ -333,12 +475,73 @@ public class ShotGenerationOrchestrator {
                     .refKind(ReferenceKind.PRODUCT_HERO)
                     .bucket(shotContext.productBrand().productRefBucket())
                     .objectKey(shotContext.productBrand().productRefObjectKey())
-                    .slotIndex(slot)
+                    .slotIndex(slot++)
+                    .build());
+        }
+        if (shotContext.lighting() != null
+                && shotContext.lighting().dpLightingImageBucket() != null
+                && shotContext.lighting().dpLightingImageObjectKey() != null) {
+            references.add(ShotPromptReference.builder()
+                    .promptId(promptId)
+                    .refKind(ReferenceKind.DP_LIGHTING)
+                    .bucket(shotContext.lighting().dpLightingImageBucket())
+                    .objectKey(shotContext.lighting().dpLightingImageObjectKey())
+                    .slotIndex(slot++)
+                    .build());
+        }
+        if (shotContext.camera() != null
+                && shotContext.camera().cameraPlanImageBucket() != null
+                && shotContext.camera().cameraPlanImageObjectKey() != null) {
+            references.add(ShotPromptReference.builder()
+                    .promptId(promptId)
+                    .refKind(ReferenceKind.CAMERA_PLAN_IMAGE)
+                    .bucket(shotContext.camera().cameraPlanImageBucket())
+                    .objectKey(shotContext.camera().cameraPlanImageObjectKey())
+                    .slotIndex(slot++)
+                    .build());
+        }
+        if (shotContext.audioAmbience() != null
+                && shotContext.audioAmbience().backgroundMusicBucket() != null
+                && shotContext.audioAmbience().backgroundMusicObjectKey() != null) {
+            references.add(ShotPromptReference.builder()
+                    .promptId(promptId)
+                    .refKind(ReferenceKind.BACKGROUND_MUSIC)
+                    .bucket(shotContext.audioAmbience().backgroundMusicBucket())
+                    .objectKey(shotContext.audioAmbience().backgroundMusicObjectKey())
+                    .slotIndex(slot++)
                     .build());
         }
         if (!references.isEmpty()) {
             shotPromptReferenceRepository.saveAll(references);
         }
+    }
+
+    /** Turns this prompt's saved {@code shot_prompt_reference} rows (character face / product
+     * hero / DP-lighting / camera-plan images) into signed URLs for llm-gateway's
+     * {@code reference_image_urls} -- ordered by {@code slotIndex} so the same ordering
+     * {@link #saveReferences} used is preserved at dispatch time. Non-image kinds
+     * ({@code CHARACTER_VOICE}, {@code BACKGROUND_MUSIC}) are deliberately excluded here -- they
+     * live in the same {@code shot_prompt_reference} table for one-place bookkeeping but the
+     * video model's reference-image slots must never receive an audio URL. Empty (not null)
+     * when a prompt has no image references, so callers can pass it straight through without a
+     * null check. */
+    private List<String> resolveReferenceImageUrls(UUID promptId) {
+        return shotPromptReferenceRepository.findByPromptId(promptId).stream()
+                .filter(ref -> isImageReference(ref.getRefKind()))
+                .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
+                .map(ref -> videoAssetPersistenceService.presignedUrl(ref.getBucket(), ref.getObjectKey()))
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    private static boolean isImageReference(ReferenceKind kind) {
+        return kind == ReferenceKind.CHARACTER_FACE
+                || kind == ReferenceKind.SET
+                || kind == ReferenceKind.STORYBOARD
+                || kind == ReferenceKind.STYLE_ANCHOR
+                || kind == ReferenceKind.PRIOR_SHOT_LAST_FRAME
+                || kind == ReferenceKind.PRODUCT_HERO
+                || kind == ReferenceKind.DP_LIGHTING
+                || kind == ReferenceKind.CAMERA_PLAN_IMAGE;
     }
 
     private void saveFoleyCues(UUID promptId, List<DerivedFoleyCue> cues) {
@@ -354,6 +557,31 @@ public class ShotGenerationOrchestrator {
                         .build())
                 .toList();
         foleyCueRepository.saveAll(entities);
+    }
+
+    private void saveDialogueBeats(UUID jobId, List<DialogueBeat> beats) {
+        OffsetDateTime now = OffsetDateTime.now();
+        int[] index = {0};
+        List<VideoGenJobDialogueBeat> entities = beats.stream()
+                .map(b -> VideoGenJobDialogueBeat.builder()
+                        .id(UUID.randomUUID())
+                        .jobId(jobId)
+                        .orderIndex(index[0]++)
+                        .startSeconds(b.startSeconds())
+                        .durationSeconds(b.durationSeconds())
+                        .text(b.text())
+                        .characterKey(b.characterKey())
+                        .voiceReferenceUrl(b.voiceReferenceUrl())
+                        .createdAt(now)
+                        .build())
+                .toList();
+        videoGenJobDialogueBeatRepository.saveAll(entities);
+    }
+
+    private List<DialogueBeat> loadDialogueBeats(UUID jobId) {
+        return videoGenJobDialogueBeatRepository.findByJobIdOrderByOrderIndexAsc(jobId).stream()
+                .map(b -> new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(), b.getVoiceReferenceUrl()))
+                .toList();
     }
 
     private FoleyCueType parseCueType(String value) {
@@ -375,15 +603,27 @@ public class ShotGenerationOrchestrator {
                 .anyMatch(c -> c.faceRefBucket() != null);
         boolean isMotionOnly = (shotContext.characters() == null || shotContext.characters().isEmpty());
         boolean requiresLipSync = hasFace && shotContext.narrative() != null && shotContext.narrative().scriptLine() != null;
+        boolean hasDialogueBeats = shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty();
         Integer duration = shotContext.technical() != null ? shotContext.technical().durationSeconds() : null;
         String durationBucket = duration == null ? "MEDIUM" : duration <= 3 ? "SHORT" : duration <= 7 ? "MEDIUM" : "LONG";
-        return new ShotSignature(hasFace, isMotionOnly, requiresLipSync, durationBucket, "DRAFT");
+        return new ShotSignature(hasFace, isMotionOnly, requiresLipSync, hasDialogueBeats, durationBucket, "DRAFT");
     }
 
     private String resolveProviderId(String modelId) {
         // v1: every registered video model is fal.ai-hosted (Seedance); multi-provider (doc §6)
         // would resolve this from llm-gateway's model catalog instead of a fixed default.
         return "fal.ai";
+    }
+
+    /** Deterministic seed per project -- the primary cross-shot continuity lever (character faces,
+     * set details, lighting). Derived from the project's UUID rather than a per-project column
+     * because the UUID is already stable and available on every job row; per-project locked_idea_id
+     * is functionally equivalent in the current schema (idea is locked once at project creation
+     * and never unlocked), so an extra pre-prod fetch would return a value that maps to the same
+     * project 1:1. Signed high bits of the most-significant 64 bits gives a positive long that
+     * FalAiProvider clamps to fal.ai's 32-bit signed int seed range. */
+    private long deriveSeed(UUID projectId) {
+        return Math.abs(projectId.getMostSignificantBits());
     }
 
     private VideoGenJobView toJobView(VideoGenJob job) {
@@ -394,7 +634,9 @@ public class ShotGenerationOrchestrator {
                 job.getApprovalStatus().name(),
                 job.getOutputUri(),
                 job.getEstimatedCost(),
-                job.getActualCost()
+                job.getActualCost(),
+                job.isMuteAudio(),
+                job.getDubSucceeded()
         );
     }
 }

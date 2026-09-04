@@ -5,5 +5,6 @@ public enum MediaAssetType {
     CAST_VOICE_REFERENCE,
     PRODUCT_REFERENCE,
     STORYBOARD_IMAGE,
+    SHOT_BACKGROUND_MUSIC,
     OTHER
 }

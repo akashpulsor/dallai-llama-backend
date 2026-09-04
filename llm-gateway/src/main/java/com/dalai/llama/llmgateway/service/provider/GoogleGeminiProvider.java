@@ -6,6 +6,7 @@ import com.dalai.llama.llmgateway.dto.ToolDefinition;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
@@ -35,6 +36,7 @@ public class GoogleGeminiProvider implements LlmProvider {
 
     private final WebClient webClient;
     private final String apiKey;
+    private final int defaultTimeoutMs;
 
     public GoogleGeminiProvider(
             @Value("${llm-gateway.google.base-url}") String baseUrl,
@@ -42,7 +44,18 @@ public class GoogleGeminiProvider implements LlmProvider {
             @Value("${llm-gateway.google.timeout-ms}") int defaultTimeoutMs
     ) {
         this.apiKey = apiKey;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        this.defaultTimeoutMs = defaultTimeoutMs;
+        // Spring WebFlux defaults to a 256KB in-memory response buffer -- a real base64-encoded
+        // generated image (this provider's whole reason for existing, for image-typed models like
+        // gemini-2.5-flash-image) routinely exceeds that, so the default silently produces an
+        // empty/truncated body instead of the real response. 16MB matches creator-service's own
+        // GoogleGenAiClientFactory, which hit and fixed this exact problem already.
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                        .build())
+                .build();
     }
 
     @Override
@@ -60,7 +73,14 @@ public class GoogleGeminiProvider implements LlmProvider {
         }
         Map<String, Object> body = toGeminiRequestBody(request);
         String path = "/v1beta/models/%s:generateContent?key=%s".formatted(request.modelId(), apiKey);
-        int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : 30000;
+        // defaultTimeoutMs, not a second hardcoded literal -- this used to ignore the injected
+        // config value entirely and always time out at a hardcoded 30s regardless of what
+        // llm-gateway.google.timeout-ms was set to, which is exactly what tripped on a shot-list
+        // generation call: a long/detailed prompt (many shots, the full per-shot editing/
+        // continuity + cinematography breakdown) routinely needs more than 30s from Gemini, and
+        // every caller into llm-gateway already budgets 120s for the whole round trip, so there
+        // was no reason this inner leg was the tightest link in the chain.
+        int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : defaultTimeoutMs;
         return webClient.post()
                 .uri(path)
                 .bodyValue(body)
@@ -170,6 +190,15 @@ public class GoogleGeminiProvider implements LlmProvider {
         // already-working StoryboardImageGenerationService request shape.
         if ("image".equalsIgnoreCase(String.valueOf(params.get("response_format")))) {
             generationConfig.put("responseModalities", List.of("IMAGE"));
+            // Without this, aspect ratio was only ever prose in the prompt text ("9:16
+            // composition") -- Gemini has no obligation to honor that and confirmed live it
+            // often didn't (square/landscape output on a shot configured for 9:16). Gemini
+            // actually supports a structural ratio here: generationConfig.imageConfig.aspectRatio,
+            // one of "1:1"/"2:3"/"3:2"/"3:4"/"4:3"/"4:5"/"5:4"/"9:16"/"16:9"/"21:9" -- defaults to
+            // 1:1 if omitted, which is exactly the failure mode reported.
+            if (params.get("aspect_ratio") != null) {
+                generationConfig.put("imageConfig", Map.of("aspectRatio", params.get("aspect_ratio")));
+            }
         }
 
         Map<String, Object> body = new LinkedHashMap<>();

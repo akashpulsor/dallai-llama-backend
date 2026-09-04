@@ -11,6 +11,7 @@ public record ScreenplayView(
         UUID id,
         UUID projectId,
         UUID scriptId,
+        UUID lockedIdeaId,
         DraftStatus status,
         Integer version,
         GenerationSource source,

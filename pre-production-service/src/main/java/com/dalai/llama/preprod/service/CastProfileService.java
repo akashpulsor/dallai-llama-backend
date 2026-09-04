@@ -5,24 +5,41 @@ import com.dalai.llama.preprod.domain.MediaAssetType;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
+import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
+import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
+import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MinioClient;
+import io.minio.http.Method;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
 public class CastProfileService {
 
     private final CastProfileRepository castProfileRepository;
+    private final CastAssignmentRepository castAssignmentRepository;
     private final MediaAssetService mediaAssetService;
+    private final MinioClient publicMinioClient;
 
-    public CastProfileService(CastProfileRepository castProfileRepository, MediaAssetService mediaAssetService) {
+    public CastProfileService(
+            CastProfileRepository castProfileRepository,
+            CastAssignmentRepository castAssignmentRepository,
+            MediaAssetService mediaAssetService,
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient
+    ) {
         this.castProfileRepository = castProfileRepository;
+        this.castAssignmentRepository = castAssignmentRepository;
         this.mediaAssetService = mediaAssetService;
+        this.publicMinioClient = publicMinioClient;
     }
 
     @Transactional
@@ -52,13 +69,33 @@ public class CastProfileService {
         return toView(profile);
     }
 
+    /** The only way a cast profile's voice reference gets set today is at creation time
+     * ({@link #create}) -- a profile created before an actor's voice sample was ready (or one
+     * shared across characters, like a narrator reusing an on-screen actor's profile) had no way
+     * to add or change it afterward. Same upload -> attach pattern as create: the caller already
+     * has bucket/objectKey from {@code POST /v1/cast-profiles/media}. */
+    @Transactional
+    public CastProfileView updateVoice(UUID tenantId, UUID castProfileId, UpdateCastProfileVoiceRequest request) {
+        CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        profile.setVoiceRefBucket(request.voiceRefBucket());
+        profile.setVoiceRefObjectKey(request.voiceRefObjectKey());
+        profile.setUpdatedAt(OffsetDateTime.now());
+        CastProfile saved = castProfileRepository.save(profile);
+        mediaAssetService.registerIfAbsent(tenantId, request.voiceRefBucket(), request.voiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
+        return toView(saved);
+    }
+
     @Transactional(readOnly = true)
     public List<CastProfileView> list(UUID tenantId, UUID projectId, CastProfileType profileType) {
-        return castProfileRepository.findByTenantIdAndProjectIdIsNullOrTenantIdAndProjectId(tenantId, tenantId, projectId)
+        List<CastProfile> profiles = castProfileRepository.findByTenantIdAndProjectIdIsNullOrTenantIdAndProjectId(tenantId, tenantId, projectId)
                 .stream()
                 .filter(p -> profileType == null || p.getProfileType() == profileType)
-                .map(this::toView)
                 .collect(Collectors.toList());
+        Map<UUID, Long> projectCounts = castAssignmentRepository
+                .countDistinctProjectsByCastProfileIdIn(profiles.stream().map(CastProfile::getId).collect(Collectors.toList())).stream()
+                .collect(Collectors.toMap(CastAssignmentRepository.CastProfileProjectCount::getCastProfileId,
+                        CastAssignmentRepository.CastProfileProjectCount::getProjectCount));
+        return profiles.stream().map(p -> toView(p, projectCounts.getOrDefault(p.getId(), 0L))).collect(Collectors.toList());
     }
 
     CastProfile requireCastProfile(UUID tenantId, UUID castProfileId) {
@@ -67,8 +104,32 @@ public class CastProfileService {
     }
 
     private CastProfileView toView(CastProfile profile) {
+        long projectCount = castAssignmentRepository.countDistinctProjectsByCastProfileIdIn(List.of(profile.getId())).stream()
+                .findFirst().map(CastAssignmentRepository.CastProfileProjectCount::getProjectCount).orElse(0L);
+        return toView(profile, projectCount);
+    }
+
+    private CastProfileView toView(CastProfile profile, long projectCount) {
         return new CastProfileView(profile.getId(), profile.getProjectId(), profile.getProfileType(), profile.getDisplayName(),
-                profile.getFaceRefBucket(), profile.getFaceRefObjectKey(), profile.getDescription(),
-                profile.getAge(), profile.getGender(), profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey());
+                profile.getFaceRefBucket(), profile.getFaceRefObjectKey(), signedUrl(profile.getFaceRefBucket(), profile.getFaceRefObjectKey()),
+                profile.getDescription(), profile.getAge(), profile.getGender(), profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(),
+                projectCount);
+    }
+
+    /** Display-only, so any presign failure degrades to no photo rather than a broken cast list. */
+    private String signedUrl(String bucket, String objectKey) {
+        if (bucket == null || objectKey == null) {
+            return null;
+        }
+        try {
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                    .method(Method.GET)
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .expiry(1, TimeUnit.HOURS)
+                    .build());
+        } catch (Exception ex) {
+            return null;
+        }
     }
 }

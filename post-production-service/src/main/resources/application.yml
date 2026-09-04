@@ -8,6 +8,14 @@ spring:
     # needs to be this long (must stay under the pod's terminationGracePeriodSeconds).
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  codec:
+    # Spring WebFlux's injected WebClient.Builder defaults to a 256KB in-memory response buffer --
+    # LlmGatewayClient's chat() responses carry base64-encoded voice-clone audio and other media
+    # that routinely exceeds that, silently truncating instead of decoding the real response
+    # (confirmed as the real cause of an equivalent bug in pre-production-service's image
+    # generation). 16MB matches creator-service's own GoogleGenAiClientFactory.
+    max-in-memory-size: 16MB
+
   servlet:
     multipart:
       # Must stay >= post-production.dubbing.max-upload-size-mb below, or Spring itself rejects
@@ -111,17 +119,37 @@ post-production:
     # default-tts-model points at the SAME model as default-voice-clone-model, not a separate TTS
     # model -- voice-clone-v1/tts-v1 (fal.ai's original guessed-shape placeholders) remain seeded
     # for a caller that explicitly asks for them, unused by this service's own defaults.
-    default-voice-clone-model: ${POST_PROD_DEFAULT_VOICE_CLONE_MODEL:fal-ai/minimax/voice-clone}
+    # Real ElevenLabs voice cloning (direct API, not fal.ai's MiniMax proxy) -- per explicit
+    # direction that ElevenLabs is called directly. fal-ai/minimax/voice-clone remains a valid,
+    # real, real-priced alternative a caller can still select via a model override.
+    default-voice-clone-model: ${POST_PROD_DEFAULT_VOICE_CLONE_MODEL:elevenlabs/instant-voice-clone}
     # fal-ai/sync-lipsync is fal.ai's real, documented lip-sync app slug -- wav2lip-v1 (still
     # seeded, V15) was never a real fal.ai endpoint.
     default-lip-sync-model: ${POST_PROD_DEFAULT_LIP_SYNC_MODEL:fal-ai/sync-lipsync}
-    default-tts-model: ${POST_PROD_DEFAULT_TTS_MODEL:fal-ai/minimax/voice-clone}
-    default-foley-model: ${POST_PROD_DEFAULT_FOLEY_MODEL:foley-v1}
-    default-music-model: ${POST_PROD_DEFAULT_MUSIC_MODEL:music-gen-v1}
+    # Was fal-ai/minimax/voice-clone -- wrong default: ttsRequestBody is shaped for ElevenLabs'
+    # real schema (text+voice), not MiniMax's (audio_url+text), so a type=tts call against MiniMax
+    # would fail. elevenlabs-tts-v1 is both the correctly-shaped AND (per explicit direction) the
+    # actually-used-in-production model for this.
+    default-tts-model: ${POST_PROD_DEFAULT_TTS_MODEL:elevenlabs-tts-v1}
+    # Was foley-v1 -- not a real fal.ai app at all; every dispatch against it would fail outright,
+    # not just bill $0. beatoven/sound-effect-generation is fal.ai's real sound-effect/foley app.
+    default-foley-model: ${POST_PROD_DEFAULT_FOLEY_MODEL:beatoven/sound-effect-generation}
+    # Was music-gen-v1 -- same "not a real app" problem as foley-v1. elevenlabs/music-v1 (real
+    # ElevenLabs /v1/music endpoint) is both real and, per explicit direction, the actual path.
+    default-music-model: ${POST_PROD_DEFAULT_MUSIC_MODEL:elevenlabs/music-v1}
     default-text-model: ${POST_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
     default-video-edit-model: ${POST_PROD_DEFAULT_VIDEO_EDIT_MODEL:kling-edit-v1}
+    # fal-ai/topaz/upscale/video is fal.ai's real, documented Topaz Video Upscale app slug --
+    # llm-gateway's V72 seed. Callers pick a different registered type=upscale model via
+    # GenerateUpscaleRequest.model when one exists; this is only the fallback.
+    default-upscale-model: ${POST_PROD_DEFAULT_UPSCALE_MODEL:fal-ai/topaz/upscale/video}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    # Presigned URLs handed to fal.ai (dubbing/lip-sync/upscale source URLs) and to the browser
+    # (dubbed playback) sign against this hostname -- must be reachable from OUTSIDE the cluster.
+    # Blank falls back to `endpoint` for local/dev. See MinioConfig.publicMinioClient for why the
+    # endpoint can't be swapped after signing.
+    public-url: ${MINIO_PUBLIC_URL:}
     access-key: ${MINIO_ACCESS_KEY:}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${POST_PROD_BUCKET:creator-assets}

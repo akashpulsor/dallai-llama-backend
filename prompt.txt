@@ -1,0 +1,15 @@
+Create one final, production-quality advertising still that will be used as an image-to-video anchor. This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.
+
+Shot type: ACTION
+What happens: Camera slowly pans from other guests' faces, who are smiling and interacting, to the protagonist's face, who is subtly observing them.
+Line: The camera subtly pans across the faces of guests, including our protagonist, who, while well-dressed, seems to be observing the sea of similar styles with a hint of longing for something more distinct. A confident, warm female NARRATOR asks, "This Diwali, what story will your style tell?"
+Camera: MS shot, Eye level angle, Slow pan left, settling on protagonist movement, Standard 50mm equivalent lens.
+Composition: Rule of thirds, protagonist framed slightly off-center for depth, with soft bokeh background.
+Location: Urban Diwali Celebration, NIGHT
+Lighting mood: SOFT
+
+Primary subject: Stuti Tripathi -- Software professional, . A reference photo is attached as the PRIMARY IDENTITY REFERENCE for this subject.
+Generate a new, photorealistic image of this same real subject -- not someone or something that merely resembles it. Preserve the underlying identity and 3D structure exactly: overall shape and proportions; distinguishing surface features and their exact position, size, and spacing; texture and material character; color and tone; and any distinctive marks, asymmetries, or wear. Treat the reference as defining this subject's underlying 3D structure -- if this shot's camera angle differs from the reference photo, reconstruct the same underlying subject from that new angle rather than designing something that merely resembles it. Where part of the subject is not visible in the reference, infer it conservatively from the visible structure, staying consistent with its identity. Do not design a new face, product, or object.
+Expression: Thoughtful, slightly wistful, observant. Emotion: Longing, contemplative. Body language: Calm, hands possibly clasped or at side, observing others.
+
+Output: RATIO_9_16 composition, clean mobile-safe framing, commercial lighting, no on-image text or labels.

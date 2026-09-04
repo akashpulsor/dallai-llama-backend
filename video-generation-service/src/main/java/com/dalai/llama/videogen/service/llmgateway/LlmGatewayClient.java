@@ -77,6 +77,44 @@ public class LlmGatewayClient {
         }
     }
 
+    /** Sends raw shot data to llm-gateway's model-specific prompt strategy (Seedance / Wan /
+     * default). Prompt-shape knowledge lives on that side; this service just POSTs the shot
+     * context + modelId + flags and gets back the composed positive/negative + max prompt length
+     * for the compression stage. Same tenantId header convention as chat(). */
+    public LlmGatewayPromptFormatResponse formatPrompt(String tenantId, Object requestBody) {
+        try {
+            return webClient.post()
+                    .uri("/v1/prompt/format")
+                    .header("X-Tenant-ID", tenantId)
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(LlmGatewayPromptFormatResponse.class)
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw new LlmGatewayCallException(
+                    "llm-gateway /v1/prompt/format failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    /** Cheap lookup used by PromptCompressionService before it decides whether to compress -- no
+     * need to run the full format pass just to read the model's max prompt length. */
+    public int getMaxPromptLength(String tenantId, String modelId) {
+        try {
+            MaxLengthResponse resp = webClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/v1/prompt/max-length").queryParam("modelId", modelId).build())
+                    .header("X-Tenant-ID", tenantId)
+                    .retrieve()
+                    .bodyToMono(MaxLengthResponse.class)
+                    .block(Duration.ofMillis(timeoutMs));
+            return resp == null ? 0 : resp.maxLength();
+        } catch (WebClientResponseException ex) {
+            throw new LlmGatewayCallException(
+                    "llm-gateway /v1/prompt/max-length failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    public record MaxLengthResponse(int maxLength) {}
+
     public List<LlmGatewayModelSummary> listModels(String tenantId, String type) {
         try {
             return webClient.get()

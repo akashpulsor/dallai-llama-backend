@@ -100,6 +100,34 @@ public class UsageController {
         return ResponseEntity.ok(details);
     }
 
+    /** Individual line items, newest first -- the actual "debit log" the wallet & billing tab
+     * shows, as opposed to {@link #getUsageSummary}/{@link #getUsageDetails}'s aggregates. Every
+     * real-time LLM-usage debit (see LlmBillingEventConsumer) lands here the same way any other
+     * usage-sourced debit does, since both go through the same {@code UsageService.recordBillableUsage}. */
+    @GetMapping("/records")
+    @Operation(summary = "Get recent usage records", description = "Individual usage/debit line items, newest first")
+    public ResponseEntity<List<UsageRecordView>> getUsageRecords(
+            @PathVariable UUID tenantId,
+            @RequestParam(defaultValue = "50") int limit
+    ) {
+        List<UsageRecordView> records = usageRecordRepository.findByTenantId(tenantId).stream()
+                .sorted((a, b) -> b.getRecordedAt().compareTo(a.getRecordedAt()))
+                .limit(Math.max(1, Math.min(limit, 200)))
+                .map(r -> new UsageRecordView(
+                        r.getId(), r.getMetric().name(), r.getQuantity(), r.getUnit().name(),
+                        r.getUnitCost(), r.getTotalCost(), r.getSourceType(), r.getSourceId(),
+                        r.getDescription(), r.getRecordedAt()))
+                .toList();
+        return ResponseEntity.ok(records);
+    }
+
+    public record UsageRecordView(
+            UUID id, String metric, BigDecimal quantity, String unit,
+            BigDecimal unitCost, BigDecimal totalCost, String sourceType, UUID sourceId,
+            String description, Instant recordedAt
+    ) {
+    }
+
     @GetMapping("/history")
     @Operation(summary = "Get usage history", description = "Get historical usage by month")
     public ResponseEntity<List<MonthlyUsageResponse>> getUsageHistory(

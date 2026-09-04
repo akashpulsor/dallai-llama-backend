@@ -39,25 +39,26 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PreProductionException.upstream(
-                    "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
+                    "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 
-    /** llm-gateway's {@code GET /v1/languages} is its own canonical source of truth for what
-     * languages exist (see its {@code language_master}/{@code model_supported_language} tables) --
-     * this is a live proxy, not a copy, so the two never drift. No tenant header: the endpoint is
-     * unauthenticated reference data, same as the chat/estimate calls' underlying model list. */
+    /** llm-gateway's language master data is its own canonical source of truth for what languages
+     * exist (see its {@code language_master}/{@code model_supported_language} tables) -- this is a
+     * live proxy, not a copy, so the two never drift. Goes through {@code /api/v1/internal/languages}
+     * like every other service-to-service call here -- {@code /v1/languages} is the JWT-protected,
+     * real-end-user-only endpoint and always 403s a service-to-service caller with no JWT to forward. */
     public List<LlmGatewayLanguageSummary> listLanguages() {
         try {
             return webClient.get()
-                    .uri("/v1/languages")
+                    .uri("/api/v1/internal/languages")
                     .retrieve()
                     .bodyToMono(new ParameterizedTypeReference<List<LlmGatewayLanguageSummary>>() {
                     })
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PreProductionException.upstream(
-                    "llm-gateway languages failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()));
+                    "llm-gateway languages failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 }

@@ -54,7 +54,8 @@ class MotionGraphicShotContextAssemblyStrategy implements ShotContextAssemblyStr
         Technical baseTechnical = ShotContextCommonFields.technical(ctx);
         Technical technical = new Technical(
                 plan.getDurationSeconds() != null ? plan.getDurationSeconds() : baseTechnical.durationSeconds(),
-                baseTechnical.aspectRatio(), baseTechnical.targetProvider(), baseTechnical.targetModel());
+                baseTechnical.aspectRatio(), baseTechnical.targetProvider(), baseTechnical.targetModel(),
+                baseTechnical.voiceCloneModel());
 
         return new ShotContext(
                 ctx.shot().getShotRef(),
@@ -66,7 +67,8 @@ class MotionGraphicShotContextAssemblyStrategy implements ShotContextAssemblyStr
                 productBrand,
                 technical,
                 ShotContextCommonFields.continuityAnchors(ctx),
-                ShotContextCommonFields.audioAmbience(ctx));
+                ShotContextCommonFields.audioAmbience(ctx),
+                List.of());
     }
 
     private String motionGraphicNarrativeLine(MotionGraphicPlan plan) {

@@ -12,6 +12,7 @@ import com.dalai.llama.billing.repository.PaymentEventRepository;
 import com.dalai.llama.billing.repository.PaymentRepository;
 import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.service.BillingStateService;
+import com.dalai.llama.billing.service.ClientReviewPaymentService;
 import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class RazorpayWebhookOrchestrationService {
     private final RazorpayService razorpayService;
     private final ProductServiceClient productServiceClient;
     private final BillingEventProducer eventProducer;
+    private final ClientReviewPaymentService clientReviewPaymentService;
 
     public void processWebhook(String eventType, String payload, String signature) {
         switch (eventType) {
@@ -69,7 +71,11 @@ public class RazorpayWebhookOrchestrationService {
 
         Payment payment = paymentRepository.findByGatewayOrderId(orderId).orElse(null);
         if (payment == null) {
-            log.warn("No payment found for order {}", orderId);
+            // Not a wallet-recharge/requirement-funding Payment -- try the other table this
+            // webhook covers before giving up on this order entirely.
+            if (!clientReviewPaymentService.captureFromWebhook(orderId, gatewayPaymentId)) {
+                log.warn("No payment found for order {}", orderId);
+            }
             return;
         }
 

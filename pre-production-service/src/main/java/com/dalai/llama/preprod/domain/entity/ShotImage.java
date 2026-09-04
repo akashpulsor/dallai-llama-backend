@@ -63,6 +63,12 @@ public class ShotImage {
     @Column(name = "reference_cast_profile_id")
     private UUID referenceCastProfileId;
 
+    /** {@link com.dalai.llama.preprod.service.ShotImageDescriptionService}'s vision-model caption
+     * of this image, cached so re-locking a project doesn't re-pay for the same LLM call. Null
+     * until the image has been described at least once. */
+    @Column(name = "description", columnDefinition = "text")
+    private String description;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

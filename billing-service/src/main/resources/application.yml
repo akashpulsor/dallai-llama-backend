@@ -72,13 +72,43 @@ razorpay:
 billing:
   creator-video-package:
     ai-short-starter-price-inr: ${CREATOR_VIDEO_PACKAGE_AI_SHORT_STARTER_PRICE_INR:5999}
+  # Client pay-to-lock pricing. platform-base is what the platform keeps (covers COGS + opex +
+  # profit); the creator's own Tenant.marginPercent rides on top and is credited to their wallet.
+  # Defaults land a typical order at ~INR 6,499 client-facing (competitor-validated), of which the
+  # platform keeps 5,299 and the creator earns ~1,200. All configurable, no redeploy to tune.
+  client-review:
+    platform-base-inr: ${CLIENT_REVIEW_PLATFORM_BASE_INR:5299}
+    default-creator-margin-percent: ${CLIENT_REVIEW_DEFAULT_CREATOR_MARGIN_PERCENT:22.6}
+    currency: ${CLIENT_REVIEW_CURRENCY:INR}
+  # Only used for the webhook-driven client-review-payment safety net (see
+  # ClientReviewPaymentService#captureFromWebhook / PreProductionServiceClient) -- nothing else in
+  # billing-service calls pre-production-service.
+  pre-production:
+    base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
   grace-period-days: ${GRACE_PERIOD_DAYS:7}
   low-balance-threshold: ${LOW_BALANCE_THRESHOLD:500}
   default-currency: ${DEFAULT_CURRENCY:INR}
   kafka:
     creator-billing-events-topic: ${CREATOR_KAFKA_BILLING_EVENTS_TOPIC:creator.billing.events}
+    llm-billing-events-topic: ${LLM_KAFKA_BILLING_EVENTS_TOPIC:llm.billing.events}
   currency:
     conversion-rates: ${BILLING_CURRENCY_CONVERSION_RATES:INR_INR=1,USD_INR=95}
+  # Applied on top of llm-gateway's raw per-call cost (see LlmBillingEventConsumer) -- llm-gateway
+  # deliberately reports raw provider cost only, pricing/margin is billing-service's job. 85 matches
+  # the one real precedent for this exact number in this codebase (creator-service's now-dead
+  # usage-markup-percent); adjust freely, this isn't derived from anything more authoritative.
+  llm-usage-margin-percent: ${LLM_USAGE_MARGIN_PERCENT:85}
+  # Only used to resolve a project's quoted price for the spend cap below -- nothing else in
+  # billing-service calls creative-planning-service.
+  creative-planning:
+    base-url: ${CREATIVE_PLANNING_SERVICE_BASE_URL:http://creative-planning-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${CREATIVE_PLANNING_SERVICE_TIMEOUT_MS:5000}
+  # A project's real accumulated cost (summed from usage_records) may exceed its quoted price by
+  # up to this multiple before new generation is refused -- 150% leaves room for a normal retry or
+  # two without silently blocking a barely-over-budget project, while still guaranteeing a runaway
+  # one (regenerating the same shot repeatedly) can't erase the platform's margin on a single deal.
+  project-spend-cap-multiple: ${PROJECT_SPEND_CAP_MULTIPLE:1.5}
 
 # Service URLs (for internal communication)
 services:

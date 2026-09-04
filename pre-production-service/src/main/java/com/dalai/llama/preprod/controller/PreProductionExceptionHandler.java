@@ -16,6 +16,14 @@ public class PreProductionExceptionHandler {
 
     @ExceptionHandler(PreProductionException.class)
     public ResponseEntity<Map<String, String>> handlePreProductionException(PreProductionException ex) {
+        // 5xx (upstream()/BAD_GATEWAY today) is a real failure worth seeing in logs -- 4xx
+        // (notFound/badRequest/conflict) are routine client-facing responses, not worth
+        // error-level noise for every "not found" typo.
+        if (ex.getStatus().is5xxServerError()) {
+            log.error("PreProductionException status={} message={}", ex.getStatus(), ex.getMessage(), ex);
+        } else {
+            log.debug("PreProductionException status={} message={}", ex.getStatus(), ex.getMessage());
+        }
         return ResponseEntity.status(ex.getStatus()).body(Map.of("error", ex.getMessage()));
     }
 

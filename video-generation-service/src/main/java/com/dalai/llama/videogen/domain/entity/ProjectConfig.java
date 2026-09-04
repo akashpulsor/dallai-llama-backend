@@ -43,6 +43,14 @@ public class ProjectConfig {
     @Column(name = "auto_approve", nullable = false)
     private Boolean autoApprove;
 
+    /** null uses {@code BeatDubbingService}'s own configured default
+     * ({@code video-gen.llm-gateway.default-voice-clone-model}) -- a project-level pick from
+     * llm-gateway's real {@code model_master} (type=voice_clone), same "master data, not a
+     * hardcoded list" precedent {@code preferredVideoModel} already set on pre-production-
+     * service's side. */
+    @Column(name = "preferred_voice_clone_model")
+    private String preferredVoiceCloneModel;
+
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 }

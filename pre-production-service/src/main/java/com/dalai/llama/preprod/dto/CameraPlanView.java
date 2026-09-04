@@ -14,6 +14,8 @@ public record CameraPlanView(
         String gimbalTiltSpeed,
         String safetyFlags,
         Boolean requiresCoordinator,
-        String complianceNote
+        String complianceNote,
+        String source,
+        String critiqueNotes
 ) {
 }

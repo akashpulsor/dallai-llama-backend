@@ -103,8 +103,12 @@ public class StaleJobReconciliationTask {
         String positive = prompt.getCompressionApplied() ? prompt.getPromptCompressed() : prompt.getPromptOriginal();
         DispatchResult result;
         try {
+            // Reuse the seed the original dispatch attempt used (persisted before that call in
+            // ShotGenerationOrchestrator.approve), so a retry produces the same visual output that
+            // the caller was already committed to -- a fresh random seed here would silently
+            // change the generated frame from what the user approved.
             result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(),
-                    new VideoDispatchParams(null, null));
+                    new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(), null, null, job.getSeedUsed()));
         } catch (RuntimeException ex) {
             if (pastGiveup) {
                 giveUp(job, "llm-gateway unreachable at giveup threshold: " + ex.getMessage());

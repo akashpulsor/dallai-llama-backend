@@ -14,6 +14,7 @@ public record BillingEvent(
         UUID eventId,
         UUID jobId,
         String tenantId,
+        UUID projectId,
         String modelId,
         int inputTokens,
         int outputTokens,

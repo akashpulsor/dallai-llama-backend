@@ -5,6 +5,7 @@ import java.util.UUID;
 public record ProjectConfigView(
         UUID projectId,
         FeatureFlags defaultFlags,
-        boolean autoApprove
+        boolean autoApprove,
+        String preferredVoiceCloneModel
 ) {
 }

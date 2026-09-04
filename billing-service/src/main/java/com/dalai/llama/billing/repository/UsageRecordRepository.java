@@ -28,6 +28,10 @@ public interface UsageRecordRepository extends JpaRepository<UsageRecord, UUID> 
     long countByTenantIdAndRecordedAtBetween(UUID tenantId, Instant from, Instant to);
 
     @Query("SELECT COALESCE(SUM(u.totalCost), 0) FROM UsageRecord u " +
+            "WHERE u.tenantId = :tenantId AND u.projectId = :projectId")
+    BigDecimal sumCostByProjectId(@Param("tenantId") UUID tenantId, @Param("projectId") UUID projectId);
+
+    @Query("SELECT COALESCE(SUM(u.totalCost), 0) FROM UsageRecord u " +
             "WHERE u.tenantId = :tenantId AND u.sourceId = :sourceId " +
             "AND u.sourceType IN :sourceTypes")
     BigDecimal sumCostByPackageScope(

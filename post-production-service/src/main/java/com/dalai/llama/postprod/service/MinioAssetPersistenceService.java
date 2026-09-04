@@ -32,17 +32,20 @@ public class MinioAssetPersistenceService implements AssetPersistenceService {
     private static final long STREAM_PART_SIZE = 10L * 1024 * 1024;
 
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
     private final WebClient webClient;
     private final String bucket;
     private final String prefix;
 
     public MinioAssetPersistenceService(
             MinioClient minioClient,
+            @org.springframework.beans.factory.annotation.Qualifier("publicMinioClient") MinioClient publicMinioClient,
             WebClient.Builder webClientBuilder,
             @Value("${post-production.minio.bucket}") String bucket,
             @Value("${post-production.minio.output-prefix}") String outputPrefix
     ) {
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
         this.webClient = webClientBuilder.build();
         this.bucket = bucket;
         this.prefix = outputPrefix;
@@ -106,7 +109,7 @@ public class MinioAssetPersistenceService implements AssetPersistenceService {
             }
         } catch (Throwable ex) {
             throw PostProductionException.upstream(
-                    "Could not stream provider result to MinIO for job_id=" + postProductionJobId + ": " + ex.getMessage());
+                    "Could not stream provider result to MinIO for job_id=" + postProductionJobId + ": " + ex.getMessage(), ex);
         }
         return new PersistedAsset(bucket, objectKey);
     }
@@ -141,7 +144,7 @@ public class MinioAssetPersistenceService implements AssetPersistenceService {
                     .contentType(contentType)
                     .build());
         } catch (Exception ex) {
-            throw PostProductionException.upstream("Could not persist result to MinIO for job_id=" + postProductionJobId + ": " + ex.getMessage());
+            throw PostProductionException.upstream("Could not persist result to MinIO for job_id=" + postProductionJobId + ": " + ex.getMessage(), ex);
         }
         return new PersistedAsset(bucket, objectKey);
     }
@@ -158,14 +161,18 @@ public class MinioAssetPersistenceService implements AssetPersistenceService {
     @Override
     public String presignedUrl(String bucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            // Signed against the PUBLIC endpoint -- these URLs are handed to fal.ai as
+            // source/reference URLs (dubbing/lip-sync/upscale) and to the browser as
+            // <video src="...">, both outside the cluster. Internal minioClient URLs would 502.
+            // See MinioConfig.publicMinioClient for why the endpoint can't be swapped after signing.
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)
                     .expiry(1, TimeUnit.HOURS)
                     .build());
         } catch (Exception ex) {
-            throw PostProductionException.upstream("Could not create a signed URL for bucket=" + bucket + " objectKey=" + objectKey);
+            throw PostProductionException.upstream("Could not create a signed URL for bucket=" + bucket + " objectKey=" + objectKey, ex);
         }
     }
 }

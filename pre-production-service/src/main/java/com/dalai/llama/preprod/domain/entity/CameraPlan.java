@@ -53,16 +53,16 @@ public class CameraPlan {
     @Builder.Default
     private Boolean gimbalEnabled = false;
 
-    @Column(name = "gimbal_device", length = 120)
+    @Column(name = "gimbal_device", columnDefinition = "text")
     private String gimbalDevice;
 
-    @Column(name = "gimbal_mode", length = 80)
+    @Column(name = "gimbal_mode", columnDefinition = "text")
     private String gimbalMode;
 
-    @Column(name = "gimbal_pan_speed", length = 40)
+    @Column(name = "gimbal_pan_speed", columnDefinition = "text")
     private String gimbalPanSpeed;
 
-    @Column(name = "gimbal_tilt_speed", length = 40)
+    @Column(name = "gimbal_tilt_speed", columnDefinition = "text")
     private String gimbalTiltSpeed;
 
     @Column(name = "safety_flags", columnDefinition = "text")
@@ -74,6 +74,15 @@ public class CameraPlan {
 
     @Column(name = "compliance_note", columnDefinition = "text")
     private String complianceNote;
+
+    /** GENERATED, EDITED, or CRITIC -- same convention as Script's GenerationSource, just not a
+     * shared enum (this plan has no version history to make a whole enum+FK worth it). */
+    @Column(name = "source", nullable = false, length = 16)
+    private String source;
+
+    /** Set only when source=CRITIC -- the actual feedback that forced a revision. */
+    @Column(name = "critique_notes", columnDefinition = "text")
+    private String critiqueNotes;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

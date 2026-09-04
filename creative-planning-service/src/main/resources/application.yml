@@ -5,6 +5,13 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  codec:
+    # Spring WebFlux's injected WebClient.Builder defaults to a 256KB in-memory response buffer --
+    # raised repo-wide alongside every other LlmGatewayClient after finding this was the real cause
+    # of a silent image-generation failure in pre-production-service. 16MB matches creator-service's
+    # own GoogleGenAiClientFactory.
+    max-in-memory-size: 16MB
+
   servlet:
     multipart:
       max-file-size: ${CREATIVE_PLANNING_MAX_UPLOAD_SIZE_MB:25}MB
@@ -117,6 +124,18 @@ creative-planning:
     # gates: a failure here fails the lock request.
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
     timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:30000}
+  billing:
+    # Prices a standalone requirement's duration (platform per-second rate + this creator's own
+    # margin) at creation time -- see BillingServiceClient. Gates the same way pre-production
+    # does: a standalone brief always needs a real price, so a billing-service failure here fails
+    # the create request rather than saving an unpriced requirement.
+    base-url: ${BILLING_SERVICE_BASE_URL:http://billing-service.apps.svc.cluster.local:8080}
+    # 30s, not 15s: this call goes all the way out to Razorpay's live API (order creation), not
+    # just to another internal service -- 15s clipped real, eventually-successful calls under
+    # normal latency variance, timing out the client-facing request while billing-service's own
+    # call to Razorpay kept running server-side. Matches pre-production's own cross-service budget
+    # above.
+    timeout-ms: ${BILLING_SERVICE_TIMEOUT_MS:30000}
   share-token:
     # How long a project-requirement share link stays live before the public GET/mark-funded
     # routes refuse it -- refreshShareToken() issues a new one when a client didn't pay in time.
@@ -129,6 +148,12 @@ creative-planning:
     secret: ${CREATIVE_PLANNING_PAYMENT_WEBHOOK_SECRET:}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://minio.infra.svc.cluster.local:9000}
+    # Presigned URLs are signed against whatever endpoint generated them (the Host header is part
+    # of the AWS SigV4 signature) -- the internal-only cluster hostname above can't be swapped in
+    # after the fact, so a second client signs against this public route instead. Same pattern as
+    # pre-production-service's publicMinioClient. Blank falls back to the internal endpoint
+    # (local/dev, where there's no public route to presign against).
+    public-url: ${MINIO_PUBLIC_URL:}
     access-key: ${MINIO_ACCESS_KEY:}
     secret-key: ${MINIO_SECRET_KEY:}
     bucket: ${CREATIVE_PLANNING_BUCKET:creator-assets}

@@ -38,7 +38,7 @@ public class MarketingPlanExportService {
     @Transactional(readOnly = true)
     public BrandPlanExportView exportPdf(UUID tenantId, UUID planId) {
         MarketingPlan plan = marketingPlanGenerationService.require(tenantId, planId);
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, plan.getBrandContextId());
 
         byte[] pdfBytes = render(brand, plan);
 

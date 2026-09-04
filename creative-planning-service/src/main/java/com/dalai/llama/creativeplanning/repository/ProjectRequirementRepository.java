@@ -14,4 +14,7 @@ public interface ProjectRequirementRepository extends JpaRepository<ProjectRequi
     Optional<ProjectRequirement> findByShareToken(String shareToken);
 
     List<ProjectRequirement> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+
+    /** Every brief/project created for one specific brand -- the Brands tab's "projects" list. */
+    List<ProjectRequirement> findByTenantIdAndBrandContextIdOrderByCreatedAtDesc(UUID tenantId, UUID brandContextId);
 }

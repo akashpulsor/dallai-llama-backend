@@ -20,6 +20,7 @@ import com.dalai.llama.billing.service.payment.PaymentGateway;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
@@ -84,6 +86,43 @@ public class PaymentServiceImpl implements PaymentService {
     private PaymentOrderResult createOrder(UUID tenantId, String currency, BigDecimal amount,
                                            String description, UUID subscriptionId,
                                            UUID projectRequirementId) {
+        // Confirmed live this was a real double-charge bug: verifyPayment's own request routinely
+        // outran the caller's timeout (the reference-image-analysis step that used to run inline
+        // with it, now fixed separately to be async) even though the payment itself succeeded --
+        // the client saw a timeout, not a success, and retried. Nothing stopped that retry from
+        // creating and paying a brand-new order for the same requirement. Confirmed in production
+        // data: one requirement was charged twice 51 seconds apart, another five times over an
+        // hour, before this existed.
+        //
+        // project_requirement_id is treated as this call's natural idempotency key -- "fund this
+        // requirement" should always resolve to the same outcome no matter how many times it's
+        // invoked, the same contract a client-supplied idempotency key would give, except this
+        // one survives a page reload since it's keyed on the domain object, not client state:
+        //   - a payment already SUCCESS for this requirement -> reject, it's already paid
+        //   - a payment still PENDING/PROCESSING -> hand back that SAME order (this is exactly
+        //     the case that happened live: the first attempt's response was lost, not the
+        //     payment) instead of creating a second one for the user to also complete
+        //   - nothing live yet -> fall through and create a genuinely new order
+        // The uq_payment_live_per_requirement partial unique index (see its migration) is the
+        // real, race-proof backstop underneath this: this check alone is a plain read with no
+        // lock, so two concurrent requests on two different pods could both pass it before either
+        // writes anything -- the DB constraint is what actually makes that impossible, this is
+        // just what makes the common (sequential retry) case return a clean, well-formed result
+        // instead of an avoidable error.
+        if (projectRequirementId != null) {
+            Optional<Payment> existingLive = paymentRepository.findByProjectRequirementIdOrderByCreatedAtDesc(projectRequirementId)
+                    .stream()
+                    .filter(p -> p.getStatus() == PaymentStatus.SUCCESS || p.getStatus() == PaymentStatus.PENDING || p.getStatus() == PaymentStatus.PROCESSING)
+                    .findFirst();
+            if (existingLive.isPresent()) {
+                Payment existing = existingLive.get();
+                if (existing.getStatus() == PaymentStatus.SUCCESS) {
+                    throw new PaymentFailedException("This requirement has already been paid for");
+                }
+                return new PaymentOrderResult(existing.getId(), existing.getGatewayOrderId(),
+                        existing.getAmount(), existing.getCurrency(), razorpayKeyId, existing.getStatus().name());
+            }
+        }
         BigDecimal rechargeAmount = validateRechargeAmount(amount);
 
         Wallet wallet = walletRepository.findByTenantId(tenantId)
@@ -106,7 +145,18 @@ public class PaymentServiceImpl implements PaymentService {
                 gatewayOrderId, subscriptionId, projectRequirementId, description
         );
 
-        paymentRepository.save(payment);
+        try {
+            // saveAndFlush, not save -- Payment uses an application-assigned UUID id, so Hibernate
+            // has no reason to insert immediately and would otherwise defer the actual INSERT (and
+            // so the uq_payment_live_per_requirement constraint check) until this transaction
+            // commits, well after this method has already returned a result to the caller. Forcing
+            // the flush here means a real constraint violation -- the true concurrent-race case,
+            // vanishingly rare now that the check above handles the sequential-retry case -- throws
+            // right here, where it can still become a clean error instead of a silently-lost order.
+            paymentRepository.saveAndFlush(payment);
+        } catch (DataIntegrityViolationException ex) {
+            throw new PaymentFailedException("This requirement already has a payment in progress or completed");
+        }
 
         paymentEventRepository.save(PaymentEvent.record(
                 payment,

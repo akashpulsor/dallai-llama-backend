@@ -16,6 +16,11 @@ public class GatewayExceptionHandler {
 
     @ExceptionHandler(GatewayException.class)
     public ResponseEntity<Map<String, String>> handleGatewayException(GatewayException ex) {
+        if (ex.getStatus().is5xxServerError()) {
+            log.error("GatewayException status={} message={}", ex.getStatus(), ex.getMessage(), ex);
+        } else {
+            log.debug("GatewayException status={} message={}", ex.getStatus(), ex.getMessage());
+        }
         return ResponseEntity.status(ex.getStatus()).body(Map.of("error", ex.getMessage()));
     }
 

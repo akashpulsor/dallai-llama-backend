@@ -13,5 +13,7 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
     List<Project> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+    Optional<Project> findByLockedIdeaIdAndTenantId(UUID lockedIdeaId, UUID tenantId);
+
     Optional<Project> findByClientReviewToken(String clientReviewToken);
 }

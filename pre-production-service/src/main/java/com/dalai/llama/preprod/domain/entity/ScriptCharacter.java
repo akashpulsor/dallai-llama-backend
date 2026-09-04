@@ -75,6 +75,9 @@ public class ScriptCharacter {
     @Column(name = "look", columnDefinition = "text")
     private String look;
 
+    @Column(name = "complexion", length = 80)
+    private String complexion;
+
     @Column(name = "profile", columnDefinition = "text")
     private String profile;
 

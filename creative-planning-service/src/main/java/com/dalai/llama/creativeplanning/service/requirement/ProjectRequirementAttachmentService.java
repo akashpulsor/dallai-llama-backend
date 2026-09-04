@@ -74,6 +74,7 @@ public class ProjectRequirementAttachmentService {
     }
 
     private ProjectRequirementAttachmentView toView(ProjectRequirementAttachment attachment) {
-        return new ProjectRequirementAttachmentView(attachment.getId(), attachment.getBucket(), attachment.getObjectKey());
+        return new ProjectRequirementAttachmentView(attachment.getId(), attachment.getBucket(), attachment.getObjectKey(),
+                minioObjectStorage.signedUrl(attachment.getObjectKey()));
     }
 }

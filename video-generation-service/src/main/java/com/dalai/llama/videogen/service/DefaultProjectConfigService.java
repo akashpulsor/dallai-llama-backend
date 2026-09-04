@@ -43,6 +43,25 @@ public class DefaultProjectConfigService implements ProjectConfigService {
         return projectConfigRepository.save(config);
     }
 
+    @Override
+    public ProjectConfig updateVoiceCloneModel(UUID tenantId, UUID projectId, String modelId) {
+        ProjectConfig config = findForTenant(tenantId, projectId).orElseGet(() -> ProjectConfig.builder()
+                .projectId(projectId)
+                .tenantId(tenantId)
+                .defaultDialogueFlag(FeatureFlags.DEFAULTS.dialogue())
+                .defaultCaptionsFlag(FeatureFlags.DEFAULTS.captions())
+                .autoApprove(false)
+                .build());
+        config.setPreferredVoiceCloneModel(modelId == null || modelId.isBlank() ? null : modelId);
+        config.setUpdatedAt(OffsetDateTime.now());
+        return projectConfigRepository.save(config);
+    }
+
+    @Override
+    public String getPreferredVoiceCloneModel(UUID tenantId, UUID projectId) {
+        return findForTenant(tenantId, projectId).map(ProjectConfig::getPreferredVoiceCloneModel).orElse(null);
+    }
+
     private Optional<ProjectConfig> findForTenant(UUID tenantId, UUID projectId) {
         return projectConfigRepository.findById(projectId)
                 .filter(config -> config.getTenantId().equals(tenantId));

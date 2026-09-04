@@ -39,7 +39,10 @@ import java.util.stream.Collectors;
 public class ChatOrchestrator {
 
     private static final String TASK_KEY = "CHAT_WITH_ACTIONS";
-    private static final int RETRIEVAL_LIMIT = 5;
+    /** Only used for an unscoped chat now (no single project to dump in full) -- see {@link
+     * #mergedContext}. A scoped chat (the common case: a locked pre-production project) always
+     * gets everything for that scope instead, since that set is small and bounded. */
+    private static final int RETRIEVAL_LIMIT = 20;
 
     private final ChatSessionService chatSessionService;
     private final ChatMessageRepository chatMessageRepository;
@@ -84,7 +87,7 @@ public class ChatOrchestrator {
                 .build());
 
         List<ChatMessage> history = chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        List<EmbeddedDocument> retrieved = embeddedDocumentService.findSimilar(tenantId, session.getScopeId(), request.content(), RETRIEVAL_LIMIT);
+        List<EmbeddedDocument> retrieved = mergedContext(tenantId, session.getScopeId(), request.content());
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
@@ -162,6 +165,18 @@ public class ChatOrchestrator {
             // hard failure -- the chat should degrade to "just talk", not error out on the user.
             return new ChatCompletionContent("reply", response.response(), null, null);
         }
+    }
+
+    /** A chat scoped to one project (e.g. a locked pre-production project, see
+     * {@code EmbeddedDocumentService#findAllForScope}'s javadoc) gets that project's complete
+     * embedded context, not a similarity-ranked subset -- a scope's total document count is small
+     * and bounded, so there's no reason to bet on ranking when everything just fits. An unscoped
+     * chat (no single project to dump) falls back to the normal top-N similarity search. */
+    private List<EmbeddedDocument> mergedContext(UUID tenantId, UUID scopeId, String queryText) {
+        if (scopeId != null) {
+            return embeddedDocumentService.findAllForScope(tenantId, scopeId);
+        }
+        return embeddedDocumentService.findSimilar(tenantId, null, queryText, RETRIEVAL_LIMIT);
     }
 
     private String conversationHistory(List<ChatMessage> messages) {

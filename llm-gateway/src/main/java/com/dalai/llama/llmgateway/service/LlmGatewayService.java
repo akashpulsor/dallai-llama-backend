@@ -17,6 +17,7 @@ import com.dalai.llama.llmgateway.service.provider.LlmProvider;
 import com.dalai.llama.llmgateway.service.provider.LlmProviderException;
 import com.dalai.llama.llmgateway.service.provider.LlmResponse;
 import com.dalai.llama.llmgateway.service.provider.ProviderRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
@@ -70,6 +72,7 @@ public class LlmGatewayService {
     private final BigDecimal minimumWalletBalance;
     private final PromptTemplateService promptTemplateService;
     private final ProviderConcurrencyLeaseService concurrencyLeaseService;
+    private final ObjectMapper objectMapper;
 
     public LlmGatewayService(
             IdempotencyService idempotencyService,
@@ -84,7 +87,8 @@ public class LlmGatewayService {
             @Value("${llm-gateway.billing.wallet-guard-enabled}") boolean walletGuardEnabled,
             @Value("${llm-gateway.billing.minimum-wallet-balance}") BigDecimal minimumWalletBalance,
             PromptTemplateService promptTemplateService,
-            ProviderConcurrencyLeaseService concurrencyLeaseService
+            ProviderConcurrencyLeaseService concurrencyLeaseService,
+            ObjectMapper objectMapper
     ) {
         this.idempotencyService = idempotencyService;
         this.modelRouterService = modelRouterService;
@@ -99,6 +103,7 @@ public class LlmGatewayService {
         this.minimumWalletBalance = minimumWalletBalance;
         this.promptTemplateService = promptTemplateService;
         this.concurrencyLeaseService = concurrencyLeaseService;
+        this.objectMapper = objectMapper;
     }
 
     public ChatResponse chat(String tenantId, String idempotencyKey, ChatRequest request) {
@@ -117,8 +122,8 @@ public class LlmGatewayService {
         // Fail fast on a bad model_id/entitlement, or an unaffordable tenant, before ever
         // claiming a row -- a rejected request should never leave a PROCESSING row behind.
         modelRouterService.route(tenantId, request.modelId());
-        requireSufficientBalance(tenantId);
-        Optional<LlmJob> claimed = jobPersistenceService.claimNewJob(tenantId, idempotencyKey, request.modelId());
+        requireSufficientBalance(tenantId, request.projectId());
+        Optional<LlmJob> claimed = jobPersistenceService.claimNewJob(tenantId, idempotencyKey, request.modelId(), request.projectId());
         if (claimed.isPresent()) {
             return dispatch(claimed.get(), tenantId, request, 1);
         }
@@ -152,7 +157,7 @@ public class LlmGatewayService {
         }
         // Re-check affordability before every retry too -- balance may have changed since the
         // original (now-terminal) attempt, and the existing row stays untouched if this rejects.
-        requireSufficientBalance(tenantId);
+        requireSufficientBalance(tenantId, existing.getProjectId());
         LlmJob job = jobPersistenceService.markProcessingForRetry(existing.getJobId(), existing.getAttemptCount() + 1);
         return dispatch(job, tenantId, request, job.getAttemptCount());
     }
@@ -161,8 +166,13 @@ public class LlmGatewayService {
      * rejected with 402 before any job row is claimed/reset, so an unaffordable request never
      * costs another tenant's rate-limit budget or leaves gateway-side state behind. A tenant_id
      * that isn't a valid UUID can't be checked against billing-service's UUID-keyed wallet API,
-     * so it's rejected the same way creator-service's BillingWalletGuardInterceptor does. */
-    private void requireSufficientBalance(String tenantId) {
+     * so it's rejected the same way creator-service's BillingWalletGuardInterceptor does.
+     * <p>
+     * When {@code projectId} is present, the same synchronous call also carries the per-project
+     * spend cap (real accumulated cost vs. the project's quoted price, evaluated in billing-
+     * service) -- a distinct 402 message so a caller/UI can tell "recharge your wallet" apart from
+     * "this project has hit its budget," which need different next steps. */
+    private void requireSufficientBalance(String tenantId, UUID projectId) {
         if (!walletGuardEnabled) {
             return;
         }
@@ -172,16 +182,20 @@ public class LlmGatewayService {
         } catch (IllegalArgumentException ex) {
             throw GatewayException.badRequest("X-Tenant-ID must be a valid UUID for billing wallet checks");
         }
-        BigDecimal balance;
+        BillingWalletClient.WalletCheck check;
         try {
-            balance = billingWalletClient.getWalletBalance(tenantUuid);
+            check = billingWalletClient.check(tenantUuid, projectId);
         } catch (BillingWalletClient.WalletBalanceCheckException ex) {
             log.warn("Wallet balance check failed tenantId={} errorMessage={}", tenantId, ex.getMessage());
             throw new GatewayException(HttpStatus.SERVICE_UNAVAILABLE, "Unable to verify wallet balance");
         }
-        if (balance.compareTo(minimumWalletBalance) < 0) {
+        if (check.balance().compareTo(minimumWalletBalance) < 0) {
             throw GatewayException.paymentRequired(
-                    "Insufficient wallet balance. currentBalance=%s minimumRequired=%s".formatted(balance, minimumWalletBalance));
+                    "Insufficient wallet balance. currentBalance=%s minimumRequired=%s".formatted(check.balance(), minimumWalletBalance));
+        }
+        if (Boolean.FALSE.equals(check.projectSpendOk())) {
+            throw GatewayException.paymentRequired(
+                    "Project spend cap exceeded. projectId=%s accumulatedSpend=%s".formatted(projectId, check.projectSpendTotal()));
         }
     }
 
@@ -204,6 +218,16 @@ public class LlmGatewayService {
      * self-expires -- must outlive {@code future.get()}'s own wait (timeoutMs + 5000ms) so a
      * genuinely still-running call is never evicted and double-counted by the next acquire. */
     private static final long LEASE_TTL_MARGIN_SECONDS = 30;
+
+    /** Purely for observability (see LlmJob#getRequestContent's javadoc) -- never let a
+     * serialization hiccup here cost the actual generation call. */
+    private void recordRequestBestEffort(UUID jobId, java.util.List<ChatMessage> renderedMessages) {
+        try {
+            jobPersistenceService.recordRequest(jobId, objectMapper.writeValueAsString(renderedMessages));
+        } catch (Exception ex) {
+            log.warn("Could not record request content for jobId={}: {}", jobId, ex.getMessage());
+        }
+    }
 
     private ChatResponse dispatch(LlmJob job, String tenantId, ChatRequest request, int attemptNumber) {
         long startedAt = System.currentTimeMillis();
@@ -230,8 +254,10 @@ public class LlmGatewayService {
             }
 
             LlmProvider provider = providerRegistry.resolve(providerId);
+            var renderedMessages = effectiveMessages(request);
+            recordRequestBestEffort(job.getJobId(), renderedMessages);
             future = provider.generate(new CanonicalRequest(
-                    routed.model().getModelId(), routed.model().getType(), effectiveMessages(request), request.params(),
+                    routed.model().getModelId(), routed.model().getType(), renderedMessages, request.params(),
                     routed.model().getTimeoutMs(), request.tools()
             )).toFuture();
             inFlightJobRegistry.register(job.getJobId(), future);
@@ -240,12 +266,13 @@ public class LlmGatewayService {
             // a Mono that somehow never signals doesn't hang the servlet thread forever.
             LlmResponse response = future.get(routed.model().getTimeoutMs() + 5000L, TimeUnit.MILLISECONDS);
             long latencyMs = System.currentTimeMillis() - startedAt;
-            BigDecimal cost = computeCost(routed.rateCard(), response.inputTokens(), response.outputTokens());
+            BigDecimal cost = computeCost(routed.rateCard(), routed.model().getType(),
+                    response.inputTokens(), response.outputTokens(), request.params());
             jobPersistenceService.finish(job.getJobId(), JobStatus.COMPLETED, null,
                     response.inputTokens(), response.outputTokens(), cost, (int) latencyMs, response.content());
             publishBillingEvent(job, response.inputTokens(), response.outputTokens(), cost, JobStatus.COMPLETED);
             return new ChatResponse(job.getJobId(), routed.model().getModelId(), response.content(),
-                    new UsageDto(response.inputTokens(), response.outputTokens(), cost), latencyMs, response.toolCalls());
+                    new UsageDto(response.inputTokens(), response.outputTokens(), cost), latencyMs, response.toolCalls(), response.finishReason());
         } catch (CancellationException ex) {
             // cancel() may already have finalised this row -- finalizeIfStillProcessing() is a
             // no-op if so, so whichever thread gets there first "wins" without double-writing.
@@ -353,14 +380,59 @@ public class LlmGatewayService {
 
     private void publishBillingEvent(LlmJob job, int inputTokens, int outputTokens, BigDecimal cost, JobStatus status) {
         billingEventPublisher.publish(new BillingEvent(
-                UUID.randomUUID(), job.getJobId(), job.getTenantId(), job.getModelId(),
+                UUID.randomUUID(), job.getJobId(), job.getTenantId(), job.getProjectId(), job.getModelId(),
                 inputTokens, outputTokens, cost, "USD", status.name(), OffsetDateTime.now()
         ));
     }
 
-    static BigDecimal computeCost(RateCard rateCard, int inputTokens, int outputTokens) {
+    /** Video, upscale, and music are all duration-priced, not token-priced: fal.ai/ElevenLabs
+     * report 0/0 tokens for these (or, for ElevenLabs music, real credits don't map to a token
+     * concept at all), so the token path always yielded $0. When the model's rate_card carries a
+     * {@code per_second_cost}, cost = perSecondCost × duration_seconds (from request params --
+     * the caller must supply this; see LlmGatewayUpscaleGenerationService for the video/upscale
+     * case, ElevenLabsProvider.composeMusic's {@code music_length_ms} param for music). Every
+     * other model type keeps the input/output-token path unchanged. */
+    private static final java.util.Set<String> DURATION_PRICED_TYPES = java.util.Set.of("video", "upscale", "music", "lip_sync");
+
+    static BigDecimal computeCost(RateCard rateCard, String modelType, int inputTokens, int outputTokens,
+                                   Map<String, Object> params) {
+        if (DURATION_PRICED_TYPES.contains(modelType) && rateCard.getPerSecondCost() != null) {
+            BigDecimal seconds = durationSeconds(params);
+            if (seconds.signum() > 0) {
+                return rateCard.getPerSecondCost().multiply(seconds);
+            }
+        }
         BigDecimal inputCost = rateCard.getInputTokenCost().multiply(BigDecimal.valueOf(inputTokens));
         BigDecimal outputCost = rateCard.getOutputTokenCost().multiply(BigDecimal.valueOf(outputTokens));
         return inputCost.add(outputCost);
+    }
+
+    /** fal.ai's video/upscale params carry clip length as {@code duration_seconds} (see
+     * FalAiProvider); ElevenLabs' music endpoint uses its own real param name {@code
+     * music_length_ms} instead (milliseconds, see ElevenLabsProvider.composeMusic) -- checked as
+     * a fallback so this one helper covers both real param shapes rather than requiring every
+     * caller to normalize into a param name that isn't the real one it sends fal.ai/ElevenLabs.
+     * Tolerant of Integer/String/absent. */
+    private static BigDecimal durationSeconds(Map<String, Object> params) {
+        if (params == null) {
+            return BigDecimal.ZERO;
+        }
+        Object raw = params.getOrDefault("duration_seconds", params.get("duration"));
+        if (raw != null) {
+            try {
+                return new BigDecimal(String.valueOf(raw));
+            } catch (NumberFormatException ex) {
+                return BigDecimal.ZERO;
+            }
+        }
+        Object musicLengthMs = params.get("music_length_ms");
+        if (musicLengthMs != null) {
+            try {
+                return new BigDecimal(String.valueOf(musicLengthMs)).divide(BigDecimal.valueOf(1000), 3, java.math.RoundingMode.HALF_UP);
+            } catch (NumberFormatException ex) {
+                return BigDecimal.ZERO;
+            }
+        }
+        return BigDecimal.ZERO;
     }
 }

@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.domain.entity;
 
+import com.dalai.llama.tenant.domain.entity.enums.AccountType;
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -46,6 +47,12 @@ public class Tenant {
     private TenantStatus status;
 
     private String substatus;
+
+    /** Account-level authorization role -- see {@link AccountType}. Defaulted to {@code CREATOR}
+     * on creation (below), never null once persisted. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private AccountType accountType;
 
     @Column(name = "status_message", length = 2000)
     private String statusMessage;
@@ -116,6 +123,11 @@ public class Tenant {
     private String billingState;
     private OffsetDateTime billingReadyAt;
 
+    /** The creator's own markup on top of the platform's standard rate for client-facing
+     * pricing (e.g. the "pay to unlock this deliverable" charge a client sees) -- a percentage,
+     * 0-100. Null/0 means the client pays exactly the standard rate, no markup. */
+    private java.math.BigDecimal marginPercent;
+
     // ─── Lifecycle ─────────────────────────────────────────────────────
     private OffsetDateTime createdAt;
     private OffsetDateTime activatedAt;
@@ -134,6 +146,9 @@ public class Tenant {
         createdAt = OffsetDateTime.now();
         updatedAt = createdAt;
         status = TenantStatus.CREATED;
+        if (accountType == null) {
+            accountType = AccountType.CREATOR;
+        }
     }
 
     @PreUpdate

@@ -11,6 +11,14 @@ public class PreProductionException extends RuntimeException {
         this.status = status;
     }
 
+    /** Preserves the real root exception (e.g. a WebClientResponseException) as the Java cause
+     * chain -- without this, logging the thrown PreProductionException only shows where THIS
+     * wrapper was constructed, not what actually failed underneath it. */
+    public PreProductionException(HttpStatus status, String message, Throwable cause) {
+        super(message, cause);
+        this.status = status;
+    }
+
     public HttpStatus getStatus() {
         return status;
     }
@@ -26,8 +34,15 @@ public class PreProductionException extends RuntimeException {
     public static PreProductionException conflict(String message) {
         return new PreProductionException(HttpStatus.CONFLICT, message);
     }
+    public static PreProductionException paymentRequired(String message) {
+        return new PreProductionException(HttpStatus.PAYMENT_REQUIRED, message);
+    }
 
     public static PreProductionException upstream(String message) {
         return new PreProductionException(HttpStatus.BAD_GATEWAY, message);
+    }
+
+    public static PreProductionException upstream(String message, Throwable cause) {
+        return new PreProductionException(HttpStatus.BAD_GATEWAY, message, cause);
     }
 }

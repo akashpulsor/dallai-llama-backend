@@ -6,7 +6,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -25,9 +27,14 @@ public class ChangeRequestController extends BaseController {
         return ResponseEntity.ok(changeRequestService.list(tenant().tenantId(), projectId));
     }
 
+    /** {@code files} is optional -- a plain apply (no attachment) still posts with no body, same
+     * as before this existed; SHOT_IMAGE only, see {@link
+     * ChangeRequestService#apply(UUID, UUID, UUID, List)}. */
     @PostMapping("/v1/projects/{projectId}/change-requests/{changeRequestId}/apply")
-    public ResponseEntity<ChangeRequestView> apply(@PathVariable UUID projectId, @PathVariable UUID changeRequestId) {
-        return ResponseEntity.ok(changeRequestService.apply(tenant().tenantId(), projectId, changeRequestId));
+    public ResponseEntity<ChangeRequestView> apply(
+            @PathVariable UUID projectId, @PathVariable UUID changeRequestId,
+            @RequestParam(required = false) List<MultipartFile> files) {
+        return ResponseEntity.ok(changeRequestService.apply(tenant().tenantId(), projectId, changeRequestId, files == null ? List.of() : files));
     }
 
     @PostMapping("/v1/projects/{projectId}/change-requests/{changeRequestId}/dismiss")

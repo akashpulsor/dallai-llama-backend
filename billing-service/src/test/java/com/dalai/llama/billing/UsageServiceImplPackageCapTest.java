@@ -65,6 +65,7 @@ class UsageServiceImplPackageCapTest {
 
         service.recordBillableUsage(new BillableUsageRequest(
                 tenantId,
+                null,
                 UsageMetric.AI_VIDEO_SECONDS,
                 BigDecimal.ONE,
                 BillingUnit.SECOND,

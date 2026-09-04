@@ -73,7 +73,7 @@ public class CampaignPlanningChatService {
                 .createdAt(now)
                 .build());
 
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, session.getBrandContextId());
         ProductProfile product = session.getProductProfileId() == null ? null
                 : productProfileRepository.findByIdAndTenantId(session.getProductProfileId(), tenantId).orElse(null);
         List<CampaignPlanningMessage> history = campaignPlanningMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);

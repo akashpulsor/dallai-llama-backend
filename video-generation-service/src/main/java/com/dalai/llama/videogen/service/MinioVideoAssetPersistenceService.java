@@ -1,8 +1,10 @@
 package com.dalai.llama.videogen.service;
 
+import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.UploadObjectArgs;
 import io.minio.http.Method;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,17 +35,20 @@ public class MinioVideoAssetPersistenceService implements VideoAssetPersistenceS
     private static final long STREAM_PART_SIZE = 10L * 1024 * 1024;
 
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
     private final WebClient webClient;
     private final String bucket;
     private final String prefix;
 
     public MinioVideoAssetPersistenceService(
             MinioClient minioClient,
+            @org.springframework.beans.factory.annotation.Qualifier("publicMinioClient") MinioClient publicMinioClient,
             WebClient.Builder webClientBuilder,
             @Value("${video-gen.minio.bucket}") String bucket,
             @Value("${video-gen.minio.export-prefix}") String exportPrefix
     ) {
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
         this.webClient = webClientBuilder.build();
         this.bucket = bucket;
         // Sibling prefix to exports, not reusing it -- generated clips and export bundles are
@@ -108,9 +113,40 @@ public class MinioVideoAssetPersistenceService implements VideoAssetPersistenceS
     }
 
     @Override
+    public void downloadTo(String bucket, String objectKey, java.nio.file.Path destination) {
+        try (java.io.InputStream in = minioClient.getObject(GetObjectArgs.builder()
+                .bucket(bucket)
+                .object(objectKey)
+                .build())) {
+            java.nio.file.Files.copy(in, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception ex) {
+            throw VideoGenException.upstream("Could not download bucket=" + bucket + " objectKey=" + objectKey + " to " + destination + ": " + ex.getMessage());
+        }
+    }
+
+    @Override
+    public PersistedAsset uploadFile(String bucket, String objectKey, java.nio.file.Path source) {
+        try {
+            minioClient.uploadObject(UploadObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .filename(source.toString())
+                    .contentType("video/mp4")
+                    .build());
+            return new PersistedAsset(bucket, objectKey);
+        } catch (Exception ex) {
+            throw VideoGenException.upstream("Could not upload " + source + " to bucket=" + bucket + " objectKey=" + objectKey + ": " + ex.getMessage());
+        }
+    }
+
+    @Override
     public String presignedUrl(String bucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            // Signed against the PUBLIC endpoint -- these URLs are handed to fal.ai as
+            // reference/source URLs and to the browser as <video src="...">, both of which live
+            // outside the cluster. The internal minioClient's URLs would 502 there. See
+            // MinioConfig.publicMinioClient for why the endpoint can't be swapped after signing.
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)

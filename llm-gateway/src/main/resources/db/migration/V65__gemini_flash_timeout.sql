@@ -1,0 +1,11 @@
+-- The 0.1.28 "fix" for the shot-list-generate 30s timeout (GoogleGeminiProvider.defaultTimeoutMs)
+-- turned out to be dead code for this call: LlmGatewayService always builds CanonicalRequest with
+-- routed.model().getTimeoutMs() -- the per-model model_master.timeout_ms column -- which is
+-- always positive and so always wins over GoogleGeminiProvider's own fallback. gemini-2.5-flash
+-- was seeded at 30000ms and never revisited even as it became the one text model nearly every
+-- generation task in this system funnels through (script, screenplay, shot list, ideas, critique,
+-- marketing plans, model recommendation, chat) -- every other model in the catalog already sits
+-- at 60000ms or higher (voice/image/video/lip-sync), so 30s was an outlier that predates this
+-- model carrying this much load, not a deliberate choice. 90s matches music-gen-v1 and leaves
+-- headroom under every caller's own 120s round-trip budget into llm-gateway.
+UPDATE model_master SET timeout_ms = 90000 WHERE model_id = 'gemini-2.5-flash';

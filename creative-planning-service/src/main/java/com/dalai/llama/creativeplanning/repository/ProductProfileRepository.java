@@ -12,4 +12,6 @@ public interface ProductProfileRepository extends JpaRepository<ProductProfile, 
     List<ProductProfile> findByBrandContextId(UUID brandContextId);
 
     Optional<ProductProfile> findByIdAndTenantId(UUID id, UUID tenantId);
+
+    Optional<ProductProfile> findByProjectRequirementId(UUID projectRequirementId);
 }

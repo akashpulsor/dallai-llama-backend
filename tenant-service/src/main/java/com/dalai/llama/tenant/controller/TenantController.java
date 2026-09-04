@@ -191,6 +191,8 @@ public class TenantController {
                 .lastName(tenantUser != null ? tenantUser.getLastName() : jwt.getClaimAsString("family_name"))
                 .email(tenantUser != null ? tenantUser.getEmail() : jwt.getClaimAsString("email"))
                 .panels(extractPanels(tenant))
+                .marginPercent(tenant != null ? tenant.getMarginPercent() : null)
+                .accountType(tenant != null ? tenant.getAccountType() : null)
                 .build();
     }
 

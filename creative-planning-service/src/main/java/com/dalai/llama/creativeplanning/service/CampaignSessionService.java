@@ -34,9 +34,12 @@ public class CampaignSessionService {
 
     @Transactional
     public CampaignSessionView create(UUID tenantId, CreateCampaignSessionRequest request) {
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, request.brandContextId());
         if (request.productProfileId() != null) {
-            productProfileService.requireProduct(tenantId, request.productProfileId());
+            var product = productProfileService.requireProduct(tenantId, request.productProfileId());
+            if (!product.getBrandContextId().equals(brand.getId())) {
+                throw CreativePlanningException.badRequest("This product belongs to a different brand");
+            }
         }
         OffsetDateTime now = OffsetDateTime.now();
         CampaignPlanningSession session = campaignPlanningSessionRepository.save(CampaignPlanningSession.builder()

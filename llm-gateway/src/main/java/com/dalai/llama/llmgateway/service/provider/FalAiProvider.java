@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
@@ -50,7 +51,16 @@ public class FalAiProvider implements LlmProvider {
             @Value("${llm-gateway.fal.api-key}") String apiKey
     ) {
         this.apiKey = apiKey;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        // Same 256KB-default-buffer problem as GoogleGeminiProvider -- fal.ai's response_url fetch
+        // can return a base64-inlined image/video/voice-clone payload well past that, so raise it
+        // to 16MB (matches creator-service's proven GoogleGenAiClientFactory value) rather than
+        // silently truncating.
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                        .build())
+                .build();
     }
 
     @Override
@@ -181,13 +191,29 @@ public class FalAiProvider implements LlmProvider {
         return switch (safeType(request)) {
             case "voice_clone" -> voiceCloneRequestBody(request);
             case "lip_sync" -> lipSyncRequestBody(request);
+            case "audio_video_merge" -> audioVideoMergeRequestBody(request);
             case "tts" -> ttsRequestBody(request);
             case "foley", "music" -> audioGenerationRequestBody(request);
             case "transcription" -> transcriptionRequestBody(request);
             case "video_edit" -> videoEditRequestBody(request);
             case "image" -> imageRequestBody(request);
+            case "upscale" -> upscaleRequestBody(request);
             default -> videoRequestBody(request);
         };
+    }
+
+    /** {@code fal-ai/ffmpeg-api/merge-audio-video}: lays one audio track onto one video at an
+     * optional offset -- the "auto-dub" mux step for video-generation-service's beat-matched
+     * cloned-voice dialogue (see doc's dialogue-beats design). Deliberately not the same method as
+     * {@link #lipSyncRequestBody} even though both are a video_url + audio_url passthrough today --
+     * this one additionally forwards {@code start_offset}, and the two fal.ai apps are unrelated
+     * (this one never warps the video to match the audio, it only places a track). */
+    private Map<String, Object> audioVideoMergeRequestBody(CanonicalRequest request) {
+        Map<String, Object> params = request.params() == null ? Map.of() : request.params();
+        Map<String, Object> body = new LinkedHashMap<>(params);
+        body.putIfAbsent("video_url", params.get("source_video_url"));
+        body.putIfAbsent("audio_url", params.get("dialogue_audio_url"));
+        return body;
     }
 
     /** Identity-preserving image generation (FLUX_PULID and similar face-conditioned apps): one
@@ -222,7 +248,30 @@ public class FalAiProvider implements LlmProvider {
         return body;
     }
 
+    /** Video-to-video-to-{larger video}: {@code fal-ai/topaz/upscale/video}, verified against
+     * fal.ai's real documented schema -- {@code video_url} (required) plus optional tuning knobs
+     * (upscale_factor, target_fps, compression/noise/halo/grain/recover_detail, model,
+     * H264_output) that callers may pass straight through via params; only video_url needs
+     * renaming from this codebase's established {@code source_video_url} convention (same
+     * convention {@link #lipSyncRequestBody}/{@link #videoEditRequestBody} already use). Response
+     * envelope is fal's common {@code {video: {url}}} shape, already covered by {@link
+     * #toLlmResponse}'s default case -- no response-side change needed. */
+    private Map<String, Object> upscaleRequestBody(CanonicalRequest request) {
+        Map<String, Object> params = request.params() == null ? Map.of() : request.params();
+        Map<String, Object> body = new LinkedHashMap<>(params);
+        body.putIfAbsent("video_url", params.get("source_video_url"));
+        body.remove("source_video_url");
+        // Present in params purely for LlmGatewayService.computeCost's duration-priced billing
+        // (see LlmGatewayUpscaleGenerationService) -- not part of Topaz's real documented schema,
+        // so it's stripped here rather than sent as an unrecognized field on the actual API call.
+        body.remove("duration_seconds");
+        return body;
+    }
+
     private Map<String, Object> videoRequestBody(CanonicalRequest request) {
+        if (isWanModel(request.modelId())) {
+            return wanVideoRequestBody(request);
+        }
         String prompt = promptFromMessages(request);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("prompt", prompt);
@@ -236,11 +285,85 @@ public class FalAiProvider implements LlmProvider {
         if (params.get("aspect_ratio") != null) {
             body.put("aspect_ratio", params.get("aspect_ratio"));
         }
+        // Verified against fal.ai's real Seedance schema: resolution is 480p/720p, default 720p
+        // (no 1080p option on this Fast variant, unlike Wan). Sent explicitly rather than left to
+        // fal.ai's own default -- same "never depend on an upstream default silently matching our
+        // rate_card row" discipline as DEFAULT_WAN_RESOLUTION below, even though today's real
+        // default happens to already be the cheaper option.
+        Object resolution = params.get("resolution");
+        body.put("resolution", resolution != null ? resolution : "720p");
+        // Verified against fal.ai's real Seedance schema: generate_audio (boolean, default true)
+        // covers native sound effects/ambient/lip-synced speech. video-generation-service sets
+        // this false when it's about to lay its own beat-matched cloned-voice audio under the
+        // silent result instead of trusting Seedance's own synthesis.
+        if (params.get("generate_audio") != null) {
+            body.put("generate_audio", params.get("generate_audio"));
+        }
         Object referenceImageUrls = params.get("reference_image_urls");
         if (referenceImageUrls instanceof List<?> urls && !urls.isEmpty()) {
             body.put(urls.size() == 1 ? "image_url" : "image_urls", urls.size() == 1 ? urls.get(0) : urls);
         }
+        // Verified against fal.ai's Seedance schema: seed (integer). Sending it makes generation
+        // deterministic -- the primary continuity mechanism across shots. Never send Long above
+        // 2^31-1 raw; Seedance's field is a 32-bit signed int, clamp via modulo.
+        Object seed = params.get("seed");
+        if (seed instanceof Number seedNumber) {
+            body.put("seed", (int) (seedNumber.longValue() & 0x7FFFFFFFL));
+        }
         return body;
+    }
+
+    /** {@code alibaba/wan-3.0-prime/image-to-video} does not share Seedance's field names despite
+     * both being type=video: verified against fal.ai's real documented schema, it wants {@code
+     * start_image_url} (singular, required for image-to-video) instead of {@code
+     * image_url}/{@code image_urls}, and {@code audio} (boolean, default true) instead of {@code
+     * generate_audio} for whether the generated clip carries native sound. duration/aspect_ratio
+     * map the same as Seedance's already-generic handling. Dispatched by model id rather than a
+     * dedicated {@code model_master.type} value so Wan still bills/lists identically to every
+     * other type=video model (see {@code LlmGatewayService.computeCost}'s {@code
+     * "video".equals(modelType)} per-second-billing branch, and {@code GET /v1/models?type=video}
+     * -- a caller listing video models shouldn't have to know Wan is somehow different). */
+    /** Cost-policy default: 480p ($0.05/s) unless a caller explicitly asks for a higher
+     * resolution -- fal.ai's own default is 1080p ($0.20/s), which must never be reached by
+     * omission. Generate cheap, upscale for delivery quality (see FalAiProvider.upscaleRequestBody
+     * and the fal-ai/topaz/upscale/video rate_card row) rather than paying 1080p generation cost. */
+    private static final String DEFAULT_WAN_RESOLUTION = "480p";
+
+    private Map<String, Object> wanVideoRequestBody(CanonicalRequest request) {
+        String prompt = promptFromMessages(request);
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (!prompt.isBlank()) {
+            body.put("prompt", prompt);
+        }
+        Map<String, Object> params = request.params() == null ? Map.of() : request.params();
+        if (params.get("duration_seconds") != null) {
+            body.put("duration", params.get("duration_seconds"));
+        }
+        Object resolution = params.get("resolution");
+        body.put("resolution", resolution != null ? resolution : DEFAULT_WAN_RESOLUTION);
+        if (params.get("aspect_ratio") != null) {
+            body.put("aspect_ratio", params.get("aspect_ratio"));
+        }
+        if (params.get("generate_audio") != null) {
+            body.put("audio", params.get("generate_audio"));
+        }
+        Object referenceImageUrls = params.get("reference_image_urls");
+        if (referenceImageUrls instanceof List<?> urls && !urls.isEmpty()) {
+            body.put("start_image_url", urls.get(0));
+        }
+        // Same seed passthrough as seedanceRequestBody; see that method for the continuity rationale.
+        // fal.ai's Wan schema also documents seed as a 32-bit signed int.
+        Object seed = params.get("seed");
+        if (seed instanceof Number seedNumber) {
+            body.put("seed", (int) (seedNumber.longValue() & 0x7FFFFFFFL));
+        }
+        return body;
+    }
+
+    /** {@code alibaba/wan-*} app slugs -- the one family of type=video models on fal.ai that
+     * doesn't share Seedance's field names, see {@link #wanVideoRequestBody}. */
+    private boolean isWanModel(String modelId) {
+        return modelId != null && modelId.startsWith("alibaba/wan");
     }
 
     /** Verified against fal.ai's real, documented fal-ai/minimax/voice-clone schema: {@code
@@ -265,6 +388,9 @@ public class FalAiProvider implements LlmProvider {
         Map<String, Object> body = new LinkedHashMap<>(params);
         body.putIfAbsent("video_url", params.get("source_video_url"));
         body.putIfAbsent("audio_url", params.get("dialogue_audio_url"));
+        // Present in params purely for LlmGatewayService.computeCost's duration-priced billing
+        // (see LlmGatewayLipSyncGenerationService) -- not part of sync-lipsync's real schema.
+        body.remove("duration_seconds");
         return body;
     }
 
@@ -352,10 +478,28 @@ public class FalAiProvider implements LlmProvider {
         if (content.isBlank()) {
             throw new LlmProviderException("fal.ai result did not contain the expected output for type=" + modelType + ": " + result, false);
         }
-        // No meaningful input/output "token" count for any of these types -- cost is computed
-        // from duration/characters via the rate card's own convention, not token counts; v1
-        // reports 0/0 here and leaves that billing model as a documented follow-up.
-        return new LlmResponse(content, 0, 0, "COMPLETED", List.of());
+        // beatoven/sound-effect-generation (type=foley) is a real, verified flat $0.01/request --
+        // not duration- or token-priced, so a flat "1 unit" input-token count lets
+        // LlmGatewayService.computeCost's existing generic input-token-cost path bill it correctly
+        // (rate_card.input_token_cost = 0.01) with no new billing branch.
+        //
+        // fal-ai/minimax/voice-clone (type=voice_clone) is real, verified two-part pricing: $1.50
+        // flat per clone request (input_token_cost, with inputTokens fixed at 1 -- a unit marker,
+        // not a real token count) PLUS $0.30/1000 characters (output_token_cost = 0.0003/char)
+        // ONLY when the fused call also synthesizes a preview (voiceCloneWantsAudio, same signal
+        // `content` above already keys off). This maps the real two-component fal.ai price exactly
+        // onto computeCost's existing input+output formula, no new billing branch needed.
+        int inputTokens = 0;
+        int outputTokens = 0;
+        if ("foley".equals(modelType)) {
+            inputTokens = 1;
+        } else if ("voice_clone".equals(modelType)) {
+            inputTokens = 1;
+            outputTokens = voiceCloneWantsAudio ? String.valueOf(requestParams.get("text")).length() : 0;
+        }
+        // Every other type here still has no meaningful input/output "token" count -- 0/0 remains
+        // a documented follow-up for those, not a claim they're free.
+        return new LlmResponse(content, inputTokens, outputTokens, "COMPLETED", List.of());
     }
 
     /** fal.ai's common image-app envelope is {@code {images: [{url}, ...]}}; some apps return a

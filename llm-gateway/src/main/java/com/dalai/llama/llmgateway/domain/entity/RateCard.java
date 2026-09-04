@@ -48,4 +48,9 @@ public class RateCard {
 
     @Column(name = "effective_from", nullable = false)
     private OffsetDateTime effectiveFrom;
+
+    /** Per-second cost for duration-priced models (video) -- null for token-priced models, which
+     * keep the input/output-token path. See {@code LlmGatewayService.computeCost}. */
+    @Column(name = "per_second_cost", precision = 18, scale = 10)
+    private BigDecimal perSecondCost;
 }

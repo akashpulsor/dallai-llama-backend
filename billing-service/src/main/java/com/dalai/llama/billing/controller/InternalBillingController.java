@@ -14,6 +14,7 @@ import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.CallAuthorizationService;
 import com.dalai.llama.billing.service.PaymentService;
+import com.dalai.llama.billing.service.ProjectSpendService;
 import com.dalai.llama.billing.service.UsageService;
 import com.dalai.llama.billing.service.WalletService;
 import com.dalai.llama.billing.service.impl.PaymentServiceImpl;
@@ -65,6 +66,7 @@ public class InternalBillingController {
     private final UsageRecordRepository usageRecordRepository;
     private final RecurringChargeRepository recurringChargeRepository;
     private final UsageService usageService;
+    private final ProjectSpendService projectSpendService;
 
     private final PaymentService paymentService;
     // ==================== WALLET MANAGEMENT ====================
@@ -84,13 +86,36 @@ public class InternalBillingController {
 
     /**
      * GET /api/v1/internal/tenants/{tenantId}/wallet/balance
-     * Get wallet balance (called by product-service, tenant-service)
+     * Get wallet balance (called by product-service, tenant-service, llm-gateway).
+     * <p>
+     * llm-gateway is the only caller that ever passes {@code projectId} -- its pre-dispatch check
+     * already makes this exact synchronous call, so the per-project spend cap piggybacks on it
+     * rather than adding a second network hop. Omitting {@code projectId} (every other caller)
+     * skips the cap check entirely, same response shape as before this existed.
      */
     @GetMapping("/wallet/balance")
     @Operation(summary = "Get wallet balance")
-    public ResponseEntity<WalletBalanceResponse> getWalletBalance(@PathVariable UUID tenantId) {
+    public ResponseEntity<WalletBalanceResponse> getWalletBalance(
+            @PathVariable UUID tenantId, @RequestParam(required = false) UUID projectId) {
         BigDecimal balance = walletService.getBalance(tenantId);
-        return ResponseEntity.ok(new WalletBalanceResponse(balance, "INR"));
+        if (projectId == null) {
+            return ResponseEntity.ok(new WalletBalanceResponse(balance, "INR", null, null));
+        }
+        ProjectSpendService.SpendStatus spend = projectSpendService.checkCap(tenantId, projectId);
+        return ResponseEntity.ok(new WalletBalanceResponse(balance, "INR", spend.withinCap(), spend.totalSpent()));
+    }
+
+    /**
+     * GET /api/v1/internal/tenants/{tenantId}/projects/{projectId}/spend
+     * Real accumulated cost for one project against its quoted price (creator-ui's budget-used
+     * indicator reads this) -- same {@link ProjectSpendService} the dispatch-time cap check uses,
+     * one source of truth for both.
+     */
+    @GetMapping("/projects/{projectId}/spend")
+    @Operation(summary = "Get project spend")
+    public ResponseEntity<ProjectSpendResponse> getProjectSpend(@PathVariable UUID tenantId, @PathVariable UUID projectId) {
+        ProjectSpendService.SpendStatus spend = projectSpendService.checkCap(tenantId, projectId);
+        return ResponseEntity.ok(new ProjectSpendResponse(spend.totalSpent(), spend.quotedTotalPrice(), spend.withinCap(), "INR"));
     }
 
     /**
@@ -308,6 +333,7 @@ public class InternalBillingController {
 
         usageService.recordBillableUsage(new BillableUsageRequest(
                 tenantId,
+                null,
                 request.metric,
                 request.quantity,
                 request.unit,
@@ -422,7 +448,12 @@ public class InternalBillingController {
 
     // Wallet
     public record WalletResponse(UUID tenantId, BigDecimal balance, String currency, String status) {}
-    public record WalletBalanceResponse(BigDecimal balance, String currency) {}
+
+    /** projectSpendOk/projectSpendTotal are null unless the caller passed projectId -- see
+     * {@link #getWalletBalance}. */
+    public record WalletBalanceResponse(BigDecimal balance, String currency, Boolean projectSpendOk, BigDecimal projectSpendTotal) {}
+
+    public record ProjectSpendResponse(BigDecimal totalSpent, BigDecimal quotedTotalPrice, boolean withinCap, String currency) {}
 
     // Charge
     @Getter

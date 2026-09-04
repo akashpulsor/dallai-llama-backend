@@ -76,9 +76,12 @@ public class MarketingPlanGenerationService {
 
     @Transactional
     public MarketingPlanGenerationResultView generate(UUID tenantId, GenerateMarketingPlanRequest request) {
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, request.brandContextId());
         ProductProfile product = request.productProfileId() == null ? null
                 : productProfileService.requireProduct(tenantId, request.productProfileId());
+        if (product != null && !product.getBrandContextId().equals(brand.getId())) {
+            throw CreativePlanningException.badRequest("This product belongs to a different brand");
+        }
 
         MarketingPlanContent content = callGeneration(tenantId, brand, product, request);
 
@@ -136,7 +139,7 @@ public class MarketingPlanGenerationService {
      * so the mandatory critic gate is never bypassed regardless of which path produced new content. */
     @Transactional
     public MarketingPlanGenerationResultView reCritiqueAndFinalize(UUID tenantId, MarketingPlan plan, MarketingPlanContent content) {
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, plan.getBrandContextId());
         ProductProfile product = plan.getProductProfileId() == null ? null
                 : productProfileService.requireProduct(tenantId, plan.getProductProfileId());
         return applyHarnessAndFinalize(tenantId, plan, content, brandAndAudienceContext(brand, product, plan.getTargetAudienceInput()));

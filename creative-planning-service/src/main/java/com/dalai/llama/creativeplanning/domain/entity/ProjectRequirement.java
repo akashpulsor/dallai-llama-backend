@@ -16,6 +16,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -30,6 +32,14 @@ import java.util.UUID;
  * payment provider's webhook once a real payment gateway is integrated (not built in this pass;
  * this service never touches money). For COMPANY tenants it's set true at creation time, since
  * their generation cost is already covered by their wallet, not a per-project payment.
+ * <p>
+ * {@code durationSeconds}/{@code languages}/{@code quoted*} are only ever set on the standalone
+ * path (entry point B) -- {@code budgetTier} is still populated there too, but only as an
+ * internal compatibility value auto-derived from {@code durationSeconds} (see {@code
+ * ProjectRequirementService#deriveLegacyBudgetTier}) for the sake of downstream consumers
+ * ({@code ProjectRequirementIdeaService}'s prompt context, pre-production-service's own {@code
+ * Project.budgetTier}) that still key off the old LEAN/STANDARD/PREMIUM tiers -- it is never
+ * shown to a user, who only ever sees duration, languages, and the quoted price.
  */
 @Getter
 @Setter
@@ -55,6 +65,13 @@ public class ProjectRequirement {
     @Column(name = "locked_idea_id")
     private UUID lockedIdeaId;
 
+    /** Which of the tenant's (possibly several) brands this brief is for -- nullable, a brief can
+     * have no brand at all. Stamped at creation time: entry point B (standalone) from whichever
+     * brand the creator picked or created inline; entry point A (from a locked idea) from that
+     * idea's campaign session, which already carries its own brandContextId. */
+    @Column(name = "brand_context_id")
+    private UUID brandContextId;
+
     @Column(name = "brief_text", nullable = false, columnDefinition = "text")
     private String briefText;
 
@@ -67,6 +84,35 @@ public class ProjectRequirement {
     @Enumerated(EnumType.STRING)
     @Column(name = "budget_tier", nullable = false, length = 16)
     private BudgetTier budgetTier;
+
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
+
+    /** Comma-joined language names, e.g. {@code "English,Hindi"} -- see {@code
+     * ProjectRequirementService} for the join/split helpers. Flat text column, matching this
+     * entity's other free-text fields, rather than a separate child table. */
+    @Column(name = "languages", columnDefinition = "text")
+    private String languages;
+
+    @Column(name = "quoted_platform_cost", precision = 12, scale = 2)
+    private BigDecimal quotedPlatformCost;
+
+    @Column(name = "quoted_creator_margin_percent", precision = 5, scale = 2)
+    private BigDecimal quotedCreatorMarginPercent;
+
+    @Column(name = "quoted_total_price", precision = 12, scale = 2)
+    private BigDecimal quotedTotalPrice;
+
+    @Column(name = "quoted_currency", length = 3)
+    private String quotedCurrency;
+
+    /** What percentage of {@code quotedTotalPrice} the client must actually pay to unlock the
+     * project -- default 100 (full payment). A creator may lower this to accept a partial/"token"
+     * payment upfront; the remainder is a business matter collected outside the app, never a
+     * second charge this service tracks or triggers. See {@link #getRequiredAmount()}. */
+    @Column(name = "required_payment_percent", nullable = false)
+    @Builder.Default
+    private int requiredPaymentPercent = 100;
 
     @Column(name = "share_token", nullable = false, unique = true, length = 64)
     private String shareToken;
@@ -87,9 +133,28 @@ public class ProjectRequirement {
     @Column(name = "funded_by")
     private UUID fundedBy;
 
+    /** Set whenever the client edits this brief through the public share link (see {@code
+     * ProjectRequirementService#updateFromClient}) -- a lightweight "client updated this brief"
+     * signal for the creator's requirement list, short of a full notification system. */
+    @Column(name = "client_updated_at")
+    private OffsetDateTime clientUpdatedAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    /** What the client actually has to pay right now to unlock the project -- {@code
+     * quotedTotalPrice} scaled by {@code requiredPaymentPercent}, rounded up so a fractional
+     * currency unit is never left uncollected. Null if this requirement has no quote yet (entry
+     * point A). */
+    public BigDecimal getRequiredAmount() {
+        if (quotedTotalPrice == null) {
+            return null;
+        }
+        return quotedTotalPrice
+                .multiply(BigDecimal.valueOf(requiredPaymentPercent))
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.CEILING);
+    }
 }

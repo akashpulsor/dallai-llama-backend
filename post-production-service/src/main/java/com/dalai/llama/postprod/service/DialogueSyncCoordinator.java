@@ -64,6 +64,21 @@ public class DialogueSyncCoordinator {
     public DialogueSyncJob run(UUID tenantId, UUID projectId, UUID postProductionJobId, String shotRef,
                                 UUID videoGenJobId, String targetLanguage,
                                 String voiceCloneModel, String ttsModel, String lipSyncModel) {
+        return run(tenantId, projectId, postProductionJobId, shotRef, videoGenJobId, targetLanguage,
+                voiceCloneModel, ttsModel, lipSyncModel, false);
+    }
+
+    /** {@code alreadyAutoDubbed} is true when video-generation-service already muxed a beat-
+     * matched cloned-voice track onto this shot (see {@code VideoGenShotJob#alreadyAutoDubbed}).
+     * For the same-language case that means the video's audio is already correct -- this becomes
+     * a fallback-only path: no clone/synthesize/lip-sync call at all, just pass the shot through
+     * as-is. A dubbed video that STILL needs a different language falls through to the full
+     * pipeline below same as ever, since translated phonemes never match the original video's
+     * mouth shapes regardless of how the audio got there. */
+    public DialogueSyncJob run(UUID tenantId, UUID projectId, UUID postProductionJobId, String shotRef,
+                                UUID videoGenJobId, String targetLanguage,
+                                String voiceCloneModel, String ttsModel, String lipSyncModel,
+                                boolean alreadyAutoDubbed) {
         // 1. Dialogue + cast details from pre-production, by project_id + shot.
         PreProductionShotDetails shotDetails = preProductionClient.getShotDialogue(tenantId, projectId, null, shotRef);
 
@@ -88,6 +103,20 @@ public class DialogueSyncCoordinator {
                 .sameLanguage(sameLanguage)
                 .createdAt(OffsetDateTime.now())
                 .build());
+
+        if (alreadyAutoDubbed && sameLanguage) {
+            // Trust the auto-dub -- no lip-sync call, this IS the fallback-only path (see the
+            // 2-arg method's javadoc). "Quality" here is exactly what BeatDubbingService already
+            // confirmed by not throwing (dub_succeeded=true); real audio/timing analysis is a
+            // documented follow-up, not built this pass.
+            try {
+                AssetPersistenceService.PersistedAsset asset = assetPersistenceService.persist(job.getDialogueSyncJobId(), sourceVideoUrl);
+                return dialogueSyncJobPersistenceService.finishSuccess(job.getDialogueSyncJobId(), null, asset.bucket(), asset.objectKey());
+            } catch (RuntimeException ex) {
+                log.warn("Auto-dub passthrough failed dialogueSyncJobId={} errorMessage={}", job.getDialogueSyncJobId(), ex.getMessage());
+                return dialogueSyncJobPersistenceService.finishFailure(job.getDialogueSyncJobId(), ex.getMessage());
+            }
+        }
 
         try {
             String dialogueAudioUrl;
@@ -147,8 +176,11 @@ public class DialogueSyncCoordinator {
             }
 
             // 4. Lip-sync the (possibly dubbed) audio onto the video.
+            // durationSeconds omitted -- this pipeline doesn't currently track a shot's real
+            // duration (see LipSyncGenerationService's javadoc); billed at the documented
+            // DEFAULT_SHOT_DURATION_SECONDS approximation instead.
             var lipSyncResult = lipSyncGenerationService.syncLips(
-                    tenantId, "post-prod-lipsync-" + job.getDialogueSyncJobId(), sourceVideoUrl, dialogueAudioUrl, lipSyncModel);
+                    tenantId, "post-prod-lipsync-" + job.getDialogueSyncJobId(), sourceVideoUrl, dialogueAudioUrl, lipSyncModel, null);
 
             // 5. Persist our own durable copy and show the pre-processed shot.
             AssetPersistenceService.PersistedAsset asset =

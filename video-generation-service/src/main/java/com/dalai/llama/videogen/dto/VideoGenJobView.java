@@ -10,6 +10,8 @@ public record VideoGenJobView(
         String approvalStatus,
         String outputUri,
         BigDecimal estimatedCost,
-        BigDecimal actualCost
+        BigDecimal actualCost,
+        boolean muteAudio,
+        Boolean dubSucceeded
 ) {
 }

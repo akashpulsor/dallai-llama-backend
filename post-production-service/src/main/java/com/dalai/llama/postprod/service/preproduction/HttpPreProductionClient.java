@@ -49,11 +49,11 @@ public class HttpPreProductionClient implements PreProductionClient {
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
                     "pre-production-service /v1/projects/%s/shots/%s/dialogue failed status=%s body=%s"
-                            .formatted(projectId, shotRef, ex.getStatusCode(), ex.getResponseBodyAsString()));
+                            .formatted(projectId, shotRef, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         } catch (RuntimeException ex) {
             throw PostProductionException.upstream(
                     "pre-production-service unreachable for project_id=%s shot_ref=%s: %s"
-                            .formatted(projectId, shotRef, ex.getMessage()));
+                            .formatted(projectId, shotRef, ex.getMessage()), ex);
         }
     }
 }

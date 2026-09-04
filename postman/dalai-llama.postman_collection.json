@@ -1,0 +1,766 @@
+{
+  "info": {
+    "name": "Dalai Llama - Project Requirements",
+    "_postman_id": "b6c1f2e0-6f1a-4b3a-9c2e-project-requirements-01",
+    "description": "creative-planning-service's project-requirements flow (standalone brief -> duration/language pricing -> product + reference-material -> funding-triggered analysis), plus the billing-service video-pricing quote and brand-context endpoints it wires into. Set {{jwt}} and {{tenantId}} before running; {{requirementId}} and {{productId}} are set automatically by the 'Create standalone requirement' request's test script. This collection is meant to grow -- add one folder per controller, one request per endpoint, and attach a saved example response (Send, then 'Save as Example') so the next person can see a real request/response pair without having to run it first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{jwt}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "platformBaseUrl", "value": "https://api.dalaillama.in/v1" },
+    { "key": "apiBaseUrl", "value": "https://api.dalaillama.in/api/v1" },
+    { "key": "jwt", "value": "" },
+    { "key": "tenantId", "value": "" },
+    { "key": "requirementId", "value": "" },
+    { "key": "productId", "value": "" },
+    { "key": "brandId", "value": "" },
+    { "key": "shareToken", "value": "" },
+    { "key": "paymentId", "value": "" },
+    { "key": "reviewToken", "value": "" },
+    { "key": "ppProjectId", "value": "" },
+    { "key": "commentId", "value": "" },
+    { "key": "shotId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Project Requirements",
+      "item": [
+        {
+          "name": "Create standalone requirement (multipart: brand, product, images)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/project-requirements",
+            "description": "Entry point B: no locked idea, no branding chat. `data` is CreateStandaloneRequirementRequest as JSON -- attach it as a text part with its own Content-Type set to application/json (Postman: click the part's row, use the dropdown on the right to pick 'Text', then set Content-Type via the part's header override, or just leave the default 'Text' type -- Spring's @RequestPart binds it as JSON either way since the body below already declares contentType). `brandContext` and `productDetails` are both optional -- set either to null (or drop the whole key) to skip upserting a brand / creating a product. `image` is the brief's own reference attachment; `productImages` (only used if productDetails is present) and `projectReferenceImages` ('what the client has in mind', unrelated to the product) are optional multi-file parts -- add more rows with the same key to attach more than one file. None of the three image sets are analyzed synchronously -- see 'Mark funded' below, which is what actually triggers analysis.",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "data",
+                  "value": "{\n  \"briefText\": \"A 30-second launch film for our new vitamin-C serum, aimed at 25-35 year old urban women.\",\n  \"targetAudience\": \"Urban women 25-35\",\n  \"campaignDirection\": \"Bright, energetic, product-hero shots\",\n  \"durationSeconds\": 30,\n  \"languages\": [\"English\", \"Hindi\"],\n  \"tenantType\": \"AI_VIDEO_CREATOR\",\n  \"brandContext\": {\n    \"brandName\": \"GlowLabs\",\n    \"industry\": \"Skincare\",\n    \"brandVoice\": \"Friendly, confident\",\n    \"targetAudience\": \"Urban women 25-35\",\n    \"brandValues\": \"Clean ingredients, cruelty-free\"\n  },\n  \"productDetails\": {\n    \"name\": \"GlowLabs Vitamin C Serum\",\n    \"description\": \"10% vitamin C brightening serum, 30ml\",\n    \"category\": \"Skincare\"\n  }\n}",
+                  "type": "text",
+                  "contentType": "application/json"
+                },
+                { "key": "image", "type": "file", "src": "", "disabled": true },
+                { "key": "productImages", "type": "file", "src": "", "disabled": true },
+                { "key": "productImages", "type": "file", "src": "", "disabled": true },
+                { "key": "projectReferenceImages", "type": "file", "src": "", "disabled": true }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('requirementId', body.id);",
+                  "  if (body.shareToken) pm.collectionVariables.set('shareToken', body.shareToken);",
+                  "  pm.test('has quoted price', () => pm.expect(body.quotedTotalPrice).to.not.be.null);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 OK -- funded (COMPANY tenant, priced 30s)",
+              "originalRequest": {
+                "method": "POST",
+                "url": "{{platformBaseUrl}}/project-requirements",
+                "body": { "mode": "formdata", "formdata": [{ "key": "data", "type": "text", "value": "{ \"briefText\": \"...\", \"durationSeconds\": 30, \"languages\": [\"English\", \"Hindi\"], \"tenantType\": \"COMPANY\" }" }] }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"3f1c9c2e-6b8a-4b1a-9d34-1a2b3c4d5e6f\",\n  \"tenantType\": \"COMPANY\",\n  \"lockedIdeaId\": null,\n  \"briefText\": \"A 30-second launch film for our new vitamin-C serum, aimed at 25-35 year old urban women.\",\n  \"targetAudience\": \"Urban women 25-35\",\n  \"campaignDirection\": \"Bright, energetic, product-hero shots\",\n  \"durationSeconds\": 30,\n  \"languages\": [\"English\", \"Hindi\"],\n  \"quotedPlatformCost\": 3000.00,\n  \"quotedCreatorMarginPercent\": 12.00,\n  \"quotedTotalPrice\": 3360.00,\n  \"quotedCurrency\": \"INR\",\n  \"shareToken\": \"9f86d081884c7d659a2feaa0c55ad015\",\n  \"shareTokenExpiresAt\": \"2026-09-05T10:00:00Z\",\n  \"funded\": true,\n  \"fundedBy\": \"6f7e8d9c-0000-0000-0000-000000000001\",\n  \"createdAt\": \"2026-08-29T10:00:00Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request -- productImages given without productDetails' brand",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"status\": 404,\n  \"message\": \"No brand context for this tenant yet\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List requirements",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/project-requirements" },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"3f1c9c2e-6b8a-4b1a-9d34-1a2b3c4d5e6f\",\n    \"tenantType\": \"AI_VIDEO_CREATOR\",\n    \"durationSeconds\": 30,\n    \"languages\": [\"English\", \"Hindi\"],\n    \"quotedTotalPrice\": 3360.00,\n    \"quotedCurrency\": \"INR\",\n    \"shareToken\": \"9f86d081884c7d659a2feaa0c55ad015\",\n    \"funded\": false,\n    \"createdAt\": \"2026-08-29T10:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get requirement",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}" }
+        },
+        {
+          "name": "Mark funded (triggers deferred reference-image analysis)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/mark-funded",
+            "description": "Tenant self-report of an out-of-band payment (see ProjectRequirementService's class javadoc -- never processes a payment itself). The real Razorpay path is billing-service's webhook publishing `billing.payment.received` on Kafka, consumed by BillingEventConsumer, which calls the equivalent internal markFundedFromPayment -- both paths run ReferenceMaterialAnalysisService synchronously right after funding, analyzing every product/project reference image stored at creation time that doesn't already have an analysis row. Analysis failures are logged and skipped per-image, never rolled back into the funding transaction."
+          },
+          "response": [
+            {
+              "name": "200 OK -- now funded",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"3f1c9c2e-6b8a-4b1a-9d34-1a2b3c4d5e6f\",\n  \"funded\": true,\n  \"fundedBy\": \"6f7e8d9c-0000-0000-0000-000000000001\",\n  \"quotedTotalPrice\": 3360.00,\n  \"quotedCurrency\": \"INR\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refresh share token",
+          "request": { "method": "POST", "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/refresh-share-token" }
+        },
+        {
+          "name": "Upload brief attachment (single file)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/attachments",
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "" }] }
+          }
+        },
+        {
+          "name": "List brief attachments",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/attachments" }
+        },
+        {
+          "name": "Get inline product (null if none)",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/product",
+            "description": "The product created from `productDetails` at creation time, if any -- a standalone requirement doesn't require one, in which case this returns an empty body with 200."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 && pm.response.text()) {",
+                  "  const body = pm.response.json();",
+                  "  if (body && body.id) pm.collectionVariables.set('productId', body.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 OK -- product present",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"a1b2c3d4-0000-0000-0000-000000000002\",\n  \"brandContextId\": \"b2c3d4e5-0000-0000-0000-000000000003\",\n  \"name\": \"GlowLabs Vitamin C Serum\",\n  \"description\": \"10% vitamin C brightening serum, 30ml\",\n  \"category\": \"Skincare\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List product reference images (+ analysis once funded)",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/product/reference-images",
+            "description": "Images of the actual product (see productImages on create). `analysis` is null until the requirement is funded -- see Mark funded above."
+          },
+          "response": [
+            {
+              "name": "200 OK -- before funding (analysis null)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"c3d4e5f6-0000-0000-0000-000000000004\",\n    \"productProfileId\": \"a1b2c3d4-0000-0000-0000-000000000002\",\n    \"bucket\": \"dalai-llama\",\n    \"objectKey\": \"reference-images/a1b2c3d4-0000-0000-0000-000000000002/1a2b3c4d.jpg\",\n    \"analysis\": null\n  }\n]"
+            },
+            {
+              "name": "200 OK -- after funding (analysis populated)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"c3d4e5f6-0000-0000-0000-000000000004\",\n    \"productProfileId\": \"a1b2c3d4-0000-0000-0000-000000000002\",\n    \"bucket\": \"dalai-llama\",\n    \"objectKey\": \"reference-images/a1b2c3d4-0000-0000-0000-000000000002/1a2b3c4d.jpg\",\n    \"analysis\": {\n      \"description\": \"A 30ml amber glass dropper bottle of vitamin C serum on a white marble surface.\",\n      \"dominantColors\": \"Amber, white, gold\",\n      \"styleNotes\": \"Clean, minimalist product photography with soft studio lighting\",\n      \"subjectMatter\": \"Skincare product bottle, hero shot\",\n      \"suggestedUseCase\": \"Opening product-hero frame or end-card\"\n    }\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "List project reference images (+ analysis once funded)",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/reference-images",
+            "description": "\"What the client has in mind\" images -- distinct from the product's own images above. `analysis` is null until funded."
+          },
+          "response": [
+            {
+              "name": "200 OK -- after funding",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"d4e5f6a7-0000-0000-0000-000000000005\",\n    \"projectRequirementId\": \"3f1c9c2e-6b8a-4b1a-9d34-1a2b3c4d5e6f\",\n    \"bucket\": \"dalai-llama\",\n    \"objectKey\": \"reference-images/3f1c9c2e-6b8a-4b1a-9d34-1a2b3c4d5e6f/2b3c4d5e.jpg\",\n    \"analysis\": {\n      \"description\": \"A moody, cinematic beauty ad still with warm rim lighting on a model's face.\",\n      \"dominantColors\": \"Warm amber, deep shadow, skin tones\",\n      \"styleNotes\": \"High-contrast cinematic lighting, shallow depth of field\",\n      \"subjectMatter\": \"Beauty portrait, mood/style reference\",\n      \"suggestedUseCase\": \"Overall lighting and tone reference for the shoot\"\n    }\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Generate idea options (only once funded)",
+          "request": { "method": "POST", "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/ideas/generate" }
+        },
+        {
+          "name": "List idea options",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/ideas" }
+        },
+        {
+          "name": "Lock chosen idea (creates the pre-production project)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/project-requirements/{{requirementId}}/ideas/lock",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"The AI Co-Pilot: Unleash Your Vision\",\n  \"concept\": \"...\",\n  \"targetAudience\": \"...\",\n  \"campaignAngle\": \"...\",\n  \"keyMessage\": \"...\",\n  \"tone\": \"...\"\n}"
+            },
+            "description": "Idempotent end to end: calling this twice for the same requirement -- a double-click, a client retry after a dropped response -- always returns the SAME LockedIdea/project pair rather than minting a second project.\n\nThis used to be a real bug: the LockedIdea insert and the pre-production-service HTTP call lived in one @Transactional method, so a failure after pre-production-service had already committed its Project (a timeout, a blip) rolled the LockedIdea insert back too. A retry then found no existing LockedIdea, created a second one, and pre-production-service (having no idempotency guard of its own) created a second, orphaned Project -- same tenant, same idea title, two different statuses (e.g. DRAFT sitting next to SCRIPT_READY). Fixed on both sides: creative-planning-service now commits the LockedIdea row and the projectId attachment as two independent transactions (see LockedIdeaWriter) so a downstream failure can never undo the insert, and pre-production-service's POST /v1/projects/from-locked-idea is now idempotent by lockedIdeaId as defense in depth."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Brands (Plans & Brand tab)",
+      "description": "A tenant can manage several brands now (an agency running multiple client brands) -- every route takes an explicit {{brandId}}, no more implicit 'the tenant's one brand'. Each brand is versioned: every update snapshots a new row into brand_context_version.",
+      "item": [
+        {
+          "name": "Create brand",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/brands",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brandName\": \"GlowLabs\",\n  \"industry\": \"Skincare\",\n  \"brandVoice\": \"Friendly, confident\",\n  \"targetAudience\": \"Urban women 25-35\",\n  \"brandValues\": \"Clean ingredients, cruelty-free\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('brandId', pm.response.json().id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"b2c3d4e5-0000-0000-0000-000000000003\",\n  \"brandName\": \"GlowLabs\",\n  \"industry\": \"Skincare\",\n  \"brandVoice\": \"Friendly, confident\",\n  \"targetAudience\": \"Urban women 25-35\",\n  \"brandValues\": \"Clean ingredients, cruelty-free\",\n  \"createdAt\": \"2026-08-29T10:00:00Z\",\n  \"currentVersion\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "List brands",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/brands" }
+        },
+        {
+          "name": "Get one brand",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/brands/{{brandId}}" }
+        },
+        {
+          "name": "Update brand (new version)",
+          "request": {
+            "method": "PUT",
+            "url": "{{platformBaseUrl}}/brands/{{brandId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brandName\": \"GlowLabs\",\n  \"industry\": \"Skincare\",\n  \"brandVoice\": \"Warm, confident\",\n  \"targetAudience\": \"Urban women 25-40\",\n  \"brandValues\": \"Clean ingredients, cruelty-free\"\n}"
+            },
+            "description": "Edits this brand in place and snapshots a new version -- the brand's id (and every product/session/plan/requirement that already points at it) never changes."
+          }
+        },
+        {
+          "name": "List brand versions",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/brands/{{brandId}}/versions",
+            "description": "Every create/update snapshots a version -- oldest first, just the brand fields at that point in time."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"c1d2e3f4-0000-0000-0000-000000000008\",\n    \"brandContextId\": \"b2c3d4e5-0000-0000-0000-000000000003\",\n    \"version\": 1,\n    \"brandName\": \"GlowLabs\",\n    \"industry\": \"Skincare\",\n    \"brandVoice\": \"Friendly, confident\",\n    \"targetAudience\": \"Urban women 25-35\",\n    \"brandValues\": \"Clean ingredients, cruelty-free\",\n    \"createdAt\": \"2026-08-29T10:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get one brand version",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/brands/{{brandId}}/versions/1" }
+        },
+        {
+          "name": "List projects for this brand",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/brands/{{brandId}}/projects",
+            "description": "Every brief/project created for this brand -- 'what has this brand actually been used for.'"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Products (Plans & Brand tab)",
+      "description": "Every product belongs to one specific brand ({{brandId}}) -- not versioned (products just get edited in place, same as cast; only Script currently needs draft history).",
+      "item": [
+        {
+          "name": "List products for a brand",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/products?brandId={{brandId}}" }
+        },
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/products",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"GlowLabs Vitamin C Serum\",\n  \"description\": \"10% vitamin C brightening serum, 30ml\",\n  \"category\": \"Skincare\",\n  \"brandContextId\": \"{{brandId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('productId', pm.response.json().id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update product (partial)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{platformBaseUrl}}/products/{{productId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"10% vitamin C brightening serum, 30ml, amber glass dropper bottle\"\n}"
+            },
+            "description": "Each field applied only when given -- omit name/category to leave them unchanged."
+          }
+        },
+        {
+          "name": "Upload product reference image",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/products/{{productId}}/reference-images",
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "" }] },
+            "description": "Analyzes synchronously (unlike the requirement-creation-time upload, which defers analysis until funded) -- this is the authenticated product-library path, not a standalone brief."
+          }
+        },
+        {
+          "name": "List product reference images",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/products/{{productId}}/reference-images" }
+        },
+        {
+          "name": "Get product journey",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/products/{{productId}}/journey",
+            "description": "Every project/campaign this product has been used in so far."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Video Pricing (billing-service)",
+      "item": [
+        {
+          "name": "Quote a duration (live estimate)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{apiBaseUrl}}/billing/{{tenantId}}/video-pricing/quote?durationSeconds=30",
+              "host": ["{{apiBaseUrl}}"],
+              "path": ["billing", "{{tenantId}}", "video-pricing", "quote"],
+              "query": [{ "key": "durationSeconds", "value": "30" }]
+            },
+            "description": "platformCost = base rate (default 100/sec) x durationSeconds; creatorAmount = platformCost x this tenant's marginPercent (Tenant.marginPercent, the same field Wallet & Billing's margin setting writes) / 100; totalPrice = platformCost + creatorAmount."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"durationSeconds\": 30,\n  \"platformCost\": 3000.00,\n  \"creatorMarginPercent\": 12.00,\n  \"creatorAmount\": 360.00,\n  \"totalPrice\": 3360.00,\n  \"currency\": \"INR\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Public Brief Page (client-facing, no auth)",
+      "description": "creative-planning-service's PublicProjectRequirementController -- deliberately unauthenticated, no {{jwt}}/{{tenantId}} needed. Possession of {{shareToken}} (set automatically by 'Create standalone requirement' above) is the authorization. Covers the full client journey: view the brief with brand/product/every reference image, edit any of it (the client may be filling in a mostly-blank brief the creator sent), then pay to fund it via Razorpay.",
+      "item": [
+        {
+          "name": "Get brief (full view: brand, product, all reference images)",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/public/project-requirements/{{shareToken}}",
+            "description": "Returns PublicProjectRequirementView -- briefText/targetAudience/campaignDirection/durationSeconds/languages/quotedTotalPrice/quotedCurrency/funded, plus brand, product, productReferenceImages, projectReferenceImages assembled by the controller."
+          },
+          "response": [
+            {
+              "name": "200 OK -- unfunded, with brand and product",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"briefText\": \"A 30-second launch film for our new vitamin-C serum.\",\n  \"targetAudience\": \"Urban women 25-35\",\n  \"campaignDirection\": \"Bright, energetic, product-hero shots\",\n  \"durationSeconds\": 30,\n  \"languages\": [\"English\", \"Hindi\"],\n  \"quotedTotalPrice\": 3360.00,\n  \"quotedCurrency\": \"INR\",\n  \"funded\": false,\n  \"brand\": {\n    \"id\": \"b2c3d4e5-0000-0000-0000-000000000003\",\n    \"brandName\": \"GlowLabs\",\n    \"industry\": \"Skincare\",\n    \"brandVoice\": \"Friendly, confident\",\n    \"targetAudience\": \"Urban women 25-35\",\n    \"brandValues\": \"Clean ingredients, cruelty-free\",\n    \"createdAt\": \"2026-08-29T10:00:00Z\"\n  },\n  \"product\": {\n    \"id\": \"a1b2c3d4-0000-0000-0000-000000000002\",\n    \"brandContextId\": \"b2c3d4e5-0000-0000-0000-000000000003\",\n    \"name\": \"GlowLabs Vitamin C Serum\",\n    \"description\": \"10% vitamin C brightening serum, 30ml\",\n    \"category\": \"Skincare\"\n  },\n  \"productReferenceImages\": [],\n  \"projectReferenceImages\": []\n}"
+            }
+          ]
+        },
+        {
+          "name": "Edit brief (multipart: text, brand, product, images)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{platformBaseUrl}}/public/project-requirements/{{shareToken}}",
+            "description": "Lets whoever holds the link fill in the brief themselves -- every field independent and optional. `data.brand` upserts this tenant's one brand row; `data.product` updates the requirement's product if one exists, otherwise creates it (needs a brand to already exist, inline in the same request or from an earlier edit -- a blank product.name is silently skipped, not an error). `images` are project reference images ('what the client has in mind'); `productImages` attach to the product. Refused with 400 once `funded` is true.",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "data",
+                  "value": "{\n  \"briefText\": \"Updated: focus on the serum's glass dropper and morning routine.\",\n  \"targetAudience\": \"Urban women 25-40\",\n  \"campaignDirection\": \"Soft morning light, calm pacing\",\n  \"brand\": {\n    \"brandName\": \"GlowLabs\",\n    \"industry\": \"Skincare\",\n    \"brandVoice\": \"Warm, confident\",\n    \"targetAudience\": \"Urban women 25-40\",\n    \"brandValues\": \"Clean ingredients, cruelty-free\"\n  },\n  \"product\": {\n    \"name\": \"GlowLabs Vitamin C Serum\",\n    \"description\": \"10% vitamin C brightening serum, 30ml, amber glass dropper bottle\",\n    \"category\": \"Skincare\"\n  }\n}",
+                  "type": "text",
+                  "contentType": "application/json"
+                },
+                { "key": "images", "type": "file", "src": "", "disabled": true },
+                { "key": "productImages", "type": "file", "src": "", "disabled": true }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "400 Bad Request -- already funded",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"status\": 400,\n  \"message\": \"This brief is already funded and can no longer be edited\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Start payment (Razorpay order for the quoted price)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/project-requirements/{{shareToken}}/payment",
+            "description": "Charges exactly the already-quoted quotedTotalPrice -- no re-quoting. Returns paymentId/gatewayOrderId/amount/currency/keyId for the client to hand to Razorpay Checkout. This and /verify both call out to billing-service's live Razorpay integration with a 30s budget (BILLING_SERVICE_TIMEOUT_MS, bumped from 15s -- a real order-creation/verify call to Razorpay occasionally took longer than 15s, timing out the client-facing request even though billing-service's own call kept running and often still succeeded). Funding self-heals if /verify still times out: billing-service's real webhook independently publishes billing.payment.received once Razorpay confirms, and creative-planning-service's BillingEventConsumer applies the exact same funded transition from that event, idempotently, whichever arrives first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('paymentId', pm.response.json().paymentId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"paymentId\": \"e5f6a7b8-0000-0000-0000-000000000006\",\n  \"gatewayOrderId\": \"order_Nk8x1y2z3A4b5C\",\n  \"amount\": 3360.00,\n  \"currency\": \"INR\",\n  \"keyId\": \"rzp_live_xxxxxxxxxxxx\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Verify payment (funds the brief on success)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/project-requirements/{{shareToken}}/payment/verify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentId\": \"{{paymentId}}\",\n  \"gatewayOrderId\": \"order_Nk8x1y2z3A4b5C\",\n  \"gatewayPaymentId\": \"pay_Nk8xABCDEFGHIJ\",\n  \"gatewaySignature\": \"<hmac from Razorpay Checkout's handler callback>\"\n}"
+            },
+            "description": "Verifies the Razorpay signature server-side (billing-service), then applies the same funding transition Mark funded / the Kafka billing.payment.received consumer does -- idempotent either way. This is the real client-callback path; Mark funded above is the tenant self-report / webhook-secret path."
+          },
+          "response": [
+            {
+              "name": "200 OK -- now funded",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"briefText\": \"...\",\n  \"funded\": true,\n  \"quotedTotalPrice\": 3360.00,\n  \"quotedCurrency\": \"INR\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Client Review Page (pre-production-service, no auth)",
+      "description": "pre-production-service's PublicProjectController, reached via /review/{{reviewToken}} in creator-ui. Set {{reviewToken}} from 'Get client review link' below (creator-authenticated) before running this folder.",
+      "item": [
+        {
+          "name": "Get the locked package (script, screenplay, cast, shots)",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}" }
+        },
+        {
+          "name": "Get pay-to-lock quote",
+          "request": { "method": "POST", "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/lock/quote" }
+        },
+        {
+          "name": "Start pay-to-lock payment (Razorpay order)",
+          "request": { "method": "POST", "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/lock/payment" }
+        },
+        {
+          "name": "Verify pay-to-lock payment (locks the project)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/lock/verify",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gatewayOrderId\": \"order_Nk8x1y2z3A4b5C\",\n  \"gatewayPaymentId\": \"pay_Nk8xABCDEFGHIJ\",\n  \"gatewaySignature\": \"<hmac from Razorpay Checkout's handler callback>\"\n}"
+            },
+            "description": "Calls billing-service's /client-review/verify (30s budget -- BILLING_SERVICE_TIMEOUT_MS) then locks the project. Unlike requirement funding, this had no async fallback until now: a timed-out verify left the project permanently unlocked even after a real charge, because nothing else was watching. Now self-heals the same way funding does, just without Kafka -- Razorpay's own payment.captured webhook hits billing-service directly, RazorpayWebhookOrchestrationService looks the order up in client_review_payment when it's not a wallet/funding Payment, marks it SUCCESS (idempotent, safe if this synchronous verify already did), and calls pre-production-service's new internal endpoint (POST /api/v1/internal/tenants/{tenantId}/projects/{projectId}/client-review-payment-captured, body {kind}) which locks the project or opens a paid extra review depending on client_review_payment.kind. Both target actions are already idempotent (relocking a CLIENT_LOCKED project is a no-op; starting a review returns the existing OPEN one), so it's harmless if this synchronous verify and the webhook both eventually succeed."
+          }
+        },
+        {
+          "name": "Leave a review comment (multipart: text + optional image)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/review-comments",
+            "description": "The client's feedback feed -- requires an open review (POST .../reviews/start first, see the transactional-reviews requests already in ClientReviewPage). A comment plus an optional reference image; visible to the creator on their own project page (see 'List review comments (creator)' below), who marks it resolved once they've made the fix.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "content", "value": "Can shot 4's lighting be warmer, closer to this reference?", "type": "text" },
+                { "key": "image", "type": "file", "src": "", "disabled": true }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"f6a7b8c9-0000-0000-0000-000000000007\",\n  \"content\": \"Can shot 4's lighting be warmer, closer to this reference?\",\n  \"imageUrl\": \"https://media.dalaillama.in/pre-production-review-comments/...\",\n  \"resolved\": false,\n  \"createdAt\": \"2026-08-30T10:00:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List review comments (client's own view)",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/review-comments" }
+        }
+      ]
+    },
+    {
+      "name": "Pre-Production Project (creator-authenticated)",
+      "description": "The creator's own side of a locked project -- set {{ppProjectId}} from ProjectController's 'from-locked-idea' response or the project list before running.",
+      "item": [
+        {
+          "name": "Sync chat context (script/screenplay/cast/shots -> embeddings)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/chat/sync",
+            "description": "Refreshes this project's chat-embedding index and opens a chat session if one doesn't exist -- lets the creator's own 'chat about a shot' panel answer real questions before any client has paid to lock the package, and stays fresh as new shots are generated afterward. Idempotent; 204 No Content."
+          }
+        },
+        {
+          "name": "List review comments (creator)",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/review-comments" },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"f6a7b8c9-0000-0000-0000-000000000007\",\n    \"content\": \"Can shot 4's lighting be warmer, closer to this reference?\",\n    \"imageUrl\": \"https://media.dalaillama.in/pre-production-review-comments/...\",\n    \"resolved\": false,\n    \"createdAt\": \"2026-08-30T10:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Resolve a review comment",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/review-comments/{{commentId}}/resolve",
+            "description": "Marks feedback handled -- the creator makes the actual fix through the normal shot-chat/apply flow first, then resolves the comment here."
+          }
+        },
+        {
+          "name": "List script versions",
+          "request": {
+            "method": "GET",
+            "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/script/versions",
+            "description": "Script is versioned like Screenplay (see ScriptVersion's javadoc) -- source is GENERATED, EDITED (a creator's manual save), or CRITIC (the accepted draft only exists because ScriptGenerationService's internal critique-retry loop rejected an earlier attempt; critiqueNotes carries the actual feedback that forced the rewrite)."
+          },
+          "response": [
+            {
+              "name": "200 OK -- one CRITIC-revised version",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"id\": \"d1e2f3a4-0000-0000-0000-000000000009\",\n    \"projectId\": \"4631ce95-e1a6-462f-a65e-a7b75ab32593\",\n    \"scriptId\": \"b246a681-ae29-40bf-a5be-94f17879c197\",\n    \"version\": 1,\n    \"source\": \"CRITIC\",\n    \"parentId\": null,\n    \"scriptText\": \"NARRATOR: What if...\",\n    \"critiqueNotes\": \"Attempt 1: Hook is too generic; doesn't establish the product category fast enough\",\n    \"createdAt\": \"2026-08-29T10:00:00Z\"\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Get one script version",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/script/versions/1" }
+        },
+        {
+          "name": "Save script edit (new EDITED version)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/script/versions/1/edit",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scriptText\": \"NARRATOR: (revised) What if making your dream video was this easy?\"\n}"
+            },
+            "description": "Only scriptText is required -- omitted narrative fields (logline, hook, etc.) fall back to the version being edited from, not blanked out. No LLM call; also updates the live script row so the edit actually takes effect on the next screenplay/shot generation."
+          }
+        },
+        {
+          "name": "Generate shot list (tags PRODUCT_HERO/MOTION_GRAPHIC, auto-plans motion graphics + lighting/camera)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/projects/{{ppProjectId}}/shots/generate-list",
+            "description": "PRE_PROD_SHOT_LIST_GENERATE classifies every shot's shotType from the script + scene context (DIALOGUE/ACTION/PRODUCT_HERO/B_ROLL/TRANSITION/MOTION_GRAPHIC) -- PRODUCT_HERO shots also get a productShotType (Hero Shot/Ingredient Shot/Lifestyle Shot/Pack Shot). A MOTION_GRAPHIC shot has no camera plan and nothing for video-generation-service to dispatch to; instead, right after this call saves the shot list (and once that write has committed), ShotListController plans every MOTION_GRAPHIC shot via MotionGraphicPlanService, AND every other (camera-planned) shot via LightingPlanService + CameraPlanService -- all best-effort per shot/kind, so one LLM hiccup (or a failed critique retry) planning one shot's one plan never costs the shot list that just generated, or the rest of that shot's plans/images. GET a shot's plan below; the 'Plan'/'Replan' actions in the UI are now the manual fallback/revision path, not the only way to get one -- image generation for each of the 4 kinds (Storyboard/Production/Lighting/Camera plan) still stays a deliberate manual click per shot.\n\neditingNotes and screenDirection (prompt v5) are written against the shot's actual neighbors, not in isolation -- editingNotes names the cut technique into this shot (J-cut, match cut, whip pan, etc), what continuity carries across it (screen direction, prop/costume state, eyeline), and the pacing rhythm relative to the surrounding shots. Before that, these two fields read as generic, interchangeable notes across shots."
+          }
+        },
+        {
+          "name": "Get a shot's motion graphic plan",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/shots/{{shotId}}/motion-graphic-plan" },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"e5f6a7b8-0000-0000-0000-000000000006\",\n  \"shotId\": \"{{shotId}}\",\n  \"concept\": \"Kinetic typography callout of the three key ingredients, one at a time\",\n  \"onScreenText\": \"Hyaluronic Acid · Vitamin C · Niacinamide\",\n  \"visualStyle\": \"Clean sans-serif, brand amber accent, dark background\",\n  \"animationNotes\": \"Each word slides in from the left, 0.3s stagger, holds 1s\",\n  \"durationSeconds\": 4\n}"
+            }
+          ]
+        },
+        {
+          "name": "Replan a shot's motion graphic",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/shots/{{shotId}}/motion-graphic-plan/generate",
+            "description": "400s if the shot isn't shotType=MOTION_GRAPHIC. One plan per shot -- regenerate overwrites rather than versioning."
+          }
+        },
+        {
+          "name": "Get a shot's lighting plan",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/shots/{{shotId}}/lighting-plan" },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"id\": \"f6a7b8c9-0000-0000-0000-000000000010\",\n  \"shotId\": \"{{shotId}}\",\n  \"cinematicIntent\": \"Warm, intimate key light to draw focus to the product's texture\",\n  \"estimatedSetupMinutes\": 10,\n  \"keyLightGear\": \"Desk lamp with warm bulb, 45 degrees camera-left\",\n  \"fillLightGear\": \"Phone flashlight bounced off a white wall, camera-right\",\n  \"rimLightGear\": null,\n  \"negFillGear\": \"Dark towel opposite the key\",\n  \"diffuserGear\": \"Bedsheet over the desk lamp\",\n  \"cameraRigGear\": \"Tripod, eye level\",\n  \"buildSteps\": \"1. Place desk lamp...\\n2. ...\",\n  \"source\": \"GENERATED\",\n  \"critiqueNotes\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Replan a shot's lighting (critique-and-retry, up to 2 attempts)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/shots/{{shotId}}/lighting-plan/generate",
+            "description": "Now auto-generated for every camera-planned shot (everything except MOTION_GRAPHIC) right after shot-list generation -- see ShotListController/ShotListGenerationService#planLightingAndCameraForShots. This is the manual fallback/replan. Runs PRE_PROD_LIGHTING_PLAN_GENERATE, then PRE_PROD_LIGHTING_PLAN_CRITIC against the result; on FAIL, regenerates once more with the critic's issues fed back. source=CRITIC (with critiqueNotes) if a retry happened, else GENERATED. Also folds in the shot's ShotProductReference analysis (reference lighting style/mood/subject), when one exists, instead of planning from the shot's flat fields alone."
+          }
+        },
+        {
+          "name": "Edit a shot's lighting plan (manual correction, no LLM call)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{platformBaseUrl}}/shots/{{shotId}}/lighting-plan",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keyLightGear\": \"Ring light, camera-left, dimmed to 40%\"\n}"
+            },
+            "description": "Every field optional -- only what's sent changes, everything else keeps its current value. Sets source=EDITED and clears critiqueNotes."
+          }
+        },
+        {
+          "name": "Get a shot's camera plan",
+          "request": { "method": "GET", "url": "{{platformBaseUrl}}/shots/{{shotId}}/camera-plan" }
+        },
+        {
+          "name": "Replan a shot's camera (critique-and-retry, up to 2 attempts)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/shots/{{shotId}}/camera-plan/generate",
+            "description": "Same auto-generation + critique-and-retry shape as the lighting plan above (PRE_PROD_CAMERA_PLAN_GENERATE -> PRE_PROD_CAMERA_PLAN_CRITIC), also folding in the shot's ShotProductReference analysis (reference camera angle/motion) when one exists."
+          }
+        },
+        {
+          "name": "Edit a shot's camera plan (manual correction, no LLM call)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{platformBaseUrl}}/shots/{{shotId}}/camera-plan",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"safetyFlags\": \"Wet floor near the sink -- non-slip mat required\"\n}"
+            },
+            "description": "Every field optional -- only what's sent changes, everything else keeps its current value. Sets source=EDITED and clears critiqueNotes."
+          }
+        }
+      ]
+    }
+  ]
+}

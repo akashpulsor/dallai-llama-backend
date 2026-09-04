@@ -39,7 +39,7 @@ public class HttpVideoGenerationClient implements VideoGenerationClient {
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
                     "video-generation-service /v1/projects/%s/jobs failed status=%s body=%s"
-                            .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()));
+                            .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 
@@ -68,7 +68,7 @@ public class HttpVideoGenerationClient implements VideoGenerationClient {
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
                     "video-generation-service /v1/jobs/%s/video failed status=%s body=%s"
-                            .formatted(videoGenJobId, ex.getStatusCode(), ex.getResponseBodyAsString()));
+                            .formatted(videoGenJobId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 }

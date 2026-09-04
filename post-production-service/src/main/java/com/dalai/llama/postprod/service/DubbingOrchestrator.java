@@ -105,7 +105,7 @@ public class DubbingOrchestrator {
                     cloneResult.providerVoiceId(), sourceVideoUrl, translated, targetLanguage, null);
 
             var lipSyncResult = lipSyncGenerationService.syncLips(
-                    tenantId, "dubbing-lipsync-" + jobId, sourceVideoUrl, synthesis.audioUrl(), null);
+                    tenantId, "dubbing-lipsync-" + jobId, sourceVideoUrl, synthesis.audioUrl(), null, null);
 
             AssetPersistenceService.PersistedAsset output = assetPersistenceService.persist(jobId, lipSyncResult.outputUri());
             return toView(jobPersistenceService.finishSuccess(jobId, output.bucket(), output.objectKey()));
@@ -134,9 +134,13 @@ public class DubbingOrchestrator {
     }
 
     private DubbingJobView toView(DubbingJob job) {
+        String videoUrl = null;
+        if (job.getOutputBucket() != null && job.getOutputObjectKey() != null) {
+            videoUrl = assetPersistenceService.presignedUrl(job.getOutputBucket(), job.getOutputObjectKey());
+        }
         return new DubbingJobView(
                 job.getJobId(), job.getTargetLanguage(), job.getStatus().name(),
-                job.getTranscript(), job.getTranslatedTranscript(), job.getLastError()
+                job.getTranscript(), job.getTranslatedTranscript(), job.getLastError(), videoUrl
         );
     }
 }

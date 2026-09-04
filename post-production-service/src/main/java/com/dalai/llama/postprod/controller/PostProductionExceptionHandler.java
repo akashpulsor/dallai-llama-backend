@@ -16,6 +16,11 @@ public class PostProductionExceptionHandler {
 
     @ExceptionHandler(PostProductionException.class)
     public ResponseEntity<Map<String, String>> handlePostProductionException(PostProductionException ex) {
+        if (ex.getStatus().is5xxServerError()) {
+            log.error("PostProductionException status={} message={}", ex.getStatus(), ex.getMessage(), ex);
+        } else {
+            log.debug("PostProductionException status={} message={}", ex.getStatus(), ex.getMessage());
+        }
         return ResponseEntity.status(ex.getStatus()).body(Map.of("error", ex.getMessage()));
     }
 

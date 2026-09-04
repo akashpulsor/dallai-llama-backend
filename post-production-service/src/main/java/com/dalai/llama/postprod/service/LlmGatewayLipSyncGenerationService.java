@@ -32,8 +32,14 @@ public class LlmGatewayLipSyncGenerationService implements LipSyncGenerationServ
         this.defaultModel = defaultModel;
     }
 
+    /** Same convention ShotListGenerationService.DEFAULT_SHOT_DURATION_SECONDS uses when a shot
+     * has no explicit duration -- reused here as a documented billing approximation, not measured
+     * per-call, until the automatic dialogue-sync pipeline threads a shot's real duration through
+     * (it doesn't today; see LipSyncGenerationService's javadoc). */
+    private static final double DEFAULT_SHOT_DURATION_SECONDS = 4.0;
+
     @Override
-    public LipSyncResult syncLips(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride) {
+    public LipSyncResult syncLips(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride, Double durationSeconds) {
         if (sourceVideoUrl == null || sourceVideoUrl.isBlank()) {
             throw PostProductionException.badRequest("No source video to lip-sync");
         }
@@ -43,6 +49,7 @@ public class LlmGatewayLipSyncGenerationService implements LipSyncGenerationServ
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("source_video_url", sourceVideoUrl);
         params.put("dialogue_audio_url", dialogueAudioUrl);
+        params.put("duration_seconds", durationSeconds != null ? durationSeconds : DEFAULT_SHOT_DURATION_SECONDS);
 
         String modelId = (modelOverride == null || modelOverride.isBlank()) ? defaultModel : modelOverride;
         LlmGatewayChatResponse response = llmGatewayClient.chat(

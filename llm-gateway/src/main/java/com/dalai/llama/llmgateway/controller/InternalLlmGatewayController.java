@@ -2,7 +2,10 @@ package com.dalai.llama.llmgateway.controller;
 
 import com.dalai.llama.llmgateway.dto.ChatRequest;
 import com.dalai.llama.llmgateway.dto.ChatResponse;
+import com.dalai.llama.llmgateway.dto.LanguageSummary;
 import com.dalai.llama.llmgateway.dto.ModelCapabilityView;
+import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
+import com.dalai.llama.llmgateway.repository.LlmJobRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
 import com.dalai.llama.llmgateway.service.LlmGatewayService;
 import jakarta.validation.Valid;
@@ -14,7 +17,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Service-to-service surface for every other backend service's LLM/embedding calls -- {@code
@@ -33,10 +38,19 @@ public class InternalLlmGatewayController {
 
     private final LlmGatewayService llmGatewayService;
     private final ModelCapabilityRepository modelCapabilityRepository;
+    private final LanguageMasterRepository languageMasterRepository;
+    private final LlmJobRepository llmJobRepository;
 
-    public InternalLlmGatewayController(LlmGatewayService llmGatewayService, ModelCapabilityRepository modelCapabilityRepository) {
+    public InternalLlmGatewayController(
+            LlmGatewayService llmGatewayService,
+            ModelCapabilityRepository modelCapabilityRepository,
+            LanguageMasterRepository languageMasterRepository,
+            LlmJobRepository llmJobRepository
+    ) {
         this.llmGatewayService = llmGatewayService;
         this.modelCapabilityRepository = modelCapabilityRepository;
+        this.languageMasterRepository = languageMasterRepository;
+        this.llmJobRepository = llmJobRepository;
     }
 
     @PostMapping("/tenants/{tenantId}/chat")
@@ -48,12 +62,37 @@ public class InternalLlmGatewayController {
         return llmGatewayService.chat(tenantId, idempotencyKey, request);
     }
 
+    /** Raw per-model-type cost totals for one project -- what the pricing layer (billing-service)
+     * reads to build a client quote. Raw only: model_master types + summed cost, no pricing
+     * categories or margins (that's billing-service's job, not llm-gateway's). Computed live from
+     * llm_job at request time, reflecting real usage as of now. */
+    @GetMapping("/tenants/{tenantId}/projects/{projectId}/job-costs")
+    public List<JobCostView> jobCosts(@PathVariable String tenantId, @PathVariable UUID projectId) {
+        return llmJobRepository.sumCostByTypeForProject(tenantId, projectId).stream()
+                .map(row -> new JobCostView(row.getModelType(), row.getCost()))
+                .toList();
+    }
+
+    public record JobCostView(String modelType, BigDecimal cost) {
+    }
+
     /** Tenant-agnostic in today's implementation (capability rows aren't tenant-scoped), so no
      * {@code tenantId} segment -- matches {@code ModelCapabilityRepository}'s own shape. */
     @GetMapping("/models/{modelId}/capabilities")
     public List<ModelCapabilityView> modelCapabilities(@PathVariable String modelId) {
         return modelCapabilityRepository.findByModelId(modelId).stream()
                 .map(c -> new ModelCapabilityView(c.getCapabilityKey(), c.getStrength()))
+                .toList();
+    }
+
+    /** Internal mirror of {@code LlmGatewayController.listLanguages()} -- that one is behind the
+     * JWT-authenticated chain (real end users only), so a service-to-service caller like {@code
+     * pre-production-service}'s {@code LlmGatewayClient.listLanguages()} always got 403 hitting it
+     * directly with no JWT. Same query, same mapping, reachable from here instead. */
+    @GetMapping("/languages")
+    public List<LanguageSummary> languages() {
+        return languageMasterRepository.findAll().stream()
+                .map(l -> new LanguageSummary(l.getLanguageCode(), l.getDisplayName(), l.getNativeName()))
                 .toList();
     }
 }

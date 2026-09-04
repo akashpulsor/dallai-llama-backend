@@ -15,6 +15,7 @@ public record ScriptCharacterView(
         Integer age,
         String ageRange,
         String look,
+        String complexion,
         String profile,
         String persona,
         String backstory,

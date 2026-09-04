@@ -42,6 +42,11 @@ public class Screenplay {
     @Column(name = "script_id", nullable = false)
     private UUID scriptId;
 
+    /** Same soft-reference convention as {@link Script#getLockedIdeaId()} -- stamped from
+     * {@code project.lockedIdeaId} at generation time. */
+    @Column(name = "locked_idea_id")
+    private UUID lockedIdeaId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private DraftStatus status;

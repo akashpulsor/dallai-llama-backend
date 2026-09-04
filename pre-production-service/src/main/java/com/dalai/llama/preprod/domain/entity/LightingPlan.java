@@ -49,27 +49,36 @@ public class LightingPlan {
     @Column(name = "estimated_setup_minutes")
     private Integer estimatedSetupMinutes;
 
-    @Column(name = "key_light_gear", length = 200)
+    @Column(name = "key_light_gear", columnDefinition = "text")
     private String keyLightGear;
 
-    @Column(name = "fill_light_gear", length = 200)
+    @Column(name = "fill_light_gear", columnDefinition = "text")
     private String fillLightGear;
 
-    @Column(name = "rim_light_gear", length = 200)
+    @Column(name = "rim_light_gear", columnDefinition = "text")
     private String rimLightGear;
 
-    @Column(name = "neg_fill_gear", length = 200)
+    @Column(name = "neg_fill_gear", columnDefinition = "text")
     private String negFillGear;
 
-    @Column(name = "diffuser_gear", length = 200)
+    @Column(name = "diffuser_gear", columnDefinition = "text")
     private String diffuserGear;
 
-    @Column(name = "camera_rig_gear", length = 200)
+    @Column(name = "camera_rig_gear", columnDefinition = "text")
     private String cameraRigGear;
 
     /** Newline-joined ordered setup steps, 5-8 in the old system's convention. */
     @Column(name = "build_steps", columnDefinition = "text")
     private String buildSteps;
+
+    /** GENERATED, EDITED, or CRITIC -- same convention as Script's GenerationSource, just not a
+     * shared enum (this plan has no version history to make a whole enum+FK worth it). */
+    @Column(name = "source", nullable = false, length = 16)
+    private String source;
+
+    /** Set only when source=CRITIC -- the actual feedback that forced a revision. */
+    @Column(name = "critique_notes", columnDefinition = "text")
+    private String critiqueNotes;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

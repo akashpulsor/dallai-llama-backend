@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.entity.CastAssignment;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.domain.entity.Script;
@@ -13,6 +14,7 @@ import com.dalai.llama.preprod.repository.ScriptRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.minio.http.Method;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +39,7 @@ public class DialogueDetailsService {
     private final CastProfileRepository castProfileRepository;
     private final ProjectConfigService projectConfigService;
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
 
     public DialogueDetailsService(
             ShotRepository shotRepository,
@@ -45,7 +48,8 @@ public class DialogueDetailsService {
             CastAssignmentRepository castAssignmentRepository,
             CastProfileRepository castProfileRepository,
             ProjectConfigService projectConfigService,
-            MinioClient minioClient
+            MinioClient minioClient,
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient
     ) {
         this.shotRepository = shotRepository;
         this.scriptRepository = scriptRepository;
@@ -54,6 +58,7 @@ public class DialogueDetailsService {
         this.castProfileRepository = castProfileRepository;
         this.projectConfigService = projectConfigService;
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
     }
 
     @Transactional(readOnly = true)
@@ -66,14 +71,20 @@ public class DialogueDetailsService {
                 ? "en-US" : config.getDialogueLanguage();
 
         Script script = scriptRepository.findByProjectId(projectId).orElse(null);
-        String dialogueScript = shot.getScriptLine() != null && !shot.getScriptLine().isBlank()
-                ? shot.getScriptLine() : shot.getVoiceOver();
+        // Shot.voiceOver is the actual line to be spoken; Shot.scriptLine is the shot's creative
+        // brief/purpose (e.g. "Capture immediate attention with cultural artistry..."), not
+        // dialogue -- it's only a fallback for shots a script pass never gave a V.O. line.
+        String dialogueScript = shot.getVoiceOver() != null && !shot.getVoiceOver().isBlank()
+                ? shot.getVoiceOver() : shot.getScriptLine();
 
         String characterName = shot.getPrimaryCharacterKey();
         String referenceAudioUrl = null;
-        if (script != null && shot.getPrimaryCharacterKey() != null) {
-            Optional<ScriptCharacter> character = scriptCharacterRepository
-                    .findByScriptIdAndCharacterKey(script.getId(), shot.getPrimaryCharacterKey());
+        if (script != null) {
+            // No one on screen but there's still a line to speak -- the narrator (never in
+            // primaryCharacterKey, per CharacterType's own javadoc) is who's actually talking.
+            Optional<ScriptCharacter> character = shot.getPrimaryCharacterKey() != null
+                    ? scriptCharacterRepository.findByScriptIdAndCharacterKey(script.getId(), shot.getPrimaryCharacterKey())
+                    : scriptCharacterRepository.findFirstByScriptIdAndCharacterType(script.getId(), CharacterType.NARRATOR);
             if (character.isPresent()) {
                 characterName = character.get().getCharacterName();
                 Optional<CastAssignment> assignment = castAssignmentRepository
@@ -95,7 +106,7 @@ public class DialogueDetailsService {
 
     private String signedUrl(String sourceBucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(sourceBucket)
                     .object(objectKey)

@@ -59,7 +59,8 @@ final class ShotContextCommonFields {
     static Technical technical(ShotAssemblyContext ctx) {
         Shot shot = ctx.shot();
         String preferredModel = ctx.projectConfig() == null ? null : ctx.projectConfig().getPreferredVideoModel();
-        return new Technical(shot.getDurationSeconds(), shot.getAspectRatio(), null, preferredModel);
+        String voiceCloneModel = ctx.projectConfig() == null ? null : ctx.projectConfig().getPreferredVoiceModel();
+        return new Technical(shot.getDurationSeconds(), shot.getAspectRatio(), null, preferredModel, voiceCloneModel);
     }
 
     /** {@code musicMoodNote} stays null -- Shot has no dedicated field for it yet (creator-service's

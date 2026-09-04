@@ -15,6 +15,7 @@ import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -50,7 +51,13 @@ public class MotionGraphicPlanService {
         this.defaultModel = defaultModel;
     }
 
-    @Transactional
+    /** REQUIRES_NEW rather than the usual REQUIRED: {@link ShotListGenerationService} calls this
+     * once per MOTION_GRAPHIC shot right after saving the shot list, in the same ambient
+     * transaction as the shots themselves. Without its own transaction, an LLM hiccup planning
+     * one shot's graphic would mark that shared transaction rollback-only and take the entire
+     * (otherwise successful) shot list down with it -- a plan is best-effort polish on top of the
+     * shot list, never a reason to lose it. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public MotionGraphicPlanView generate(UUID tenantId, UUID shotId) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));

@@ -18,6 +18,7 @@ import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import io.minio.PutObjectArgs;
 import io.minio.http.Method;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,6 +53,7 @@ public class ShotProductReferenceService {
     private final MediaAssetService mediaAssetService;
     private final ObjectMapper objectMapper;
     private final MinioClient minioClient;
+    private final MinioClient publicMinioClient;
     private final String bucket;
     private final String referencePrefix;
     private final String defaultModel;
@@ -63,6 +65,7 @@ public class ShotProductReferenceService {
             MediaAssetService mediaAssetService,
             ObjectMapper objectMapper,
             MinioClient minioClient,
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
             @Value("${pre-production.minio.bucket}") String bucket,
             @Value("${pre-production.minio.cast-media-prefix}") String referencePrefix,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
@@ -73,6 +76,7 @@ public class ShotProductReferenceService {
         this.mediaAssetService = mediaAssetService;
         this.objectMapper = objectMapper;
         this.minioClient = minioClient;
+        this.publicMinioClient = publicMinioClient;
         this.bucket = bucket;
         this.referencePrefix = referencePrefix;
         this.defaultModel = defaultModel;
@@ -196,7 +200,7 @@ public class ShotProductReferenceService {
 
     private String signedUrl(String sourceBucket, String objectKey) {
         try {
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(sourceBucket)
                     .object(objectKey)

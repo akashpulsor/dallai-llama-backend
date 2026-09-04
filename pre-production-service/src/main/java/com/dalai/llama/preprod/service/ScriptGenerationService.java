@@ -3,17 +3,24 @@ package com.dalai.llama.preprod.service;
 import com.dalai.llama.preprod.domain.CastProfileType;
 import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.DraftStatus;
+import com.dalai.llama.preprod.domain.GenerationSource;
 import com.dalai.llama.preprod.domain.ProjectStatus;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
+import com.dalai.llama.preprod.domain.entity.Project;
 import com.dalai.llama.preprod.domain.entity.Script;
 import com.dalai.llama.preprod.domain.entity.ScriptCharacter;
+import com.dalai.llama.preprod.domain.entity.ScriptVersion;
 import com.dalai.llama.preprod.dto.CreateCastAssignmentRequest;
 import com.dalai.llama.preprod.dto.GenerateScriptRequest;
+import com.dalai.llama.preprod.dto.SaveScriptEditRequest;
 import com.dalai.llama.preprod.dto.ScriptCharacterView;
+import com.dalai.llama.preprod.dto.ScriptVersionView;
 import com.dalai.llama.preprod.dto.ScriptView;
+import com.dalai.llama.preprod.dto.UpdateScriptCharacterRequest;
 import com.dalai.llama.preprod.repository.ProjectRepository;
 import com.dalai.llama.preprod.repository.ScriptCharacterRepository;
 import com.dalai.llama.preprod.repository.ScriptRepository;
+import com.dalai.llama.preprod.repository.ScriptVersionRepository;
 import com.dalai.llama.preprod.service.generation.HookBeatPlanResult;
 import com.dalai.llama.preprod.service.generation.JsonExtraction;
 import com.dalai.llama.preprod.service.generation.ScriptCritiqueResult;
@@ -26,6 +33,7 @@ import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -47,6 +55,7 @@ public class ScriptGenerationService {
     private final ProjectRepository projectRepository;
     private final ScriptRepository scriptRepository;
     private final ScriptCharacterRepository scriptCharacterRepository;
+    private final ScriptVersionRepository scriptVersionRepository;
     private final CastProfileService castProfileService;
     private final CastAssignmentService castAssignmentService;
     private final ProjectConfigService projectConfigService;
@@ -59,6 +68,7 @@ public class ScriptGenerationService {
             ProjectRepository projectRepository,
             ScriptRepository scriptRepository,
             ScriptCharacterRepository scriptCharacterRepository,
+            ScriptVersionRepository scriptVersionRepository,
             CastProfileService castProfileService,
             CastAssignmentService castAssignmentService,
             ProjectConfigService projectConfigService,
@@ -70,6 +80,7 @@ public class ScriptGenerationService {
         this.projectRepository = projectRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
+        this.scriptVersionRepository = scriptVersionRepository;
         this.castProfileService = castProfileService;
         this.castAssignmentService = castAssignmentService;
         this.projectConfigService = projectConfigService;
@@ -81,9 +92,8 @@ public class ScriptGenerationService {
 
     @Transactional
     public ScriptView generate(UUID tenantId, UUID projectId, GenerateScriptRequest request) {
-        if (projectRepository.findByIdAndTenantId(projectId, tenantId).isEmpty()) {
-            throw PreProductionException.notFound("No project " + projectId);
-        }
+        Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
         List<CastProfile> productProfiles = loadProductProfiles(tenantId, request.productCastProfileIds());
         int durationSeconds = resolveDuration(tenantId, projectId, request.targetDurationSeconds());
         String dialogueLanguage = resolveDialogueLanguage(projectId);
@@ -95,6 +105,7 @@ public class ScriptGenerationService {
 
         ScriptGenerationResult parsed = null;
         String critiqueFeedback = "";
+        List<String> critiqueNotesByAttempt = new java.util.ArrayList<>();
         for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
             Map<String, String> variables = Map.of(
                     "brief", briefWithPlan + critiqueFeedback,
@@ -106,7 +117,7 @@ public class ScriptGenerationService {
                     tenantId.toString(),
                     "script-generate-" + projectId + "-attempt" + attempt,
                     new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                            JsonExtraction.JSON_MODE_PARAMS, TASK_KEY, variables));
+                            JsonExtraction.JSON_MODE_PARAMS, TASK_KEY, variables).withProjectId(projectId));
 
             parsed = parse(response);
             if (parsed.scriptText() == null || parsed.scriptText().isBlank()) {
@@ -119,9 +130,11 @@ public class ScriptGenerationService {
             if (!critique.isFail()) {
                 break;
             }
-            critiqueFeedback = "\n\nCRITIC FEEDBACK FROM A PRIOR ATTEMPT (fix these issues, do not repeat them): "
-                    + String.join("; ", critique.issues() == null ? List.of() : critique.issues());
+            String issues = String.join("; ", critique.issues() == null ? List.of() : critique.issues());
+            critiqueNotesByAttempt.add("Attempt " + attempt + ": " + issues);
+            critiqueFeedback = "\n\nCRITIC FEEDBACK FROM A PRIOR ATTEMPT (fix these issues, do not repeat them): " + issues;
         }
+        String critiqueNotes = critiqueNotesByAttempt.isEmpty() ? null : String.join(" | ", critiqueNotesByAttempt);
 
         OffsetDateTime now = OffsetDateTime.now();
         Script script = scriptRepository.findByProjectId(projectId).orElseGet(() -> Script.builder()
@@ -129,6 +142,7 @@ public class ScriptGenerationService {
                 .projectId(projectId)
                 .createdAt(now)
                 .build());
+        script.setLockedIdeaId(project.getLockedIdeaId());
         script.setStatus(DraftStatus.DRAFT);
         script.setScriptText(parsed.scriptText());
         script.setPacingStyle(parsed.pacingStyle());
@@ -140,10 +154,18 @@ public class ScriptGenerationService {
         script.setEndingPayoff(parsed.endingPayoff());
         script.setSetting(parsed.setting());
         script.setHook(parsed.hook());
+        script.setBeatPlan(beatPlan.isBlank() ? null : beatPlan);
         script.setStorytellingType(parsed.storytellingType());
         script.setUpdatedAt(now);
         script = scriptRepository.save(script);
         UUID scriptId = script.getId();
+
+        // CRITIC, not GENERATED, when the accepted draft only exists because an earlier attempt
+        // this same call got rejected by critiqueScript() above and had to be revised -- lets
+        // version history show "the critic made it rewrite this" (and why, via critiqueNotes)
+        // instead of treating every automated attempt the same as a plain one-shot generation.
+        snapshotVersion(tenantId, projectId, script,
+                critiqueNotes == null ? GenerationSource.GENERATED : GenerationSource.CRITIC, null, critiqueNotes, now);
 
         List<ScriptCharacter> characters = (parsed.characters() == null ? List.<ScriptGenerationResult.CharacterItem>of() : parsed.characters())
                 .stream()
@@ -165,7 +187,7 @@ public class ScriptGenerationService {
             var config = projectConfigService.getEntityOrDefault(projectId);
             if (config != null && config.getTargetDurationSeconds() == null) {
                 projectConfigService.update(tenantId, projectId,
-                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null));
+                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null, null, null, null, null, null, null));
             }
             return requestedDuration;
         }
@@ -238,11 +260,146 @@ public class ScriptGenerationService {
         return generate(tenantId, projectId, new GenerateScriptRequest(briefText, null, null));
     }
 
-    @Transactional(readOnly = true)
+    /** Manual correction/refinement of one character -- only fields present in the request change.
+     * Does not touch generation: the next regenerate still overwrites this character from scratch,
+     * same as every other stage's "editing is a stopgap, not a fork" convention in this service. */
+    @Transactional
+    public ScriptCharacterView updateCharacter(UUID tenantId, UUID projectId, UUID characterId, UpdateScriptCharacterRequest request) {
+        Script script = scriptRepository.findByProjectId(projectId)
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No script for project " + projectId));
+        ScriptCharacter character = scriptCharacterRepository.findById(characterId)
+                .filter(c -> c.getScriptId().equals(script.getId()))
+                .orElseThrow(() -> PreProductionException.notFound("No character " + characterId + " on this project's script"));
+
+        if (request.characterName() != null) character.setCharacterName(request.characterName());
+        if (request.characterRole() != null) character.setCharacterRole(request.characterRole());
+        if (request.description() != null) character.setDescription(request.description());
+        if (request.characterType() != null) character.setCharacterType(TolerantEnumParser.parse(CharacterType.class, request.characterType(), character.getCharacterType()));
+        if (request.gender() != null) character.setGender(request.gender());
+        if (request.age() != null) character.setAge(request.age());
+        if (request.ageRange() != null) character.setAgeRange(request.ageRange());
+        if (request.look() != null) character.setLook(request.look());
+        if (request.complexion() != null) character.setComplexion(request.complexion());
+        if (request.profile() != null) character.setProfile(request.profile());
+        if (request.persona() != null) character.setPersona(request.persona());
+        if (request.backstory() != null) character.setBackstory(request.backstory());
+        if (request.motivation() != null) character.setMotivation(request.motivation());
+        if (request.fearOrBlock() != null) character.setFearOrBlock(request.fearOrBlock());
+        if (request.relationshipToStory() != null) character.setRelationshipToStory(request.relationshipToStory());
+        if (request.speakingStyle() != null) character.setSpeakingStyle(request.speakingStyle());
+        if (request.visualIdentity() != null) character.setVisualIdentity(request.visualIdentity());
+
+        character = scriptCharacterRepository.save(character);
+        return new ScriptCharacterView(character.getId(), character.getCharacterKey(), character.getCharacterName(), character.getCharacterRole(),
+                character.getDescription(), character.getCharacterType(), character.getGender(), character.getAge(), character.getAgeRange(),
+                character.getLook(), character.getComplexion(), character.getProfile(), character.getPersona(), character.getBackstory(),
+                character.getMotivation(), character.getFearOrBlock(), character.getRelationshipToStory(), character.getSpeakingStyle(),
+                character.getVisualIdentity());
+    }
+
+    /** REQUIRES_NEW -- callers that treat a missing script as non-fatal (e.g. {@code
+     * PublicProjectService#view}'s {@code tolerantly}, {@code ProjectLockService#ingestScript})
+     * catch the not-found exception this throws, but Spring marks the AMBIENT transaction
+     * rollback-only at the point the exception crosses this method's proxy boundary regardless of
+     * whether the caller catches it -- surfacing later as an unrelated {@code
+     * UnexpectedRollbackException} when that ambient transaction tries to commit (confirmed live:
+     * this broke the public review page for any project with no script yet). A dedicated
+     * transaction means a "not found" here can only ever affect this one read. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public ScriptView get(UUID tenantId, UUID projectId) {
         Script script = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.notFound("No script for project " + projectId));
         return toView(script, scriptCharacterRepository.findByScriptId(script.getId()));
+    }
+
+    /** Saves a creator's manual edit as a new EDITED version -- no LLM call, a direct write. Also
+     * updates the live {@code Script} row (what every other stage in this codebase reads) to
+     * match, so the edit actually takes effect rather than just existing in history. Fields the
+     * request omits fall back to {@code parentVersion}'s values, not the live row's -- the edit is
+     * defined relative to the version the creator was looking at, even if generate() has moved the
+     * live row on since (an edit started from an older version is still a coherent snapshot). */
+    @Transactional
+    public ScriptView saveEdit(UUID tenantId, UUID projectId, Integer parentVersion, SaveScriptEditRequest request) {
+        ScriptVersion parent = scriptVersionRepository.findByProjectIdAndVersion(projectId, parentVersion)
+                .filter(v -> v.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No script version " + parentVersion + " for project " + projectId));
+        Script script = scriptRepository.findByProjectId(projectId)
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No script for project " + projectId));
+
+        OffsetDateTime now = OffsetDateTime.now();
+        script.setScriptText(request.scriptText());
+        script.setPacingStyle(request.pacingStyle() != null ? request.pacingStyle() : parent.getPacingStyle());
+        script.setEmotionalArc(request.emotionalArc() != null ? request.emotionalArc() : parent.getEmotionalArc());
+        script.setHookStrategy(request.hookStrategy() != null ? request.hookStrategy() : parent.getHookStrategy());
+        script.setNoHumans(request.noHumans() != null ? request.noHumans() : parent.getNoHumans());
+        script.setLogline(request.logline() != null ? request.logline() : parent.getLogline());
+        script.setCentralConflict(request.centralConflict() != null ? request.centralConflict() : parent.getCentralConflict());
+        script.setEndingPayoff(request.endingPayoff() != null ? request.endingPayoff() : parent.getEndingPayoff());
+        script.setSetting(request.setting() != null ? request.setting() : parent.getSetting());
+        script.setHook(request.hook() != null ? request.hook() : parent.getHook());
+        script.setStorytellingType(request.storytellingType() != null ? request.storytellingType() : parent.getStorytellingType());
+        script.setUpdatedAt(now);
+        script = scriptRepository.save(script);
+
+        snapshotVersion(tenantId, projectId, script, GenerationSource.EDITED, parent.getId(), null, now);
+
+        return toView(script, scriptCharacterRepository.findByScriptId(script.getId()));
+    }
+
+    /** One specific version's content -- what "previous version" / "next version" navigation
+     * reads. Characters aren't included (they're not versioned, see {@link ScriptVersion}'s
+     * javadoc) -- a caller wanting the live character list uses {@link #get} instead. */
+    @Transactional(readOnly = true)
+    public ScriptVersionView getVersion(UUID tenantId, UUID projectId, Integer version) {
+        ScriptVersion v = scriptVersionRepository.findByProjectIdAndVersion(projectId, version)
+                .filter(sv -> sv.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound("No script version " + version + " for project " + projectId));
+        return toVersionView(v);
+    }
+
+    /** Every version ever saved for this project, oldest first -- populates a version picker. */
+    @Transactional(readOnly = true)
+    public List<ScriptVersionView> listVersions(UUID tenantId, UUID projectId) {
+        return scriptVersionRepository.findByProjectIdOrderByVersionAsc(projectId).stream()
+                .filter(v -> v.getTenantId().equals(tenantId))
+                .map(this::toVersionView)
+                .collect(Collectors.toList());
+    }
+
+    private void snapshotVersion(UUID tenantId, UUID projectId, Script script, GenerationSource source, UUID parentId, String critiqueNotes, OffsetDateTime now) {
+        int nextVersion = scriptVersionRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .map(v -> v.getVersion() + 1)
+                .orElse(1);
+        scriptVersionRepository.save(ScriptVersion.builder()
+                .tenantId(tenantId)
+                .projectId(projectId)
+                .scriptId(script.getId())
+                .version(nextVersion)
+                .source(source)
+                .parentId(parentId)
+                .scriptText(script.getScriptText())
+                .pacingStyle(script.getPacingStyle())
+                .emotionalArc(script.getEmotionalArc())
+                .hookStrategy(script.getHookStrategy())
+                .noHumans(script.getNoHumans())
+                .logline(script.getLogline())
+                .centralConflict(script.getCentralConflict())
+                .endingPayoff(script.getEndingPayoff())
+                .setting(script.getSetting())
+                .hook(script.getHook())
+                .storytellingType(script.getStorytellingType())
+                .critiqueNotes(critiqueNotes)
+                .createdAt(now)
+                .build());
+    }
+
+    private ScriptVersionView toVersionView(ScriptVersion v) {
+        return new ScriptVersionView(v.getId(), v.getProjectId(), v.getScriptId(), v.getVersion(), v.getSource(), v.getParentId(),
+                v.getScriptText(), v.getPacingStyle(), v.getEmotionalArc(), v.getHookStrategy(), v.getNoHumans(),
+                v.getLogline(), v.getCentralConflict(), v.getEndingPayoff(), v.getSetting(), v.getHook(), v.getStorytellingType(),
+                v.getCritiqueNotes(), v.getCreatedAt());
     }
 
     private ScriptCharacter upsertCharacter(UUID tenantId, UUID scriptId, ScriptGenerationResult.CharacterItem item, OffsetDateTime now) {
@@ -261,6 +418,7 @@ public class ScriptGenerationService {
         character.setAge(item.age());
         character.setAgeRange(item.ageRange());
         character.setLook(item.look());
+        character.setComplexion(item.complexion());
         character.setProfile(item.profile());
         character.setPersona(item.persona());
         character.setBackstory(item.backstory());
@@ -353,12 +511,13 @@ public class ScriptGenerationService {
     private ScriptView toView(Script script, List<ScriptCharacter> characters) {
         List<ScriptCharacterView> characterViews = characters.stream()
                 .map(c -> new ScriptCharacterView(c.getId(), c.getCharacterKey(), c.getCharacterName(), c.getCharacterRole(), c.getDescription(),
-                        c.getCharacterType(), c.getGender(), c.getAge(), c.getAgeRange(), c.getLook(), c.getProfile(), c.getPersona(),
+                        c.getCharacterType(), c.getGender(), c.getAge(), c.getAgeRange(), c.getLook(), c.getComplexion(), c.getProfile(), c.getPersona(),
                         c.getBackstory(), c.getMotivation(), c.getFearOrBlock(), c.getRelationshipToStory(), c.getSpeakingStyle(), c.getVisualIdentity()))
                 .collect(Collectors.toList());
-        return new ScriptView(script.getId(), script.getProjectId(), script.getStatus(), script.getScriptText(),
+        ScriptVersion latest = scriptVersionRepository.findTopByProjectIdOrderByVersionDesc(script.getProjectId()).orElse(null);
+        return new ScriptView(script.getId(), script.getProjectId(), script.getLockedIdeaId(), script.getStatus(), script.getScriptText(),
                 script.getPacingStyle(), script.getEmotionalArc(), script.getHookStrategy(), script.getNoHumans(),
-                script.getLogline(), script.getCentralConflict(), script.getEndingPayoff(), script.getSetting(), script.getHook(), script.getStorytellingType(),
-                characterViews);
+                script.getLogline(), script.getCentralConflict(), script.getEndingPayoff(), script.getSetting(), script.getHook(), script.getBeatPlan(),
+                script.getStorytellingType(), characterViews, latest == null ? null : latest.getVersion(), latest == null ? null : latest.getSource());
     }
 }

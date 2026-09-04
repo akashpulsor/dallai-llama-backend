@@ -2,6 +2,7 @@ package com.dalai.llama.preprod.controller;
 
 import com.dalai.llama.preprod.dto.CreateProjectRequest;
 import com.dalai.llama.preprod.dto.ProjectView;
+import com.dalai.llama.preprod.dto.SwitchLockedIdeaRequest;
 import com.dalai.llama.preprod.service.ProjectService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -34,5 +35,14 @@ public class InternalProjectController {
     public ResponseEntity<ProjectView> createFromLockedIdea(
             @PathVariable UUID tenantId, @Valid @RequestBody CreateProjectRequest request) {
         return ResponseEntity.ok(projectService.createFromLockedIdea(tenantId, request));
+    }
+
+    /** Called by creative-planning-service's ProjectIdeaService#switchToOption after it creates a
+     * new LockedIdea for an existing project (a creator picking a different idea for a project
+     * that's already past creation). */
+    @PostMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/switch-locked-idea")
+    public ResponseEntity<ProjectView> switchLockedIdea(
+            @PathVariable UUID tenantId, @PathVariable UUID projectId, @Valid @RequestBody SwitchLockedIdeaRequest request) {
+        return ResponseEntity.ok(projectService.switchLockedIdea(tenantId, projectId, request.lockedIdeaId()));
     }
 }

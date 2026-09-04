@@ -42,5 +42,5 @@ public class TenantServiceClient {
         }
     }
 
-    public record TenantInfo(UUID id, String name, String status, String planCode) {}
+    public record TenantInfo(UUID id, String name, String status, String planCode, java.math.BigDecimal marginPercent) {}
 }

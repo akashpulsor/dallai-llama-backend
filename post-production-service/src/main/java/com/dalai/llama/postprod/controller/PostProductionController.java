@@ -4,13 +4,17 @@ import com.dalai.llama.postprod.dto.AudioGenerationView;
 import com.dalai.llama.postprod.dto.CreatePostProductionJobRequest;
 import com.dalai.llama.postprod.dto.GenerateFoleyRequest;
 import com.dalai.llama.postprod.dto.GenerateMusicRequest;
+import com.dalai.llama.postprod.dto.GenerateUpscaleRequest;
 import com.dalai.llama.postprod.dto.PostProductionJobView;
 import com.dalai.llama.postprod.dto.PreviewVoiceRequest;
+import com.dalai.llama.postprod.dto.VideoGenerationView;
 import com.dalai.llama.postprod.dto.VoicePreviewView;
 import com.dalai.llama.postprod.service.AudioGenerationResult;
 import com.dalai.llama.postprod.service.FoleyGenerationService;
 import com.dalai.llama.postprod.service.MusicGenerationService;
 import com.dalai.llama.postprod.service.PostProductionOrchestrator;
+import com.dalai.llama.postprod.service.UpscaleGenerationResult;
+import com.dalai.llama.postprod.service.UpscaleGenerationService;
 import com.dalai.llama.postprod.service.VoicePreviewService;
 import com.dalai.llama.postprod.service.llmgateway.LlmGatewayClient;
 import com.dalai.llama.postprod.service.llmgateway.LlmGatewayModelSummary;
@@ -36,19 +40,22 @@ public class PostProductionController {
     private final FoleyGenerationService foleyGenerationService;
     private final MusicGenerationService musicGenerationService;
     private final VoicePreviewService voicePreviewService;
+    private final UpscaleGenerationService upscaleGenerationService;
 
     public PostProductionController(
             PostProductionOrchestrator orchestrator,
             LlmGatewayClient llmGatewayClient,
             FoleyGenerationService foleyGenerationService,
             MusicGenerationService musicGenerationService,
-            VoicePreviewService voicePreviewService
+            VoicePreviewService voicePreviewService,
+            UpscaleGenerationService upscaleGenerationService
     ) {
         this.orchestrator = orchestrator;
         this.llmGatewayClient = llmGatewayClient;
         this.foleyGenerationService = foleyGenerationService;
         this.musicGenerationService = musicGenerationService;
         this.voicePreviewService = voicePreviewService;
+        this.upscaleGenerationService = upscaleGenerationService;
     }
 
     /** "I want to listen how the cloned voice sounds" -- see VoicePreviewService. */
@@ -88,6 +95,16 @@ public class PostProductionController {
                 tenant().tenantId(), "post-prod-music-test-" + UUID.randomUUID(),
                 request.moodPrompt(), request.durationSeconds(), request.model());
         return ResponseEntity.ok(new AudioGenerationView(request.model(), result.audioUrl()));
+    }
+
+    /** Manual "Upscale" CTA: run a completed shot/clip through a chosen type=upscale model.
+     * Blocks until the upscaled video is ready (same synchronous shape as foley/music above). */
+    @PostMapping("/v1/post-production/upscale")
+    public ResponseEntity<VideoGenerationView> upscale(@Valid @RequestBody GenerateUpscaleRequest request) {
+        UpscaleGenerationResult result = upscaleGenerationService.upscale(
+                tenant().tenantId(), "post-prod-upscale-" + UUID.randomUUID(),
+                request.sourceVideoUrl(), request.model(), request.durationSeconds());
+        return ResponseEntity.ok(new VideoGenerationView(request.model(), result.videoUrl()));
     }
 
     /** scope=PROJECT: move every already-completed shot in the project into post-production at

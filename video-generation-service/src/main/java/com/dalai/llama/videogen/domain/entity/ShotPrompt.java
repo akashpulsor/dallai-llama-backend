@@ -79,6 +79,38 @@ public class ShotPrompt {
     @Column(nullable = false)
     private Boolean shipped;
 
+    /** Pre-prod source-of-truth pointers -- see V20 migration javadoc. Rest of the shot context
+     * (camera notes, lighting mood, cast, dialogue beats) is NOT duplicated here; these ids let
+     * a debugger walk back to the exact pre-prod rows that fed the composed prompt above. All
+     * nullable because a shot without a lighting plan / product reference / bg-music pick is
+     * still valid to prepare a prompt for. */
+    @Column(name = "shot_id")
+    private UUID shotId;
+
+    @Column(name = "camera_plan_id")
+    private UUID cameraPlanId;
+
+    @Column(name = "lighting_plan_id")
+    private UUID lightingPlanId;
+
+    @Column(name = "product_reference_id")
+    private UUID productReferenceId;
+
+    @Column(name = "background_music_id")
+    private UUID backgroundMusicId;
+
+    /** Whatever llm-gateway's model recommender picked at prepare time (when the project has
+     * {@code recommenderEnabled=true}). Distinct from {@code modelId} on the sibling VideoGenJob
+     * which is the actual dispatch pick -- this is the suggestion the UI renders as a "Recommended: X"
+     * chip on the shot card. Null when the recommender was disabled or unreachable. */
+    @Column(name = "recommended_model_id", length = 128)
+    private String recommendedModelId;
+
+    /** Timestamp of the pre-prod bundle snapshot this prompt was composed against. Lets the UI
+     * warn "this prompt is stale, the shot changed since prepare -- re-prepare?" without a diff. */
+    @Column(name = "prompt_bundle_snapshot_at")
+    private OffsetDateTime promptBundleSnapshotAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.dto.response;
 
 import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -14,6 +15,7 @@ public record TenantResponse(
         TenantStatus status,
         String statusMessage,
         OffsetDateTime createdAt,
-        OffsetDateTime activatedAt
+        OffsetDateTime activatedAt,
+        BigDecimal marginPercent
 
 ) {}

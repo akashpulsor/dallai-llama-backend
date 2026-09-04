@@ -5,6 +5,7 @@ import java.util.UUID;
 public record ProjectRequirementAttachmentView(
         UUID id,
         String bucket,
-        String objectKey
+        String objectKey,
+        String signedUrl
 ) {
 }

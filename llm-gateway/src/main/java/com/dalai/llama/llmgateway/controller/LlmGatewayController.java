@@ -9,9 +9,12 @@ import com.dalai.llama.llmgateway.dto.ModelCapabilityView;
 import com.dalai.llama.llmgateway.dto.ModelSummary;
 import com.dalai.llama.llmgateway.dto.ModelSummaryMapper;
 import com.dalai.llama.llmgateway.domain.entity.LanguageMaster;
+import com.dalai.llama.llmgateway.domain.entity.ModelMaster;
 import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
+import com.dalai.llama.llmgateway.repository.ModelMasterRepository;
 import com.dalai.llama.llmgateway.repository.ModelSupportedLanguageRepository;
+import com.dalai.llama.llmgateway.service.GatewayException;
 import com.dalai.llama.llmgateway.service.LlmGatewayService;
 import com.dalai.llama.llmgateway.service.ModelRouterService;
 import jakarta.validation.Valid;
@@ -42,6 +45,7 @@ public class LlmGatewayController {
     private final LanguageMasterRepository languageMasterRepository;
     private final ModelSupportedLanguageRepository modelSupportedLanguageRepository;
     private final ModelCapabilityRepository modelCapabilityRepository;
+    private final ModelMasterRepository modelMasterRepository;
 
     public LlmGatewayController(
             LlmGatewayService llmGatewayService,
@@ -49,7 +53,8 @@ public class LlmGatewayController {
             ModelSummaryMapper modelSummaryMapper,
             LanguageMasterRepository languageMasterRepository,
             ModelSupportedLanguageRepository modelSupportedLanguageRepository,
-            ModelCapabilityRepository modelCapabilityRepository
+            ModelCapabilityRepository modelCapabilityRepository,
+            ModelMasterRepository modelMasterRepository
     ) {
         this.llmGatewayService = llmGatewayService;
         this.modelRouterService = modelRouterService;
@@ -57,6 +62,7 @@ public class LlmGatewayController {
         this.languageMasterRepository = languageMasterRepository;
         this.modelSupportedLanguageRepository = modelSupportedLanguageRepository;
         this.modelCapabilityRepository = modelCapabilityRepository;
+        this.modelMasterRepository = modelMasterRepository;
     }
 
     @PostMapping("/v1/chat")
@@ -137,4 +143,40 @@ public class LlmGatewayController {
                 .toList();
         return ResponseEntity.ok(capabilities);
     }
+
+    /** Full config for a single model -- the request-body schema hints (via the {@code
+     * capabilities} jsonb column), provider, type, rate-limit defaults, timeout. Fed to the
+     * video-workspace UI's "change model" dropdown so it can validate a shot has the required
+     * inputs (e.g. Wan needs a start image) before the user commits. Complements the existing
+     * {@code /capabilities} endpoint which returns critic-oriented strength ratings. */
+    @GetMapping("/v1/models/{modelId}/config")
+    public ResponseEntity<ModelConfigView> getModelConfig(@PathVariable String modelId) {
+        ModelMaster model = modelMasterRepository.findById(modelId)
+                .orElseThrow(() -> GatewayException.notFound("No model with model_id=" + modelId));
+        return ResponseEntity.ok(new ModelConfigView(
+                model.getModelId(),
+                model.getProviderId(),
+                model.getType(),
+                model.getStatus(),
+                model.getCapabilities(),
+                model.getContextWindow(),
+                model.getSupportsStreaming(),
+                model.getDefaultRpm(),
+                model.getDefaultTpm(),
+                model.getTimeoutMs()
+        ));
+    }
+
+    public record ModelConfigView(
+            String modelId,
+            String providerId,
+            String type,
+            String status,
+            String capabilities,
+            Integer contextWindow,
+            Boolean supportsStreaming,
+            Integer defaultRpm,
+            Integer defaultTpm,
+            Integer timeoutMs
+    ) {}
 }

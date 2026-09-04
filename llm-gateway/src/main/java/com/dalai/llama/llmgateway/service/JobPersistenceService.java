@@ -36,11 +36,12 @@ public class JobPersistenceService {
     /** @return the claimed row, or empty if a concurrent duplicate won the race on the unique
      * (tenant_id, idempotency_key) index -- the caller should re-read and treat it as a replay. */
     @Transactional
-    public Optional<LlmJob> claimNewJob(String tenantId, String idempotencyKey, String modelId) {
+    public Optional<LlmJob> claimNewJob(String tenantId, String idempotencyKey, String modelId, UUID projectId) {
         LlmJob job = LlmJob.builder()
                 .jobId(UUID.randomUUID())
                 .tenantId(tenantId)
                 .modelId(modelId)
+                .projectId(projectId)
                 .status(JobStatus.PROCESSING)
                 .mode("sync")
                 .idempotencyKey(idempotencyKey)
@@ -54,6 +55,14 @@ public class JobPersistenceService {
         } catch (DataIntegrityViolationException ex) {
             return Optional.empty();
         }
+    }
+
+    /** Recorded at dispatch time, before the provider call -- see {@link LlmJob#getRequestContent()}. */
+    @Transactional
+    public void recordRequest(UUID jobId, String requestContent) {
+        LlmJob job = requireJob(jobId);
+        job.setRequestContent(requestContent);
+        llmJobRepository.save(job);
     }
 
     /** Resets an existing (already-terminal) row back to PROCESSING for a same-idempotency-key
@@ -81,6 +90,9 @@ public class JobPersistenceService {
         job.setCompletedAt(OffsetDateTime.now());
         job.setLastError(error);
         job.setResultContent(resultContent);
+        // Persist cost on the job row itself (not only audit_log) -- this is what the per-project
+        // cost rollup reads, and it lands here in real time at completion.
+        job.setCost(cost);
         llmJobRepository.save(job);
         return writeAuditLog(job, inputTokens, outputTokens, cost, latencyMs, status, error);
     }

@@ -12,6 +12,7 @@ import java.util.UUID;
 
 public record ShotView(
         UUID id,
+        UUID lockedIdeaId,
         String shotRef,
         Integer shotNumber,
         UUID screenplaySceneId,
@@ -56,6 +57,7 @@ public record ShotView(
         String shootDay,
         String shootBlock,
         String directorNote,
-        CinematographyView cinematography
+        CinematographyView cinematography,
+        ShotCastView cast
 ) {
 }

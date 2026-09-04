@@ -77,7 +77,7 @@ public class LockedIdeaService {
         if (history.isEmpty()) {
             throw CreativePlanningException.badRequest("Session " + sessionId + " has no conversation to extract an idea from");
         }
-        BrandContext brand = brandContextService.requireBrand(tenantId);
+        BrandContext brand = brandContextService.requireBrand(tenantId, session.getBrandContextId());
         ProductProfile product = session.getProductProfileId() == null ? null
                 : productProfileRepository.findByIdAndTenantId(session.getProductProfileId(), tenantId).orElse(null);
 

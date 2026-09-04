@@ -47,6 +47,11 @@ public class Shot {
     @Column(name = "screenplay_scene_id", nullable = false)
     private UUID screenplaySceneId;
 
+    /** Same soft-reference convention as {@code Script.lockedIdeaId} -- stamped from
+     * {@code project.lockedIdeaId} at generation time. */
+    @Column(name = "locked_idea_id")
+    private UUID lockedIdeaId;
+
     /** Stable identity used everywhere a shot is referenced across service boundaries (matches
      * {@code ShotContext.shotRef} on video-generation-service's side), not the surrogate id. */
     @Column(name = "shot_ref", nullable = false, length = 64)

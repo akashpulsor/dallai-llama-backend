@@ -5,6 +5,13 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_SHUTDOWN_TIMEOUT:210s}
 
+  codec:
+    # Spring WebFlux's injected WebClient.Builder defaults to a 256KB in-memory response buffer --
+    # raised repo-wide alongside every other LlmGatewayClient after finding this was the real cause
+    # of a silent image-generation failure in pre-production-service. 16MB matches creator-service's
+    # own GoogleGenAiClientFactory.
+    max-in-memory-size: 16MB
+
   web:
     cors:
       mapping: "/**"

@@ -1,10 +1,33 @@
 package com.dalai.llama.videogen.service;
 
-/** v1 is text-to-video only -- reference-image conditioning (turning
- * {@code shot_prompt_reference} rows into fetchable URLs for llm-gateway's
- * {@code reference_image_urls}) is a fast-follow, not built this pass. */
+import java.util.List;
+
+/** {@code referenceImageUrls}: {@code shot_prompt_reference} rows (character face / product hero,
+ * already saved at prompt-build time by {@code ShotGenerationOrchestrator.saveReferences}) turned
+ * into fetchable signed URLs for llm-gateway's own {@code reference_image_urls} param -- the
+ * schema and the row-saving were already there, only the read-back-and-forward step at dispatch
+ * time was the gap.
+ *
+ * <p>{@code generateAudio}: null leaves Seedance's own default (true) untouched. Set false only
+ * once a caller actually has beat-matched cloned-voice audio ready to mux under the silent
+ * result -- there is no such caller yet (that's the dialogue-beats work this sets the stage for),
+ * so every current call site passes null. */
 public record VideoDispatchParams(
         Integer durationSeconds,
-        String aspectRatio
+        String aspectRatio,
+        Boolean generateAudio,
+        List<String> referenceImageUrls,
+        Long seed
 ) {
+    public VideoDispatchParams(Integer durationSeconds, String aspectRatio) {
+        this(durationSeconds, aspectRatio, null, null, null);
+    }
+
+    public VideoDispatchParams(Integer durationSeconds, String aspectRatio, Boolean generateAudio) {
+        this(durationSeconds, aspectRatio, generateAudio, null, null);
+    }
+
+    public VideoDispatchParams(Integer durationSeconds, String aspectRatio, Boolean generateAudio, List<String> referenceImageUrls) {
+        this(durationSeconds, aspectRatio, generateAudio, referenceImageUrls, null);
+    }
 }

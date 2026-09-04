@@ -16,6 +16,11 @@ import com.dalai.llama.creativeplanning.service.llmgateway.LlmGatewayChatRequest
 import com.dalai.llama.creativeplanning.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.creativeplanning.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.creativeplanning.service.llmgateway.LlmGatewayClient;
+import com.dalai.llama.creativeplanning.service.requirement.critic.IdeaCandidateItem;
+import com.dalai.llama.creativeplanning.service.requirement.critic.IdeaCriticServiceClient;
+import com.dalai.llama.creativeplanning.service.requirement.critic.IdeaCritiqueItem;
+import com.dalai.llama.creativeplanning.service.requirement.critic.IdeaCritiqueRequest;
+import com.dalai.llama.creativeplanning.service.requirement.critic.IdeaCritiqueVerdict;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -45,11 +51,18 @@ public class ProjectRequirementIdeaService {
 
     private static final String GENERATE_TASK_KEY = "PROJECT_REQUIREMENT_IDEA_GENERATION";
     private static final int DEFAULT_OPTION_COUNT = 3;
+    /** One retry of the whole batch if every candidate fails critique -- regenerating a fresh
+     * batch is cheap (this is an exploratory step the creator picks from manually anyway), so
+     * this stays low unlike script generation's 3 attempts for a single committed document. */
+    private static final int MAX_GENERATION_ATTEMPTS = 2;
 
     private final ProjectRequirementService projectRequirementService;
     private final IdeaOptionRepository ideaOptionRepository;
     private final LockedIdeaRepository lockedIdeaRepository;
+    private final LockedIdeaWriter lockedIdeaWriter;
     private final PreProductionServiceClient preProductionServiceClient;
+    private final ReferenceMaterialAnalysisService referenceMaterialAnalysisService;
+    private final IdeaCriticServiceClient ideaCriticServiceClient;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
@@ -58,7 +71,10 @@ public class ProjectRequirementIdeaService {
             ProjectRequirementService projectRequirementService,
             IdeaOptionRepository ideaOptionRepository,
             LockedIdeaRepository lockedIdeaRepository,
+            LockedIdeaWriter lockedIdeaWriter,
             PreProductionServiceClient preProductionServiceClient,
+            ReferenceMaterialAnalysisService referenceMaterialAnalysisService,
+            IdeaCriticServiceClient ideaCriticServiceClient,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${creative-planning.llm-gateway.default-text-model}") String defaultModel
@@ -66,7 +82,10 @@ public class ProjectRequirementIdeaService {
         this.projectRequirementService = projectRequirementService;
         this.ideaOptionRepository = ideaOptionRepository;
         this.lockedIdeaRepository = lockedIdeaRepository;
+        this.lockedIdeaWriter = lockedIdeaWriter;
         this.preProductionServiceClient = preProductionServiceClient;
+        this.referenceMaterialAnalysisService = referenceMaterialAnalysisService;
+        this.ideaCriticServiceClient = ideaCriticServiceClient;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.defaultModel = defaultModel;
@@ -75,7 +94,15 @@ public class ProjectRequirementIdeaService {
     /** Only a funded requirement can generate ideas -- see the class javadoc: this is what the
      * "generate ideas" CTA on a project page calls once funded flips true. Every candidate the
      * model returns is saved immediately (source=GENERATED), not just handed back in the
-     * response -- see {@link #listOptions} for how a refreshed page gets them back. */
+     * response -- see {@link #listOptions} for how a refreshed page gets them back.
+     * <p>
+     * Each batch is scored by critic-service ({@link IdeaCriticServiceClient}) before saving --
+     * completeness (does it actually use the brief/brand/reference-image context), story craft,
+     * and distinctiveness. If every candidate in a batch fails, the whole batch is regenerated
+     * once with the critic's concerns fed back as feedback (same retry-with-feedback shape as
+     * pre-production-service's {@code ScriptGenerationService}); a batch with at least one PASS is
+     * kept as-is even if others in it failed, so the creator can still see and compare all of them
+     * rather than losing options silently. */
     @Transactional
     public List<IdeaOptionView> generateOptions(UUID tenantId, UUID requirementId, Integer count) {
         ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
@@ -84,38 +111,85 @@ public class ProjectRequirementIdeaService {
         }
 
         int optionCount = (count == null || count < 1) ? DEFAULT_OPTION_COUNT : Math.min(count, 5);
+        String referenceImageAnalysis = referenceMaterialAnalysisService.summarizeForRequirement(tenantId, requirementId);
 
-        LlmGatewayChatResponse response = llmGatewayClient.chat(
-                tenantId.toString(),
-                "requirement-ideas-" + requirementId,
-                new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                        JsonExtraction.JSON_MODE_PARAMS, GENERATE_TASK_KEY,
-                        java.util.Map.of(
-                                "briefText", requirement.getBriefText(),
-                                "targetAudience", orNotSpecified(requirement.getTargetAudience()),
-                                "campaignDirection", orNotSpecified(requirement.getCampaignDirection()),
-                                "budgetTier", requirement.getBudgetTier().name(),
-                                "optionCount", String.valueOf(optionCount)
-                        )));
+        List<RawIdeaCandidate> candidates = List.of();
+        Map<String, IdeaCritiqueItem> critiqueByTitle = Map.of();
+        String critiqueFeedback = "";
+
+        for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+            LlmGatewayChatResponse response = llmGatewayClient.chat(
+                    tenantId.toString(),
+                    "requirement-ideas-" + requirementId + "-attempt" + attempt,
+                    new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
+                            JsonExtraction.JSON_MODE_PARAMS, GENERATE_TASK_KEY,
+                            Map.of(
+                                    "briefText", requirement.getBriefText() + critiqueFeedback,
+                                    "targetAudience", orNotSpecified(requirement.getTargetAudience()),
+                                    "campaignDirection", orNotSpecified(requirement.getCampaignDirection()),
+                                    "budgetTier", requirement.getBudgetTier().name(),
+                                    "optionCount", String.valueOf(optionCount),
+                                    "referenceImageAnalysis", referenceImageAnalysis
+                            )));
+            candidates = parseCandidates(response);
+            critiqueByTitle = critiqueCandidates(tenantId, requirement, referenceImageAnalysis, candidates);
+
+            boolean anyPass = critiqueByTitle.values().stream().anyMatch(item -> item.verdict() == IdeaCritiqueVerdict.PASS);
+            if (anyPass || critiqueByTitle.isEmpty() || attempt == MAX_GENERATION_ATTEMPTS) {
+                break;
+            }
+            String concerns = critiqueByTitle.values().stream()
+                    .flatMap(item -> item.concerns().stream())
+                    .distinct()
+                    .collect(Collectors.joining("; "));
+            critiqueFeedback = "\n\nCRITIC FEEDBACK FROM A PRIOR ATTEMPT (every option failed review -- fix these issues, do not repeat them): " + concerns;
+        }
 
         OffsetDateTime now = OffsetDateTime.now();
-        List<IdeaOption> saved = parseCandidates(response).stream()
-                .map(candidate -> ideaOptionRepository.save(IdeaOption.builder()
-                        .tenantId(tenantId)
-                        .projectRequirementId(requirementId)
-                        .title(candidate.title())
-                        .concept(candidate.concept())
-                        .targetAudience(candidate.targetAudience())
-                        .campaignAngle(candidate.campaignAngle())
-                        .keyMessage(candidate.keyMessage())
-                        .tone(candidate.tone())
-                        .source(IdeaOptionSource.GENERATED)
-                        .parentId(null)
-                        .createdAt(now)
-                        .build()))
+        Map<String, IdeaCritiqueItem> finalCritiqueByTitle = critiqueByTitle;
+        List<IdeaOption> saved = candidates.stream()
+                .map(candidate -> {
+                    IdeaCritiqueItem critique = finalCritiqueByTitle.get(candidate.title());
+                    return ideaOptionRepository.save(IdeaOption.builder()
+                            .tenantId(tenantId)
+                            .projectRequirementId(requirementId)
+                            .title(candidate.title())
+                            .concept(candidate.concept())
+                            .targetAudience(candidate.targetAudience())
+                            .campaignAngle(candidate.campaignAngle())
+                            .keyMessage(candidate.keyMessage())
+                            .tone(candidate.tone())
+                            .source(IdeaOptionSource.GENERATED)
+                            .parentId(null)
+                            .criticVerdict(critique == null ? null : critique.verdict().name())
+                            .completenessScore(critique == null ? null : critique.completenessScore())
+                            .storyScore(critique == null ? null : critique.storyScore())
+                            .distinctivenessScore(critique == null ? null : critique.distinctivenessScore())
+                            .criticStrengths(critique == null ? null : String.join("\n", critique.strengths()))
+                            .criticConcerns(critique == null ? null : String.join("\n", critique.concerns()))
+                            .createdAt(now)
+                            .build());
+                })
                 .collect(Collectors.toList());
 
         return saved.stream().map(this::toOptionView).collect(Collectors.toList());
+    }
+
+    /** Empty map (never throws) if critic-service is unreachable or returns nothing usable --
+     * see {@link IdeaCriticServiceClient}'s own javadoc for why this is best-effort, not a gate. */
+    private Map<String, IdeaCritiqueItem> critiqueCandidates(
+            UUID tenantId, ProjectRequirement requirement, String referenceImageAnalysis, List<RawIdeaCandidate> candidates) {
+        List<IdeaCandidateItem> items = candidates.stream()
+                .map(c -> new IdeaCandidateItem(c.title(), c.concept(), c.targetAudience(), c.campaignAngle(), c.keyMessage(), c.tone()))
+                .collect(Collectors.toList());
+        var result = ideaCriticServiceClient.critique(tenantId, new IdeaCritiqueRequest(
+                requirement.getBriefText(), requirement.getTargetAudience(), requirement.getCampaignDirection(),
+                referenceImageAnalysis, items));
+        if (result.items() == null) {
+            return Map.of();
+        }
+        return result.items().stream()
+                .collect(Collectors.toMap(IdeaCritiqueItem::title, item -> item, (a, b) -> a));
     }
 
     /** What a refreshed project-requirement page reads instead of losing the generated list --
@@ -159,41 +233,31 @@ public class ProjectRequirementIdeaService {
         return toOptionView(saved);
     }
 
-    /** Creates the real LockedIdea and hands off to pre-production-service in one transaction-ish
-     * step (the pre-production call happens after the local commit succeeds conceptually, but
-     * since there's no distributed transaction here, a pre-production failure rolls the local
-     * LockedIdea insert back too -- see PreProductionServiceClient, which throws rather than
-     * swallowing). Idempotent: locking twice for the same requirement returns the existing idea
-     * rather than creating a second one or re-calling pre-production-service. */
-    @Transactional
+    /** Creates the real LockedIdea and hands off to pre-production-service. Deliberately NOT
+     * {@code @Transactional} itself -- the LockedIdea write and the pre-production HTTP call are
+     * two separate {@link LockedIdeaWriter} transactions (each its own proxy boundary, each
+     * committed independently) precisely so a downstream failure from the HTTP call can never
+     * roll back the LockedIdea insert. See {@link LockedIdeaWriter}'s class javadoc for the
+     * duplicate-project bug this prevents. Idempotent: locking twice for the same requirement
+     * returns the existing idea rather than creating a second one or re-calling
+     * pre-production-service; if a prior attempt got as far as saving the LockedIdea but never
+     * reached pre-production-service (its own failure mode this guards against), this resumes
+     * from there using the same lockedIdeaId rather than minting a new one. */
     public LockIdeaOptionResponse lockOption(UUID tenantId, UUID requirementId, LockIdeaOptionRequest chosen) {
         ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
         if (!requirement.isFunded()) {
             throw CreativePlanningException.badRequest("Requirement " + requirementId + " is not funded yet");
         }
 
-        var existing = lockedIdeaRepository.findByProjectRequirementId(requirementId);
-        if (existing.isPresent()) {
-            return new LockIdeaOptionResponse(toView(existing.get()), existing.get().getProjectId());
+        LockedIdea lockedIdea = lockedIdeaWriter.findOrCreate(tenantId, requirementId, chosen, requirement.getBudgetTier());
+        if (lockedIdea.getProjectId() != null) {
+            return new LockIdeaOptionResponse(toView(lockedIdea), lockedIdea.getProjectId());
         }
-
-        LockedIdea lockedIdea = lockedIdeaRepository.save(LockedIdea.builder()
-                .tenantId(tenantId)
-                .projectRequirementId(requirementId)
-                .title(chosen.title())
-                .concept(chosen.concept())
-                .targetAudience(chosen.targetAudience())
-                .campaignAngle(chosen.campaignAngle())
-                .keyMessage(chosen.keyMessage())
-                .tone(chosen.tone())
-                .budgetTier(requirement.getBudgetTier())
-                .createdAt(OffsetDateTime.now())
-                .build());
 
         UUID projectId = preProductionServiceClient.createProjectFromLockedIdea(
                 tenantId, lockedIdea.getId(), chosen.title(), requirement.getBudgetTier());
+        lockedIdeaWriter.attachProject(lockedIdea.getId(), projectId);
         lockedIdea.setProjectId(projectId);
-        lockedIdeaRepository.save(lockedIdea);
 
         return new LockIdeaOptionResponse(toView(lockedIdea), projectId);
     }
@@ -232,7 +296,13 @@ public class ProjectRequirementIdeaService {
     private IdeaOptionView toOptionView(IdeaOption option) {
         return new IdeaOptionView(option.getId(), option.getTitle(), option.getConcept(), option.getTargetAudience(),
                 option.getCampaignAngle(), option.getKeyMessage(), option.getTone(), option.getSource(),
-                option.getParentId(), option.getCreatedAt());
+                option.getParentId(), option.getCriticVerdict(), option.getCompletenessScore(), option.getStoryScore(),
+                option.getDistinctivenessScore(), splitLines(option.getCriticStrengths()), splitLines(option.getCriticConcerns()),
+                option.getCreatedAt());
+    }
+
+    private static List<String> splitLines(String text) {
+        return (text == null || text.isBlank()) ? List.of() : List.of(text.split("\n"));
     }
 
     private LockedIdeaView toView(LockedIdea idea) {

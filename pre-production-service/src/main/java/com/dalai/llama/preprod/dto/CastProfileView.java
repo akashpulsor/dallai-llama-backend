@@ -11,10 +11,12 @@ public record CastProfileView(
         String displayName,
         String faceRefBucket,
         String faceRefObjectKey,
+        String faceRefUrl,
         String description,
         Integer age,
         String gender,
         String voiceRefBucket,
-        String voiceRefObjectKey
+        String voiceRefObjectKey,
+        long projectCount
 ) {
 }
