@@ -17,17 +17,20 @@ public record VideoDispatchParams(
         String aspectRatio,
         Boolean generateAudio,
         List<String> referenceImageUrls,
-        Long seed
+        Long seed,
+        /** Wire value of VideoResolution (see that enum's javadoc), or null to leave the
+         * provider's own default untouched. */
+        String resolution
 ) {
     public VideoDispatchParams(Integer durationSeconds, String aspectRatio) {
-        this(durationSeconds, aspectRatio, null, null, null);
+        this(durationSeconds, aspectRatio, null, null, null, null);
     }
 
     public VideoDispatchParams(Integer durationSeconds, String aspectRatio, Boolean generateAudio) {
-        this(durationSeconds, aspectRatio, generateAudio, null, null);
+        this(durationSeconds, aspectRatio, generateAudio, null, null, null);
     }
 
     public VideoDispatchParams(Integer durationSeconds, String aspectRatio, Boolean generateAudio, List<String> referenceImageUrls) {
-        this(durationSeconds, aspectRatio, generateAudio, referenceImageUrls, null);
+        this(durationSeconds, aspectRatio, generateAudio, referenceImageUrls, null, null);
     }
 }

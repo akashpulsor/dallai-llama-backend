@@ -167,6 +167,8 @@ public class ShotGenerationOrchestrator {
                 .durationSeconds(shotContext.technical() != null ? shotContext.technical().durationSeconds() : null)
                 .aspectRatio(shotContext.technical() != null && shotContext.technical().aspectRatio() != null
                         ? shotContext.technical().aspectRatio().wireValue() : null)
+                .resolution(shotContext.technical() != null && shotContext.technical().resolution() != null
+                        ? shotContext.technical().resolution().wireValue() : null)
                 .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
                 .muteAudio(muteAudio)
                 .status(JobStatus.PENDING_APPROVAL)
@@ -301,7 +303,7 @@ public class ShotGenerationOrchestrator {
             job.setSeedUsed(seed);
             videoGenJobRepository.save(job);
             VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
-                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed);
+                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution());
             DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
 
             String outputUri = result.outputUri();

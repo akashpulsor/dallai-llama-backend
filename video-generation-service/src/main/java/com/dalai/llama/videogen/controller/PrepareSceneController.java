@@ -70,9 +70,10 @@ public class PrepareSceneController {
     ) {
         TenantContext ctx = TenantContextHolder.get();
         ShotContextAssemblyService.PrepareShotOverrides overrides = request == null
-                ? new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null)
+                ? new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null, null)
                 : new ShotContextAssemblyService.PrepareShotOverrides(
-                        request.featureFlagOverrides(), request.modelPin(), request.durationSecondsOverride(), request.customNotes());
+                        request.featureFlagOverrides(), request.modelPin(), request.durationSecondsOverride(),
+                        request.customNotes(), request.resolutionOverride());
         ShotContextAssemblyService.AssembledShot assembled =
                 shotContextAssemblyService.assemble(ctx.tenantId(), projectId, shotId, overrides);
         GenerateShotRequest generateRequest = new GenerateShotRequest(
@@ -121,12 +122,16 @@ public class PrepareSceneController {
 
     public record ProjectScenePreparationView(UUID projectId, String templateText, OffsetDateTime preparedAt, OffsetDateTime updatedAt, String status) {}
 
-    /** Every override is optional; null leaves the value inherited from the shot / project config. */
+    /** Every override is optional; null leaves the value inherited from the shot / project config.
+     * resolutionOverride is a VideoResolution wire value ("480p"/"720p") -- unrecognized/blank
+     * values fall back to the provider's own default rather than rejecting the request, see
+     * VideoResolution.fromWireValue. */
     public record PrepareShotRequest(
             FeatureFlags featureFlagOverrides,
             String modelPin,
             Integer durationSecondsOverride,
-            String customNotes
+            String customNotes,
+            String resolutionOverride
     ) {}
 
     public record UpdateShotPromptRequest(@jakarta.validation.constraints.NotBlank String positive) {}

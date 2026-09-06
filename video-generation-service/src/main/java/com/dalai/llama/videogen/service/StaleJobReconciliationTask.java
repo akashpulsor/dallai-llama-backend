@@ -108,7 +108,7 @@ public class StaleJobReconciliationTask {
             // the caller was already committed to -- a fresh random seed here would silently
             // change the generated frame from what the user approved.
             result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(),
-                    new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(), null, null, job.getSeedUsed()));
+                    new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(), null, null, job.getSeedUsed(), job.getResolution()));
         } catch (RuntimeException ex) {
             if (pastGiveup) {
                 giveUp(job, "llm-gateway unreachable at giveup threshold: " + ex.getMessage());

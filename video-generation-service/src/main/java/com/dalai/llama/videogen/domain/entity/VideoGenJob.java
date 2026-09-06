@@ -57,6 +57,12 @@ public class VideoGenJob {
     @Column(name = "aspect_ratio", length = 16)
     private String aspectRatio;
 
+    /** Same capture-at-generate()/read-at-approve() reasoning as durationSeconds/aspectRatio above
+     * -- ShotContext.technical().resolution()'s wire value (see VideoResolution), forwarded to the
+     * provider on dispatch. Null uses that provider's own default. */
+    @Column(name = "resolution", length = 16)
+    private String resolution;
+
     /** Same capture-at-generate()/read-at-approve() reasoning as durationSeconds/aspectRatio --
      * the project's voice-clone model pin (ShotContext.technical().voiceCloneModel(), sourced
      * from pre-production-service's ProjectConfig.preferredVoiceModel), forwarded to

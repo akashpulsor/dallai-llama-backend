@@ -38,6 +38,12 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
         if (params != null && params.generateAudio() != null) {
             videoParams.put("generate_audio", params.generateAudio());
         }
+        // FalAiProvider already reads this key for both Seedance and Wan (falls back to its own
+        // cost-policy default when absent) -- this was the missing link, nothing on the
+        // llm-gateway side needed to change.
+        if (params != null && params.resolution() != null) {
+            videoParams.put("resolution", params.resolution());
+        }
         if (params != null && params.referenceImageUrls() != null && !params.referenceImageUrls().isEmpty()) {
             videoParams.put("reference_image_urls", params.referenceImageUrls());
         }

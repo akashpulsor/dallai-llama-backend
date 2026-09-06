@@ -4,6 +4,7 @@ import com.dalai.llama.videogen.domain.AspectRatio;
 import com.dalai.llama.videogen.domain.MoodProfile;
 import com.dalai.llama.videogen.domain.ShotSize;
 import com.dalai.llama.videogen.domain.TimeOfDay;
+import com.dalai.llama.videogen.domain.VideoResolution;
 import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.shotcontext.AudioAmbience;
@@ -242,7 +243,8 @@ public class ShotContextAssemblyService {
         String pinnedModel = overrides != null && overrides.modelPin() != null
                 ? overrides.modelPin()
                 : (projectPreferredModel != null && !projectPreferredModel.isBlank() ? projectPreferredModel : null);
-        return new Technical(duration, aspectRatio, null, pinnedModel, null, editingNotes);
+        VideoResolution resolution = overrides == null ? null : VideoResolution.fromWireValue(overrides.resolutionOverride());
+        return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes);
     }
 
     private List<ContinuityAnchor> buildContinuityAnchors(ProjectScenePreparation prep) {
@@ -364,6 +366,11 @@ public class ShotContextAssemblyService {
             FeatureFlags featureFlagOverrides,
             String modelPin,
             Integer durationSecondsOverride,
-            String customNotes
+            String customNotes,
+            /** Wire value (see VideoResolution) -- unlike duration/aspect-ratio this has no
+             * pre-production-side default to fall back to, it's purely a generate-time cost/
+             * quality choice, so a blank/unrecognized value here just means "use the provider's
+             * own default" (VideoResolution.fromWireValue already returns null for that case). */
+            String resolutionOverride
     ) {}
 }

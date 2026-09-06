@@ -60,7 +60,7 @@ public class PrepareOrchestrationService {
         List<ShotPromptView> prepared = new ArrayList<>();
         List<FailedShot> failed = new ArrayList<>();
         ShotContextAssemblyService.PrepareShotOverrides overrides =
-                new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null);
+                new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null, null);
         try {
             for (UUID shotId : shotIds) {
                 long shotStartMs = System.currentTimeMillis();
