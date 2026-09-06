@@ -1,6 +1,9 @@
 # Build stage
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
+# Cap Maven's forked-JVM heap -- the default sizing lets compiler/annotation-processing
+# plugins balloon memory usage during `package`, which starves the host on constrained dev machines.
+ENV MAVEN_OPTS="-Xmx768m"
 
 # Install parent POM only (skip module resolution)
 COPY pom.xml /app/
