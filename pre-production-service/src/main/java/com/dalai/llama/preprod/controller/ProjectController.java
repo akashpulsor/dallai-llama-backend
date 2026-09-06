@@ -5,9 +5,11 @@ import com.dalai.llama.preprod.dto.ClientReviewLinkView;
 import com.dalai.llama.preprod.dto.CreateProjectRequest;
 import com.dalai.llama.preprod.dto.ProjectView;
 import com.dalai.llama.preprod.dto.ReviewCommentView;
+import com.dalai.llama.preprod.dto.ShotDesignReadyProjectView;
 import com.dalai.llama.preprod.service.ProjectLockService;
 import com.dalai.llama.preprod.service.ProjectService;
 import com.dalai.llama.preprod.service.ReviewCommentService;
+import com.dalai.llama.preprod.service.ShotDesignReadyProjectService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -27,11 +30,18 @@ public class ProjectController extends BaseController {
     private final ProjectService projectService;
     private final ProjectLockService projectLockService;
     private final ReviewCommentService reviewCommentService;
+    private final ShotDesignReadyProjectService shotDesignReadyProjectService;
 
-    public ProjectController(ProjectService projectService, ProjectLockService projectLockService, ReviewCommentService reviewCommentService) {
+    public ProjectController(
+            ProjectService projectService,
+            ProjectLockService projectLockService,
+            ReviewCommentService reviewCommentService,
+            ShotDesignReadyProjectService shotDesignReadyProjectService
+    ) {
         this.projectService = projectService;
         this.projectLockService = projectLockService;
         this.reviewCommentService = reviewCommentService;
+        this.shotDesignReadyProjectService = shotDesignReadyProjectService;
     }
 
     @PostMapping("/v1/projects/from-locked-idea")
@@ -47,6 +57,17 @@ public class ProjectController extends BaseController {
     @GetMapping("/v1/projects")
     public ResponseEntity<List<ProjectView>> list() {
         return ResponseEntity.ok(projectService.list(tenant().tenantId()));
+    }
+
+    /** creator-ui's Planner page "post production" panel: every recent project that has at least
+     * one shot, each with its shots inline -- see {@link ShotDesignReadyProjectView}'s class
+     * comment. Distinct literal segment "shot-design-ready" is matched before the
+     * {@code /v1/projects/{projectId}} variable mapping above (standard Spring path-matching
+     * precedence), so this doesn't collide with it. */
+    @GetMapping("/v1/projects/shot-design-ready")
+    public ResponseEntity<List<ShotDesignReadyProjectView>> listShotDesignReady(
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(shotDesignReadyProjectService.list(tenant().tenantId(), limit));
     }
 
     /** Idempotent -- returns the existing client review link if one was already generated. The
