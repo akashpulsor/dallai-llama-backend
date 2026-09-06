@@ -40,7 +40,7 @@ public class RazorpayWebhookOrchestrationService {
     private final BillingEventProducer eventProducer;
     private final ClientReviewPaymentService clientReviewPaymentService;
 
-    public void processWebhook(String eventType, String payload, String signature) {
+    public void processWebhook(String eventType, String payload) {
         switch (eventType) {
             case "payment.captured" -> handlePaymentCaptured(payload);
             case "payment.failed"   -> handlePaymentFailed(payload);

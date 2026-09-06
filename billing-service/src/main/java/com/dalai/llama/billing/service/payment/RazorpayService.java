@@ -28,6 +28,9 @@ public class RazorpayService implements PaymentGateway {
     @Value("${razorpay.key-secret}")
     private String razorpayKeySecret;
 
+    @Value("${razorpay.webhook-secret}")
+    private String razorpayWebhookSecret;
+
     @Value("${razorpay.mock-enabled:false}")
     private boolean mockEnabled;
 
@@ -76,6 +79,24 @@ public class RazorpayService implements PaymentGateway {
 
         } catch (Exception e) {
             throw new PaymentFailedException("Invalid Razorpay payment signature", e);
+        }
+    }
+
+    /**
+     * Verifies the X-Razorpay-Signature header on an incoming webhook against the raw
+     * request body, using the webhook secret configured in the Razorpay dashboard (distinct
+     * from the API key/secret used for the checkout flow -- see {@link #verify}).
+     */
+    public void verifyWebhookSignature(String payload, String signature) {
+        if (mockEnabled) {
+            log.info("[MOCK] Skipping webhook signature verification");
+            return;
+        }
+
+        try {
+            Utils.verifyWebhookSignature(payload, signature, razorpayWebhookSecret);
+        } catch (Exception e) {
+            throw new PaymentFailedException("Invalid Razorpay webhook signature", e);
         }
     }
 

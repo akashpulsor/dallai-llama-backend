@@ -30,15 +30,18 @@ public class RazorpayWebhookController {
         log.info("Received Razorpay webhook");
 
         try {
+            razorpayService.verifyWebhookSignature(payload, signature);
+        } catch (Exception e) {
+            log.warn("Rejected Razorpay webhook: invalid signature", e);
+            return ResponseEntity.badRequest().body("Invalid signature");
+        }
+
+        try {
             String eventType = razorpayService.extractEventType(payload);
 
             log.info("Processing Razorpay event: {}", eventType);
 
-            webhookService.processWebhook(
-                    eventType,
-                    payload,
-                    signature
-            );
+            webhookService.processWebhook(eventType, payload);
 
             return ResponseEntity.ok("OK");
 
