@@ -17,8 +17,10 @@ import com.dalai.llama.preprod.domain.entity.ScreenplayScene;
 import com.dalai.llama.preprod.domain.entity.Script;
 import com.dalai.llama.preprod.domain.entity.ScriptCharacter;
 import com.dalai.llama.preprod.domain.entity.Shot;
+import com.dalai.llama.preprod.dto.CreateShotRequest;
 import com.dalai.llama.preprod.dto.ShotCastView;
 import com.dalai.llama.preprod.dto.ShotView;
+import com.dalai.llama.preprod.dto.UpdateShotRequest;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
 import com.dalai.llama.preprod.repository.ProjectRepository;
@@ -250,12 +252,80 @@ public class ShotListGenerationService {
 
     @Transactional(readOnly = true)
     public List<ShotView> list(UUID tenantId, UUID projectId) {
-        Map<String, ShotCastView> castByCharacterKey = scriptRepository.findByProjectId(projectId)
-                .map(script -> resolveCastByCharacterKey(tenantId, projectId, script.getId()))
-                .orElseGet(Map::of);
+        Map<String, ShotCastView> castByCharacterKey = castByCharacterKeyForProject(tenantId, projectId);
         return shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
                 .map(s -> toView(s, castByCharacterKey))
                 .collect(Collectors.toList());
+    }
+
+    /** Manually inserts one shot into an existing screenplay scene -- see {@link
+     * CreateShotRequest}'s class comment for what this deliberately does and doesn't populate.
+     * shotNumber continues the scene's own sequence (existing shots in that scene, not the whole
+     * project), matching shot_ref's "shot-{sceneNumber}-{shotNumber}" convention {@link #toShot}
+     * already establishes for AI-generated shots. */
+    public ShotView createShot(UUID tenantId, UUID projectId, CreateShotRequest request) {
+        Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no screenplay yet"));
+        ScreenplayScene scene = screenplaySceneRepository.findByIdAndTenantId(request.screenplaySceneId(), tenantId)
+                .filter(s -> s.getScreenplayId().equals(screenplay.getId()))
+                .orElseThrow(() -> PreProductionException.badRequest(
+                        "screenplaySceneId=" + request.screenplaySceneId() + " does not belong to project " + projectId + "'s current screenplay"));
+
+        int nextShotNumber = shotRepository.findByScreenplaySceneIdOrderByShotNumberAsc(scene.getId()).stream()
+                .mapToInt(Shot::getShotNumber)
+                .max()
+                .orElse(0) + 1;
+        var projectConfig = projectConfigService.getEntityOrDefault(projectId);
+        AspectRatio aspectRatio = projectConfig == null || projectConfig.getAspectRatio() == null
+                ? AspectRatio.RATIO_9_16 : projectConfig.getAspectRatio();
+        OffsetDateTime now = OffsetDateTime.now();
+        Shot shot = Shot.builder()
+                .tenantId(tenantId)
+                .projectId(projectId)
+                .lockedIdeaId(project.getLockedIdeaId())
+                .screenplaySceneId(scene.getId())
+                .shotRef("shot-%02d-%03d".formatted(scene.getSceneNumber(), nextShotNumber))
+                .shotNumber(nextShotNumber)
+                .shotType(request.shotType() == null ? ShotType.ACTION : request.shotType())
+                .scriptLine(request.scriptLine())
+                .cameraShotSize(ShotSize.MS)
+                .timeOfDay(TimeOfDay.MIDDAY)
+                .lightingMood(MoodProfile.SOFT)
+                .durationSeconds(request.durationSeconds() == null ? DEFAULT_SHOT_DURATION_SECONDS : request.durationSeconds())
+                .aspectRatio(aspectRatio)
+                .status(ShotStatus.READY)
+                .executionDifficulty(ExecutionDifficulty.MEDIUM)
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        Shot saved = shotRepository.save(shot);
+        continuityBibleService.refresh(tenantId, projectId);
+        shotPlanQualityService.refresh(tenantId, projectId);
+        return toView(saved, castByCharacterKeyForProject(tenantId, projectId));
+    }
+
+    /** Hand-edit of a shot's script line and/or length -- see {@link UpdateShotRequest}'s class
+     * comment. Every other field (camera plan, lighting, etc.) is untouched. */
+    public ShotView updateShot(UUID tenantId, UUID shotId, UpdateShotRequest request) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        if (request.scriptLine() != null) {
+            shot.setScriptLine(request.scriptLine());
+        }
+        if (request.durationSeconds() != null) {
+            shot.setDurationSeconds(request.durationSeconds());
+        }
+        shot.setUpdatedAt(OffsetDateTime.now());
+        Shot saved = shotRepository.save(shot);
+        return toView(saved, castByCharacterKeyForProject(tenantId, shot.getProjectId()));
+    }
+
+    private Map<String, ShotCastView> castByCharacterKeyForProject(UUID tenantId, UUID projectId) {
+        return scriptRepository.findByProjectId(projectId)
+                .map(script -> resolveCastByCharacterKey(tenantId, projectId, script.getId()))
+                .orElseGet(Map::of);
     }
 
     /** Batch-resolves every character's cast assignment once per call instead of per shot -- a

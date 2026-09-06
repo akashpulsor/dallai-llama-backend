@@ -1,14 +1,18 @@
 package com.dalai.llama.preprod.controller;
 
+import com.dalai.llama.preprod.dto.CreateShotRequest;
 import com.dalai.llama.preprod.dto.DispatchShotRequest;
 import com.dalai.llama.preprod.dto.GenerationThoughtView;
 import com.dalai.llama.preprod.dto.ShotDispatchResponse;
 import com.dalai.llama.preprod.dto.ShotView;
+import com.dalai.llama.preprod.dto.UpdateShotRequest;
 import com.dalai.llama.preprod.service.GenerationThoughtService;
 import com.dalai.llama.preprod.service.ShotContextAssemblyService;
 import com.dalai.llama.preprod.service.ShotListGenerationService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,6 +50,21 @@ public class ShotListController extends BaseController {
     @GetMapping("/v1/projects/{projectId}/shots")
     public ResponseEntity<List<ShotView>> list(@PathVariable UUID projectId) {
         return ResponseEntity.ok(shotListGenerationService.list(tenant().tenantId(), projectId));
+    }
+
+    /** Manually inserts one shot -- the "design a shot by hand" counterpart to {@link
+     * #generateList}. See {@link CreateShotRequest}'s class comment for scope and the
+     * regenerate-wipes-manual-shots caveat. */
+    @PostMapping("/v1/projects/{projectId}/shots")
+    public ResponseEntity<ShotView> createShot(@PathVariable UUID projectId, @Valid @RequestBody CreateShotRequest request) {
+        return ResponseEntity.ok(shotListGenerationService.createShot(tenant().tenantId(), projectId, request));
+    }
+
+    /** Hand-edit a shot's script line and/or length after the fact -- see {@link
+     * UpdateShotRequest}'s class comment. */
+    @PatchMapping("/v1/shots/{shotId}")
+    public ResponseEntity<ShotView> updateShot(@PathVariable UUID shotId, @Valid @RequestBody UpdateShotRequest request) {
+        return ResponseEntity.ok(shotListGenerationService.updateShot(tenant().tenantId(), shotId, request));
     }
 
     @PostMapping("/v1/shots/{shotId}/generate")
