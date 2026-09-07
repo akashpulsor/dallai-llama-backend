@@ -101,10 +101,11 @@ public class ShotContextAssemblyService {
                 buildCamera(shot, shotBundle.cameraPlan(), cameraPlanImage),
                 buildProductBrand(shotBundle.productReference()),
                 buildTechnical(shot, overrides,
-                        bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel()),
+                        bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel(),
+                        bundle.projectConfig() == null ? null : bundle.projectConfig().preferredTtsModel()),
                 buildContinuityAnchors(projectPrep),
                 buildAudioAmbience(shot, shotBundle.backgroundMusic()),
-                buildDialogueBeats(beats, castAssignments, profilesById, bundle.script())
+                buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion())
         );
 
         FeatureFlags flagsOverride = overrides == null ? null : overrides.featureFlagOverrides();
@@ -222,7 +223,7 @@ public class ShotContextAssemblyService {
         );
     }
 
-    private Technical buildTechnical(PreProductionViews.ShotView shot, PrepareShotOverrides overrides, String projectPreferredModel) {
+    private Technical buildTechnical(PreProductionViews.ShotView shot, PrepareShotOverrides overrides, String projectPreferredModel, String projectPreferredTtsModel) {
         Integer duration = overrides != null && overrides.durationSecondsOverride() != null
                 ? overrides.durationSecondsOverride() : shot.durationSeconds();
         AspectRatio aspectRatio = null;
@@ -244,7 +245,8 @@ public class ShotContextAssemblyService {
                 ? overrides.modelPin()
                 : (projectPreferredModel != null && !projectPreferredModel.isBlank() ? projectPreferredModel : null);
         VideoResolution resolution = overrides == null ? null : VideoResolution.fromWireValue(overrides.resolutionOverride());
-        return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes);
+        String ttsModel = projectPreferredTtsModel != null && !projectPreferredTtsModel.isBlank() ? projectPreferredTtsModel : null;
+        return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes, ttsModel);
     }
 
     private List<ContinuityAnchor> buildContinuityAnchors(ProjectScenePreparation prep) {
@@ -274,7 +276,8 @@ public class ShotContextAssemblyService {
             List<PreProductionViews.ShotDialogueBeatView> beats,
             List<PreProductionViews.CastAssignmentView> castAssignments,
             Map<UUID, PreProductionViews.CastProfileView> profilesById,
-            PreProductionViews.ScriptView script) {
+            PreProductionViews.ScriptView script,
+            String emotion) {
         if (beats == null || beats.isEmpty()) {
             return List.of();
         }
@@ -305,7 +308,7 @@ public class ShotContextAssemblyService {
                             castProfileByScriptCharacterId, profilesById);
                     PreProductionViews.CastProfileView profile = resolved != null ? resolved : fallbackProfile;
                     return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(),
-                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile));
+                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile), emotion);
                 })
                 .toList();
     }

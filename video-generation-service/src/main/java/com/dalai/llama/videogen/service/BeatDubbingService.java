@@ -5,6 +5,8 @@ import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
+import com.dalai.llama.videogen.service.sceneenergy.SceneEnergyDirective;
+import com.dalai.llama.videogen.service.sceneenergy.SceneEnergyStrategyResolver;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,16 +37,22 @@ import java.util.UUID;
 public class BeatDubbingService {
 
     private final LlmGatewayClient llmGatewayClient;
+    private final SceneEnergyStrategyResolver sceneEnergyStrategyResolver;
     private final String voiceCloneModel;
+    private final String ttsModel;
     private final String mergeModel;
 
     public BeatDubbingService(
             LlmGatewayClient llmGatewayClient,
+            SceneEnergyStrategyResolver sceneEnergyStrategyResolver,
             @Value("${video-gen.llm-gateway.default-voice-clone-model}") String voiceCloneModel,
+            @Value("${video-gen.llm-gateway.default-tts-model}") String ttsModel,
             @Value("${video-gen.llm-gateway.default-audio-video-merge-model}") String mergeModel
     ) {
         this.llmGatewayClient = llmGatewayClient;
+        this.sceneEnergyStrategyResolver = sceneEnergyStrategyResolver;
         this.voiceCloneModel = voiceCloneModel;
+        this.ttsModel = ttsModel;
         this.mergeModel = mergeModel;
     }
 
@@ -63,14 +71,8 @@ public class BeatDubbingService {
     }
 
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl) {
-        return dub(tenantId, jobId, projectId, beats, silentVideoUrl, null);
+        return dub(tenantId, jobId, projectId, beats, silentVideoUrl, null, null);
     }
-
-    /** ElevenLabs pairs its instant-clone model 1:1 with its own TTS model -- cloning never
-     * returns audio there (see {@code ElevenLabsProvider}'s class doc), only a {@code voice_id}
-     * a second, separate TTS call then speaks with. Hardcoded rather than looked up: this
-     * pairing is a fact about the ElevenLabs API itself, not project-configurable data. */
-    private static final String ELEVENLABS_TTS_MODEL = "elevenlabs-tts-v1";
 
     /** {@code voiceCloneModelOverride}: a project's picked model (from llm-gateway's real
      * model_master, type=voice_clone) instead of this service's own configured default -- null
@@ -80,8 +82,12 @@ public class BeatDubbingService {
      * through clone-then-TTS as two calls instead, with the beats' text plainly concatenated (no
      * literal marker characters spoken aloud). Beat-to-beat gap timing is best-effort only for
      * ElevenLabs (no gap encoding at all), same "best-effort bet, not a guarantee" this class's
-     * own class-doc already states for MiniMax's timing overall. */
-    public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl, String voiceCloneModelOverride) {
+     * own class-doc already states for MiniMax's timing overall. {@code ttsModelOverride}: same
+     * pin shape, type=tts -- which model actually speaks (clone-then-TTS's second call, and the
+     * built-in-voice direct call), and via {@link SceneEnergyStrategyResolver} which mechanism
+     * conveys this shot's emotion to it. */
+    public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl,
+                          String voiceCloneModelOverride, String ttsModelOverride) {
         List<DialogueBeat> sorted = beats.stream()
                 .sorted(Comparator.comparing(DialogueBeat::startSeconds))
                 .toList();
@@ -93,16 +99,23 @@ public class BeatDubbingService {
         boolean useBuiltinVoice = referenceAudioUrl == null && builtinVoiceId != null;
 
         String model = voiceCloneModelOverride == null || voiceCloneModelOverride.isBlank() ? voiceCloneModel : voiceCloneModelOverride;
+        String resolvedTtsModel = ttsModelOverride == null || ttsModelOverride.isBlank() ? ttsModel : ttsModelOverride;
         boolean fused = !useBuiltinVoice && model.toLowerCase(Locale.ROOT).contains("minimax");
-        String combinedText = fused
+        String rawText = fused
                 ? buildPausedText(sorted)
                 : sorted.stream().map(DialogueBeat::text).collect(java.util.stream.Collectors.joining(" "));
+        // MiniMax's fused clone+synthesize is a different provider/request shape entirely (no
+        // voice_settings concept) -- scene energy only applies to the ElevenLabs TTS paths.
+        SceneEnergyDirective directive = fused
+                ? SceneEnergyDirective.textOnly(rawText)
+                : sceneEnergyStrategyResolver.resolve(tenantId, resolvedTtsModel, sorted.get(0).emotion(), rawText);
+        String combinedText = directive.text();
 
         LlmGatewayChatResponse synthesis = useBuiltinVoice
-                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText)
+                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText, resolvedTtsModel, directive)
                 : fused
                         ? fusedCloneAndSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText)
-                        : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText);
+                        : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText, resolvedTtsModel, directive);
         if (synthesis == null || synthesis.response() == null || synthesis.response().isBlank()) {
             throw VideoGenException.upstream("llm-gateway returned no synthesized dialogue audio for job_id=" + jobId);
         }
@@ -137,11 +150,13 @@ public class BeatDubbingService {
     /** No sample to clone -- {@code voiceId} is already a usable ElevenLabs stock voice_id (see
      * llm-gateway's {@code builtin_voice} table), so this is just the TTS half of {@link
      * #cloneThenSynthesize}, skipping the clone call entirely. */
-    private LlmGatewayChatResponse directTtsSynthesize(String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText) {
+    private LlmGatewayChatResponse directTtsSynthesize(
+            String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText, String resolvedTtsModel, SceneEnergyDirective directive) {
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
+        ttsParams.putAll(directive.extraTtsParams());
         return llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
-                new LlmGatewayChatRequest(ELEVENLABS_TTS_MODEL, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
+                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
     }
 
     /** ElevenLabs' two-call shape: clone the reference sample into a {@code voice_id} (no text --
@@ -149,7 +164,9 @@ public class BeatDubbingService {
      * then speak {@code combinedText} in that voice via a normal TTS call. Costs from both calls
      * are summed into the single {@code LlmGatewayChatResponse} the fused path would have
      * returned, so the caller doesn't need to know which path ran. */
-    private LlmGatewayChatResponse cloneThenSynthesize(String tenantId, UUID jobId, UUID projectId, String cloneModel, String referenceAudioUrl, String combinedText) {
+    private LlmGatewayChatResponse cloneThenSynthesize(
+            String tenantId, UUID jobId, UUID projectId, String cloneModel, String referenceAudioUrl, String combinedText,
+            String resolvedTtsModel, SceneEnergyDirective directive) {
         Map<String, Object> cloneParams = new LinkedHashMap<>();
         cloneParams.put("reference_audio_url", referenceAudioUrl);
         LlmGatewayChatResponse clone = llmGatewayClient.chat(tenantId, "beat-dub-clone-" + jobId,
@@ -162,8 +179,9 @@ public class BeatDubbingService {
 
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
+        ttsParams.putAll(directive.extraTtsParams());
         LlmGatewayChatResponse tts = llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
-                new LlmGatewayChatRequest(ELEVENLABS_TTS_MODEL, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
+                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
         if (tts == null) {
             return null;
         }

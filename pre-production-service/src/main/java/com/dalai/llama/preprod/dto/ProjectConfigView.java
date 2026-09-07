@@ -12,6 +12,7 @@ public record ProjectConfigView(
         /** Project-level default video resolution ("480p" / "720p"). Null means "provider
          * default." Per-shot resolutionOverride still wins over this at prepare time. */
         String preferredResolution,
+        String preferredTtsModel,
         String dialogueLanguage,
         /** Feature-flag gates for the video-workspace UI's optional enrichments (see
          * ProjectConfig entity javadoc for per-flag intent). All default to a sensible on/off

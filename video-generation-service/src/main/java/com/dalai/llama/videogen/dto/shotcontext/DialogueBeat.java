@@ -14,6 +14,10 @@ public record DialogueBeat(
         String text,
         String characterKey,
         String voiceReferenceUrl,
-        String builtinVoiceId
+        String builtinVoiceId,
+        /** Shot.emotion -- a shot-level attribute, fed into {@code BeatDubbingService}'s {@code
+         * SceneEnergyStrategyResolver} so the dubbed delivery matches the shot's intended mood
+         * instead of reading as flat/neutral text. Nullable. */
+        String emotion
 ) {
 }

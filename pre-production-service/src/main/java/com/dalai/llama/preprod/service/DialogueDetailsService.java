@@ -1,6 +1,5 @@
 package com.dalai.llama.preprod.service;
 
-import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.entity.CastAssignment;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.domain.entity.Script;
@@ -40,6 +39,7 @@ public class DialogueDetailsService {
     private final ProjectConfigService projectConfigService;
     private final MinioClient minioClient;
     private final MinioClient publicMinioClient;
+    private final EffectiveSpeakerResolver effectiveSpeakerResolver;
 
     public DialogueDetailsService(
             ShotRepository shotRepository,
@@ -49,7 +49,8 @@ public class DialogueDetailsService {
             CastProfileRepository castProfileRepository,
             ProjectConfigService projectConfigService,
             MinioClient minioClient,
-            @Qualifier("publicMinioClient") MinioClient publicMinioClient
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
+            EffectiveSpeakerResolver effectiveSpeakerResolver
     ) {
         this.shotRepository = shotRepository;
         this.scriptRepository = scriptRepository;
@@ -59,6 +60,7 @@ public class DialogueDetailsService {
         this.projectConfigService = projectConfigService;
         this.minioClient = minioClient;
         this.publicMinioClient = publicMinioClient;
+        this.effectiveSpeakerResolver = effectiveSpeakerResolver;
     }
 
     @Transactional(readOnly = true)
@@ -80,11 +82,13 @@ public class DialogueDetailsService {
         String characterName = shot.getPrimaryCharacterKey();
         String referenceAudioUrl = null;
         if (script != null) {
-            // No one on screen but there's still a line to speak -- the narrator (never in
-            // primaryCharacterKey, per CharacterType's own javadoc) is who's actually talking.
-            Optional<ScriptCharacter> character = shot.getPrimaryCharacterKey() != null
-                    ? scriptCharacterRepository.findByScriptIdAndCharacterKey(script.getId(), shot.getPrimaryCharacterKey())
-                    : scriptCharacterRepository.findFirstByScriptIdAndCharacterType(script.getId(), CharacterType.NARRATOR);
+            // EffectiveSpeakerResolver: the shot's own primary character, unless it's a mute
+            // PRODUCT or there's no primary character at all (nobody on screen) -- both fall
+            // through to the script's narrator.
+            String effectiveCharacterKey = effectiveSpeakerResolver.resolveCharacterKey(projectId, shot);
+            Optional<ScriptCharacter> character = effectiveCharacterKey == null
+                    ? Optional.empty()
+                    : scriptCharacterRepository.findByScriptIdAndCharacterKey(script.getId(), effectiveCharacterKey);
             if (character.isPresent()) {
                 characterName = character.get().getCharacterName();
                 Optional<CastAssignment> assignment = castAssignmentRepository

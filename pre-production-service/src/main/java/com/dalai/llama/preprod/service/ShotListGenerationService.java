@@ -500,8 +500,15 @@ public class ShotListGenerationService {
     }
 
     private ShotView toView(Shot shot, Map<String, ShotCastView> castByCharacterKey) {
-        ShotCastView cast = shot.getPrimaryCharacterKey() != null
+        ShotCastView primaryCast = shot.getPrimaryCharacterKey() != null
                 ? castByCharacterKey.get(shot.getPrimaryCharacterKey())
+                : null;
+        // A PRODUCT primary character is on screen but mute -- any narration on this shot (e.g. a
+        // PRODUCT_HERO shot's voiceOver) is the narrator talking, same as a shot with no primary
+        // character at all. Without this, a product shot's cast/hasVoiceSample would reflect the
+        // product's own (always-absent) voice, permanently disabling dialogue-beat dubbing for it.
+        ShotCastView cast = primaryCast != null && primaryCast.characterType() != CharacterType.PRODUCT
+                ? primaryCast
                 : narratorCast(shot, castByCharacterKey);
         return new ShotView(
                 shot.getId(), shot.getLockedIdeaId(), shot.getShotRef(), shot.getShotNumber(), shot.getScreenplaySceneId(),

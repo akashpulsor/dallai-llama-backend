@@ -106,6 +106,13 @@ public class ElevenLabsProvider implements LlmProvider {
         // ElevenLabs' own multilingual model -- language is implicit in the text/voice, not a
         // separate request field on this endpoint.
         body.put("model_id", "eleven_multilingual_v2");
+        // Optional scene-energy lever (stability/style) -- video-generation-service's
+        // SceneEnergyStrategyResolver decides whether/what to send; this stays a pure passthrough
+        // with no domain knowledge of "shots" or "emotion" of its own. Absent means ElevenLabs
+        // applies its own defaults, same as before this existed.
+        if (params.get("voice_settings") != null) {
+            body.put("voice_settings", params.get("voice_settings"));
+        }
 
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : 30000;
         return webClient.post()

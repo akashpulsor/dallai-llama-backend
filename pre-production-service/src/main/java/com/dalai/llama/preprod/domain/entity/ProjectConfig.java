@@ -56,6 +56,11 @@ public class ProjectConfig {
     @Column(name = "preferred_lip_sync_model")
     private String preferredLipSyncModel;
 
+    /** A model_id from llm-gateway's real model_master (type=tts) -- e.g. "elevenlabs-tts-v1".
+     * Null uses video-generation-service's own configured default. See V53 migration. */
+    @Column(name = "preferred_tts_model")
+    private String preferredTtsModel;
+
     /** Set once, before/alongside script generation -- what every stage after it (shot-list
      * aspect ratio, video generation) plans around unless a shot has a deliberate reason to
      * differ. Null until the creator sets it (the project-settings panel defaults to RATIO_9_16

@@ -59,6 +59,9 @@ public class ProjectConfigService {
             // frontend picker uses "" as the "Default" option.
             config.setPreferredResolution(request.preferredResolution().isBlank() ? null : request.preferredResolution());
         }
+        if (request.preferredTtsModel() != null) {
+            config.setPreferredTtsModel(request.preferredTtsModel().isBlank() ? null : request.preferredTtsModel());
+        }
         if (request.recommenderEnabled() != null) {
             config.setRecommenderEnabled(request.recommenderEnabled());
         }
@@ -90,7 +93,7 @@ public class ProjectConfigService {
     private ProjectConfigView toView(ProjectConfig config) {
         return new ProjectConfigView(config.getAspectRatio(), config.getTargetDurationSeconds(), config.getPreferMotionGraphics(),
                 config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(),
-                config.getPreferredResolution(), config.getDialogueLanguage(),
+                config.getPreferredResolution(), config.getPreferredTtsModel(), config.getDialogueLanguage(),
                 config.getRecommenderEnabled(), config.getCostPreviewEnabled(),
                 config.getAutoCloneAudioPromptEnabled(), config.getPriceDeltaModalEnabled());
     }

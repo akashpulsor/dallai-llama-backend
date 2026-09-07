@@ -23,6 +23,9 @@ public record UpdateProjectConfigRequest(
          * string clears the pin back to "provider default". No 1080p option: no configured
          * provider currently supports it (see VideoResolution.java class-level comment). */
         String preferredResolution,
+        /** A model_id from llm-gateway's real model_master (type=tts) -- e.g. "elevenlabs-tts-v1".
+         * Same "" -> clear back to default convention as preferredResolution. */
+        String preferredTtsModel,
         /** Feature-flag gates -- null leaves the current value untouched, matching the partial
          * -update convention every other field on this record already uses. See ProjectConfig
          * entity javadoc and migration V48 for per-flag intent. */

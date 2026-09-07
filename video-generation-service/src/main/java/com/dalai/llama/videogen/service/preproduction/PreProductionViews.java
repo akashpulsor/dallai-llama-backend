@@ -27,6 +27,7 @@ public final class PreProductionViews {
             String preferredVideoModel,
             String preferredVoiceModel,
             String preferredLipSyncModel,
+            String preferredTtsModel,
             String dialogueLanguage
     ) {}
 

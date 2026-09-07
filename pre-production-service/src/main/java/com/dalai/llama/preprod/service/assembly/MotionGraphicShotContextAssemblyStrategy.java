@@ -81,7 +81,7 @@ class MotionGraphicShotContextAssemblyStrategy implements ShotContextAssemblyStr
         Technical technical = new Technical(
                 plan.getDurationSeconds() != null ? plan.getDurationSeconds() : baseTechnical.durationSeconds(),
                 baseTechnical.aspectRatio(), baseTechnical.targetProvider(), baseTechnical.targetModel(),
-                baseTechnical.voiceCloneModel(), baseTechnical.resolution());
+                baseTechnical.voiceCloneModel(), baseTechnical.resolution(), baseTechnical.ttsModel());
 
         return new ShotContext(
                 ctx.shot().getShotRef(),

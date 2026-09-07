@@ -242,7 +242,7 @@ public class ShotContextAssemblyService {
                 .map(b -> {
                     BeatVoice voice = resolveBeatVoice(tenantId, script, b.getCharacterKey(), assemblyContext, voiceByCharacterKey);
                     return new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
-                            voice.referenceUrl(), voice.builtinVoiceId());
+                            voice.referenceUrl(), voice.builtinVoiceId(), shot.getEmotion());
                 })
                 .collect(Collectors.toList());
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),

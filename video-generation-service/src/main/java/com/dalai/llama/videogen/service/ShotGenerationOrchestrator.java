@@ -170,6 +170,7 @@ public class ShotGenerationOrchestrator {
                 .resolution(shotContext.technical() != null && shotContext.technical().resolution() != null
                         ? shotContext.technical().resolution().wireValue() : null)
                 .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
+                .ttsModel(shotContext.technical() != null ? shotContext.technical().ttsModel() : null)
                 .muteAudio(muteAudio)
                 .status(JobStatus.PENDING_APPROVAL)
                 .approvalStatus(ApprovalStatus.PENDING)
@@ -316,7 +317,8 @@ public class ShotGenerationOrchestrator {
                 boolean dubSucceeded;
                 try {
                     BeatDubbingService.DubResult dub = beatDubbingService.dub(
-                            job.getTenantId().toString(), job.getJobId(), job.getProjectId(), beats, outputUri, job.getVoiceCloneModel());
+                            job.getTenantId().toString(), job.getJobId(), job.getProjectId(), beats, outputUri,
+                            job.getVoiceCloneModel(), job.getTtsModel());
                     outputUri = dub.finalVideoUrl();
                     actualCost = actualCost.add(dub.cost());
                     dubSucceeded = true;
@@ -575,6 +577,7 @@ public class ShotGenerationOrchestrator {
                         .characterKey(b.characterKey())
                         .voiceReferenceUrl(b.voiceReferenceUrl())
                         .builtinVoiceId(b.builtinVoiceId())
+                        .emotion(b.emotion())
                         .createdAt(now)
                         .build())
                 .toList();
@@ -584,7 +587,7 @@ public class ShotGenerationOrchestrator {
     private List<DialogueBeat> loadDialogueBeats(UUID jobId) {
         return videoGenJobDialogueBeatRepository.findByJobIdOrderByOrderIndexAsc(jobId).stream()
                 .map(b -> new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
-                        b.getVoiceReferenceUrl(), b.getBuiltinVoiceId()))
+                        b.getVoiceReferenceUrl(), b.getBuiltinVoiceId(), b.getEmotion()))
                 .toList();
     }
 

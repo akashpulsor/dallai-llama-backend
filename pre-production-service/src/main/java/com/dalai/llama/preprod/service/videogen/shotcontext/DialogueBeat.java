@@ -15,6 +15,11 @@ public record DialogueBeat(
         String text,
         String characterKey,
         String voiceReferenceUrl,
-        String builtinVoiceId
+        String builtinVoiceId,
+        /** Shot.emotion -- a shot-level attribute (same value for every beat in that shot), fed
+         * into beat-dubbing's scene-energy TTS lever so a shot's dubbed delivery matches its
+         * intended mood instead of reading as flat/neutral text. Nullable, same tolerant "no
+         * signal, use a sensible default" handling as the voice fields above. */
+        String emotion
 ) {
 }

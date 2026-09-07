@@ -13,7 +13,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.web.bind.annotation.RequestMapping;
+
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -23,6 +26,13 @@ public class ShotDialogueBeatController extends BaseController {
 
     public ShotDialogueBeatController(ShotDialogueBeatService shotDialogueBeatService) {
         this.shotDialogueBeatService = shotDialogueBeatService;
+    }
+
+    /** Backs the Cast tab's "needs a voice" vs "voice not required" marker -- every characterKey
+     * that actually has at least one dialogue beat anywhere in the project. */
+    @GetMapping("/v1/projects/{projectId}/speaking-characters")
+    public ResponseEntity<Set<String>> speakingCharacters(@PathVariable UUID projectId) {
+        return ResponseEntity.ok(shotDialogueBeatService.speakingCharacterKeys(tenant().tenantId(), projectId));
     }
 
     @GetMapping("/v1/shots/{shotId}/dialogue-beats")

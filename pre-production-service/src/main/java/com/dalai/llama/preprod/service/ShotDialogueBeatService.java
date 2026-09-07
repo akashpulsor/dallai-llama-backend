@@ -1,12 +1,9 @@
 package com.dalai.llama.preprod.service;
 
-import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.entity.Shot;
 import com.dalai.llama.preprod.domain.entity.ShotDialogueBeat;
 import com.dalai.llama.preprod.dto.SaveShotDialogueBeatRequest;
 import com.dalai.llama.preprod.dto.ShotDialogueBeatView;
-import com.dalai.llama.preprod.repository.ScriptCharacterRepository;
-import com.dalai.llama.preprod.repository.ScriptRepository;
 import com.dalai.llama.preprod.repository.ShotDialogueBeatRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
 import org.springframework.stereotype.Service;
@@ -15,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -25,19 +23,19 @@ public class ShotDialogueBeatService {
 
     private final ShotRepository shotRepository;
     private final ShotDialogueBeatRepository shotDialogueBeatRepository;
-    private final ScriptRepository scriptRepository;
-    private final ScriptCharacterRepository scriptCharacterRepository;
+    private final EffectiveSpeakerResolver effectiveSpeakerResolver;
+    private final ProjectService projectService;
 
     public ShotDialogueBeatService(
             ShotRepository shotRepository,
             ShotDialogueBeatRepository shotDialogueBeatRepository,
-            ScriptRepository scriptRepository,
-            ScriptCharacterRepository scriptCharacterRepository
+            EffectiveSpeakerResolver effectiveSpeakerResolver,
+            ProjectService projectService
     ) {
         this.shotRepository = shotRepository;
         this.shotDialogueBeatRepository = shotDialogueBeatRepository;
-        this.scriptRepository = scriptRepository;
-        this.scriptCharacterRepository = scriptCharacterRepository;
+        this.effectiveSpeakerResolver = effectiveSpeakerResolver;
+        this.projectService = projectService;
     }
 
     @Transactional(readOnly = true)
@@ -81,6 +79,23 @@ public class ShotDialogueBeatService {
         return toView(shotDialogueBeatRepository.save(beat));
     }
 
+    /** Ground truth for the Cast tab's "needs a voice" vs "voice not required" marker -- the exact
+     * same characterKey set {@code ShotContextAssemblyService.resolveBeatVoice} resolves voices
+     * for at dispatch time, not a per-shot-type guess (which would miss narration beats and,
+     * after {@link EffectiveSpeakerResolver}, product-shot beats now correctly attributed to the
+     * narrator instead of the mute product). */
+    @Transactional(readOnly = true)
+    public Set<String> speakingCharacterKeys(UUID tenantId, UUID projectId) {
+        projectService.requireProject(tenantId, projectId);
+        List<UUID> shotIds = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
+                .map(Shot::getId)
+                .collect(Collectors.toList());
+        if (shotIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(shotDialogueBeatRepository.findDistinctCharacterKeysByShotIdIn(shotIds));
+    }
+
     @Transactional
     public void delete(UUID tenantId, UUID shotId, UUID beatId) {
         ShotDialogueBeat beat = shotDialogueBeatRepository.findByIdAndTenantId(beatId, tenantId)
@@ -107,21 +122,15 @@ public class ShotDialogueBeatService {
         return shot.getVoiceOver() != null && !shot.getVoiceOver().isBlank() ? shot.getVoiceOver() : shot.getScriptLine();
     }
 
-    /** No one on screen but there's still a line to speak -- the narrator (never in
-     * {@code primaryCharacterKey}, per {@link CharacterType}'s own javadoc) is who's actually
-     * talking, so beat-dubbing resolves its voice sample the same way {@link DialogueDetailsService}
-     * does for the read-only dialogue view. */
+    /** An explicit override always wins (a shot's beats can span more than one speaker); otherwise
+     * {@link EffectiveSpeakerResolver} decides -- the shot's own primary character, unless it's a
+     * mute PRODUCT or there's no primary character at all, both of which fall through to the
+     * script's narrator, same as {@link DialogueDetailsService} for the read-only dialogue view. */
     private String resolveCharacterKey(SaveShotDialogueBeatRequest request, Shot shot) {
         if (request.characterKey() != null) {
             return request.characterKey();
         }
-        if (shot.getPrimaryCharacterKey() != null) {
-            return shot.getPrimaryCharacterKey();
-        }
-        return scriptRepository.findByProjectId(shot.getProjectId())
-                .flatMap(script -> scriptCharacterRepository.findFirstByScriptIdAndCharacterType(script.getId(), CharacterType.NARRATOR))
-                .map(character -> character.getCharacterKey())
-                .orElse(null);
+        return effectiveSpeakerResolver.resolveCharacterKey(shot.getProjectId(), shot);
     }
 
     private BigDecimal resolveDurationSeconds(SaveShotDialogueBeatRequest request, Shot shot) {

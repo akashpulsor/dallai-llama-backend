@@ -70,6 +70,13 @@ public class VideoGenJob {
     @Column(name = "voice_clone_model")
     private String voiceCloneModel;
 
+    /** Same capture-at-generate()/read-at-approve() reasoning -- the project's TTS model pin
+     * (ShotContext.technical().ttsModel(), sourced from pre-production-service's
+     * ProjectConfig.preferredTtsModel), forwarded to BeatDubbingService.dub() when this job
+     * auto-dubs. Null uses that service's own default. */
+    @Column(name = "tts_model")
+    private String ttsModel;
+
     /** True when every dialogue beat this job carried resolved a cast voice reference -- decided
      * once at generate() time (see {@link BeatDubbingService#canAutoDub}), read back at approve()
      * to both mute Seedance's native audio and trigger the post-dispatch dub/mux step. */

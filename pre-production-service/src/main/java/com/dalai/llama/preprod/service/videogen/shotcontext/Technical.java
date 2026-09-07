@@ -14,11 +14,21 @@ public record Technical(
         /** ProjectConfig.preferredResolution -- "480p" / "720p" wire value, or null for
          * provider default. Serialized as-is to video-generation-service where its own
          * VideoResolution.fromWireValue handles unknown/blank tolerantly. */
-        String resolution
+        String resolution,
+        /** ProjectConfig.preferredTtsModel -- a model_id pin for beat-dubbing's TTS call
+         * (llm-gateway model_master, type=tts), e.g. when a built-in voice speaks directly with
+         * no clone step. Null uses video-generation-service's own configured default. */
+        String ttsModel
 ) {
-    /** Back-compat: existing 5-arg call sites keep working with resolution=null. */
+    /** Back-compat: existing 5-arg call sites keep working with resolution/ttsModel=null. */
     public Technical(Integer durationSeconds, AspectRatio aspectRatio, String targetProvider,
                      String targetModel, String voiceCloneModel) {
-        this(durationSeconds, aspectRatio, targetProvider, targetModel, voiceCloneModel, null);
+        this(durationSeconds, aspectRatio, targetProvider, targetModel, voiceCloneModel, null, null);
+    }
+
+    /** Back-compat: existing 6-arg call sites (pre-ttsModel) keep working with ttsModel=null. */
+    public Technical(Integer durationSeconds, AspectRatio aspectRatio, String targetProvider,
+                     String targetModel, String voiceCloneModel, String resolution) {
+        this(durationSeconds, aspectRatio, targetProvider, targetModel, voiceCloneModel, resolution, null);
     }
 }
