@@ -1,9 +1,12 @@
 package com.dalai.llama.preprod.service.assembly;
 
+import com.dalai.llama.preprod.domain.ShotImageKind;
 import com.dalai.llama.preprod.domain.ShotType;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.domain.entity.MotionGraphicPlan;
+import com.dalai.llama.preprod.domain.entity.ShotImage;
 import com.dalai.llama.preprod.repository.MotionGraphicPlanRepository;
+import com.dalai.llama.preprod.repository.ShotImageRepository;
 import com.dalai.llama.preprod.service.PreProductionException;
 import com.dalai.llama.preprod.service.videogen.shotcontext.Narrative;
 import com.dalai.llama.preprod.service.videogen.shotcontext.ProductBrand;
@@ -26,9 +29,14 @@ import java.util.List;
 class MotionGraphicShotContextAssemblyStrategy implements ShotContextAssemblyStrategy {
 
     private final MotionGraphicPlanRepository motionGraphicPlanRepository;
+    private final ShotImageRepository shotImageRepository;
 
-    MotionGraphicShotContextAssemblyStrategy(MotionGraphicPlanRepository motionGraphicPlanRepository) {
+    MotionGraphicShotContextAssemblyStrategy(
+            MotionGraphicPlanRepository motionGraphicPlanRepository,
+            ShotImageRepository shotImageRepository
+    ) {
         this.motionGraphicPlanRepository = motionGraphicPlanRepository;
+        this.shotImageRepository = shotImageRepository;
     }
 
     @Override
@@ -46,10 +54,28 @@ class MotionGraphicShotContextAssemblyStrategy implements ShotContextAssemblyStr
         Narrative narrative = new Narrative(motionGraphicNarrativeLine(plan),
                 ctx.scene() == null ? null : ctx.scene().getSlug(), ctx.arcPosition());
 
+        // Reference-image priority: cast profile first (e.g. a product being highlighted in the
+        // graphic already has a resolved face/product reference), then the shot's own MOTION_GRAPHIC
+        // image (the design preview generated at shot-list time -- Wan/Seedance treat it as the
+        // input frame for image-to-video, so the model animates the actual designed graphic rather
+        // than making up a fresh interpretation of the text prompt). Falls through to no reference
+        // only if neither exists, in which case the model generates from text alone.
         CastProfile reference = ctx.castProfile();
-        ProductBrand productBrand = new ProductBrand(reference != null, plan.getOnScreenText(),
-                reference == null ? null : reference.getFaceRefBucket(),
-                reference == null ? null : reference.getFaceRefObjectKey());
+        String referenceBucket = null;
+        String referenceObjectKey = null;
+        if (reference != null) {
+            referenceBucket = reference.getFaceRefBucket();
+            referenceObjectKey = reference.getFaceRefObjectKey();
+        } else {
+            ShotImage mgImage = shotImageRepository.findByShotIdAndKind(ctx.shot().getId(), ShotImageKind.MOTION_GRAPHIC).orElse(null);
+            if (mgImage != null) {
+                referenceBucket = mgImage.getBucket();
+                referenceObjectKey = mgImage.getObjectKey();
+            }
+        }
+        boolean hasReference = referenceBucket != null && referenceObjectKey != null;
+        ProductBrand productBrand = new ProductBrand(hasReference, plan.getOnScreenText(),
+                referenceBucket, referenceObjectKey);
 
         Technical baseTechnical = ShotContextCommonFields.technical(ctx);
         Technical technical = new Technical(
