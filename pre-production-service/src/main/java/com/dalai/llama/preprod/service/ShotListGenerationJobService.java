@@ -9,6 +9,7 @@ import com.dalai.llama.preprod.repository.ShotListJobRepository;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,14 +76,29 @@ public class ShotListGenerationJobService {
 
     private ShotListJob createPending(UUID tenantId, UUID projectId, String idempotencyKey) {
         OffsetDateTime now = OffsetDateTime.now();
-        return shotListJobRepository.save(ShotListJob.builder()
-                .tenantId(tenantId)
-                .projectId(projectId)
-                .status(ShotListJobStatus.PENDING)
-                .llmJobIdempotencyKey(idempotencyKey)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        try {
+            return shotListJobRepository.save(ShotListJob.builder()
+                    .tenantId(tenantId)
+                    .projectId(projectId)
+                    .status(ShotListJobStatus.PENDING)
+                    .llmJobIdempotencyKey(idempotencyKey)
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build());
+        } catch (DataIntegrityViolationException ex) {
+            // Race: another request just inserted the same idempotency key between our findBy()
+            // and this save(). The UNIQUE index on llm_job_idempotency_key caught it. Re-read
+            // the row the racing request just wrote and treat it exactly like an already-existing
+            // pending job -- one Kafka message eventually goes out either way, and the second
+            // caller reuses the winner's job id. Prevents the "clicked twice, got a 500 the
+            // second time and a duplicate job the first time" pattern.
+            log.info("Idempotency-key race on shot-list submit -- reusing winner's row idempotencyKey={}",
+                    idempotencyKey);
+            return shotListJobRepository.findByLlmJobIdempotencyKey(idempotencyKey)
+                    .map(existing -> resubmitIfTerminal(existing, tenantId))
+                    .orElseThrow(() -> PreProductionException.upstream(
+                            "Idempotency race resolved but row disappeared for key " + idempotencyKey));
+        }
     }
 
     /** For a job row whose previous run finished terminally, reset it to PENDING and reuse the
