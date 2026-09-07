@@ -1,4 +1,0 @@
-task_0:
-  video_path: "C:/Users/Akash/workspace/v5/dallai-llama-backend/ai-service/work/avatar/lip-sync-b5bd9be4d1-e5b3bd80/source.mp4"
-  audio_path: "C:/Users/Akash/workspace/v5/dallai-llama-backend/ai-service/work/avatar/lip-sync-b5bd9be4d1-e5b3bd80/dialogue.wav"
-  result_name: "lip-sync-output.mp4"

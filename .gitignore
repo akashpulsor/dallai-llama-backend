@@ -33,3 +33,30 @@ creator-service/docker/dev-ca/*.pem
 
 # Claude Code local settings
 .claude/
+
+# Local scratch / smoke-test outputs -- these were accidentally committed at some point.
+# Test fixtures that BELONG in git live under src/test/resources.
+.avatar-smoke/
+**/.avatar-smoke/
+ai-service/work/
+gemini_*.json
+gemini_*.txt
+shot10_*.json
+shot*_*_req.json
+shot*_*_resp.json
+minimal_test_*.json
+mirror_test_*.json
+natural_full_*.json
+nomirror_test_*.json
+simple_resp.json
+softlock_resp.json
+mirror_test_resp.json
+minimal_test_resp.json
+natural_full_resp.json
+nomirror_test_resp.json
+*.all-java-files.txt
+**/all-java-files.txt
+
+# Python caches (a few Python helper scripts have crept in over time)
+__pycache__/
+*.pyc
