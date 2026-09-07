@@ -29,9 +29,12 @@ public class EffectiveSpeakerResolver {
 
     public String resolveCharacterKey(UUID projectId, Shot shot) {
         Script script = scriptRepository.findByProjectId(projectId).orElse(null);
-        if (script == null) {
-            return null;
-        }
+        return script == null ? null : resolveCharacterKey(script, shot);
+    }
+
+    /** Same rule, for a caller that already has the {@link Script} (e.g. resolving this for every
+     * shot in a project) and would otherwise redundantly re-fetch it per shot. */
+    public String resolveCharacterKey(Script script, Shot shot) {
         String primaryKey = shot.getPrimaryCharacterKey();
         if (primaryKey != null && !isMuteProduct(script, primaryKey)) {
             return primaryKey;
