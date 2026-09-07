@@ -122,7 +122,7 @@ video-gen:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}
     default-compression-model: ${VIDEO_GEN_COMPRESSION_MODEL:gemini-2.5-flash}
-    default-voice-clone-model: ${VIDEO_GEN_VOICE_CLONE_MODEL:fal-ai/minimax/voice-clone}
+    default-voice-clone-model: ${VIDEO_GEN_VOICE_CLONE_MODEL:elevenlabs/instant-voice-clone}
     default-audio-video-merge-model: ${VIDEO_GEN_AUDIO_VIDEO_MERGE_MODEL:fal-ai/ffmpeg-api/merge-audio-video}
     timeout-ms: ${VIDEO_GEN_LLM_GATEWAY_TIMEOUT_MS:200000}
   job:

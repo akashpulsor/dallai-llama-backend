@@ -51,6 +51,7 @@ public final class PreProductionViews {
             String gender,
             String voiceRefBucket,
             String voiceRefObjectKey,
+            String builtinVoiceId,
             long projectCount
     ) {}
 

@@ -76,6 +76,14 @@ public class CastProfile {
     @Column(name = "voice_ref_object_key")
     private String voiceRefObjectKey;
 
+    /** ACTOR profiles only, alternative to voiceRef* -- a stock ElevenLabs voice_id (see llm-
+     * gateway's builtin_voice table) for a character with no recorded voice sample to clone.
+     * Mutually exclusive with voiceRefBucket/voiceRefObjectKey: {@link
+     * com.dalai.llama.preprod.service.CastProfileService#updateVoice} clears this when a real
+     * sample is uploaded, and {@code selectBuiltinVoice} clears voiceRef* when this is set. */
+    @Column(name = "builtin_voice_id", length = 128)
+    private String builtinVoiceId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

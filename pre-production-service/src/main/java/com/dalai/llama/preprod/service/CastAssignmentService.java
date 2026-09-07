@@ -1,5 +1,7 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.domain.CastProfileType;
+import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.entity.CastAssignment;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.domain.entity.ScriptCharacter;
@@ -37,6 +39,7 @@ public class CastAssignmentService {
         ScriptCharacter character = scriptCharacterRepository.findById(request.scriptCharacterId())
                 .orElseThrow(() -> PreProductionException.notFound("No script character " + request.scriptCharacterId()));
         CastProfile profile = castProfileService.requireCastProfile(tenantId, request.castProfileId());
+        requireCompatibleTypes(character, profile);
 
         OffsetDateTime now = OffsetDateTime.now();
         CastAssignment assignment = castAssignmentRepository.findByProjectIdAndScriptCharacterId(projectId, character.getId())
@@ -51,6 +54,22 @@ public class CastAssignmentService {
         assignment.setPerformanceDirection(request.performanceDirection());
         assignment.setUpdatedAt(now);
         return toView(castAssignmentRepository.save(assignment));
+    }
+
+    /** The two profileType/characterType enums only genuinely disagree on "a person" (frontend's
+     * {@code CastSection.jsx} maps both HUMAN and NARRATOR characters to an ACTOR profile -- see
+     * its {@code toProfileType} comment -- there's no dedicated NARRATOR-profile requirement in
+     * practice). So the one rule actually worth enforcing here is PRODUCT-ness matching: a PRODUCT
+     * character needs a PRODUCT profile (the showcased item), and a HUMAN/NARRATOR character needs
+     * a non-PRODUCT profile (someone who can speak) -- catches the same class of mismatch as the
+     * voice-on-a-PRODUCT-profile gap this change also closes in {@code CastProfileService}. */
+    private void requireCompatibleTypes(ScriptCharacter character, CastProfile profile) {
+        boolean characterIsProduct = character.getCharacterType() == CharacterType.PRODUCT;
+        boolean profileIsProduct = profile.getProfileType() == CastProfileType.PRODUCT;
+        if (characterIsProduct != profileIsProduct) {
+            throw PreProductionException.badRequest("Cannot assign a " + profile.getProfileType()
+                    + " profile to a " + character.getCharacterType() + " character");
+        }
     }
 
     @Transactional(readOnly = true)

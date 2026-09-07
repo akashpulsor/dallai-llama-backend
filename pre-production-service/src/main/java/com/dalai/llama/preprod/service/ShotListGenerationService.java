@@ -406,7 +406,7 @@ public class ShotListGenerationService {
                     profile == null ? null : profile.getId(),
                     profile == null ? null : profile.getDisplayName(),
                     profile == null ? null : signedFaceUrl(profile),
-                    profile != null && profile.getVoiceRefBucket() != null
+                    profile != null && (profile.getVoiceRefBucket() != null || profile.getBuiltinVoiceId() != null)
             ));
         }
         return result;

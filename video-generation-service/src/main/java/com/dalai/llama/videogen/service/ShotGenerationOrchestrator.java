@@ -574,6 +574,7 @@ public class ShotGenerationOrchestrator {
                         .text(b.text())
                         .characterKey(b.characterKey())
                         .voiceReferenceUrl(b.voiceReferenceUrl())
+                        .builtinVoiceId(b.builtinVoiceId())
                         .createdAt(now)
                         .build())
                 .toList();
@@ -582,7 +583,8 @@ public class ShotGenerationOrchestrator {
 
     private List<DialogueBeat> loadDialogueBeats(UUID jobId) {
         return videoGenJobDialogueBeatRepository.findByJobIdOrderByOrderIndexAsc(jobId).stream()
-                .map(b -> new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(), b.getVoiceReferenceUrl()))
+                .map(b -> new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
+                        b.getVoiceReferenceUrl(), b.getBuiltinVoiceId()))
                 .toList();
     }
 

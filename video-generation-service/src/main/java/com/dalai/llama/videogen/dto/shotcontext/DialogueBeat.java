@@ -4,13 +4,16 @@ import java.math.BigDecimal;
 
 /** Wire-contract mirror of pre-production-service's own {@code DialogueBeat} -- one dialogue
  * timestamp within this shot's timeline. Presence of any beat with a non-null {@code
- * voiceReferenceUrl} is what drives {@code ShotGenerationOrchestrator} to turn off Seedance's
- * native audio and build a beat-matched cloned-voice track instead. */
+ * voiceReferenceUrl} (clone the actor's own sample) or {@code builtinVoiceId} (speak directly with
+ * a stock ElevenLabs voice, no cloning) is what drives {@code ShotGenerationOrchestrator} to turn
+ * off Seedance's native audio and build a beat-matched voice track instead; see {@link
+ * com.dalai.llama.videogen.service.BeatDubbingService#canAutoDub}. */
 public record DialogueBeat(
         BigDecimal startSeconds,
         BigDecimal durationSeconds,
         String text,
         String characterKey,
-        String voiceReferenceUrl
+        String voiceReferenceUrl,
+        String builtinVoiceId
 ) {
 }

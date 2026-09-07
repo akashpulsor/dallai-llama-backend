@@ -298,18 +298,19 @@ public class ShotContextAssemblyService {
                         (a, b) -> a));
         PreProductionViews.CastProfileView primaryFallback = castAssignments.isEmpty()
                 ? null : profilesById.get(castAssignments.get(0).castProfileId());
-        String fallbackVoiceUrl = voiceUrlFor(primaryFallback);
+        PreProductionViews.CastProfileView fallbackProfile = primaryFallback;
         return beats.stream()
                 .map(b -> {
-                    String voiceUrl = resolveVoiceUrl(b.characterKey(), scriptCharacterIdByKey,
+                    PreProductionViews.CastProfileView resolved = resolveVoiceProfile(b.characterKey(), scriptCharacterIdByKey,
                             castProfileByScriptCharacterId, profilesById);
+                    PreProductionViews.CastProfileView profile = resolved != null ? resolved : fallbackProfile;
                     return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(),
-                            b.characterKey(), voiceUrl != null ? voiceUrl : fallbackVoiceUrl);
+                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile));
                 })
                 .toList();
     }
 
-    private String resolveVoiceUrl(
+    private PreProductionViews.CastProfileView resolveVoiceProfile(
             String characterKey,
             Map<String, UUID> scriptCharacterIdByKey,
             Map<UUID, UUID> castProfileByScriptCharacterId,
@@ -325,14 +326,24 @@ public class ShotContextAssemblyService {
         if (castProfileId == null) {
             return null;
         }
-        return voiceUrlFor(profilesById.get(castProfileId));
+        return profilesById.get(castProfileId);
     }
 
+    /** A profile with a real uploaded sample takes priority over a built-in pick -- {@code
+     * CastProfileService} already keeps the two mutually exclusive, so this is defensive ordering
+     * only, matching pre-production-service's own {@code resolveBeatVoice}. */
     private static String voiceUrlFor(PreProductionViews.CastProfileView profile) {
         if (profile == null || profile.voiceRefBucket() == null || profile.voiceRefObjectKey() == null) {
             return null;
         }
         return profile.voiceRefBucket() + "/" + profile.voiceRefObjectKey();
+    }
+
+    private static String builtinVoiceIdFor(PreProductionViews.CastProfileView profile) {
+        if (profile == null || voiceUrlFor(profile) != null) {
+            return null;
+        }
+        return profile.builtinVoiceId();
     }
 
     private PreProductionViews.ShotImageView pickImage(List<PreProductionViews.ShotImageView> images, String kind) {

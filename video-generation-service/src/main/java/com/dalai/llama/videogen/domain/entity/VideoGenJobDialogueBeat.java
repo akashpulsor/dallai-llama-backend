@@ -54,6 +54,9 @@ public class VideoGenJobDialogueBeat {
     @Column(name = "voice_reference_url", columnDefinition = "text")
     private String voiceReferenceUrl;
 
+    @Column(name = "builtin_voice_id")
+    private String builtinVoiceId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

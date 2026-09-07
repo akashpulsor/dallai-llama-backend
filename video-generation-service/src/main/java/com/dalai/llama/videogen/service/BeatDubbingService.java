@@ -48,13 +48,18 @@ public class BeatDubbingService {
         this.mergeModel = mergeModel;
     }
 
-    /** True only when every beat resolved a cast voice reference -- a shot with any beat missing
-     * one falls back to normal native-audio generation for the whole shot rather than partially
-     * dubbing (see {@code DialogueBeat.voiceReferenceUrl}'s javadoc on pre-production-service's
-     * side for why: multi-character beats aren't independently voiced yet in this pass). */
+    /** True only when every beat resolved a cast voice -- either a cloned-sample reference or a
+     * stock built-in voice id -- a shot with any beat missing both falls back to normal
+     * native-audio generation for the whole shot rather than partially dubbing (see {@code
+     * DialogueBeat}'s javadoc on pre-production-service's side for why: multi-character beats
+     * aren't independently voiced yet in this pass). */
     public boolean canAutoDub(List<DialogueBeat> beats) {
-        return beats != null && !beats.isEmpty()
-                && beats.stream().allMatch(b -> b.voiceReferenceUrl() != null && !b.voiceReferenceUrl().isBlank());
+        return beats != null && !beats.isEmpty() && beats.stream().allMatch(BeatDubbingService::hasVoice);
+    }
+
+    private static boolean hasVoice(DialogueBeat beat) {
+        return (beat.voiceReferenceUrl() != null && !beat.voiceReferenceUrl().isBlank())
+                || (beat.builtinVoiceId() != null && !beat.builtinVoiceId().isBlank());
     }
 
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl) {
@@ -77,19 +82,27 @@ public class BeatDubbingService {
      * ElevenLabs (no gap encoding at all), same "best-effort bet, not a guarantee" this class's
      * own class-doc already states for MiniMax's timing overall. */
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl, String voiceCloneModelOverride) {
-        String model = voiceCloneModelOverride == null || voiceCloneModelOverride.isBlank() ? voiceCloneModel : voiceCloneModelOverride;
-        boolean fused = model.toLowerCase(Locale.ROOT).contains("minimax");
         List<DialogueBeat> sorted = beats.stream()
                 .sorted(Comparator.comparing(DialogueBeat::startSeconds))
                 .toList();
         String referenceAudioUrl = sorted.get(0).voiceReferenceUrl();
+        String builtinVoiceId = sorted.get(0).builtinVoiceId();
+        // A built-in voice is ElevenLabs' own stock voice_id -- nothing to clone, so this always
+        // goes straight to TTS regardless of the project's picked clone model (that pin only means
+        // something once there IS a sample to clone).
+        boolean useBuiltinVoice = referenceAudioUrl == null && builtinVoiceId != null;
+
+        String model = voiceCloneModelOverride == null || voiceCloneModelOverride.isBlank() ? voiceCloneModel : voiceCloneModelOverride;
+        boolean fused = !useBuiltinVoice && model.toLowerCase(Locale.ROOT).contains("minimax");
         String combinedText = fused
                 ? buildPausedText(sorted)
                 : sorted.stream().map(DialogueBeat::text).collect(java.util.stream.Collectors.joining(" "));
 
-        LlmGatewayChatResponse synthesis = fused
-                ? fusedCloneAndSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText)
-                : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText);
+        LlmGatewayChatResponse synthesis = useBuiltinVoice
+                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText)
+                : fused
+                        ? fusedCloneAndSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText)
+                        : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText);
         if (synthesis == null || synthesis.response() == null || synthesis.response().isBlank()) {
             throw VideoGenException.upstream("llm-gateway returned no synthesized dialogue audio for job_id=" + jobId);
         }
@@ -119,6 +132,16 @@ public class BeatDubbingService {
         params.put("text", combinedText);
         return llmGatewayClient.chat(tenantId, "beat-dub-synthesize-" + jobId,
                 new LlmGatewayChatRequest(model, List.of(new LlmGatewayMessage("user", combinedText)), params, null, null, projectId));
+    }
+
+    /** No sample to clone -- {@code voiceId} is already a usable ElevenLabs stock voice_id (see
+     * llm-gateway's {@code builtin_voice} table), so this is just the TTS half of {@link
+     * #cloneThenSynthesize}, skipping the clone call entirely. */
+    private LlmGatewayChatResponse directTtsSynthesize(String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText) {
+        Map<String, Object> ttsParams = new LinkedHashMap<>();
+        ttsParams.put("voice_id", voiceId);
+        return llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
+                new LlmGatewayChatRequest(ELEVENLABS_TTS_MODEL, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
     }
 
     /** ElevenLabs' two-call shape: clone the reference sample into a {@code voice_id} (no text --

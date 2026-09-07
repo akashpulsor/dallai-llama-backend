@@ -237,19 +237,29 @@ public class ShotContextAssemblyService {
             return base;
         }
         Script script = scriptRepository.findByProjectId(shot.getProjectId()).orElse(null);
-        Map<String, String> voiceUrlByCharacterKey = new HashMap<>();
+        Map<String, BeatVoice> voiceByCharacterKey = new HashMap<>();
         List<DialogueBeat> dialogueBeats = beats.stream()
-                .map(b -> new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
-                        resolveBeatVoiceUrl(tenantId, script, b.getCharacterKey(), assemblyContext, voiceUrlByCharacterKey)))
+                .map(b -> {
+                    BeatVoice voice = resolveBeatVoice(tenantId, script, b.getCharacterKey(), assemblyContext, voiceByCharacterKey);
+                    return new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
+                            voice.referenceUrl(), voice.builtinVoiceId());
+                })
                 .collect(Collectors.toList());
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),
                 base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(), dialogueBeats);
     }
 
-    private String resolveBeatVoiceUrl(UUID tenantId, Script script, String characterKey,
-                                        ShotAssemblyContext assemblyContext, Map<String, String> cache) {
+    /** A beat's speaking character resolves to at most one of a cloned-sample signed URL or a
+     * stock built-in voice id -- never both (service layer already keeps them mutually exclusive
+     * on {@code CastProfile}), and possibly neither if the character has no usable cast voice. */
+    private record BeatVoice(String referenceUrl, String builtinVoiceId) {
+        static final BeatVoice NONE = new BeatVoice(null, null);
+    }
+
+    private BeatVoice resolveBeatVoice(UUID tenantId, Script script, String characterKey,
+                                        ShotAssemblyContext assemblyContext, Map<String, BeatVoice> cache) {
         if (characterKey == null) {
-            return null;
+            return BeatVoice.NONE;
         }
         if (cache.containsKey(characterKey)) {
             return cache.get(characterKey);
@@ -257,11 +267,16 @@ public class ShotContextAssemblyService {
         CastProfile profile = characterKey.equals(assemblyContext.shot().getPrimaryCharacterKey()) && assemblyContext.castProfile() != null
                 ? assemblyContext.castProfile()
                 : resolveCastProfile(tenantId, script, characterKey);
-        String url = profile != null && profile.getVoiceRefBucket() != null && profile.getVoiceRefObjectKey() != null
-                ? signedUrl(profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey())
-                : null;
-        cache.put(characterKey, url);
-        return url;
+        BeatVoice voice = BeatVoice.NONE;
+        if (profile != null) {
+            if (profile.getVoiceRefBucket() != null && profile.getVoiceRefObjectKey() != null) {
+                voice = new BeatVoice(signedUrl(profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey()), null);
+            } else if (profile.getBuiltinVoiceId() != null) {
+                voice = new BeatVoice(null, profile.getBuiltinVoiceId());
+            }
+        }
+        cache.put(characterKey, voice);
+        return voice;
     }
 
     private CastProfile resolveCastProfile(UUID tenantId, Script script, String characterKey) {

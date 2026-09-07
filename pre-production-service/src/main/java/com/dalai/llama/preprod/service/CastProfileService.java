@@ -5,6 +5,7 @@ import com.dalai.llama.preprod.domain.MediaAssetType;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
+import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
@@ -58,6 +59,7 @@ public class CastProfileService {
                 .gender(profileType == CastProfileType.ACTOR ? request.gender() : null)
                 .voiceRefBucket(profileType == CastProfileType.ACTOR ? request.voiceRefBucket() : null)
                 .voiceRefObjectKey(profileType == CastProfileType.ACTOR ? request.voiceRefObjectKey() : null)
+                .builtinVoiceId(profileType == CastProfileType.ACTOR ? request.builtinVoiceId() : null)
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -73,16 +75,41 @@ public class CastProfileService {
      * ({@link #create}) -- a profile created before an actor's voice sample was ready (or one
      * shared across characters, like a narrator reusing an on-screen actor's profile) had no way
      * to add or change it afterward. Same upload -> attach pattern as create: the caller already
-     * has bucket/objectKey from {@code POST /v1/cast-profiles/media}. */
+     * has bucket/objectKey from {@code POST /v1/cast-profiles/media}. ACTOR-only, like every other
+     * voice field on this entity -- a PRODUCT/NARRATOR profile has no dialogue to dub. Uploading a
+     * real sample supersedes any previously-picked built-in voice. */
     @Transactional
     public CastProfileView updateVoice(UUID tenantId, UUID castProfileId, UpdateCastProfileVoiceRequest request) {
         CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        requireActorProfile(profile);
         profile.setVoiceRefBucket(request.voiceRefBucket());
         profile.setVoiceRefObjectKey(request.voiceRefObjectKey());
+        profile.setBuiltinVoiceId(null);
         profile.setUpdatedAt(OffsetDateTime.now());
         CastProfile saved = castProfileRepository.save(profile);
         mediaAssetService.registerIfAbsent(tenantId, request.voiceRefBucket(), request.voiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
         return toView(saved);
+    }
+
+    /** Alternative to {@link #updateVoice} for a character with no recorded sample to clone: picks
+     * a stock ElevenLabs voice (see llm-gateway's {@code builtin_voice} table) instead. Clears any
+     * previously-uploaded sample -- the two are alternative choices, not additive. */
+    @Transactional
+    public CastProfileView selectBuiltinVoice(UUID tenantId, UUID castProfileId, SelectCastProfileBuiltinVoiceRequest request) {
+        CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        requireActorProfile(profile);
+        profile.setBuiltinVoiceId(request.builtinVoiceId());
+        profile.setVoiceRefBucket(null);
+        profile.setVoiceRefObjectKey(null);
+        profile.setUpdatedAt(OffsetDateTime.now());
+        return toView(castProfileRepository.save(profile));
+    }
+
+    private void requireActorProfile(CastProfile profile) {
+        if (profile.getProfileType() != CastProfileType.ACTOR) {
+            throw PreProductionException.badRequest(
+                    "Cast profile " + profile.getId() + " is a " + profile.getProfileType() + " profile -- voice only applies to ACTOR profiles");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -113,7 +140,7 @@ public class CastProfileService {
         return new CastProfileView(profile.getId(), profile.getProjectId(), profile.getProfileType(), profile.getDisplayName(),
                 profile.getFaceRefBucket(), profile.getFaceRefObjectKey(), signedUrl(profile.getFaceRefBucket(), profile.getFaceRefObjectKey()),
                 profile.getDescription(), profile.getAge(), profile.getGender(), profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(),
-                projectCount);
+                profile.getBuiltinVoiceId(), projectCount);
     }
 
     /** Display-only, so any presign failure degrades to no photo rather than a broken cast list. */

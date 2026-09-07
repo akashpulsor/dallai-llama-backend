@@ -7,7 +7,9 @@ import java.util.UUID;
 
 /** {@code projectId == null} creates a reusable library entry, same convention as CastProfile
  * itself. {@code profileType} defaults to ACTOR when omitted; {@code age}/{@code gender}/
- * {@code voiceRefBucket}/{@code voiceRefObjectKey} are meaningful for ACTOR profiles only. */
+ * {@code voiceRefBucket}/{@code voiceRefObjectKey}/{@code builtinVoiceId} are meaningful for ACTOR
+ * profiles only. {@code voiceRefBucket}+{@code voiceRefObjectKey} (a real sample) and {@code
+ * builtinVoiceId} (a stock voice) are alternatives -- send at most one pair. */
 public record CreateCastProfileRequest(
         UUID projectId,
         CastProfileType profileType,
@@ -18,6 +20,7 @@ public record CreateCastProfileRequest(
         Integer age,
         String gender,
         String voiceRefBucket,
-        String voiceRefObjectKey
+        String voiceRefObjectKey,
+        String builtinVoiceId
 ) {
 }

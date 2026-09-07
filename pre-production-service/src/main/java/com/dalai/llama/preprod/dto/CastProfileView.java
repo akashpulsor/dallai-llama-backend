@@ -17,6 +17,7 @@ public record CastProfileView(
         String gender,
         String voiceRefBucket,
         String voiceRefObjectKey,
+        String builtinVoiceId,
         long projectCount
 ) {
 }

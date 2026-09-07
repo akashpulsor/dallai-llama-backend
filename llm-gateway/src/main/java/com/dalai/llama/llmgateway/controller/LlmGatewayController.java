@@ -1,5 +1,6 @@
 package com.dalai.llama.llmgateway.controller;
 
+import com.dalai.llama.llmgateway.dto.BuiltinVoiceView;
 import com.dalai.llama.llmgateway.dto.ChatRequest;
 import com.dalai.llama.llmgateway.dto.ChatResponse;
 import com.dalai.llama.llmgateway.dto.EstimateResponse;
@@ -8,8 +9,11 @@ import com.dalai.llama.llmgateway.dto.LanguageSummary;
 import com.dalai.llama.llmgateway.dto.ModelCapabilityView;
 import com.dalai.llama.llmgateway.dto.ModelSummary;
 import com.dalai.llama.llmgateway.dto.ModelSummaryMapper;
+import com.dalai.llama.llmgateway.domain.entity.BuiltinVoice;
 import com.dalai.llama.llmgateway.domain.entity.LanguageMaster;
 import com.dalai.llama.llmgateway.domain.entity.ModelMaster;
+import com.dalai.llama.llmgateway.repository.BuiltinVoiceLanguageRepository;
+import com.dalai.llama.llmgateway.repository.BuiltinVoiceRepository;
 import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
 import com.dalai.llama.llmgateway.repository.ModelMasterRepository;
@@ -28,7 +32,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Doc §16 v1 surface: {@code POST /v1/chat} (sync only -- {@code /v1/chat/async} is not built),
@@ -46,6 +54,8 @@ public class LlmGatewayController {
     private final ModelSupportedLanguageRepository modelSupportedLanguageRepository;
     private final ModelCapabilityRepository modelCapabilityRepository;
     private final ModelMasterRepository modelMasterRepository;
+    private final BuiltinVoiceRepository builtinVoiceRepository;
+    private final BuiltinVoiceLanguageRepository builtinVoiceLanguageRepository;
 
     public LlmGatewayController(
             LlmGatewayService llmGatewayService,
@@ -54,7 +64,9 @@ public class LlmGatewayController {
             LanguageMasterRepository languageMasterRepository,
             ModelSupportedLanguageRepository modelSupportedLanguageRepository,
             ModelCapabilityRepository modelCapabilityRepository,
-            ModelMasterRepository modelMasterRepository
+            ModelMasterRepository modelMasterRepository,
+            BuiltinVoiceRepository builtinVoiceRepository,
+            BuiltinVoiceLanguageRepository builtinVoiceLanguageRepository
     ) {
         this.llmGatewayService = llmGatewayService;
         this.modelRouterService = modelRouterService;
@@ -63,6 +75,8 @@ public class LlmGatewayController {
         this.modelSupportedLanguageRepository = modelSupportedLanguageRepository;
         this.modelCapabilityRepository = modelCapabilityRepository;
         this.modelMasterRepository = modelMasterRepository;
+        this.builtinVoiceRepository = builtinVoiceRepository;
+        this.builtinVoiceLanguageRepository = builtinVoiceLanguageRepository;
     }
 
     @PostMapping("/v1/chat")
@@ -165,6 +179,40 @@ public class LlmGatewayController {
                 model.getDefaultTpm(),
                 model.getTimeoutMs()
         ));
+    }
+
+    /** Stock (non-cloned) provider voices for a character with no actor voice sample to clone --
+     * see {@code CastProfile.builtinVoiceId} on pre-production-service's side. {@code gender} is
+     * ElevenLabs' own MALE/FEMALE label (matched loosely, as a UI default, against {@code
+     * CastProfile.gender}'s free-text field -- not enforced here); {@code language} filters to
+     * voices that support a given {@code language_master} code (e.g. {@code hi-IN}). Both params
+     * are optional; omitting them returns the full active catalog. */
+    @GetMapping("/v1/voices/builtin")
+    public ResponseEntity<List<BuiltinVoiceView>> listBuiltinVoices(
+            @RequestParam(required = false) String gender,
+            @RequestParam(required = false) String language
+    ) {
+        List<BuiltinVoice> voices = gender == null || gender.isBlank()
+                ? builtinVoiceRepository.findByActiveTrue()
+                : builtinVoiceRepository.findByActiveTrueAndGender(gender.toUpperCase(Locale.ROOT));
+
+        if (language != null && !language.isBlank()) {
+            Set<String> voiceIdsForLanguage = builtinVoiceLanguageRepository.findByIdLanguageCode(language).stream()
+                    .map(row -> row.getId().getVoiceId())
+                    .collect(Collectors.toSet());
+            voices = voices.stream().filter(v -> voiceIdsForLanguage.contains(v.getVoiceId())).toList();
+        }
+
+        Map<String, List<String>> languagesByVoiceId = builtinVoiceLanguageRepository
+                .findByIdVoiceIdIn(voices.stream().map(BuiltinVoice::getVoiceId).toList()).stream()
+                .collect(Collectors.groupingBy(row -> row.getId().getVoiceId(),
+                        Collectors.mapping(row -> row.getId().getLanguageCode(), Collectors.toList())));
+
+        List<BuiltinVoiceView> views = voices.stream()
+                .map(v -> new BuiltinVoiceView(v.getVoiceId(), v.getProviderId(), v.getProviderVoiceId(), v.getDisplayName(),
+                        v.getGender(), v.getPreviewAudioUrl(), languagesByVoiceId.getOrDefault(v.getVoiceId(), List.of())))
+                .toList();
+        return ResponseEntity.ok(views);
     }
 
     public record ModelConfigView(
