@@ -16,6 +16,7 @@ import com.dalai.llama.preprod.repository.CameraPlanRepository;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
 import com.dalai.llama.preprod.repository.LightingPlanRepository;
+import com.dalai.llama.preprod.repository.MotionGraphicPlanRepository;
 import com.dalai.llama.preprod.repository.ScriptCharacterRepository;
 import com.dalai.llama.preprod.repository.ScriptRepository;
 import com.dalai.llama.preprod.repository.ShotImageRepository;
@@ -78,6 +79,7 @@ public class ShotImageService {
     private final ShotProductReferenceRepository shotProductReferenceRepository;
     private final LightingPlanRepository lightingPlanRepository;
     private final CameraPlanRepository cameraPlanRepository;
+    private final MotionGraphicPlanRepository motionGraphicPlanRepository;
     private final LlmGatewayClient llmGatewayClient;
     private final MediaAssetService mediaAssetService;
     private final GenerationThoughtService generationThoughtService;
@@ -101,6 +103,7 @@ public class ShotImageService {
             ShotProductReferenceRepository shotProductReferenceRepository,
             LightingPlanRepository lightingPlanRepository,
             CameraPlanRepository cameraPlanRepository,
+            MotionGraphicPlanRepository motionGraphicPlanRepository,
             LlmGatewayClient llmGatewayClient,
             MediaAssetService mediaAssetService,
             GenerationThoughtService generationThoughtService,
@@ -123,6 +126,7 @@ public class ShotImageService {
         this.shotProductReferenceRepository = shotProductReferenceRepository;
         this.lightingPlanRepository = lightingPlanRepository;
         this.cameraPlanRepository = cameraPlanRepository;
+        this.motionGraphicPlanRepository = motionGraphicPlanRepository;
         this.llmGatewayClient = llmGatewayClient;
         this.mediaAssetService = mediaAssetService;
         this.generationThoughtService = generationThoughtService;
@@ -290,6 +294,7 @@ public class ShotImageService {
             case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(shot, castProfile, productReference);
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
+            case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));
         };
     }
 

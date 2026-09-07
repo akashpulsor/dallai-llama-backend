@@ -3,6 +3,7 @@ package com.dalai.llama.preprod.service.generation;
 import com.dalai.llama.preprod.domain.entity.CameraPlan;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.domain.entity.LightingPlan;
+import com.dalai.llama.preprod.domain.entity.MotionGraphicPlan;
 import com.dalai.llama.preprod.domain.entity.Shot;
 import com.dalai.llama.preprod.domain.entity.ShotProductReference;
 
@@ -175,6 +176,34 @@ public final class ShotImagePromptBuilder {
             }
         }
         sb.append("Do not invent camera gear beyond what a solo smartphone creator would plausibly own.");
+        return sb.toString();
+    }
+
+    /** Preview of the on-screen graphic itself for a MOTION_GRAPHIC shot. These shots have no
+     * cinematography (no lighting/camera plans), so this is their equivalent visual: a still
+     * rendering of what the finished animated overlay/text/data beat will look like at the
+     * halfway frame. Driven by the shot's {@link MotionGraphicPlan} (concept, on-screen text,
+     * visual style, animation notes) which the planning step wrote first; falls back to the
+     * shot's own fields when no plan exists yet so a manual regenerate still gets something. */
+    public static String buildMotionGraphicPreviewPrompt(Shot shot, MotionGraphicPlan plan) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Design mockup: a single still frame preview of a motion graphic overlay for a short-form vertical video, ")
+                .append(orNotSpecified(shot.getAspectRatio())).append(" composition. ")
+                .append("Show what the finished animated graphic looks like at its most legible mid-frame -- text, iconography, and color ")
+                .append("styling all rendered flat with clear hierarchy, mobile-review-sized type, no photorealistic subjects. ")
+                .append("Do not draw storyboard sketch marks, camera-diagram arrows, or a cinematography plan -- this is the graphic itself, ")
+                .append("as it will appear on screen.\n\n");
+        if (plan != null) {
+            sb.append("Concept: ").append(orNotSpecified(plan.getConcept())).append("\n");
+            sb.append("On-screen text (render this text visibly in the frame, verbatim): ")
+                    .append(orNotSpecified(plan.getOnScreenText())).append("\n");
+            sb.append("Visual style: ").append(orNotSpecified(plan.getVisualStyle())).append("\n");
+            sb.append("Animation notes (describe the motion in a footer caption, do not animate): ")
+                    .append(orNotSpecified(plan.getAnimationNotes())).append("\n");
+        } else {
+            sb.append("Beat: ").append(orNotSpecified(shot.getAction())).append("\n");
+            sb.append("Script line (on-screen text if applicable): ").append(orNotSpecified(shot.getScriptLine())).append("\n");
+        }
         return sb.toString();
     }
 

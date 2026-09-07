@@ -15,5 +15,12 @@ public enum ShotImageKind {
      * steps. */
     LIGHTING,
     /** Shoot-ready DP camera plan: position, lens, framing box, movement path. */
-    CAMERA_PLAN
+    CAMERA_PLAN,
+    /** Preview of the on-screen graphic itself for a {@code ShotType.MOTION_GRAPHIC} shot.
+     * Prompt is built from that shot's {@code motion_graphic_plan} row (on_screen_text +
+     * visual_style + animation_notes) so the creator sees what the animated overlay/text/data
+     * beat will look like -- these shots have no cinematography to storyboard, so this is
+     * their equivalent visual. Auto-fired by
+     * {@code ShotListGenerationService#planMotionGraphicShots} after the plan is written. */
+    MOTION_GRAPHIC
 }

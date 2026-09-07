@@ -87,6 +87,7 @@ public class ShotListGenerationService {
     private final MotionGraphicPlanService motionGraphicPlanService;
     private final LightingPlanService lightingPlanService;
     private final CameraPlanService cameraPlanService;
+    private final ShotImageService shotImageService;
     private final MinioClient publicMinioClient;
     private final String defaultModel;
 
@@ -108,6 +109,7 @@ public class ShotListGenerationService {
             MotionGraphicPlanService motionGraphicPlanService,
             LightingPlanService lightingPlanService,
             CameraPlanService cameraPlanService,
+            ShotImageService shotImageService,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
     ) {
@@ -129,6 +131,7 @@ public class ShotListGenerationService {
         this.motionGraphicPlanService = motionGraphicPlanService;
         this.lightingPlanService = lightingPlanService;
         this.cameraPlanService = cameraPlanService;
+        this.shotImageService = shotImageService;
         this.publicMinioClient = publicMinioClient;
         this.defaultModel = defaultModel;
     }
@@ -253,6 +256,19 @@ public class ShotListGenerationService {
                 motionGraphicPlanService.generate(tenantId, shot.id());
             } catch (Exception ex) {
                 log.warn("Could not auto-plan motion graphic for shot {}: {}", shot.id(), ex.getMessage());
+                // Skip the preview image too -- with no plan to drive it, buildMotionGraphicPreviewPrompt
+                // falls back to shot fields alone and produces a low-quality generic frame. A manual
+                // regenerate from the UI is a better remediation than an auto-fired half-baked one.
+                continue;
+            }
+            try {
+                // Preview of the on-screen graphic itself -- MOTION_GRAPHIC shots have no
+                // storyboard/lighting/camera-plan images (those are cinematography-driven and this
+                // shot type has no cinematography by design); this is their equivalent visual, driven
+                // by the plan we just wrote. Best-effort like every other auto-generated image.
+                shotImageService.generate(tenantId, shot.id(), com.dalai.llama.preprod.domain.ShotImageKind.MOTION_GRAPHIC);
+            } catch (Exception ex) {
+                log.warn("Could not auto-generate motion-graphic preview image for shot {}: {}", shot.id(), ex.getMessage());
             }
         }
     }
