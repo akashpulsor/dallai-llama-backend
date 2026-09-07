@@ -61,6 +61,24 @@ spring:
       password: ${REDIS_PASSWORD:}
       timeout: 2000ms
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: pre-production-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+
   security:
     oauth2:
       resourceserver:
@@ -98,6 +116,12 @@ pre-production:
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}
+    # Topic pre-production-service publishes to for async LLM job submission. llm-gateway's
+    # ChatJobRequestedConsumer reads from the same topic name.
+    job-requested-topic: ${LLM_GATEWAY_JOB_REQUESTED_TOPIC:llm.job.requested}
+    # Topic pre-production-service listens on for terminal job outcomes. llm-gateway publishes to
+    # this on both SUCCEEDED and FAILED.
+    job-completed-topic: ${LLM_GATEWAY_JOB_COMPLETED_TOPIC:llm.job.completed}
     default-image-model: ${PRE_PROD_DEFAULT_IMAGE_MODEL:gemini-2.5-flash-image}
     # Defaults to Gemini (no separate credential needed) rather than fal.ai's flux-pulid-v1 --
     # confirmed live that FAL_API_KEY was never actually provisioned in this environment, so every

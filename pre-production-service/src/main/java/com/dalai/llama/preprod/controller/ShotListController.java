@@ -4,12 +4,15 @@ import com.dalai.llama.preprod.dto.CreateShotRequest;
 import com.dalai.llama.preprod.dto.DispatchShotRequest;
 import com.dalai.llama.preprod.dto.GenerationThoughtView;
 import com.dalai.llama.preprod.dto.ShotDispatchResponse;
+import com.dalai.llama.preprod.dto.ShotListJobView;
 import com.dalai.llama.preprod.dto.ShotView;
 import com.dalai.llama.preprod.dto.UpdateShotRequest;
 import com.dalai.llama.preprod.service.GenerationThoughtService;
 import com.dalai.llama.preprod.service.ShotContextAssemblyService;
+import com.dalai.llama.preprod.service.ShotListGenerationJobService;
 import com.dalai.llama.preprod.service.ShotListGenerationService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -25,26 +28,40 @@ import java.util.UUID;
 public class ShotListController extends BaseController {
 
     private final ShotListGenerationService shotListGenerationService;
+    private final ShotListGenerationJobService shotListGenerationJobService;
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final GenerationThoughtService generationThoughtService;
 
     public ShotListController(
             ShotListGenerationService shotListGenerationService,
+            ShotListGenerationJobService shotListGenerationJobService,
             ShotContextAssemblyService shotContextAssemblyService,
             GenerationThoughtService generationThoughtService
     ) {
         this.shotListGenerationService = shotListGenerationService;
+        this.shotListGenerationJobService = shotListGenerationJobService;
         this.shotContextAssemblyService = shotContextAssemblyService;
         this.generationThoughtService = generationThoughtService;
     }
 
+    /**
+     * Async job submission: returns immediately with the job id, generation happens on
+     * llm-gateway's Kafka worker. The UI must poll {@link #getGenerateListJob} until status
+     * reaches SUCCEEDED (then re-fetch /v1/projects/{projectId}/shots) or FAILED.
+     */
     @PostMapping("/v1/projects/{projectId}/shots/generate-list")
-    public ResponseEntity<List<ShotView>> generateList(@PathVariable UUID projectId) {
+    public ResponseEntity<ShotListJobView> generateList(@PathVariable UUID projectId) {
         UUID tenantId = tenant().tenantId();
-        List<ShotView> shots = shotListGenerationService.generate(tenantId, projectId);
-        shotListGenerationService.planMotionGraphicShots(tenantId, shots);
-        shotListGenerationService.planLightingAndCameraForShots(tenantId, shots);
-        return ResponseEntity.ok(shots);
+        ShotListJobView job = shotListGenerationJobService.submit(tenantId, projectId);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    /** Status endpoint the UI polls after {@link #generateList} responds. */
+    @GetMapping("/v1/projects/{projectId}/shots/generate-list/{jobId}")
+    public ResponseEntity<ShotListJobView> getGenerateListJob(
+            @PathVariable UUID projectId, @PathVariable UUID jobId
+    ) {
+        return ResponseEntity.ok(shotListGenerationJobService.get(tenant().tenantId(), projectId, jobId));
     }
 
     @GetMapping("/v1/projects/{projectId}/shots")

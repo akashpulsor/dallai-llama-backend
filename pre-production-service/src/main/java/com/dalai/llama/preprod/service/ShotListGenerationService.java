@@ -135,12 +135,62 @@ public class ShotListGenerationService {
 
     @Transactional
     public List<ShotView> generate(UUID tenantId, UUID projectId) {
+        LlmGatewayChatResponse response = llmGatewayClient.chat(
+                tenantId.toString(),
+                shotListIdempotencyKey(projectId),
+                buildChatRequest(tenantId, projectId));
+        return persistFromLlmResponse(tenantId, projectId, response);
+    }
+
+    /** The idempotency key both the sync path and the async path use for this project's
+     * shot-list LLM job. Stable per-project so a replay hits the same {@code llm_job} row rather
+     * than costing a second Gemini call. Exposed for the async caller to store on
+     * {@link com.dalai.llama.preprod.domain.entity.ShotListJob#getLlmJobIdempotencyKey}. */
+    public static String shotListIdempotencyKey(UUID projectId) {
+        return "shot-list-generate-" + projectId;
+    }
+
+    /** Assembles the exact {@link LlmGatewayChatRequest} the sync path sends -- exposed so the
+     * async submission ({@link com.dalai.llama.preprod.service.ShotListGenerationJobService})
+     * can publish the same payload to Kafka without duplicating the prompt-variable wiring. */
+    public LlmGatewayChatRequest buildChatRequest(UUID tenantId, UUID projectId) {
+        // Load-only project fetch (validation) -- the persist path below reloads it inside its
+        // own transaction anyway, so this method stays safe to call from any thread.
+        projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        Script script = scriptRepository.findByProjectId(projectId)
+                .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
+        Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no screenplay yet"));
+        List<ScreenplayScene> scenes = screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId());
+        if (scenes.isEmpty()) {
+            throw PreProductionException.badRequest("Screenplay for project " + projectId + " has no scenes");
+        }
+        List<String> knownCharacterKeys = scriptCharacterRepository.findByScriptId(script.getId()).stream()
+                .map(ScriptCharacter::getCharacterKey)
+                .collect(Collectors.toList());
+        var projectConfig = projectConfigService.getEntityOrDefault(projectId);
+        AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
+        boolean preferMotionGraphics = projectConfig != null && Boolean.TRUE.equals(projectConfig.getPreferMotionGraphics());
+
+        return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
+                JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
+                Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys),
+                        "aspectRatio", configuredAspectRatio == null ? "no preference set -- choose what suits each shot" : configuredAspectRatio.toString(),
+                        "motionGraphicsGuidance", preferMotionGraphics
+                                ? "This project prefers MOTION_GRAPHIC for any text/data/graphic-driven beat -- classify those shots as MOTION_GRAPHIC rather than ACTION or B_ROLL."
+                                : "Only use MOTION_GRAPHIC where the beat is clearly a graphic/text/data overlay, not a live-action moment.")).withProjectId(projectId);
+    }
+
+    /** Post-LLM-response half of shot list generation: parse, persist shots, advance project
+     * status, kick off dependent refreshes. Called by the sync {@link #generate} path as well
+     * as the async {@link com.dalai.llama.preprod.kafka.ChatJobCompletedConsumer} handler. */
+    @Transactional
+    public List<ShotView> persistFromLlmResponse(UUID tenantId, UUID projectId, LlmGatewayChatResponse response) {
         Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
         Script script = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
-        // Screenplay is versioned now (see ScreenplayGenerationService) -- shots always build
-        // from the latest version, same as before this only had one version to choose from.
         Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no screenplay yet"));
         List<ScreenplayScene> scenes = screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId());
@@ -149,23 +199,8 @@ public class ShotListGenerationService {
         }
         Map<Integer, UUID> sceneIdByNumber = scenes.stream()
                 .collect(Collectors.toMap(ScreenplayScene::getSceneNumber, ScreenplayScene::getId, (a, b) -> a));
-        List<String> knownCharacterKeys = scriptCharacterRepository.findByScriptId(script.getId()).stream()
-                .map(ScriptCharacter::getCharacterKey)
-                .collect(Collectors.toList());
         var projectConfig = projectConfigService.getEntityOrDefault(projectId);
         AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
-        boolean preferMotionGraphics = projectConfig != null && Boolean.TRUE.equals(projectConfig.getPreferMotionGraphics());
-
-        LlmGatewayChatResponse response = llmGatewayClient.chat(
-                tenantId.toString(),
-                "shot-list-generate-" + projectId,
-                new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                        JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys),
-                                "aspectRatio", configuredAspectRatio == null ? "no preference set -- choose what suits each shot" : configuredAspectRatio.toString(),
-                                "motionGraphicsGuidance", preferMotionGraphics
-                                        ? "This project prefers MOTION_GRAPHIC for any text/data/graphic-driven beat -- classify those shots as MOTION_GRAPHIC rather than ACTION or B_ROLL."
-                                        : "Only use MOTION_GRAPHIC where the beat is clearly a graphic/text/data overlay, not a live-action moment.")).withProjectId(projectId));
 
         ShotListGenerationResult parsed = parse(response);
         if (parsed.shots() == null || parsed.shots().isEmpty()) {
