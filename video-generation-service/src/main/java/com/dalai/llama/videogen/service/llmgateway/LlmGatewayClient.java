@@ -116,9 +116,12 @@ public class LlmGatewayClient {
     public record MaxLengthResponse(int maxLength) {}
 
     public List<LlmGatewayModelSummary> listModels(String tenantId, String type) {
+        // /api/v1/internal/models is the service-to-service permitAll path; the /v1/models path
+        // is JWT-protected (end-user only) and always 401s a service caller with no JWT to
+        // forward -- same convention as /api/v1/internal/languages vs /v1/languages.
         try {
             return webClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/v1/models").queryParamIfPresent("type", java.util.Optional.ofNullable(type)).build())
+                    .uri(uriBuilder -> uriBuilder.path("/api/v1/internal/models").queryParamIfPresent("type", java.util.Optional.ofNullable(type)).build())
                     .header("X-Tenant-ID", tenantId)
                     .retrieve()
                     .bodyToFlux(LlmGatewayModelSummary.class)
@@ -126,7 +129,7 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw new LlmGatewayCallException(
-                    "llm-gateway /v1/models failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "llm-gateway /api/v1/internal/models failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 

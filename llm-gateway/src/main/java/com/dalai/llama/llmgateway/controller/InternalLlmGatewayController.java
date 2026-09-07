@@ -4,10 +4,13 @@ import com.dalai.llama.llmgateway.dto.ChatRequest;
 import com.dalai.llama.llmgateway.dto.ChatResponse;
 import com.dalai.llama.llmgateway.dto.LanguageSummary;
 import com.dalai.llama.llmgateway.dto.ModelCapabilityView;
+import com.dalai.llama.llmgateway.dto.ModelSummary;
+import com.dalai.llama.llmgateway.dto.ModelSummaryMapper;
 import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
 import com.dalai.llama.llmgateway.repository.LlmJobRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
 import com.dalai.llama.llmgateway.service.LlmGatewayService;
+import com.dalai.llama.llmgateway.service.ModelRouterService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
@@ -40,17 +44,23 @@ public class InternalLlmGatewayController {
     private final ModelCapabilityRepository modelCapabilityRepository;
     private final LanguageMasterRepository languageMasterRepository;
     private final LlmJobRepository llmJobRepository;
+    private final ModelRouterService modelRouterService;
+    private final ModelSummaryMapper modelSummaryMapper;
 
     public InternalLlmGatewayController(
             LlmGatewayService llmGatewayService,
             ModelCapabilityRepository modelCapabilityRepository,
             LanguageMasterRepository languageMasterRepository,
-            LlmJobRepository llmJobRepository
+            LlmJobRepository llmJobRepository,
+            ModelRouterService modelRouterService,
+            ModelSummaryMapper modelSummaryMapper
     ) {
         this.llmGatewayService = llmGatewayService;
         this.modelCapabilityRepository = modelCapabilityRepository;
         this.languageMasterRepository = languageMasterRepository;
         this.llmJobRepository = llmJobRepository;
+        this.modelRouterService = modelRouterService;
+        this.modelSummaryMapper = modelSummaryMapper;
     }
 
     @PostMapping("/tenants/{tenantId}/chat")
@@ -93,6 +103,22 @@ public class InternalLlmGatewayController {
     public List<LanguageSummary> languages() {
         return languageMasterRepository.findAll().stream()
                 .map(l -> new LanguageSummary(l.getLanguageCode(), l.getDisplayName(), l.getNativeName()))
+                .toList();
+    }
+
+    /** Internal mirror of {@code LlmGatewayController.listModels()} -- same JWT-chain problem as
+     * {@link #languages()}: video-generation-service's LlmGatewayClient.listModels() was calling
+     * the end-user /v1/models path with no JWT and always got 401 (surfaced live as a 500 on
+     * https://api.dalaillama.in/v1/scenes/models?type=video). Same query, same mapping,
+     * reachable from here instead. Tenant identity comes in via the X-Tenant-ID header, same
+     * shape as the sync {@link #chat} handler. */
+    @GetMapping("/models")
+    public List<ModelSummary> models(
+            @RequestHeader("X-Tenant-ID") String tenantId,
+            @RequestParam(required = false) String type
+    ) {
+        return modelRouterService.listForTenant(tenantId, type).stream()
+                .map(modelSummaryMapper::toSummary)
                 .toList();
     }
 }
