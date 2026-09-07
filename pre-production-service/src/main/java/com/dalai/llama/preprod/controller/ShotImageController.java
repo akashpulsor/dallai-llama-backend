@@ -38,6 +38,17 @@ public class ShotImageController extends BaseController {
         return ResponseEntity.ok(shotImageService.generateWithInspiration(tenant().tenantId(), shotId, kind, note, files));
     }
 
+    /** "Same" upload flow -- creator downloaded the image, hand-corrected the typos (Gemini's
+     * text rendering is unreliable, especially in Hindi/Hinglish), and is uploading the fixed
+     * version. No LLM call: the uploaded bytes ARE the new image, stored as-is. Sibling of
+     * {@link #generateWithInspiration}, which is the "inspired" variant of the same UX. */
+    @PostMapping(path = "/v1/shots/{shotId}/images/{kind}/replace", consumes = "multipart/form-data")
+    public ResponseEntity<ShotImageView> replace(
+            @PathVariable UUID shotId, @PathVariable ShotImageKind kind,
+            @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(shotImageService.replaceImage(tenant().tenantId(), shotId, kind, file));
+    }
+
     @GetMapping("/v1/shots/{shotId}/images/{kind}")
     public ResponseEntity<ShotImageView> get(@PathVariable UUID shotId, @PathVariable ShotImageKind kind) {
         return ResponseEntity.ok(shotImageService.get(tenant().tenantId(), shotId, kind));

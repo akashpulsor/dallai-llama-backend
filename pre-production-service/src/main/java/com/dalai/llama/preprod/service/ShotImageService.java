@@ -272,6 +272,74 @@ public class ShotImageService {
         }
     }
 
+    /** "Same" upload flow: the creator has downloaded a shot image, hand-corrected the wrong text
+     * (Gemini's text rendering is famously unreliable), and is uploading the fixed version as the
+     * authoritative image for this shot+kind. No LLM call, no re-analysis -- store the exact
+     * bytes and update the existing shot_image row (or create one if none existed yet, e.g. a
+     * shot whose auto-generated image failed). Sibling of {@link #generateWithInspiration}
+     * (which does re-generate); the caller (frontend) chooses between them via a "same/inspired"
+     * toggle. */
+    @Transactional
+    public ShotImageView replaceImage(UUID tenantId, UUID shotId, ShotImageKind kind, MultipartFile file) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        if (file == null || file.isEmpty()) {
+            throw PreProductionException.badRequest("Uploaded file is empty");
+        }
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (Exception ex) {
+            throw PreProductionException.badRequest("Could not read uploaded file: " + ex.getMessage());
+        }
+        String contentType = file.getContentType() != null ? file.getContentType() : "image/png";
+        String extension = extensionFor(contentType, file.getOriginalFilename());
+
+        String objectKey = "%s/%s/%s/%s.%s".formatted(storyboardPrefix, kind.name().toLowerCase(), shotId, UUID.randomUUID(), extension);
+        upload(objectKey, new DecodedImage(bytes, contentType, extension));
+
+        OffsetDateTime now = OffsetDateTime.now();
+        ShotImage image = shotImageRepository.findByShotIdAndKind(shotId, kind).orElseGet(() -> ShotImage.builder()
+                .tenantId(tenantId)
+                .shotId(shotId)
+                .kind(kind)
+                .createdAt(now)
+                .build());
+        image.setBucket(bucket);
+        image.setObjectKey(objectKey);
+        // Deliberately clear prompt/referenceCastProfileId: this image was NOT generated from
+        // them, so leaving the previous run's values here would misrepresent provenance. The
+        // description field stays as-is (or empty) -- the caller can trigger a re-analysis later
+        // if they want a fresh description; we don't want to burn an LLM call on every upload.
+        image.setPrompt(null);
+        image.setReferenceCastProfileId(null);
+        image.setUpdatedAt(now);
+        image = shotImageRepository.save(image);
+
+        mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.STORYBOARD_IMAGE);
+        generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_UPLOADED",
+                kind + " image replaced by manual upload, stored at " + objectKey);
+        return toView(image);
+    }
+
+    /** Prefer the declared Content-Type; fall back to the filename extension, then to png. */
+    private String extensionFor(String contentType, String originalFilename) {
+        if (contentType != null) {
+            String lower = contentType.toLowerCase();
+            if (lower.contains("png")) return "png";
+            if (lower.contains("webp")) return "webp";
+            if (lower.contains("jpeg") || lower.contains("jpg")) return "jpg";
+        }
+        if (originalFilename != null && originalFilename.contains(".")) {
+            String ext = originalFilename.substring(originalFilename.lastIndexOf('.') + 1).toLowerCase();
+            if (ext.equals("png") || ext.equals("jpg") || ext.equals("jpeg") || ext.equals("webp")) {
+                return ext.equals("jpeg") ? "jpg" : ext;
+            }
+        }
+        return "png";
+    }
+
     @Transactional(readOnly = true)
     public ShotImageView get(UUID tenantId, UUID shotId, ShotImageKind kind) {
         shotRepository.findByIdAndTenantId(shotId, tenantId)
