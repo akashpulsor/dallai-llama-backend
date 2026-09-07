@@ -54,6 +54,11 @@ public class ProjectConfigService {
         if (request.preferredVideoModel() != null) {
             config.setPreferredVideoModel(request.preferredVideoModel());
         }
+        if (request.preferredResolution() != null) {
+            // Empty string clears the preference back to "provider default" -- matches how the
+            // frontend picker uses "" as the "Default" option.
+            config.setPreferredResolution(request.preferredResolution().isBlank() ? null : request.preferredResolution());
+        }
         if (request.recommenderEnabled() != null) {
             config.setRecommenderEnabled(request.recommenderEnabled());
         }
@@ -84,7 +89,8 @@ public class ProjectConfigService {
 
     private ProjectConfigView toView(ProjectConfig config) {
         return new ProjectConfigView(config.getAspectRatio(), config.getTargetDurationSeconds(), config.getPreferMotionGraphics(),
-                config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(), config.getDialogueLanguage(),
+                config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(),
+                config.getPreferredResolution(), config.getDialogueLanguage(),
                 config.getRecommenderEnabled(), config.getCostPreviewEnabled(),
                 config.getAutoCloneAudioPromptEnabled(), config.getPriceDeltaModalEnabled());
     }

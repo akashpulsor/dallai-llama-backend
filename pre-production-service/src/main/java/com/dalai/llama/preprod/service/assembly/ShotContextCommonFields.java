@@ -60,7 +60,8 @@ final class ShotContextCommonFields {
         Shot shot = ctx.shot();
         String preferredModel = ctx.projectConfig() == null ? null : ctx.projectConfig().getPreferredVideoModel();
         String voiceCloneModel = ctx.projectConfig() == null ? null : ctx.projectConfig().getPreferredVoiceModel();
-        return new Technical(shot.getDurationSeconds(), shot.getAspectRatio(), null, preferredModel, voiceCloneModel);
+        String preferredResolution = ctx.projectConfig() == null ? null : ctx.projectConfig().getPreferredResolution();
+        return new Technical(shot.getDurationSeconds(), shot.getAspectRatio(), null, preferredModel, voiceCloneModel, preferredResolution);
     }
 
     /** {@code musicMoodNote} stays null -- Shot has no dedicated field for it yet (creator-service's

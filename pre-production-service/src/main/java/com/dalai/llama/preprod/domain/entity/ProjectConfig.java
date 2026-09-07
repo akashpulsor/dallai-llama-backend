@@ -43,6 +43,13 @@ public class ProjectConfig {
     @Column(name = "preferred_video_model")
     private String preferredVideoModel;
 
+    /** Project-level default video resolution ("480p" / "720p" -- matches
+     * VideoResolution.wireValue in video-generation-service). NULL means "use each provider's
+     * own default"; a per-shot resolutionOverride still wins over this project default when set.
+     * See V51 migration. */
+    @Column(name = "preferred_resolution", length = 16)
+    private String preferredResolution;
+
     @Column(name = "preferred_voice_model")
     private String preferredVoiceModel;
 

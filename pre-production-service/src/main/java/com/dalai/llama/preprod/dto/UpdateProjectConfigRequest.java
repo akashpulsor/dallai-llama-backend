@@ -18,6 +18,11 @@ public record UpdateProjectConfigRequest(
          * auto-recommendation pick per-shot. Wired from the creator-UI video-workspace's model
          * dropdown (VideoGenerationSection). */
         String preferredVideoModel,
+        /** Project-level default video resolution -- "480p" or "720p" (matches VideoResolution
+         * wireValues in video-generation-service). Null leaves current value untouched; empty
+         * string clears the pin back to "provider default". No 1080p option: no configured
+         * provider currently supports it (see VideoResolution.java class-level comment). */
+        String preferredResolution,
         /** Feature-flag gates -- null leaves the current value untouched, matching the partial
          * -update convention every other field on this record already uses. See ProjectConfig
          * entity javadoc and migration V48 for per-flag intent. */

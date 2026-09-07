@@ -187,7 +187,7 @@ public class ScriptGenerationService {
             var config = projectConfigService.getEntityOrDefault(projectId);
             if (config != null && config.getTargetDurationSeconds() == null) {
                 projectConfigService.update(tenantId, projectId,
-                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null, null, null, null, null, null, null));
+                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null, null, null, null, null, null, null, null));
             }
             return requestedDuration;
         }
