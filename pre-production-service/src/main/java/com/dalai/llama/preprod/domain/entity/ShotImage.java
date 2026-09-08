@@ -69,6 +69,20 @@ public class ShotImage {
     @Column(name = "description", columnDefinition = "text")
     private String description;
 
+    /** Any rendered on-image text the vision model detected in this specific image (packaging
+     * copy, signage, on-frame captions, motion-graphic text) -- populated by the same
+     * {@link com.dalai.llama.preprod.service.ShotImageDescriptionService} call that fills
+     * {@code description}, using the on-screen-text field the V50 prompt was already asking for
+     * but was previously discarded on read. "Has rendered text" is derived: this field non-null
+     * and non-empty. See V56 migration. */
+    @Column(name = "on_screen_text", columnDefinition = "text")
+    private String onScreenText;
+
+    /** BCP-47 code of {@link #onScreenText} when set (e.g. {@code en}, {@code hi}, {@code
+     * hi-Latn} for romanized Hindi/Hinglish). Null when {@code onScreenText} is null. */
+    @Column(name = "on_screen_text_language", length = 16)
+    private String onScreenTextLanguage;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

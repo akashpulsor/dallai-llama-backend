@@ -61,8 +61,15 @@ public class ProjectService {
                 .build();
         project = projectRepository.save(project);
 
+        // Default new-project dialogue language: Hinglish (hi-Latn-IN, seeded in llm-gateway V78).
+        // The deployment's single-market context is India and eleven_multilingual_v2 needs an
+        // explicit language_code hint to render romanized Hindi text with a Hindi accent rather
+        // than English -- leaving this null (previous behavior) let the model over-rely on its
+        // English prior for anything romanized. Existing projects with a non-null value are
+        // untouched (no bulk migration); creators can still change it in the project settings.
         projectConfigRepository.save(ProjectConfig.builder()
                 .projectId(project.getId())
+                .dialogueLanguage("hi-Latn-IN")
                 .createdAt(now)
                 .updatedAt(now)
                 .build());

@@ -238,11 +238,12 @@ public class ShotContextAssemblyService {
         }
         Script script = scriptRepository.findByProjectId(shot.getProjectId()).orElse(null);
         Map<String, BeatVoice> voiceByCharacterKey = new HashMap<>();
+        String languageCode = assemblyContext.projectConfig() == null ? null : assemblyContext.projectConfig().getDialogueLanguage();
         List<DialogueBeat> dialogueBeats = beats.stream()
                 .map(b -> {
                     BeatVoice voice = resolveBeatVoice(tenantId, script, b.getCharacterKey(), assemblyContext, voiceByCharacterKey);
                     return new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
-                            voice.referenceUrl(), voice.builtinVoiceId(), shot.getEmotion());
+                            voice.referenceUrl(), voice.builtinVoiceId(), shot.getEmotion(), languageCode);
                 })
                 .collect(Collectors.toList());
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),

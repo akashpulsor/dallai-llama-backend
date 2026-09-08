@@ -52,20 +52,30 @@ public class ShotImageDescriptionService {
         this.defaultModel = defaultModel;
     }
 
-    public String describe(UUID tenantId, ShotImage image) {
+    /** Every field on {@link Description} is nullable and any parse/network error degrades to
+     * {@link Description#EMPTY} rather than throwing -- an unreadable image never fails the caller. */
+    public Description describe(UUID tenantId, ShotImage image) {
         try {
             byte[] bytes = downloadBytes(image.getBucket(), image.getObjectKey());
             String mimeType = mimeTypeFor(image.getObjectKey());
             String dataUri = "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(bytes);
             String response = call(tenantId, "shot-image-describe-" + image.getId(), dataUri, DESCRIBE_TASK_KEY);
             if (response == null) {
-                return null;
+                return Description.EMPTY;
             }
             DescribeResult parsed = objectMapper.readValue(response, DescribeResult.class);
-            return parsed.description();
+            return new Description(parsed.description(), parsed.onScreenText(), parsed.onScreenTextLanguage());
         } catch (Exception ex) {
-            return null;
+            return Description.EMPTY;
         }
+    }
+
+    /** All three fields the vision model produces about a shot image -- previously only
+     * {@code description} was returned to callers; {@code onScreenText}/{@code onScreenTextLanguage}
+     * now flow through so the frontend can drive per-image text-only affordances against a real
+     * detection instead of the shot-type allowlist that used to stand in for it. */
+    public record Description(String description, String onScreenText, String onScreenTextLanguage) {
+        public static final Description EMPTY = new Description(null, null, null);
     }
 
     /** "Pick a reference photo, figure out its cinematic technique, apply it to our own shot" --
@@ -117,7 +127,7 @@ public class ShotImageDescriptionService {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record DescribeResult(String description, String onScreenText) {
+    private record DescribeResult(String description, String onScreenText, String onScreenTextLanguage) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

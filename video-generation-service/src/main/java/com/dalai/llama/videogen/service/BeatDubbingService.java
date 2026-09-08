@@ -110,12 +110,15 @@ public class BeatDubbingService {
                 ? SceneEnergyDirective.textOnly(rawText)
                 : sceneEnergyStrategyResolver.resolve(tenantId, resolvedTtsModel, sorted.get(0).emotion(), rawText);
         String combinedText = directive.text();
+        // Shot-level per the DialogueBeat javadoc; every beat in a shot shares the project's
+        // dialogueLanguage. Fused (MiniMax) path has no language_code param -- it infers.
+        String languageCode = sorted.get(0).languageCode();
 
         LlmGatewayChatResponse synthesis = useBuiltinVoice
-                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText, resolvedTtsModel, directive)
+                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText, resolvedTtsModel, directive, languageCode)
                 : fused
                         ? fusedCloneAndSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText)
-                        : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText, resolvedTtsModel, directive);
+                        : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText, resolvedTtsModel, directive, languageCode);
         if (synthesis == null || synthesis.response() == null || synthesis.response().isBlank()) {
             throw VideoGenException.upstream("llm-gateway returned no synthesized dialogue audio for job_id=" + jobId);
         }
@@ -151,10 +154,14 @@ public class BeatDubbingService {
      * llm-gateway's {@code builtin_voice} table), so this is just the TTS half of {@link
      * #cloneThenSynthesize}, skipping the clone call entirely. */
     private LlmGatewayChatResponse directTtsSynthesize(
-            String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText, String resolvedTtsModel, SceneEnergyDirective directive) {
+            String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText, String resolvedTtsModel,
+            SceneEnergyDirective directive, String languageCode) {
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
         ttsParams.putAll(directive.extraTtsParams());
+        if (languageCode != null && !languageCode.isBlank()) {
+            ttsParams.put("language_code", languageCode);
+        }
         return llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
                 new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
     }
@@ -166,7 +173,7 @@ public class BeatDubbingService {
      * returned, so the caller doesn't need to know which path ran. */
     private LlmGatewayChatResponse cloneThenSynthesize(
             String tenantId, UUID jobId, UUID projectId, String cloneModel, String referenceAudioUrl, String combinedText,
-            String resolvedTtsModel, SceneEnergyDirective directive) {
+            String resolvedTtsModel, SceneEnergyDirective directive, String languageCode) {
         Map<String, Object> cloneParams = new LinkedHashMap<>();
         cloneParams.put("reference_audio_url", referenceAudioUrl);
         LlmGatewayChatResponse clone = llmGatewayClient.chat(tenantId, "beat-dub-clone-" + jobId,
@@ -180,6 +187,9 @@ public class BeatDubbingService {
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
         ttsParams.putAll(directive.extraTtsParams());
+        if (languageCode != null && !languageCode.isBlank()) {
+            ttsParams.put("language_code", languageCode);
+        }
         LlmGatewayChatResponse tts = llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
                 new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
         if (tts == null) {

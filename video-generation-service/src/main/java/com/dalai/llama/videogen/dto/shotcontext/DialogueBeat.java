@@ -18,6 +18,11 @@ public record DialogueBeat(
         /** Shot.emotion -- a shot-level attribute, fed into {@code BeatDubbingService}'s {@code
          * SceneEnergyStrategyResolver} so the dubbed delivery matches the shot's intended mood
          * instead of reading as flat/neutral text. Nullable. */
-        String emotion
+        String emotion,
+        /** BCP-47 code from the project's dialogueLanguage (see pre-production-service's own
+         * DialogueBeat.languageCode javadoc). Forwarded by {@code BeatDubbingService} into the
+         * TTS call as an explicit hint so eleven_multilingual_v2 doesn't misidentify the target
+         * language from romanized text alone. Nullable. */
+        String languageCode
 ) {
 }

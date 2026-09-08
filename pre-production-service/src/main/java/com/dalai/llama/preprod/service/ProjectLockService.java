@@ -179,17 +179,19 @@ public class ProjectLockService {
         // brand-new DB connection attempts at once (one per parallel thread) was enough to trip
         // connection refusals against this cluster's single shared Postgres under load.
         List<ShotImage> toDescribe = bestImages.stream().filter(i -> i.getDescription() == null).toList();
-        Map<UUID, String> newDescriptions = new java.util.concurrent.ConcurrentHashMap<>();
+        Map<UUID, ShotImageDescriptionService.Description> newDescriptions = new java.util.concurrent.ConcurrentHashMap<>();
         toDescribe.parallelStream().forEach(image -> {
-            String description = shotImageDescriptionService.describe(tenantId, image);
-            if (description != null && !description.isBlank()) {
-                newDescriptions.put(image.getId(), description);
+            ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, image);
+            if (described != null && described.description() != null && !described.description().isBlank()) {
+                newDescriptions.put(image.getId(), described);
             }
         });
         for (ShotImage image : toDescribe) {
-            String description = newDescriptions.get(image.getId());
-            if (description != null) {
-                image.setDescription(description);
+            ShotImageDescriptionService.Description described = newDescriptions.get(image.getId());
+            if (described != null) {
+                image.setDescription(described.description());
+                image.setOnScreenText(described.onScreenText());
+                image.setOnScreenTextLanguage(described.onScreenTextLanguage());
                 shotImageRepository.save(image);
             }
         }

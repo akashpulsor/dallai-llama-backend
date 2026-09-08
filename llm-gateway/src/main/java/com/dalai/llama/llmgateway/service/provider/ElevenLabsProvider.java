@@ -113,6 +113,14 @@ public class ElevenLabsProvider implements LlmProvider {
         if (params.get("voice_settings") != null) {
             body.put("voice_settings", params.get("voice_settings"));
         }
+        // Optional BCP-47 language hint -- the caller (video-generation-service's
+        // BeatDubbingService) sends this when the project's dialogueLanguage is set, so
+        // eleven_multilingual_v2 doesn't misidentify the target language from romanized text
+        // alone. Same passthrough shape as voice_settings above.
+        Object languageCode = params.get("language_code");
+        if (languageCode != null && !String.valueOf(languageCode).isBlank()) {
+            body.put("language_code", languageCode);
+        }
 
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : 30000;
         return webClient.post()

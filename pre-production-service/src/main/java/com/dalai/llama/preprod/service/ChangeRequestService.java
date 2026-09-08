@@ -8,6 +8,7 @@ import com.dalai.llama.preprod.domain.entity.SuggestionTargetType;
 import com.dalai.llama.preprod.dto.ChangeRequestView;
 import com.dalai.llama.preprod.dto.SuggestChangeRequestRequest;
 import com.dalai.llama.preprod.repository.ChangeRequestRepository;
+import com.dalai.llama.preprod.repository.ShotImageRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,26 +35,32 @@ public class ChangeRequestService {
     private final SuggestionTargetTypeService suggestionTargetTypeService;
     private final ProjectService projectService;
     private final ShotRepository shotRepository;
+    private final ShotImageRepository shotImageRepository;
     private final ScriptGenerationService scriptGenerationService;
     private final ScreenplayGenerationService screenplayGenerationService;
     private final ShotImageService shotImageService;
+    private final ShotImageEditPromptComposer shotImageEditPromptComposer;
 
     public ChangeRequestService(
             ChangeRequestRepository changeRequestRepository,
             SuggestionTargetTypeService suggestionTargetTypeService,
             ProjectService projectService,
             ShotRepository shotRepository,
+            ShotImageRepository shotImageRepository,
             ScriptGenerationService scriptGenerationService,
             ScreenplayGenerationService screenplayGenerationService,
-            ShotImageService shotImageService
+            ShotImageService shotImageService,
+            ShotImageEditPromptComposer shotImageEditPromptComposer
     ) {
         this.changeRequestRepository = changeRequestRepository;
         this.suggestionTargetTypeService = suggestionTargetTypeService;
         this.projectService = projectService;
         this.shotRepository = shotRepository;
+        this.shotImageRepository = shotImageRepository;
         this.scriptGenerationService = scriptGenerationService;
         this.screenplayGenerationService = screenplayGenerationService;
         this.shotImageService = shotImageService;
+        this.shotImageEditPromptComposer = shotImageEditPromptComposer;
     }
 
     /** Called by chat-service, service-to-service, immediately after the model proposes the
@@ -70,17 +77,45 @@ public class ChangeRequestService {
         }
 
         OffsetDateTime now = OffsetDateTime.now();
+        String storedNote = composeNoteIfShotImage(tenantId, projectId, targetType.getCode(), request.targetRef(), request.note());
         ChangeRequest changeRequest = changeRequestRepository.save(ChangeRequest.builder()
                 .tenantId(tenantId)
                 .projectId(projectId)
                 .targetType(targetType.getCode())
                 .targetRef(request.targetRef())
-                .note(request.note())
+                .note(storedNote)
                 .status(ChangeRequestStatus.PENDING)
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
         return toView(changeRequest);
+    }
+
+    /** For SHOT_IMAGE suggestions only: rewrite the raw creator note into an edit-safe instruction
+     * that preserves the rest of the frame (see {@link ShotImageEditPromptComposer}) -- otherwise
+     * the note flows through unchanged, same as before. Any failure to resolve the target image
+     * or compose the prompt falls back to the raw note, so a broken composition never blocks a
+     * chat suggestion from being logged. */
+    private String composeNoteIfShotImage(UUID tenantId, UUID projectId, String targetTypeCode, String targetRef, String rawNote) {
+        if (!"SHOT_IMAGE".equals(targetTypeCode) || rawNote == null || rawNote.isBlank() || targetRef == null) {
+            return rawNote;
+        }
+        String[] parts = targetRef.split(":", 2);
+        if (parts.length != 2) {
+            return rawNote;
+        }
+        ShotImageKind kind;
+        try {
+            kind = ShotImageKind.valueOf(parts[1].toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return rawNote;
+        }
+        String currentOnScreenText = shotRepository.findByProjectIdAndShotRef(projectId, parts[0])
+                .filter(s -> s.getTenantId().equals(tenantId))
+                .flatMap(s -> shotImageRepository.findByShotIdAndKind(s.getId(), kind))
+                .map(image -> image.getOnScreenText())
+                .orElse(null);
+        return shotImageEditPromptComposer.compose(tenantId, rawNote, currentOnScreenText);
     }
 
     @Transactional(readOnly = true)

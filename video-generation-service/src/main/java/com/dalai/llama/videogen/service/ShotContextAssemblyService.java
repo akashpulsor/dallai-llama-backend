@@ -105,7 +105,8 @@ public class ShotContextAssemblyService {
                         bundle.projectConfig() == null ? null : bundle.projectConfig().preferredTtsModel()),
                 buildContinuityAnchors(projectPrep),
                 buildAudioAmbience(shot, shotBundle.backgroundMusic()),
-                buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion())
+                buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion(),
+                        bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage())
         );
 
         FeatureFlags flagsOverride = overrides == null ? null : overrides.featureFlagOverrides();
@@ -277,7 +278,8 @@ public class ShotContextAssemblyService {
             List<PreProductionViews.CastAssignmentView> castAssignments,
             Map<UUID, PreProductionViews.CastProfileView> profilesById,
             PreProductionViews.ScriptView script,
-            String emotion) {
+            String emotion,
+            String languageCode) {
         if (beats == null || beats.isEmpty()) {
             return List.of();
         }
@@ -308,7 +310,7 @@ public class ShotContextAssemblyService {
                             castProfileByScriptCharacterId, profilesById);
                     PreProductionViews.CastProfileView profile = resolved != null ? resolved : fallbackProfile;
                     return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(),
-                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile), emotion);
+                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile), emotion, languageCode);
                 })
                 .toList();
     }

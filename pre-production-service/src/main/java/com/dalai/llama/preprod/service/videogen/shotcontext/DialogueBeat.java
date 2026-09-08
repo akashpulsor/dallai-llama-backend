@@ -20,6 +20,12 @@ public record DialogueBeat(
          * into beat-dubbing's scene-energy TTS lever so a shot's dubbed delivery matches its
          * intended mood instead of reading as flat/neutral text. Nullable, same tolerant "no
          * signal, use a sensible default" handling as the voice fields above. */
-        String emotion
+        String emotion,
+        /** BCP-47 code from ProjectConfig.dialogueLanguage (e.g. hi-IN, hi-Latn-IN, en-US). Fed to
+         * the TTS provider as an explicit language hint so eleven_multilingual_v2 doesn't over-rely
+         * on its English prior when the text happens to be romanized Hindi/Hinglish -- the exact
+         * bug where a Hinglish script was speaking with an English accent. Nullable: absent means
+         * let the provider infer from the text as before. */
+        String languageCode
 ) {
 }

@@ -231,13 +231,49 @@ public class ShotImageService {
         image.setObjectKey(objectKey);
         image.setPrompt(prompt);
         image.setReferenceCastProfileId(castProfile == null ? null : castProfile.getId());
+        // Refresh the vision-analysis cache on regenerate -- the previous run's onScreenText no
+        // longer describes this image. Cleared explicitly (not just left stale) so a UI reading
+        // "does this frame have visible text" gets a null instead of a lie until the analysis
+        // below refills it.
+        image.setDescription(null);
+        image.setOnScreenText(null);
+        image.setOnScreenTextLanguage(null);
         image.setUpdatedAt(now);
         image = shotImageRepository.save(image);
 
         mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.STORYBOARD_IMAGE);
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_GENERATED", kind + " image stored at " + objectKey);
 
+        annotateFromVisionAnalysis(tenantId, image);
         return toView(image);
+    }
+
+    /** Runs the vision-analysis call immediately after producing a new/replaced image, so the
+     * frontend's per-image "has rendered text" affordances (Download, "fix on-image text") work
+     * from the moment the tile appears -- previously these fields were populated only lazily
+     * inside {@code ProjectLockService.ingestShots} on the STORYBOARD image, so a
+     * PRODUCTION/MOTION_GRAPHIC image never had them at all. One extra LLM call per image; the
+     * same call the lock path was already paying for, just moved earlier and per-image. Never
+     * fails the caller -- the description helper degrades to {@code Description.EMPTY} on any
+     * error, matching its own class-level "never breaks the shot pipeline" contract. */
+    private void annotateFromVisionAnalysis(UUID tenantId, ShotImage image) {
+        ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, image);
+        if (described == null) {
+            return;
+        }
+        boolean any = false;
+        if (described.description() != null && !described.description().isBlank()) {
+            image.setDescription(described.description());
+            any = true;
+        }
+        if (described.onScreenText() != null && !described.onScreenText().isBlank()) {
+            image.setOnScreenText(described.onScreenText());
+            image.setOnScreenTextLanguage(described.onScreenTextLanguage());
+            any = true;
+        }
+        if (any) {
+            shotImageRepository.save(image);
+        }
     }
 
     /** Entry point for the "pick a reference photo (e.g. from Pinterest), apply its cinematic
@@ -309,17 +345,23 @@ public class ShotImageService {
         image.setBucket(bucket);
         image.setObjectKey(objectKey);
         // Deliberately clear prompt/referenceCastProfileId: this image was NOT generated from
-        // them, so leaving the previous run's values here would misrepresent provenance. The
-        // description field stays as-is (or empty) -- the caller can trigger a re-analysis later
-        // if they want a fresh description; we don't want to burn an LLM call on every upload.
+        // them, so leaving the previous run's values here would misrepresent provenance. Also
+        // clear the cached vision-analysis fields -- the previous image's onScreenText no longer
+        // describes what the user just uploaded; the annotate call below refills them per the new
+        // bytes, so the frontend's "has rendered text" affordances stay accurate.
         image.setPrompt(null);
         image.setReferenceCastProfileId(null);
+        image.setDescription(null);
+        image.setOnScreenText(null);
+        image.setOnScreenTextLanguage(null);
         image.setUpdatedAt(now);
         image = shotImageRepository.save(image);
 
         mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.STORYBOARD_IMAGE);
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_UPLOADED",
                 kind + " image replaced by manual upload, stored at " + objectKey);
+
+        annotateFromVisionAnalysis(tenantId, image);
         return toView(image);
     }
 
@@ -619,7 +661,8 @@ public class ShotImageService {
 
     private ShotImageView toView(ShotImage image) {
         return new ShotImageView(image.getId(), image.getKind(), image.getBucket(), image.getObjectKey(),
-                signedUrl(image.getBucket(), image.getObjectKey()), image.getCreatedAt());
+                signedUrl(image.getBucket(), image.getObjectKey()),
+                image.getOnScreenText(), image.getOnScreenTextLanguage(), image.getCreatedAt());
     }
 
     private record DecodedImage(byte[] bytes, String contentType, String extension) {

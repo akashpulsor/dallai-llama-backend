@@ -60,6 +60,9 @@ public class VideoGenJobDialogueBeat {
     @Column(name = "emotion", length = 240)
     private String emotion;
 
+    @Column(name = "language_code", length = 16)
+    private String languageCode;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }
