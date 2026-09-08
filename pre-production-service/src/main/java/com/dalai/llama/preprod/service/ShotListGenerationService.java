@@ -357,17 +357,29 @@ public class ShotListGenerationService {
         return toView(saved, castByCharacterKeyForProject(tenantId, projectId));
     }
 
-    /** Hand-edit of a shot's script line and/or length -- see {@link UpdateShotRequest}'s class
-     * comment. Every other field (camera plan, lighting, etc.) is untouched. */
+    /** Hand-edit of a shot's plan -- see {@link UpdateShotRequest}'s class comment. PATCH semantics
+     * throughout: a null field on the request leaves the shot column untouched; a non-null field
+     * (including an empty string, for clearing free-text notes) is applied. Deep cinematography
+     * fields ({@code cine_*}) and lighting/camera gear stay in their own edit paths (LightingPlan/
+     * CameraPlan editors) since that's where the DP-critic material already lives. */
     public ShotView updateShot(UUID tenantId, UUID shotId, UpdateShotRequest request) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
-        if (request.scriptLine() != null) {
-            shot.setScriptLine(request.scriptLine());
-        }
-        if (request.durationSeconds() != null) {
-            shot.setDurationSeconds(request.durationSeconds());
-        }
+        if (request.scriptLine() != null) shot.setScriptLine(request.scriptLine());
+        if (request.durationSeconds() != null) shot.setDurationSeconds(request.durationSeconds());
+        if (request.action() != null) shot.setAction(request.action());
+        if (request.voiceOver() != null) shot.setVoiceOver(request.voiceOver());
+        if (request.emotion() != null) shot.setEmotion(request.emotion());
+        if (request.textOverlay() != null) shot.setTextOverlay(request.textOverlay());
+        if (request.soundDesign() != null) shot.setSoundDesign(request.soundDesign());
+        if (request.editingNotes() != null) shot.setEditingNotes(request.editingNotes());
+        if (request.location() != null) shot.setLocation(request.location());
+        if (request.timeOfDay() != null) shot.setTimeOfDay(request.timeOfDay());
+        if (request.lightingMood() != null) shot.setLightingMood(request.lightingMood());
+        if (request.cameraShotSize() != null) shot.setCameraShotSize(request.cameraShotSize());
+        if (request.cameraAngle() != null) shot.setCameraAngle(request.cameraAngle());
+        if (request.cameraMovement() != null) shot.setCameraMovement(request.cameraMovement());
+        if (request.cameraNote() != null) shot.setCameraNote(request.cameraNote());
         shot.setUpdatedAt(OffsetDateTime.now());
         Shot saved = shotRepository.save(shot);
         return toView(saved, castByCharacterKeyForProject(tenantId, shot.getProjectId()));
