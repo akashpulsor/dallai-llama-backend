@@ -13,4 +13,6 @@ public interface ShotImageRepository extends JpaRepository<ShotImage, UUID> {
     Optional<ShotImage> findByShotIdAndKind(UUID shotId, ShotImageKind kind);
 
     List<ShotImage> findByShotId(UUID shotId);
+
+    List<ShotImage> findByShotIdIn(List<UUID> shotIds);
 }

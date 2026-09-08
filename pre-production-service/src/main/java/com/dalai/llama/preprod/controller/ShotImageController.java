@@ -58,4 +58,27 @@ public class ShotImageController extends BaseController {
     public ResponseEntity<List<ShotImageView>> list(@PathVariable UUID shotId) {
         return ResponseEntity.ok(shotImageService.list(tenant().tenantId(), shotId));
     }
+
+    /** Re-runs vision analysis on an existing image so its on_screen_text / description /
+     * on_screen_text_language get refreshed -- without this, images generated before the vision-
+     * analysis-on-generate change (V56) have those fields NULL forever and the Download button
+     * never surfaces for text-bearing frames. The frontend calls this lazily per-tile when it sees
+     * a null on_screen_text; server-side it's just the same describe() call the generate/replace
+     * paths already fire, applied to the already-stored bytes. */
+    @PostMapping("/v1/shots/{shotId}/images/{kind}/reanalyze")
+    public ResponseEntity<ShotImageView> reanalyze(@PathVariable UUID shotId, @PathVariable ShotImageKind kind) {
+        return ResponseEntity.ok(shotImageService.reanalyzeVisualDescription(tenant().tenantId(), shotId, kind));
+    }
+
+    /** Proactive legacy-data fix: walk every shot_image row in this project whose
+     * on_screen_text is still NULL (i.e. was never analyzed under the V56/V83 vision-with-language
+     * contract) and re-run describe() on each. Fired once per project per session from the
+     * frontend so a creator visiting a project locked before the on_screen_text feature shipped
+     * doesn't have to open every tile individually to unlock its Download button. Returns the
+     * number of images actually re-analyzed. */
+    @PostMapping("/v1/projects/{projectId}/shot-images/reanalyze-missing")
+    public ResponseEntity<java.util.Map<String, Integer>> reanalyzeMissingForProject(@PathVariable UUID projectId) {
+        int fired = shotImageService.reanalyzeMissingForProject(tenant().tenantId(), projectId);
+        return ResponseEntity.ok(java.util.Map.of("reanalyzed", fired));
+    }
 }

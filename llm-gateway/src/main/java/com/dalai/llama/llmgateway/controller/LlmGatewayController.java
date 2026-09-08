@@ -18,6 +18,7 @@ import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
 import com.dalai.llama.llmgateway.repository.ModelMasterRepository;
 import com.dalai.llama.llmgateway.repository.ModelSupportedLanguageRepository;
+import com.dalai.llama.llmgateway.service.BuiltinVoiceSyncService;
 import com.dalai.llama.llmgateway.service.GatewayException;
 import com.dalai.llama.llmgateway.service.LlmGatewayService;
 import com.dalai.llama.llmgateway.service.ModelRouterService;
@@ -56,6 +57,7 @@ public class LlmGatewayController {
     private final ModelMasterRepository modelMasterRepository;
     private final BuiltinVoiceRepository builtinVoiceRepository;
     private final BuiltinVoiceLanguageRepository builtinVoiceLanguageRepository;
+    private final BuiltinVoiceSyncService builtinVoiceSyncService;
 
     public LlmGatewayController(
             LlmGatewayService llmGatewayService,
@@ -66,7 +68,8 @@ public class LlmGatewayController {
             ModelCapabilityRepository modelCapabilityRepository,
             ModelMasterRepository modelMasterRepository,
             BuiltinVoiceRepository builtinVoiceRepository,
-            BuiltinVoiceLanguageRepository builtinVoiceLanguageRepository
+            BuiltinVoiceLanguageRepository builtinVoiceLanguageRepository,
+            BuiltinVoiceSyncService builtinVoiceSyncService
     ) {
         this.llmGatewayService = llmGatewayService;
         this.modelRouterService = modelRouterService;
@@ -77,6 +80,7 @@ public class LlmGatewayController {
         this.modelMasterRepository = modelMasterRepository;
         this.builtinVoiceRepository = builtinVoiceRepository;
         this.builtinVoiceLanguageRepository = builtinVoiceLanguageRepository;
+        this.builtinVoiceSyncService = builtinVoiceSyncService;
     }
 
     @PostMapping("/v1/chat")
@@ -213,6 +217,18 @@ public class LlmGatewayController {
                         v.getGender(), v.getPreviewAudioUrl(), languagesByVoiceId.getOrDefault(v.getVoiceId(), List.of())))
                 .toList();
         return ResponseEntity.ok(views);
+    }
+
+    /** One-shot admin trigger: refreshes {@code builtin_voice} + {@code builtin_voice_language}
+     * from the ElevenLabs account's current voice list (only voices ElevenLabs itself verifies for
+     * Hindi land here -- the premade English voices from V80 aren't touched, they stay for their
+     * en-US mapping). Fixes the "same voice comes for Hindi or English" symptom for creators who
+     * expect authentic Hindi speech: after running this, the built-in voice picker filtered by
+     * hi-IN/hi-Latn-IN surfaces the account's real Hindi-native voices instead of English premade
+     * voices that speak Hindi with an English accent. Idempotent -- re-running just refreshes. */
+    @PostMapping("/v1/voices/sync")
+    public ResponseEntity<BuiltinVoiceSyncService.SyncResult> syncBuiltinVoices() {
+        return ResponseEntity.ok(builtinVoiceSyncService.syncFromElevenLabs());
     }
 
     public record ModelConfigView(

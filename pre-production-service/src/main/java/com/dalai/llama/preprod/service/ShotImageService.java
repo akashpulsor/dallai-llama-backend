@@ -193,8 +193,24 @@ public class ShotImageService {
                 // actually provisioned in this environment, so identity-image-model now defaults
                 // to Gemini (see application.yml), which needs no separate credential at all.
                 params = imageParams(shot);
+                List<String> uris = new java.util.ArrayList<>();
+                // Chat/creator edit path: the CURRENT image goes in FIRST so Gemini treats it as
+                // the frame to edit (preserve composition, only change what the note asks). Without
+                // this, an identity-conditioned PRODUCTION shot regenerated from just the face ref
+                // would blow away the on-image text placement / composition every time -- exactly
+                // the "apply text change and everything else got replaced" failure this branch was
+                // silently causing when a SHOT_IMAGE change request landed on a cast-conditioned
+                // frame (chat-service always routes text edits through this path via
+                // ShotImageEditPromptComposer, so this is the common case, not an edge).
+                if (note != null && !note.isBlank()) {
+                    shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(uris::add);
+                }
+                // Identity ref is still the authoritative face/product source and stays in the
+                // call. On a plain (no-note) regenerate, it's the only image -- same behavior as
+                // before this fix; on an edit it's a second reference alongside the current frame.
                 String refDataUri = toDataUri(refBucket, refObjectKey);
-                editDataUris = refDataUri == null ? null : List.of(refDataUri);
+                if (refDataUri != null) uris.add(refDataUri);
+                editDataUris = uris.isEmpty() ? null : uris;
                 prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
             } else {
                 params = Map.of("reference_image_urls", List.of(signedUrl(refBucket, refObjectKey)));
@@ -258,22 +274,21 @@ public class ShotImageService {
      * error, matching its own class-level "never breaks the shot pipeline" contract. */
     private void annotateFromVisionAnalysis(UUID tenantId, ShotImage image) {
         ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, image);
-        if (described == null) {
+        // Anything other than a full success (the describe helper degrades to null-fields
+        // Description.EMPTY on any failure) is a "haven't successfully analyzed yet" state --
+        // leave the row alone so the frontend keeps auto-firing reanalyze until it succeeds.
+        if (described == null || described.description() == null || described.description().isBlank()) {
             return;
         }
-        boolean any = false;
-        if (described.description() != null && !described.description().isBlank()) {
-            image.setDescription(described.description());
-            any = true;
-        }
-        if (described.onScreenText() != null && !described.onScreenText().isBlank()) {
-            image.setOnScreenText(described.onScreenText());
-            image.setOnScreenTextLanguage(described.onScreenTextLanguage());
-            any = true;
-        }
-        if (any) {
-            shotImageRepository.save(image);
-        }
+        image.setDescription(described.description());
+        // Store the on-image text unconditionally on a successful describe -- empty string when
+        // the model saw no text -- so a NULL on_screen_text unambiguously means "never
+        // successfully analyzed", not "analyzed and no text". Without this distinction, the
+        // frontend would keep re-firing reanalyze every session on genuinely text-free images.
+        String text = described.onScreenText() == null ? "" : described.onScreenText().trim();
+        image.setOnScreenText(text);
+        image.setOnScreenTextLanguage(text.isEmpty() ? null : described.onScreenTextLanguage());
+        shotImageRepository.save(image);
     }
 
     /** Entry point for the "pick a reference photo (e.g. from Pinterest), apply its cinematic
@@ -380,6 +395,49 @@ public class ShotImageService {
             }
         }
         return "png";
+    }
+
+    /** Backfill entry point for shot images generated before the vision-analysis-on-generate change
+     * shipped (V56 + ShotImageService.annotateFromVisionAnalysis). Those rows have
+     * on_screen_text / on_screen_text_language NULL forever otherwise, so the per-image Download
+     * affordance can never surface for text-bearing frames. Same describe() call the generate/
+     * replace paths already fire, just applied to the already-stored bytes. Safe to call any time --
+     * it just refreshes the cached fields, never touches the image bytes. */
+    @Transactional
+    public ShotImageView reanalyzeVisualDescription(UUID tenantId, UUID shotId, ShotImageKind kind) {
+        shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        ShotImage image = shotImageRepository.findByShotIdAndKind(shotId, kind)
+                .orElseThrow(() -> PreProductionException.notFound("Shot " + shotId + " has no " + kind + " image yet"));
+        annotateFromVisionAnalysis(tenantId, image);
+        return toView(image);
+    }
+
+    /** Project-wide legacy backfill: finds every shot_image in the project whose on_screen_text is
+     * NULL (i.e. was never successfully analyzed under the V56/V83 vision-with-language contract)
+     * and runs the same describe() call on each. Fired automatically once per project per session
+     * from the frontend so a creator visiting a project locked before the on_screen_text feature
+     * shipped doesn't have to open every tile individually to unlock its Download button.
+     *
+     * <p>Returns the number of images actually re-analyzed. Images with on_screen_text already set
+     * (including the sentinel empty string set for "analyzed but has no text") are skipped for
+     * free -- no LLM call, no wasted cost. */
+    @Transactional
+    public int reanalyzeMissingForProject(UUID tenantId, UUID projectId) {
+        List<Shot> projectShots = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
+                .filter(s -> tenantId.equals(s.getTenantId()))
+                .toList();
+        if (projectShots.isEmpty()) return 0;
+        List<UUID> shotIds = projectShots.stream().map(Shot::getId).toList();
+        List<ShotImage> images = shotImageRepository.findByShotIdIn(shotIds).stream()
+                .filter(i -> i.getOnScreenText() == null)
+                .toList();
+        int fired = 0;
+        for (ShotImage image : images) {
+            annotateFromVisionAnalysis(tenantId, image);
+            fired++;
+        }
+        return fired;
     }
 
     @Transactional(readOnly = true)
