@@ -14,8 +14,11 @@ public record CreateCastProfileRequest(
         UUID projectId,
         CastProfileType profileType,
         @NotBlank String displayName,
-        @NotBlank String faceRefBucket,
-        @NotBlank String faceRefObjectKey,
+        /** Both nullable together for the "AI-generated identity" flow (no uploaded face,
+         * relies on {@code builtinVoiceId} for the voice). The "real person likeness" flow
+         * still requires both -- enforced client-side by CastProfileQuickCreate's mode toggle. */
+        String faceRefBucket,
+        String faceRefObjectKey,
         String description,
         Integer age,
         String gender,

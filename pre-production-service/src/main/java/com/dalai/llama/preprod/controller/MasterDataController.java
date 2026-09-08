@@ -2,6 +2,7 @@ package com.dalai.llama.preprod.controller;
 
 import com.dalai.llama.preprod.dto.AspectRatioOptionView;
 import com.dalai.llama.preprod.dto.DialogueLanguageView;
+import com.dalai.llama.preprod.dto.GenderOptionView;
 import com.dalai.llama.preprod.dto.ShotTypeDefinitionView;
 import com.dalai.llama.preprod.dto.VideoFeatureFlagDefinitionView;
 import com.dalai.llama.preprod.service.MasterDataService;
@@ -41,5 +42,10 @@ public class MasterDataController {
     @GetMapping("/v1/dialogue-languages")
     public ResponseEntity<List<DialogueLanguageView>> dialogueLanguages() {
         return ResponseEntity.ok(masterDataService.listDialogueLanguages());
+    }
+
+    @GetMapping("/v1/genders")
+    public ResponseEntity<List<GenderOptionView>> genders() {
+        return ResponseEntity.ok(masterDataService.listGenders());
     }
 }

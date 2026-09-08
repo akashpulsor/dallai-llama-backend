@@ -50,10 +50,14 @@ public class CastProfile {
     @Column(name = "display_name", nullable = false, length = 160)
     private String displayName;
 
-    @Column(name = "face_ref_bucket", nullable = false)
+    /** Both nullable to support the "AI-generated identity" flow -- a profile with no uploaded
+     * face photo pairs with a {@link #builtinVoiceId} for reliable pronunciation and lets the
+     * video model generate the face fresh from the character's text description each dispatch.
+     * The "real person likeness" flow still uploads both. See V54 migration. */
+    @Column(name = "face_ref_bucket")
     private String faceRefBucket;
 
-    @Column(name = "face_ref_object_key", nullable = false)
+    @Column(name = "face_ref_object_key")
     private String faceRefObjectKey;
 
     @Column(name = "description")

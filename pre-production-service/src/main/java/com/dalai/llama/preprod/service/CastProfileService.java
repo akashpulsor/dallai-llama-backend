@@ -63,8 +63,10 @@ public class CastProfileService {
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
-        mediaAssetService.registerIfAbsent(tenantId, request.faceRefBucket(), request.faceRefObjectKey(),
-                profileType == CastProfileType.PRODUCT ? MediaAssetType.PRODUCT_REFERENCE : MediaAssetType.CAST_FACE_REFERENCE);
+        if (request.faceRefBucket() != null && request.faceRefObjectKey() != null) {
+            mediaAssetService.registerIfAbsent(tenantId, request.faceRefBucket(), request.faceRefObjectKey(),
+                    profileType == CastProfileType.PRODUCT ? MediaAssetType.PRODUCT_REFERENCE : MediaAssetType.CAST_FACE_REFERENCE);
+        }
         if (profile.getVoiceRefBucket() != null && profile.getVoiceRefObjectKey() != null) {
             mediaAssetService.registerIfAbsent(tenantId, profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
         }

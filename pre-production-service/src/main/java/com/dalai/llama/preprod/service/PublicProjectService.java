@@ -286,7 +286,15 @@ public class PublicProjectService {
         }
     }
 
+    /** Display-only for the public client-review page's cast list -- degrades to no image rather
+     * than 500ing the whole page. Both null-guarded (an AI-generated-identity cast profile has no
+     * face_ref_bucket/object_key at all, see V54 migration) and catch-and-return-null on presign
+     * failure, same convention as {@code CastProfileService.signedUrl} and {@code
+     * ShotListGenerationService.signedFaceUrl}. */
     private String signedUrl(String bucket, String objectKey) {
+        if (bucket == null || objectKey == null) {
+            return null;
+        }
         try {
             return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
@@ -295,7 +303,7 @@ public class PublicProjectService {
                     .expiry(1, TimeUnit.HOURS)
                     .build());
         } catch (Exception ex) {
-            throw PreProductionException.upstream("Could not sign cast image URL: " + ex.getMessage());
+            return null;
         }
     }
 }

@@ -1,13 +1,16 @@
 package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.domain.entity.AspectRatioOption;
+import com.dalai.llama.preprod.domain.entity.GenderOption;
 import com.dalai.llama.preprod.domain.entity.ShotTypeDefinition;
 import com.dalai.llama.preprod.domain.entity.VideoFeatureFlagDefinition;
 import com.dalai.llama.preprod.dto.AspectRatioOptionView;
 import com.dalai.llama.preprod.dto.DialogueLanguageView;
+import com.dalai.llama.preprod.dto.GenderOptionView;
 import com.dalai.llama.preprod.dto.ShotTypeDefinitionView;
 import com.dalai.llama.preprod.dto.VideoFeatureFlagDefinitionView;
 import com.dalai.llama.preprod.repository.AspectRatioOptionRepository;
+import com.dalai.llama.preprod.repository.GenderOptionRepository;
 import com.dalai.llama.preprod.repository.ShotTypeDefinitionRepository;
 import com.dalai.llama.preprod.repository.VideoFeatureFlagDefinitionRepository;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
@@ -31,17 +34,20 @@ public class MasterDataService {
     private final ShotTypeDefinitionRepository shotTypeDefinitionRepository;
     private final VideoFeatureFlagDefinitionRepository videoFeatureFlagDefinitionRepository;
     private final AspectRatioOptionRepository aspectRatioOptionRepository;
+    private final GenderOptionRepository genderOptionRepository;
     private final LlmGatewayClient llmGatewayClient;
 
     public MasterDataService(
             ShotTypeDefinitionRepository shotTypeDefinitionRepository,
             VideoFeatureFlagDefinitionRepository videoFeatureFlagDefinitionRepository,
             AspectRatioOptionRepository aspectRatioOptionRepository,
+            GenderOptionRepository genderOptionRepository,
             LlmGatewayClient llmGatewayClient
     ) {
         this.shotTypeDefinitionRepository = shotTypeDefinitionRepository;
         this.videoFeatureFlagDefinitionRepository = videoFeatureFlagDefinitionRepository;
         this.aspectRatioOptionRepository = aspectRatioOptionRepository;
+        this.genderOptionRepository = genderOptionRepository;
         this.llmGatewayClient = llmGatewayClient;
     }
 
@@ -60,6 +66,11 @@ public class MasterDataService {
         return aspectRatioOptionRepository.findByActiveTrue().stream().map(this::toView).collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
+    public List<GenderOptionView> listGenders() {
+        return genderOptionRepository.findByActiveTrue().stream().map(this::toView).collect(Collectors.toList());
+    }
+
     public List<DialogueLanguageView> listDialogueLanguages() {
         return llmGatewayClient.listLanguages().stream()
                 .map(l -> new DialogueLanguageView(l.languageCode(), l.displayName(), l.nativeName()))
@@ -76,5 +87,9 @@ public class MasterDataService {
 
     private AspectRatioOptionView toView(AspectRatioOption o) {
         return new AspectRatioOptionView(o.getCode(), o.getLabel(), o.getOrientation());
+    }
+
+    private GenderOptionView toView(GenderOption g) {
+        return new GenderOptionView(g.getCode(), g.getLabel());
     }
 }
