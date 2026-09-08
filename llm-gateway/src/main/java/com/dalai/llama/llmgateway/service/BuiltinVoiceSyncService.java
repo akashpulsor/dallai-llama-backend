@@ -104,19 +104,25 @@ public class BuiltinVoiceSyncService {
             boolean speaksHindi = verifiedCodes.contains("hi") || verifiedCodes.contains("hi-IN") || verifiedCodes.contains("hi-Latn-IN");
             if (!speaksHindi) continue;
 
-            String ourVoiceId = "elevenlabs-" + v.voiceId();
-            boolean existed = builtinVoiceRepository.findById(ourVoiceId).isPresent();
-            BuiltinVoice row = builtinVoiceRepository.findById(ourVoiceId).orElseGet(() -> BuiltinVoice.builder()
-                    .voiceId(ourVoiceId)
+            // Match by provider_voice_id, not by our synthetic voice_id -- the pre-seeded voices
+            // from V80 have friendly ids like "elevenlabs-sarah" while this sync would default to
+            // "elevenlabs-<providerVoiceId>", so a straight-by-id lookup would insert a duplicate
+            // row for the very voices that were already seeded. Provider+providerVoiceId is the
+            // real natural key of "which ElevenLabs voice is this".
+            BuiltinVoice existing = builtinVoiceRepository.findByProviderIdAndProviderVoiceId("elevenlabs", v.voiceId()).orElse(null);
+            boolean existed = existing != null;
+            BuiltinVoice row = existing != null ? existing : BuiltinVoice.builder()
+                    .voiceId("elevenlabs-" + v.voiceId())
                     .providerId("elevenlabs")
                     .createdAt(now)
-                    .build());
+                    .build();
             row.setProviderVoiceId(v.voiceId());
             row.setDisplayName(displayNameFor(v));
             row.setGender(genderFor(v));
             row.setPreviewAudioUrl(v.previewUrl());
             row.setActive(true);
-            builtinVoiceRepository.save(row);
+            row = builtinVoiceRepository.save(row);
+            String ourVoiceId = row.getVoiceId();
             if (existed) touched++; else inserted++;
             if (existed) updatedHindiVoiceIds.add(ourVoiceId); else addedHindiVoiceIds.add(ourVoiceId);
 

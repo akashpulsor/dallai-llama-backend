@@ -10,4 +10,6 @@ public interface BuiltinVoiceRepository extends JpaRepository<BuiltinVoice, Stri
     List<BuiltinVoice> findByActiveTrue();
 
     List<BuiltinVoice> findByActiveTrueAndGender(String gender);
+
+    java.util.Optional<BuiltinVoice> findByProviderIdAndProviderVoiceId(String providerId, String providerVoiceId);
 }
