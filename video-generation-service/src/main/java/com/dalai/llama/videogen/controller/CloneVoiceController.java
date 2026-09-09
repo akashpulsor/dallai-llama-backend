@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -28,11 +29,18 @@ public class CloneVoiceController {
     }
 
     @PostMapping("/v1/clone")
-    public ResponseEntity<CloneVoiceService.CloneVoiceResult> testVoice(@RequestBody @NotNull TestVoiceRequest request) {
+    public ResponseEntity<CloneVoiceService.CloneVoiceResult> testVoice(@RequestBody @NotNull CloneVoiceRequest request) {
         UUID tenantId = TenantContextHolder.get().tenantId();
         return ResponseEntity.ok(cloneVoiceService.cloneVoice(tenantId, request.projectId(), request.shotId(), request.text()));
     }
 
-    public record TestVoiceRequest(UUID projectId, UUID shotId, String text) {
+    @PostMapping("/v1/clone/project")
+    public ResponseEntity<List<CloneVoiceService.CloneVoiceResult>> cloneProject(@RequestBody @NotNull CloneProjectRequest request) {
+        UUID tenantId = TenantContextHolder.get().tenantId();
+        return ResponseEntity.ok(cloneVoiceService.cloneProject(tenantId, request.projectId()));
     }
+
+    public record CloneVoiceRequest(UUID projectId, UUID shotId, String text) {}
+
+    public record CloneProjectRequest(UUID projectId) {}
 }
