@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,4 +23,9 @@ public interface ShotDialogueBeatRepository extends JpaRepository<ShotDialogueBe
      * a voice for at dispatch time, so this can't disagree with what actually gets dubbed. */
     @Query("SELECT DISTINCT b.characterKey FROM ShotDialogueBeat b WHERE b.shotId IN :shotIds AND b.characterKey IS NOT NULL")
     List<String> findDistinctCharacterKeysByShotIdIn(@Param("shotIds") List<UUID> shotIds);
+
+    List<ShotDialogueBeat> findByTenantIdAndShotIdInOrderByShotIdAscOrderIndexAsc(
+            UUID tenantId,
+            Collection<UUID> shotIds
+    );
 }

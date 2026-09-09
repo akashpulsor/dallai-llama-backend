@@ -23,11 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.time.OffsetDateTime;
-import java.util.Base64;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /** Background music, on demand only -- never part of the automatic shot-dispatch pipeline (the
  * creator's own explicit call, one track per shot). Sourced from the shot's already-planned
@@ -115,6 +113,18 @@ public class ShotBackgroundMusicService {
         return shotBackgroundMusicRepository.findByShotIdAndTenantId(shotId, tenantId).map(this::toView).orElse(null);
     }
 
+    @Transactional(readOnly = true)
+    public Map<UUID, ShotBackgroundMusicView> listByShotIds(UUID tenantId, List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return shotBackgroundMusicRepository.findByTenantIdAndShotIdIn(tenantId, shotIds).stream()
+                .collect(Collectors.toMap(
+                        ShotBackgroundMusic::getShotId,
+                        this::toView
+                ));
+    }
     /** Joins every {@code ambient_bed} layer's description from {@code Shot.soundDesign} (a JSON
      * array written at shot-list generation time, e.g. {@code [{"layerType": "ambient_bed",
      * "description": "..."}]}) -- {@code sync_hit} layers are one-off foley cues, not background

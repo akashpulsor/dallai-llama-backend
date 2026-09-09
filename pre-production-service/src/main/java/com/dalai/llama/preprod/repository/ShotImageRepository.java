@@ -15,4 +15,5 @@ public interface ShotImageRepository extends JpaRepository<ShotImage, UUID> {
     List<ShotImage> findByShotId(UUID shotId);
 
     List<ShotImage> findByShotIdIn(List<UUID> shotIds);
+    List<ShotImage> findByTenantIdAndShotIdIn(UUID tenantId, List<UUID> shotIds);
 }

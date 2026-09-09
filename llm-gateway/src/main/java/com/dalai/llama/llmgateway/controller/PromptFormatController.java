@@ -1,6 +1,7 @@
 package com.dalai.llama.llmgateway.controller;
 
 import com.dalai.llama.llmgateway.dto.prompt.PromptDtos;
+import com.dalai.llama.llmgateway.service.PromptFormatService;
 import com.dalai.llama.llmgateway.service.prompt.ProviderPromptStrategy;
 import com.dalai.llama.llmgateway.service.prompt.ProviderPromptStrategyResolver;
 import jakarta.validation.Valid;
@@ -25,27 +26,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class PromptFormatController {
 
-    private final ProviderPromptStrategyResolver strategyResolver;
+    private final PromptFormatService promptFormatService;
 
     @PostMapping("/v1/prompt/format")
-    public ResponseEntity<PromptDtos.PromptFormatResponse> format(@Valid @RequestBody PromptDtos.PromptFormatRequest request) {
-        long startMs = System.currentTimeMillis();
-        ProviderPromptStrategy strategy = strategyResolver.resolve(request.modelId());
-        ProviderPromptStrategy.Built built = strategy.build(request.shotContext(), request.flags());
-        int positiveLen = built.positive() == null ? 0 : built.positive().length();
-        int negativeLen = built.negative() == null ? 0 : built.negative().length();
-        log.info("prompt-format modelId={} strategy={} positiveLen={} negativeLen={} maxLen={} elapsedMs={}",
-                request.modelId(), strategy.getClass().getSimpleName(), positiveLen, negativeLen,
-                strategy.maxPromptLength(), System.currentTimeMillis() - startMs);
-        return ResponseEntity.ok(new PromptDtos.PromptFormatResponse(
-                built.positive(), built.negative(), strategy.maxPromptLength()));
+    public ResponseEntity<PromptDtos.PromptFormatResponse> format(
+            @Valid @RequestBody PromptDtos.PromptFormatRequest request) {
+
+        return ResponseEntity.ok(promptFormatService.format(request));
     }
 
-    /** Lightweight query used by callers that only need the compression threshold without
-     * running the full format pass. */
     @GetMapping("/v1/prompt/max-length")
     public ResponseEntity<MaxLengthResponse> maxLength(@RequestParam String modelId) {
-        return ResponseEntity.ok(new MaxLengthResponse(strategyResolver.resolve(modelId).maxPromptLength()));
+        return ResponseEntity.ok(
+                new MaxLengthResponse(promptFormatService.maxPromptLength(modelId))
+        );
     }
 
     public record MaxLengthResponse(int maxLength) {}

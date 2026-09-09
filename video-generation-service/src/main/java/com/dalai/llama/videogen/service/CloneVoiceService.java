@@ -12,11 +12,13 @@ import io.minio.http.Method;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,7 +44,7 @@ import java.util.concurrent.TimeUnit;
  * runs the flow.
  */
 @Service
-public class TestVoiceService {
+public class CloneVoiceService {
 
     private static final String DEFAULT_TEST_LINE =
             "This is a short sample of my voice for this character.";
@@ -53,7 +55,7 @@ public class TestVoiceService {
     private final String voiceCloneModel;
     private final String ttsModel;
 
-    public TestVoiceService(
+    public CloneVoiceService(
             PreProductionServiceClient preProductionServiceClient,
             LlmGatewayClient llmGatewayClient,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
@@ -67,7 +69,7 @@ public class TestVoiceService {
         this.ttsModel = ttsModel;
     }
 
-    public TestVoiceResult testVoice(UUID tenantId, UUID projectId, UUID shotId, String text) {
+    public CloneVoiceResult cloneVoice(UUID tenantId, UUID projectId, UUID shotId, String text) {
         PreProductionViews.PrepareBundleView bundle = preProductionServiceClient.getPrepareBundle(tenantId, projectId)
                 .orElseThrow(() -> VideoGenException.badRequest("No prepare-bundle for project " + projectId));
         PreProductionViews.ShotBundleView shotBundle = bundle.shots().stream()
@@ -92,7 +94,8 @@ public class TestVoiceService {
         if (profile.voiceRefBucket() != null && profile.voiceRefObjectKey() != null) {
             // Cast likeness -- clone from the uploaded sample, then TTS.
             String signedSampleUrl = presign(profile.voiceRefBucket(), profile.voiceRefObjectKey());
-            voiceId = cloneReference(tenantId, projectId, signedSampleUrl);
+            String cloneKey = idempotencyKey("voice-clone", profile.id(), profile.voiceRefBucket(), profile.voiceRefObjectKey(), voiceCloneModel);
+            voiceId = cloneReference(tenantId, projectId, signedSampleUrl, cloneKey);
             mode = "cloned";
         } else if (profile.builtinVoiceId() != null && !profile.builtinVoiceId().isBlank()) {
             // AI-generated identity -- direct TTS with the built-in voice.
@@ -102,8 +105,9 @@ public class TestVoiceService {
             throw VideoGenException.badRequest("Cast profile " + profile.id() + " has neither an uploaded voice sample nor a built-in voice set");
         }
 
-        String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode);
-        return new TestVoiceResult(mode, voiceId, audioDataUri);
+        String ttsKey = idempotencyKey("voice-tts", shotId, voiceId, line, languageCode, ttsModel);
+        String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode, ttsKey);
+        return new CloneVoiceResult(mode, voiceId, audioDataUri);
     }
 
     /** Same fallback ladder DialogueBeatsEditor's frontend uses today: prefer the shot's voice-
@@ -151,11 +155,11 @@ public class TestVoiceService {
         }
     }
 
-    private String cloneReference(UUID tenantId, UUID projectId, String signedSampleUrl) {
+    private String cloneReference(UUID tenantId, UUID projectId, String signedSampleUrl,String idempotencyKey) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("reference_audio_url", signedSampleUrl);
         LlmGatewayChatResponse clone = llmGatewayClient.chat(tenantId.toString(),
-                "test-voice-clone-" + UUID.randomUUID(),
+                 idempotencyKey,
                 new LlmGatewayChatRequest(voiceCloneModel, List.of(new LlmGatewayMessage("user", signedSampleUrl)),
                         params, null, null, projectId));
         if (clone == null || clone.response() == null || clone.response().isBlank()) {
@@ -164,14 +168,14 @@ public class TestVoiceService {
         return clone.response();
     }
 
-    private String synthesize(UUID tenantId, UUID projectId, String voiceId, String text, String languageCode) {
+    private String synthesize(UUID tenantId, UUID projectId, String voiceId, String text, String languageCode, String idempotencyKey) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("voice_id", voiceId);
         if (languageCode != null && !languageCode.isBlank()) {
             params.put("language_code", languageCode);
         }
         LlmGatewayChatResponse tts = llmGatewayClient.chat(tenantId.toString(),
-                "test-voice-tts-" + UUID.randomUUID(),
+                idempotencyKey,
                 new LlmGatewayChatRequest(ttsModel, List.of(new LlmGatewayMessage("user", text)),
                         params, null, null, projectId));
         if (tts == null || tts.response() == null || tts.response().isBlank()) {
@@ -180,6 +184,28 @@ public class TestVoiceService {
         return tts.response();
     }
 
-    public record TestVoiceResult(String mode, String providerVoiceId, String audioDataUri) {
+    private String idempotencyKey(String operation, UUID resourceId, String... values) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+
+            StringBuilder input = new StringBuilder(operation)
+                    .append(':')
+                    .append(resourceId);
+
+            for (String value : values) {
+                input.append(':').append(value == null ? "" : value);
+            }
+
+            String hash = HexFormat.of().formatHex(
+                    digest.digest(input.toString().getBytes(StandardCharsets.UTF_8))
+            );
+
+            return operation + ":" + resourceId + ":" + hash.substring(0, 16);
+
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is not available", ex);
+        }
+    }
+    public record CloneVoiceResult(String mode, String providerVoiceId, String audioDataUri) {
     }
 }

@@ -41,5 +41,5 @@ public class DefaultPromptBuilderService implements PromptBuilderService {
 
     /** Wire body for POST /v1/prompt/format -- structural mirror of llm-gateway's
      * PromptDtos.PromptFormatRequest. Kept private since only this service posts it. */
-    private record FormatRequest(String modelId, ShotContext shotContext, FeatureFlags flags) {}
+    public record FormatRequest(String modelId, ShotContext shotContext, FeatureFlags flags) {}
 }

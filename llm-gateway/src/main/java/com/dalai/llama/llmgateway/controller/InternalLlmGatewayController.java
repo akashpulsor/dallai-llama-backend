@@ -1,17 +1,16 @@
 package com.dalai.llama.llmgateway.controller;
 
-import com.dalai.llama.llmgateway.dto.ChatRequest;
-import com.dalai.llama.llmgateway.dto.ChatResponse;
-import com.dalai.llama.llmgateway.dto.LanguageSummary;
-import com.dalai.llama.llmgateway.dto.ModelCapabilityView;
-import com.dalai.llama.llmgateway.dto.ModelSummary;
-import com.dalai.llama.llmgateway.dto.ModelSummaryMapper;
+import com.dalai.llama.llmgateway.dto.*;
+import com.dalai.llama.llmgateway.dto.prompt.PromptDtos;
 import com.dalai.llama.llmgateway.repository.LanguageMasterRepository;
 import com.dalai.llama.llmgateway.repository.LlmJobRepository;
 import com.dalai.llama.llmgateway.repository.ModelCapabilityRepository;
+import com.dalai.llama.llmgateway.service.BuiltinVoiceSyncService;
 import com.dalai.llama.llmgateway.service.LlmGatewayService;
 import com.dalai.llama.llmgateway.service.ModelRouterService;
+import com.dalai.llama.llmgateway.service.PromptFormatService;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,14 +45,17 @@ public class InternalLlmGatewayController {
     private final LlmJobRepository llmJobRepository;
     private final ModelRouterService modelRouterService;
     private final ModelSummaryMapper modelSummaryMapper;
-
+    private final BuiltinVoiceSyncService builtinVoiceSyncService;
+    private  final PromptFormatService promptFormatService;
     public InternalLlmGatewayController(
             LlmGatewayService llmGatewayService,
             ModelCapabilityRepository modelCapabilityRepository,
             LanguageMasterRepository languageMasterRepository,
             LlmJobRepository llmJobRepository,
             ModelRouterService modelRouterService,
-            ModelSummaryMapper modelSummaryMapper
+            ModelSummaryMapper modelSummaryMapper,
+            BuiltinVoiceSyncService builtinVoiceSyncService,
+            PromptFormatService promptFormatService
     ) {
         this.llmGatewayService = llmGatewayService;
         this.modelCapabilityRepository = modelCapabilityRepository;
@@ -61,6 +63,26 @@ public class InternalLlmGatewayController {
         this.llmJobRepository = llmJobRepository;
         this.modelRouterService = modelRouterService;
         this.modelSummaryMapper = modelSummaryMapper;
+        this.builtinVoiceSyncService = builtinVoiceSyncService;
+        this.promptFormatService = promptFormatService;
+    }
+
+    /** In-cluster admin trigger for the ElevenLabs voice sync -- same body {@code
+     * /v1/voices/sync} runs, but this one lives on the internal permitAll security chain so a
+     * curl from within the pod (or from another service) doesn't need a JWT. Used to bootstrap
+     * builtin_voice after seeding new voices in the ElevenLabs account without having to click
+     * the UI button. */
+    @PostMapping("/voices/sync")
+    public BuiltinVoiceSyncService.SyncResult syncBuiltinVoices() {
+        return builtinVoiceSyncService.syncFromElevenLabs();
+    }
+
+    @PostMapping("/v1/{tenantId}/estimate")
+    public ResponseEntity<EstimateResponse> estimate(
+            @PathVariable String tenantId,
+            @Valid @RequestBody ChatRequest request
+    ) {
+        return ResponseEntity.ok(llmGatewayService.estimate(tenantId, request));
     }
 
     @PostMapping("/tenants/{tenantId}/chat")
@@ -121,4 +143,18 @@ public class InternalLlmGatewayController {
                 .map(modelSummaryMapper::toSummary)
                 .toList();
     }
+
+    @PostMapping("/prompt/format")
+    public PromptDtos.PromptFormatResponse formatPrompt(
+            @Valid @RequestBody PromptDtos.PromptFormatRequest request) {
+
+        return promptFormatService.format(request);
+    }
+
+    @GetMapping("/prompt/max-length")
+    public PromptFormatController.MaxLengthResponse promptMaxLength(@RequestParam String modelId) {
+        return new PromptFormatController.MaxLengthResponse(promptFormatService.maxPromptLength(modelId));
+    }
+
+
 }

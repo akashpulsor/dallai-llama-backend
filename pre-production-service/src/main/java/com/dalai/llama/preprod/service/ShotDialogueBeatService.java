@@ -14,10 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /** CRUD for {@link ShotDialogueBeat} -- the creator plans a shot's dialogue timing here before
@@ -51,6 +48,31 @@ public class ShotDialogueBeatService {
         return shotDialogueBeatRepository.findByShotIdOrderByOrderIndexAsc(shotId).stream()
                 .map(this::toView)
                 .collect(Collectors.toList());
+    }
+
+
+    @Transactional(readOnly = true)
+    public Map<UUID, List<ShotDialogueBeatView>> listByShotIds(
+            UUID tenantId,
+            Collection<UUID> shotIds
+    ) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return shotDialogueBeatRepository
+                .findByTenantIdAndShotIdInOrderByShotIdAscOrderIndexAsc(
+                        tenantId,
+                        shotIds
+                )
+                .stream()
+                .collect(Collectors.groupingBy(
+                        ShotDialogueBeat::getShotId,
+                        Collectors.mapping(
+                                this::toView,
+                                Collectors.toList()
+                        )
+                ));
     }
 
     @Transactional

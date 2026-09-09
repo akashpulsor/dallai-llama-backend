@@ -1,5 +1,6 @@
 package com.dalai.llama.videogen.service.llmgateway;
 
+import com.dalai.llama.videogen.service.DefaultPromptBuilderService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -31,11 +32,12 @@ public class LlmGatewayClient {
         this.timeoutMs = timeoutMs;
     }
 
+
+
     public LlmGatewayChatResponse chat(String tenantId, String idempotencyKey, LlmGatewayChatRequest request) {
         try {
             return webClient.post()
-                    .uri("/v1/chat")
-                    .header("X-Tenant-ID", tenantId)
+                    .uri("/api/v1/internal/tenants/{tenantId}/chat", tenantId)
                     .header("Idempotency-Key", idempotencyKey)
                     .bodyValue(request)
                     .retrieve()
@@ -43,15 +45,14 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw new LlmGatewayCallException(
-                    "llm-gateway /v1/chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 
     public LlmGatewayEstimateResponse estimate(String tenantId, LlmGatewayChatRequest request) {
         try {
             return webClient.post()
-                    .uri("/v1/estimate")
-                    .header("X-Tenant-ID", tenantId)
+                    .uri("/api/v1/internal/tenants/{tenantId}/estimate")
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(LlmGatewayEstimateResponse.class)
@@ -81,10 +82,10 @@ public class LlmGatewayClient {
      * default). Prompt-shape knowledge lives on that side; this service just POSTs the shot
      * context + modelId + flags and gets back the composed positive/negative + max prompt length
      * for the compression stage. Same tenantId header convention as chat(). */
-    public LlmGatewayPromptFormatResponse formatPrompt(String tenantId, Object requestBody) {
+    public LlmGatewayPromptFormatResponse formatPrompt(String tenantId, DefaultPromptBuilderService.FormatRequest requestBody) {
         try {
             return webClient.post()
-                    .uri("/v1/prompt/format")
+                    .uri("/api/v1/internal/prompt/format")
                     .header("X-Tenant-ID", tenantId)
                     .bodyValue(requestBody)
                     .retrieve()
@@ -92,7 +93,10 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw new LlmGatewayCallException(
-                    "llm-gateway /v1/prompt/format failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "llm-gateway /api/v1/internal/prompt/format failed status=%s body=%s"
+                            .formatted(ex.getStatusCode(), ex.getResponseBodyAsString()),
+                    ex
+            );
         }
     }
 
@@ -101,15 +105,23 @@ public class LlmGatewayClient {
     public int getMaxPromptLength(String tenantId, String modelId) {
         try {
             MaxLengthResponse resp = webClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/v1/prompt/max-length").queryParam("modelId", modelId).build())
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/internal/prompt/max-length")
+                            .queryParam("modelId", modelId)
+                            .build())
                     .header("X-Tenant-ID", tenantId)
                     .retrieve()
                     .bodyToMono(MaxLengthResponse.class)
                     .block(Duration.ofMillis(timeoutMs));
+
             return resp == null ? 0 : resp.maxLength();
+
         } catch (WebClientResponseException ex) {
             throw new LlmGatewayCallException(
-                    "llm-gateway /v1/prompt/max-length failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "llm-gateway /api/v1/internal/prompt/max-length failed status=%s body=%s"
+                            .formatted(ex.getStatusCode(), ex.getResponseBodyAsString()),
+                    ex
+            );
         }
     }
 

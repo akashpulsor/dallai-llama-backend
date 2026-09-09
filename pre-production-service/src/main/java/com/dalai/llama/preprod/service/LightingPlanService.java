@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** Plans a shot's lighting build sheet -- feeds the LIGHTING {@code ShotImageKind}'s prompt with
  * real structure (6 gear slots, ordered setup steps) instead of just the shot's flat
@@ -120,6 +121,18 @@ public class LightingPlanService {
         return toView(lightingPlanRepository.save(plan));
     }
 
+    @Transactional(readOnly = true)
+    public Map<UUID, LightingPlanView> listByShotIds(UUID tenantId, List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return lightingPlanRepository.findByTenantIdAndShotIdIn(tenantId, shotIds).stream()
+                .collect(Collectors.toMap(
+                        LightingPlan::getShotId,
+                        this::toView
+                ));
+    }
     /** No LLM call -- applies the creator's correction directly onto the live row. Anything the
      * request omits keeps its current value rather than being blanked out. */
     @Transactional

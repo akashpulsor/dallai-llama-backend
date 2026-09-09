@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** Plans a shot's camera/blocking sheet -- feeds the CAMERA_PLAN {@code ShotImageKind}'s prompt
  * with real structure (blocking map, ordered execution steps, gimbal settings) instead of just
@@ -178,6 +179,18 @@ public class CameraPlanService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public Map<UUID, CameraPlanView> listByShotIds(UUID tenantId, List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return cameraPlanRepository.findByTenantIdAndShotIdIn(tenantId, shotIds).stream()
+                .collect(Collectors.toMap(
+                        CameraPlan::getShotId,
+                        this::toView
+                ));
+    }
     /** One critique call per attempt. Never blocks generation on a parse failure: an unparseable
      * critique is treated as a pass (no feedback to act on), not a hard failure. */
     private PlanCritiqueResult critique(UUID tenantId, UUID shotId, CameraPlanGenerationResult parsed) {

@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * The "attach a real-world reference photo to a shot" flow -- analyze (one vision call, nothing
@@ -137,6 +138,18 @@ public class ShotProductReferenceService {
                 .orElseThrow(() -> PreProductionException.notFound("Shot " + shotId + " has no product reference yet"));
     }
 
+    @Transactional(readOnly = true)
+    public Map<UUID, ShotProductReferenceView> listByShotIds(UUID tenantId, List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return shotProductReferenceRepository.findByTenantIdAndShotIdIn(tenantId, shotIds).stream()
+                .collect(Collectors.toMap(
+                        ShotProductReference::getShotId,
+                        this::toView
+                ));
+    }
     private ShotProductReferenceAnalysisResult analyzeCast(UUID tenantId, UUID shotId, String dataUri) {
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),

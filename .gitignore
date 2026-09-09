@@ -60,3 +60,10 @@ nomirror_test_resp.json
 # Python caches (a few Python helper scripts have crept in over time)
 __pycache__/
 *.pyc
+
+# Local-dev helpers -- machine-specific, contain fetched credentials or ports pinned to your
+# laptop; never share. Rebuild any time via scripts/local-dev/fetch-and-verify.sh (which is
+# itself ignored here so it can't accidentally be committed either).
+scripts/local-dev/
+**/src/main/resources/application-local.yml
+**/src/main/resources/application-local.yaml

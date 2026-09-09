@@ -153,6 +153,20 @@ public class ShotImageService {
         return generate(tenantId, shotId, kind, note, List.of());
     }
 
+
+    @Transactional(readOnly = true)
+    public Map<UUID, List<ShotImageView>> listByShotIds(UUID tenantId, List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return shotImageRepository.findByTenantIdAndShotIdIn(tenantId, shotIds).stream()
+                .collect(Collectors.groupingBy(
+                        ShotImage::getShotId,
+                        Collectors.mapping(this::toView, Collectors.toList())
+                ));
+    }
+
     /** Same as {@link #generate(UUID, UUID, ShotImageKind, String)}, plus one or more inspiration
      * images (already-downloaded bytes, e.g. from a creator upload) to edit alongside the shot's
      * current image -- e.g. "match this reference photo's lighting". Applies to STORYBOARD,

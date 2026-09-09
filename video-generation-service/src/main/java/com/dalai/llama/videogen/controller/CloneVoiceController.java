@@ -1,6 +1,6 @@
 package com.dalai.llama.videogen.controller;
 
-import com.dalai.llama.videogen.service.TestVoiceService;
+import com.dalai.llama.videogen.service.CloneVoiceService;
 import com.dalai.llama.videogen.web.TenantContextHolder;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.ResponseEntity;
@@ -19,18 +19,18 @@ import java.util.UUID;
  * {@code /v1/dubbing} route ownership at the gateway.
  */
 @RestController
-public class TestVoiceController {
+public class CloneVoiceController {
 
-    private final TestVoiceService testVoiceService;
+    private final CloneVoiceService cloneVoiceService;
 
-    public TestVoiceController(TestVoiceService testVoiceService) {
-        this.testVoiceService = testVoiceService;
+    public CloneVoiceController(CloneVoiceService cloneVoiceService) {
+        this.cloneVoiceService = cloneVoiceService;
     }
 
-    @PostMapping("/v1/voice-tests")
-    public ResponseEntity<TestVoiceService.TestVoiceResult> testVoice(@RequestBody @NotNull TestVoiceRequest request) {
+    @PostMapping("/v1/clone")
+    public ResponseEntity<CloneVoiceService.CloneVoiceResult> testVoice(@RequestBody @NotNull TestVoiceRequest request) {
         UUID tenantId = TenantContextHolder.get().tenantId();
-        return ResponseEntity.ok(testVoiceService.testVoice(tenantId, request.projectId(), request.shotId(), request.text()));
+        return ResponseEntity.ok(cloneVoiceService.cloneVoice(tenantId, request.projectId(), request.shotId(), request.text()));
     }
 
     public record TestVoiceRequest(UUID projectId, UUID shotId, String text) {

@@ -1,0 +1,519 @@
+{
+  "info": {
+    "name": "Local dev - video-generation + post-production",
+    "_postman_id": "b7f2c1a0-2222-4b3a-9c2e-local-dev-videogen-postprod-01",
+    "description": "Targeted local-dev collection for video-generation-service (localhost:8180) and post-production-service (localhost:8181). Assumes scripts/local-dev/port-forward-cluster.sh is running and both services are up in IntelliJ. Set {{jwt}}, {{tenantId}}, {{projectId}}, {{shotId}}, {{shotRef}} before running -- the requests that create IDs (generate, dub) auto-populate {{jobId}} / {{voiceProfileId}} / {{renderId}} into collection variables via their test scripts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{jwt}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "videoGenBase",     "value": "http://localhost:8180", "type": "string" },
+    { "key": "postProdBase",     "value": "http://localhost:8181", "type": "string" },
+    { "key": "keycloakUrl",      "value": "https://auth.dalaillama.in", "type": "string" },
+    { "key": "keycloakRealm",    "value": "dalai-llama", "type": "string" },
+    { "key": "keycloakClientId", "value": "creator-ui", "type": "string" },
+    { "key": "keycloakUsername", "value": "", "type": "string" },
+    { "key": "keycloakPassword", "value": "", "type": "string" },
+    { "key": "jwt",              "value": "", "type": "string" },
+    { "key": "refreshToken",     "value": "", "type": "string" },
+    { "key": "tenantId",         "value": "", "type": "string" },
+    { "key": "projectId",        "value": "", "type": "string" },
+    { "key": "shotId",           "value": "", "type": "string" },
+    { "key": "shotRef",          "value": "", "type": "string" },
+    { "key": "promptId",         "value": "", "type": "string" },
+    { "key": "jobId",            "value": "", "type": "string" },
+    { "key": "voiceProfileId",   "value": "", "type": "string" },
+    { "key": "renderId",         "value": "", "type": "string" },
+    { "key": "dubbingJobId",     "value": "", "type": "string" },
+    { "key": "bundleId",         "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0 · Auth (Keycloak)",
+      "description": "Fetches a real JWT from the cloud Keycloak using the resource-owner password grant, and saves it into {{jwt}} + {{refreshToken}}. Run this FIRST after importing -- every other request in the collection uses {{jwt}} via the collection-level bearer auth. Also decodes the token's tenant_id claim into {{tenantId}} so you don't have to set that separately. Set {{keycloakUsername}} and {{keycloakPassword}} at the collection variable level before running.",
+      "item": [
+        {
+          "name": "Get token (username/password)",
+          "auth": { "type": "noauth" },
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type", "value": "password" },
+                { "key": "client_id",  "value": "{{keycloakClientId}}" },
+                { "key": "username",   "value": "{{keycloakUsername}}" },
+                { "key": "password",   "value": "{{keycloakPassword}}" },
+                { "key": "scope",      "value": "openid" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakUrl}}/realms/{{keycloakRealm}}/protocol/openid-connect/token",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["realms", "{{keycloakRealm}}", "protocol", "openid-connect", "token"]
+            },
+            "description": "Direct-access-grant (password) flow -- the creator-ui public client has this enabled in this realm. Response body carries access_token, refresh_token, expires_in. Test script below persists both and decodes the tenant claim from the JWT into {{tenantId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code !== 200) {",
+                  "  console.log('Auth failed:', pm.response.text());",
+                  "  return;",
+                  "}",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('jwt', body.access_token);",
+                  "if (body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);",
+                  "// Decode JWT to pull tenant_id + user_id claims -- saves the user from setting them by hand.",
+                  "try {",
+                  "  const parts = body.access_token.split('.');",
+                  "  const payload = JSON.parse(decodeURIComponent(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));",
+                  "  const tenantClaim = payload.tenant_id || payload.tenantId || payload.tid;",
+                  "  if (tenantClaim) pm.collectionVariables.set('tenantId', tenantClaim);",
+                  "  pm.test('token acquired', () => pm.expect(body.access_token).to.be.a('string'));",
+                  "  pm.test('tenant_id extracted from JWT', () => pm.expect(pm.collectionVariables.get('tenantId')).to.not.eq(''));",
+                  "  console.log('JWT payload:', payload);",
+                  "  console.log('tenantId:', pm.collectionVariables.get('tenantId'));",
+                  "} catch (e) {",
+                  "  console.log('JWT decode failed (ok -- set {{tenantId}} manually):', e.message);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "auth": { "type": "noauth" },
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "grant_type",    "value": "refresh_token" },
+                { "key": "client_id",     "value": "{{keycloakClientId}}" },
+                { "key": "refresh_token", "value": "{{refreshToken}}" }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakUrl}}/realms/{{keycloakRealm}}/protocol/openid-connect/token",
+              "host": ["{{keycloakUrl}}"],
+              "path": ["realms", "{{keycloakRealm}}", "protocol", "openid-connect", "token"]
+            },
+            "description": "Use when the access token expired (~5 min lifetime typically). Saves the new access_token + refresh_token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('jwt', body.access_token);",
+                  "  if (body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Video generation (localhost:8180)",
+      "description": "Everything owned by video-generation-service under /v1/voice-tests, /v1/scenes, /v1/prompts, /v1/shots, /v1/projects/{id}/generate-batch, /v1/jobs, /v1/projects/{id}/config, /v1/final-renders, /v1/exports.",
+      "item": [
+        {
+          "name": "Test voice (preview cast identity)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"shotId\": \"{{shotId}}\",\n  \"text\": \"This is a short sample of my voice.\"\n}"
+            },
+            "url": { "raw": "{{videoGenBase}}/v1/voice-tests", "host": ["{{videoGenBase}}"], "path": ["v1", "voice-tests"] },
+            "description": "TestVoiceController -- resolves the shot's primary character's cast identity and returns audio: clone-then-TTS if the profile has an uploaded voice sample, direct-TTS if it has a built-in voice pick. Returns { mode: 'cloned' | 'built_in', providerVoiceId, audioDataUri }."
+          }
+        },
+        {
+          "name": "Prepare all shots for a project",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/scenes/projects/{{projectId}}/prepare", "host": ["{{videoGenBase}}"], "path": ["v1", "scenes", "projects", "{{projectId}}", "prepare"] },
+            "description": "PrepareSceneController -- pulls the full prepare-bundle from pre-production and builds one ShotPrompt per shot (idempotent, safe to call again)."
+          }
+        },
+        {
+          "name": "Get project preparation state",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/scenes/projects/{{projectId}}/preparation", "host": ["{{videoGenBase}}"], "path": ["v1", "scenes", "projects", "{{projectId}}", "preparation"] }
+          }
+        },
+        {
+          "name": "Prepare single shot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"featureFlagOverrides\": { \"dialogue\": true, \"captions\": false }\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/scenes/projects/{{projectId}}/shots/{{shotId}}/prepare", "host": ["{{videoGenBase}}"], "path": ["v1", "scenes", "projects", "{{projectId}}", "shots", "{{shotId}}", "prepare"] },
+            "description": "Assemble one shot's prompt without dispatching. Response includes externalPromptId (save into {{promptId}}) and, once approved, becomes the input for /v1/shots/generate."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.externalPromptId) pm.collectionVariables.set('promptId', b.externalPromptId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get prompt by id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/prompts/{{promptId}}", "host": ["{{videoGenBase}}"], "path": ["v1", "prompts", "{{promptId}}"] },
+            "description": "Full assembled ShotPromptView -- text sent to the video model + assembly source ids so a debugger can walk back to the pre-prod rows that fed it."
+          }
+        },
+        {
+          "name": "List prompts for a shot",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/shots/{{shotRef}}/prompts", "host": ["{{videoGenBase}}"], "path": ["v1", "shots", "{{shotRef}}", "prompts"] }
+          }
+        },
+        {
+          "name": "Dispatch shot (auto-approve false)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"shotContext\": {},\n  \"featureFlagOverrides\": { \"dialogue\": true, \"captions\": false },\n  \"autoApprove\": false\n}"
+            },
+            "url": { "raw": "{{videoGenBase}}/v1/shots/generate", "host": ["{{videoGenBase}}"], "path": ["v1", "shots", "generate"] },
+            "description": "ShotGenerationOrchestrator -- prepares the prompt + runs the mandatory pre-flight critique. Nothing spends until you approve with the returned externalJobId. Full ShotContext body is huge; the prepare-scene flow above builds it and returns externalPromptId which /v1/final-renders/exports uses. For a manual test-dispatch you'd copy the ShotContext JSON from GET /v1/prompts/{{promptId}}.body."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.externalJobId) pm.collectionVariables.set('jobId', b.externalJobId);",
+                  "  if (b.externalPromptId) pm.collectionVariables.set('promptId', b.externalPromptId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve dispatched job (spends)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/jobs/{{jobId}}/approve", "host": ["{{videoGenBase}}"], "path": ["v1", "jobs", "{{jobId}}", "approve"] },
+            "description": "Runs the actual video model (fal-ai/seedance-v1 by default, wan-v1 optional). Blocks until COMPLETED or FAILED. Requires FAL_API_KEY to be populated -- see fetch-and-verify.sh."
+          }
+        },
+        {
+          "name": "Reject dispatched job",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Prompt looked wrong\",\n  \"issueTags\": [\"wrong-composition\"]\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/jobs/{{jobId}}/reject", "host": ["{{videoGenBase}}"], "path": ["v1", "jobs", "{{jobId}}", "reject"] }
+          }
+        },
+        {
+          "name": "Cancel in-flight job",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/jobs/{{jobId}}/cancel", "host": ["{{videoGenBase}}"], "path": ["v1", "jobs", "{{jobId}}", "cancel"] }
+          }
+        },
+        {
+          "name": "Get generated video (302 to signed MinIO URL)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/jobs/{{jobId}}/video", "host": ["{{videoGenBase}}"], "path": ["v1", "jobs", "{{jobId}}", "video"] },
+            "description": "302 redirect to a short-lived MinIO signed URL. In Postman, disable auto-follow-redirects to inspect the Location header."
+          }
+        },
+        {
+          "name": "Batch dispatch (whole project)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"shots\": [],\n  \"featureFlagOverrides\": { \"dialogue\": true, \"captions\": false }\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/projects/{{projectId}}/generate-batch", "host": ["{{videoGenBase}}"], "path": ["v1", "projects", "{{projectId}}", "generate-batch"] }
+          }
+        },
+        {
+          "name": "List jobs for a project",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/projects/{{projectId}}/jobs", "host": ["{{videoGenBase}}"], "path": ["v1", "projects", "{{projectId}}", "jobs"] }
+          }
+        },
+        {
+          "name": "Get project config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/projects/{{projectId}}/config", "host": ["{{videoGenBase}}"], "path": ["v1", "projects", "{{projectId}}", "config"] }
+          }
+        },
+        {
+          "name": "Update project config (feature flags + autoApprove)",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"defaultFlags\": { \"dialogue\": true, \"captions\": false },\n  \"autoApprove\": false\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/projects/{{projectId}}/config", "host": ["{{videoGenBase}}"], "path": ["v1", "projects", "{{projectId}}", "config"] }
+          }
+        },
+        {
+          "name": "Request final render (concat every approved shot)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"projectId\": \"{{projectId}}\"\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/final-renders", "host": ["{{videoGenBase}}"], "path": ["v1", "final-renders"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.renderId) pm.collectionVariables.set('renderId', b.renderId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get final render status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/final-renders/{{renderId}}", "host": ["{{videoGenBase}}"], "path": ["v1", "final-renders", "{{renderId}}"] }
+          }
+        },
+        {
+          "name": "Latest final render for a project",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/final-renders/projects/{{projectId}}/latest", "host": ["{{videoGenBase}}"], "path": ["v1", "final-renders", "projects", "{{projectId}}", "latest"] }
+          }
+        },
+        {
+          "name": "Get final-render video (302 to signed URL)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/final-renders/{{renderId}}/video", "host": ["{{videoGenBase}}"], "path": ["v1", "final-renders", "{{renderId}}", "video"] }
+          }
+        },
+        {
+          "name": "Request export bundle (per-prompt)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"promptId\": \"{{promptId}}\"\n}" },
+            "url": { "raw": "{{videoGenBase}}/v1/exports", "host": ["{{videoGenBase}}"], "path": ["v1", "exports"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.bundleId) pm.collectionVariables.set('bundleId', b.bundleId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get export bundle status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{videoGenBase}}/v1/exports/{{bundleId}}", "host": ["{{videoGenBase}}"], "path": ["v1", "exports", "{{bundleId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Post production (localhost:8181)",
+      "description": "Everything owned by post-production-service under /v1/dubbing and /v1/post-production.",
+      "item": [
+        {
+          "name": "Standalone dub -- upload video + target language (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "", "description": "video file to dub" },
+                { "key": "targetLanguage", "type": "text", "value": "hi-IN" }
+              ]
+            },
+            "url": { "raw": "{{postProdBase}}/v1/dubbing/jobs", "host": ["{{postProdBase}}"], "path": ["v1", "dubbing", "jobs"] },
+            "description": "DubbingOrchestrator -- transcribe -> translate -> clone -> synth -> lip-sync -> mux. Fal.ai + ElevenLabs chain; both need their API keys set. Returns DubbingJobView with jobId, poll GET below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('dubbingJobId', b.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get dubbing job status",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{postProdBase}}/v1/dubbing/jobs/{{dubbingJobId}}", "host": ["{{postProdBase}}"], "path": ["v1", "dubbing", "jobs", "{{dubbingJobId}}"] }
+          }
+        },
+        {
+          "name": "Get dubbed video (302 to signed URL)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{postProdBase}}/v1/dubbing/jobs/{{dubbingJobId}}/video", "host": ["{{postProdBase}}"], "path": ["v1", "dubbing", "jobs", "{{dubbingJobId}}", "video"] }
+          }
+        },
+        {
+          "name": "List models (filter by type: lip_sync, tts, voice_clone, upscale, foley, music)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": {
+              "raw": "{{postProdBase}}/v1/post-production/models?type=lip_sync",
+              "host": ["{{postProdBase}}"],
+              "path": ["v1", "post-production", "models"],
+              "query": [{ "key": "type", "value": "lip_sync" }]
+            },
+            "description": "Every candidate registered for a capability -- lets you swap models per-request via voiceCloneModel/ttsModel/lipSyncModel overrides in the createJobs body."
+          }
+        },
+        {
+          "name": "Preview a voice profile (I want to hear it)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"text\": \"This is a preview of my cloned voice.\",\n  \"model\": null\n}" },
+            "url": { "raw": "{{postProdBase}}/v1/post-production/voice-profiles/{{voiceProfileId}}/preview", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "voice-profiles", "{{voiceProfileId}}", "preview"] }
+          }
+        },
+        {
+          "name": "Generate foley (fal.ai)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sourceVideoUrl\": null,\n  \"cueDescription\": \"footsteps on wet pavement, distant thunder\",\n  \"model\": null\n}" },
+            "url": { "raw": "{{postProdBase}}/v1/post-production/foley", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "foley"] }
+          }
+        },
+        {
+          "name": "Generate music (ElevenLabs)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"moodPrompt\": \"warm cinematic strings, upbeat resolution\",\n  \"durationSeconds\": 15,\n  \"model\": null\n}" },
+            "url": { "raw": "{{postProdBase}}/v1/post-production/music", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "music"] }
+          }
+        },
+        {
+          "name": "Upscale a video (fal-ai/topaz)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sourceVideoUrl\": \"https://media.dalaillama.in/creator-assets/video-gen-exports/some-shot.mp4\",\n  \"model\": null,\n  \"durationSeconds\": 5.0\n}"
+            },
+            "url": { "raw": "{{postProdBase}}/v1/post-production/upscale", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "upscale"] },
+            "description": "Blocks until Topaz finishes. Duration required so llm-gateway can compute real cost. Falls back to configured default-upscale-model when model is null."
+          }
+        },
+        {
+          "name": "Create post-production jobs (SHOT or PROJECT scope)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scope\": \"SHOT\",\n  \"projectId\": \"{{projectId}}\",\n  \"shotRef\": \"{{shotRef}}\",\n  \"targetLanguage\": \"hi-IN\",\n  \"voiceCloneModel\": null,\n  \"ttsModel\": null,\n  \"lipSyncModel\": null\n}"
+            },
+            "url": { "raw": "{{postProdBase}}/v1/post-production/jobs", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "jobs"] },
+            "description": "scope=SHOT: dub + lip-sync one shot. scope=PROJECT: every already-completed shot in the project. Blocks synchronously (same shape as video-gen approve)."
+          }
+        },
+        {
+          "name": "List post-production jobs for a project",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{postProdBase}}/v1/post-production/projects/{{projectId}}/jobs", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "projects", "{{projectId}}", "jobs"] }
+          }
+        },
+        {
+          "name": "Get post-production job video (302)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-ID", "value": "{{tenantId}}" }],
+            "url": { "raw": "{{postProdBase}}/v1/post-production/jobs/{{jobId}}/video", "host": ["{{postProdBase}}"], "path": ["v1", "post-production", "jobs", "{{jobId}}", "video"] }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -360,6 +360,16 @@ public class Shot {
     @Column(name = "director_note", columnDefinition = "text")
     private String directorNote;
 
+    /** MinIO handle for the shot's dubbed voice-over audio -- populated by the video-page "Dub all
+     * shots" button (video-generation-service /v1/voice-tests/dub-shot). Bucket+objectKey, not a
+     * signed URL, so the URL is re-signed per read (signed URLs are short-lived). Nullable; NULL
+     * means "not dubbed yet". */
+    @Column(name = "dubbed_audio_bucket", length = 64)
+    private String dubbedAudioBucket;
+
+    @Column(name = "dubbed_audio_object_key", length = 512)
+    private String dubbedAudioObjectKey;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
