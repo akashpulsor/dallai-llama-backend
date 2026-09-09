@@ -14,7 +14,7 @@ import java.util.UUID;
  * Video-page "Test voice" preview -- given a shot, returns a short audio sample rendered with the
  * character's real voice identity (cloned from the uploaded actor sample, or direct TTS with the
  * built-in voice pick, exactly matching what {@link com.dalai.llama.videogen.service.BeatDubbingService}
- * would do at approve() time). Lives under a fresh {@code /v1/voice-tests} prefix so it doesn't
+ * would do at approve() time). Lives under a fresh {@code /v1/clone} prefix so it doesn't
  * collide with pre-production-service's {@code /v1/shots} or post-production-service's
  * {@code /v1/dubbing} route ownership at the gateway.
  */
