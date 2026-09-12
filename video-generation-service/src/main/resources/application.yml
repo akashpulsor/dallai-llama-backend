@@ -123,6 +123,7 @@ video-gen:
     default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}
     default-compression-model: ${VIDEO_GEN_COMPRESSION_MODEL:gemini-2.5-flash}
     default-voice-clone-model: ${VIDEO_GEN_VOICE_CLONE_MODEL:elevenlabs/instant-voice-clone}
+    default-voice-clone-provider-id: ${VIDEO_GEN_VOICE_CLONE_PROVIDER_ID:elevenlabs}
     default-tts-model: ${VIDEO_GEN_TTS_MODEL:elevenlabs-tts-v1}
     default-audio-video-merge-model: ${VIDEO_GEN_AUDIO_VIDEO_MERGE_MODEL:fal-ai/ffmpeg-api/merge-audio-video}
     timeout-ms: ${VIDEO_GEN_LLM_GATEWAY_TIMEOUT_MS:200000}

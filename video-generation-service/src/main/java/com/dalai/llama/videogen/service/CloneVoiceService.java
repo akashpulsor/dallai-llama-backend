@@ -1,16 +1,13 @@
 package com.dalai.llama.videogen.service;
 
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayLanguageSelection;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionViews;
-import io.minio.GetPresignedObjectUrlArgs;
-import io.minio.MinioClient;
-import io.minio.http.Method;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +17,6 @@ import java.util.HexFormat;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Test-voice preview for the video-generation page. Given a shot + a bit of text, resolves the
@@ -31,10 +27,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Two flows, matching per-character identity state exactly:
  * <ul>
- *   <li><b>Cast likeness</b> (profile has {@code voiceRefBucket/ObjectKey}) -- MinIO-presign the
- *       actor sample, clone it via {@code elevenlabs/instant-voice-clone}, then TTS with the
- *       returned voice id. Sample-preview URL is signed fresh per call so it stays short-lived --
- *       llm-gateway fetches it once during the clone call and no persistent handle is needed.</li>
+ *   <li><b>Cast likeness</b> (profile has {@code voiceRefBucket/ObjectKey}) -- pass its cast
+ *       profile reference to llm-gateway. The gateway obtains the protected original sample from
+ *       pre-production-service, clones it via {@code elevenlabs/instant-voice-clone}, then TTSes
+ *       with the returned voice id. No signed object URL crosses a service boundary.</li>
  *   <li><b>AI-generated identity</b> ({@code builtinVoiceId} set, no upload) -- direct TTS with
  *       the built-in voice id; no clone call.</li>
  * </ul>
@@ -53,18 +49,18 @@ public class CloneVoiceService {
 
     private final PreProductionServiceClient preProductionServiceClient;
     private final LlmGatewayClient llmGatewayClient;
-    private final MinioClient publicMinioClient;
     private final String voiceCloneModel;
+    private final String voiceCloneProviderId;
     private final String ttsModel;
 
     public CloneVoiceService(PreProductionServiceClient preProductionServiceClient, LlmGatewayClient llmGatewayClient,
-                             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
                              @Value("${video-gen.llm-gateway.default-voice-clone-model}") String voiceCloneModel,
+                             @Value("${video-gen.llm-gateway.default-voice-clone-provider-id}") String voiceCloneProviderId,
                              @Value("${video-gen.llm-gateway.default-tts-model}") String ttsModel) {
         this.preProductionServiceClient = preProductionServiceClient;
         this.llmGatewayClient = llmGatewayClient;
-        this.publicMinioClient = publicMinioClient;
         this.voiceCloneModel = voiceCloneModel;
+        this.voiceCloneProviderId = voiceCloneProviderId;
         this.ttsModel = ttsModel;
     }
 
@@ -161,16 +157,23 @@ public class CloneVoiceService {
         String voiceId;
         String mode;
 
-        if (profile.voiceRefBucket() != null && profile.voiceRefObjectKey() != null) {
+        if (hasPersistedClonedVoice(profile)) {
+            voiceId = profile.clonedVoiceId();
+            mode = "AI".equals(profile.voiceIdentityType()) ? "built_in" : "cloned";
+            log.debug("clone-voice reusing provider identity projectId={} shotId={} castProfileId={} providerId={} identityType={}",
+                    projectId, shot.id(), profile.id(), profile.clonedVoiceProviderId(), profile.voiceIdentityType());
+        } else if (profile.voiceRefBucket() != null && profile.voiceRefObjectKey() != null) {
             log.debug("clone-voice uploaded reference projectId={} shotId={} castProfileId={}", projectId, shot.id(), profile.id());
 
-            String signedSampleUrl = presign(profile.voiceRefBucket(), profile.voiceRefObjectKey());
             String cloneKey = idempotencyKey("voice-clone", profile.id(), profile.voiceRefBucket(), profile.voiceRefObjectKey(), voiceCloneModel);
-
-            voiceId = cloneReference(tenantId, projectId, signedSampleUrl, cloneKey);
+            String generatedVoiceId = cloneReference(tenantId, projectId, profile.id(), cloneKey);
+            PreProductionViews.ClonedVoiceIdentityView persisted = preProductionServiceClient.persistClonedVoiceIfAbsent(
+                    tenantId, projectId, profile.id(), generatedVoiceId, voiceCloneProviderId, "HUMAN");
+            if (persisted == null || persisted.clonedVoiceId() == null || persisted.clonedVoiceId().isBlank()) {
+                throw VideoGenException.upstream("pre-production-service did not return a persisted cloned voice identity");
+            }
+            voiceId = persisted.clonedVoiceId();
             mode = "cloned";
-
-            // TODO: Persist cloned provider voiceId + clone modelId on CastProfile and reuse it directly.
         } else if (profile.builtinVoiceId() != null && !profile.builtinVoiceId().isBlank()) {
             voiceId = profile.builtinVoiceId();
             mode = "built_in";
@@ -188,6 +191,11 @@ public class CloneVoiceService {
         String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode, ttsKey);
 
         return new CloneVoiceResult(mode, voiceId, audioDataUri);
+    }
+
+    private boolean hasPersistedClonedVoice(PreProductionViews.CastProfileView profile) {
+        return profile.clonedVoiceId() != null && !profile.clonedVoiceId().isBlank()
+                && profile.clonedVoiceProviderId() != null && !profile.clonedVoiceProviderId().isBlank();
     }
 
     private String defaultLineFor(PreProductionViews.ShotView shot) {
@@ -225,30 +233,18 @@ public class CloneVoiceService {
                 .orElse(null);
     }
 
-    private String presign(String bucket, String objectKey) {
-        try {
-            return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
-                    .method(Method.GET)
-                    .bucket(bucket)
-                    .object(objectKey)
-                    .expiry(15, TimeUnit.MINUTES)
-                    .build());
-        } catch (Exception ex) {
-            log.error("clone-voice presign failed bucket={} objectKey={}", bucket, objectKey, ex);
-            throw VideoGenException.upstream("Could not presign voice sample URL: " + ex.getMessage(), ex);
-        }
-    }
-
-    private String cloneReference(UUID tenantId, UUID projectId, String signedSampleUrl, String idempotencyKey) {
+    private String cloneReference(UUID tenantId, UUID projectId, UUID castProfileId, String idempotencyKey) {
         long startMs = System.currentTimeMillis();
 
         log.debug("voice-clone request projectId={} model={} idempotencyKey={}", projectId, voiceCloneModel, idempotencyKey);
 
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("reference_audio_url", signedSampleUrl);
+        params.put("cast_profile_id", castProfileId.toString());
 
         LlmGatewayChatResponse clone = llmGatewayClient.chat(tenantId.toString(), idempotencyKey,
-                new LlmGatewayChatRequest(voiceCloneModel, List.of(new LlmGatewayMessage("user", signedSampleUrl)), params, null, null, projectId));
+                new LlmGatewayChatRequest(voiceCloneModel,
+                        List.of(new LlmGatewayMessage("user", "Clone cast profile " + castProfileId)),
+                        params, null, null, projectId));
 
         if (clone == null || clone.response() == null || clone.response().isBlank()) {
             log.error("voice-clone empty response projectId={} model={} idempotencyKey={}", projectId, voiceCloneModel, idempotencyKey);
@@ -269,12 +265,10 @@ public class CloneVoiceService {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("voice_id", voiceId);
 
-        if (languageCode != null && !languageCode.isBlank()) {
-            params.put("language_code", languageCode);
-        }
 
         LlmGatewayChatResponse tts = llmGatewayClient.chat(tenantId.toString(), idempotencyKey,
-                new LlmGatewayChatRequest(ttsModel, List.of(new LlmGatewayMessage("user", text)), params, null, null, projectId));
+                new LlmGatewayChatRequest(ttsModel, List.of(new LlmGatewayMessage("user", text)), params, null, null, projectId,
+                        LlmGatewayLanguageSelection.fromBcp47String(languageCode)));
 
         if (tts == null || tts.response() == null || tts.response().isBlank()) {
             log.error("voice-tts empty response projectId={} model={} idempotencyKey={}", projectId, ttsModel, idempotencyKey);

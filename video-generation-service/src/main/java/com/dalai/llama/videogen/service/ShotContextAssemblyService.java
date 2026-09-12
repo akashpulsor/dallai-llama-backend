@@ -309,8 +309,9 @@ public class ShotContextAssemblyService {
                     PreProductionViews.CastProfileView resolved = resolveVoiceProfile(b.characterKey(), scriptCharacterIdByKey,
                             castProfileByScriptCharacterId, profilesById);
                     PreProductionViews.CastProfileView profile = resolved != null ? resolved : fallbackProfile;
-                    return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(),
-                            b.characterKey(), voiceUrlFor(profile), builtinVoiceIdFor(profile), emotion, languageCode);
+                    return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(), b.characterKey(),
+                            voiceUrlFor(profile), clonedVoiceIdFor(profile), clonedVoiceProviderIdFor(profile),
+                            builtinVoiceIdFor(profile), emotion, languageCode);
                 })
                 .toList();
     }
@@ -334,21 +335,37 @@ public class ShotContextAssemblyService {
         return profilesById.get(castProfileId);
     }
 
-    /** A profile with a real uploaded sample takes priority over a built-in pick -- {@code
-     * CastProfileService} already keeps the two mutually exclusive, so this is defensive ordering
-     * only, matching pre-production-service's own {@code resolveBeatVoice}. */
+    /** A prepared clone takes priority over a raw uploaded sample, which takes priority over a
+     * built-in voice. This mirrors pre-production-service and makes Prepare All Dialogues durable
+     * through the later job snapshot. */
     private static String voiceUrlFor(PreProductionViews.CastProfileView profile) {
-        if (profile == null || profile.voiceRefBucket() == null || profile.voiceRefObjectKey() == null) {
+        if (clonedVoiceIdFor(profile) != null || profile == null
+                || !hasText(profile.voiceRefBucket()) || !hasText(profile.voiceRefObjectKey())) {
             return null;
         }
         return profile.voiceRefBucket() + "/" + profile.voiceRefObjectKey();
     }
 
+    private static String clonedVoiceIdFor(PreProductionViews.CastProfileView profile) {
+        if (profile == null || !hasText(profile.clonedVoiceId()) || !hasText(profile.clonedVoiceProviderId())) {
+            return null;
+        }
+        return profile.clonedVoiceId();
+    }
+
+    private static String clonedVoiceProviderIdFor(PreProductionViews.CastProfileView profile) {
+        return clonedVoiceIdFor(profile) == null ? null : profile.clonedVoiceProviderId();
+    }
+
     private static String builtinVoiceIdFor(PreProductionViews.CastProfileView profile) {
-        if (profile == null || voiceUrlFor(profile) != null) {
+        if (profile == null || clonedVoiceIdFor(profile) != null || voiceUrlFor(profile) != null) {
             return null;
         }
         return profile.builtinVoiceId();
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private PreProductionViews.ShotImageView pickImage(List<PreProductionViews.ShotImageView> images, String kind) {

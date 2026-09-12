@@ -2,6 +2,7 @@ package com.dalai.llama.videogen.service;
 
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayLanguageSelection;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
@@ -56,8 +57,8 @@ public class BeatDubbingService {
         this.mergeModel = mergeModel;
     }
 
-    /** True only when every beat resolved a cast voice -- either a cloned-sample reference or a
-     * stock built-in voice id -- a shot with any beat missing both falls back to normal
+    /** True only when every beat resolved a cast voice -- a previously prepared clone, a raw
+     * sample reference, or a stock built-in voice id. A shot with any beat missing all three falls back to normal
      * native-audio generation for the whole shot rather than partially dubbing (see {@code
      * DialogueBeat}'s javadoc on pre-production-service's side for why: multi-character beats
      * aren't independently voiced yet in this pass). */
@@ -66,8 +67,13 @@ public class BeatDubbingService {
     }
 
     private static boolean hasVoice(DialogueBeat beat) {
-        return (beat.voiceReferenceUrl() != null && !beat.voiceReferenceUrl().isBlank())
-                || (beat.builtinVoiceId() != null && !beat.builtinVoiceId().isBlank());
+        return hasText(beat.clonedVoiceId())
+                || hasText(beat.voiceReferenceUrl())
+                || hasText(beat.builtinVoiceId());
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl) {
@@ -92,15 +98,18 @@ public class BeatDubbingService {
                 .sorted(Comparator.comparing(DialogueBeat::startSeconds))
                 .toList();
         String referenceAudioUrl = sorted.get(0).voiceReferenceUrl();
+        String clonedVoiceId = sorted.get(0).clonedVoiceId();
         String builtinVoiceId = sorted.get(0).builtinVoiceId();
-        // A built-in voice is ElevenLabs' own stock voice_id -- nothing to clone, so this always
-        // goes straight to TTS regardless of the project's picked clone model (that pin only means
-        // something once there IS a sample to clone).
-        boolean useBuiltinVoice = referenceAudioUrl == null && builtinVoiceId != null;
+        // A prepared clone and a built-in voice both already are usable provider voice_ids. They
+        // therefore take the same direct-to-TTS path; cloning happens only for an unprepared raw sample.
+        boolean usePreparedClone = hasText(clonedVoiceId);
+        boolean useBuiltinVoice = !usePreparedClone && !hasText(referenceAudioUrl) && hasText(builtinVoiceId);
+        boolean useDirectVoice = usePreparedClone || useBuiltinVoice;
+        String directVoiceId = usePreparedClone ? clonedVoiceId : builtinVoiceId;
 
         String model = voiceCloneModelOverride == null || voiceCloneModelOverride.isBlank() ? voiceCloneModel : voiceCloneModelOverride;
         String resolvedTtsModel = ttsModelOverride == null || ttsModelOverride.isBlank() ? ttsModel : ttsModelOverride;
-        boolean fused = !useBuiltinVoice && model.toLowerCase(Locale.ROOT).contains("minimax");
+        boolean fused = !useDirectVoice && model.toLowerCase(Locale.ROOT).contains("minimax");
         String rawText = fused
                 ? buildPausedText(sorted)
                 : sorted.stream().map(DialogueBeat::text).collect(java.util.stream.Collectors.joining(" "));
@@ -111,11 +120,11 @@ public class BeatDubbingService {
                 : sceneEnergyStrategyResolver.resolve(tenantId, resolvedTtsModel, sorted.get(0).emotion(), rawText);
         String combinedText = directive.text();
         // Shot-level per the DialogueBeat javadoc; every beat in a shot shares the project's
-        // dialogueLanguage. Fused (MiniMax) path has no language_code param -- it infers.
+        // dialogueLanguage. The fused MiniMax path has no language selection because it infers language.
         String languageCode = sorted.get(0).languageCode();
 
-        LlmGatewayChatResponse synthesis = useBuiltinVoice
-                ? directTtsSynthesize(tenantId, jobId, projectId, builtinVoiceId, combinedText, resolvedTtsModel, directive, languageCode)
+        LlmGatewayChatResponse synthesis = useDirectVoice
+                ? directTtsSynthesize(tenantId, jobId, projectId, directVoiceId, combinedText, resolvedTtsModel, directive, languageCode)
                 : fused
                         ? fusedCloneAndSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText)
                         : cloneThenSynthesize(tenantId, jobId, projectId, model, referenceAudioUrl, combinedText, resolvedTtsModel, directive, languageCode);
@@ -150,20 +159,18 @@ public class BeatDubbingService {
                 new LlmGatewayChatRequest(model, List.of(new LlmGatewayMessage("user", combinedText)), params, null, null, projectId));
     }
 
-    /** No sample to clone -- {@code voiceId} is already a usable ElevenLabs stock voice_id (see
-     * llm-gateway's {@code builtin_voice} table), so this is just the TTS half of {@link
-     * #cloneThenSynthesize}, skipping the clone call entirely. */
+    /** No sample to clone -- {@code voiceId} is either a prepared human clone or a stock provider
+     * voice id, so this is just the TTS half of {@link #cloneThenSynthesize}, skipping the clone
+     * call entirely. */
     private LlmGatewayChatResponse directTtsSynthesize(
             String tenantId, UUID jobId, UUID projectId, String voiceId, String combinedText, String resolvedTtsModel,
             SceneEnergyDirective directive, String languageCode) {
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
         ttsParams.putAll(directive.extraTtsParams());
-        if (languageCode != null && !languageCode.isBlank()) {
-            ttsParams.put("language_code", languageCode);
-        }
         return llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
-                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
+                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId,
+                        LlmGatewayLanguageSelection.fromBcp47String(languageCode)));
     }
 
     /** ElevenLabs' two-call shape: clone the reference sample into a {@code voice_id} (no text --
@@ -187,11 +194,9 @@ public class BeatDubbingService {
         Map<String, Object> ttsParams = new LinkedHashMap<>();
         ttsParams.put("voice_id", voiceId);
         ttsParams.putAll(directive.extraTtsParams());
-        if (languageCode != null && !languageCode.isBlank()) {
-            ttsParams.put("language_code", languageCode);
-        }
         LlmGatewayChatResponse tts = llmGatewayClient.chat(tenantId, "beat-dub-tts-" + jobId,
-                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId));
+                new LlmGatewayChatRequest(resolvedTtsModel, List.of(new LlmGatewayMessage("user", combinedText)), ttsParams, null, null, projectId,
+                        LlmGatewayLanguageSelection.fromBcp47String(languageCode)));
         if (tts == null) {
             return null;
         }

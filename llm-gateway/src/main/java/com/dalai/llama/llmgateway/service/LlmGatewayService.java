@@ -13,8 +13,10 @@ import com.dalai.llama.llmgateway.kafka.BillingEvent;
 import com.dalai.llama.llmgateway.kafka.BillingEventPublisher;
 import com.dalai.llama.llmgateway.repository.LlmJobRepository;
 import com.dalai.llama.llmgateway.service.provider.CanonicalRequest;
+import com.dalai.llama.llmgateway.service.provider.ProviderLanguageDirective;
 import com.dalai.llama.llmgateway.service.provider.LlmProvider;
 import com.dalai.llama.llmgateway.service.provider.LlmProviderException;
+import com.dalai.llama.llmgateway.service.provider.ProviderRequestContext;
 import com.dalai.llama.llmgateway.service.provider.LlmResponse;
 import com.dalai.llama.llmgateway.service.provider.ProviderRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -72,6 +74,7 @@ public class LlmGatewayService {
     private final BigDecimal minimumWalletBalance;
     private final PromptTemplateService promptTemplateService;
     private final ProviderConcurrencyLeaseService concurrencyLeaseService;
+    private final ProviderLanguageResolver providerLanguageResolver;
     private final ObjectMapper objectMapper;
 
     public LlmGatewayService(
@@ -88,6 +91,7 @@ public class LlmGatewayService {
             @Value("${llm-gateway.billing.minimum-wallet-balance}") BigDecimal minimumWalletBalance,
             PromptTemplateService promptTemplateService,
             ProviderConcurrencyLeaseService concurrencyLeaseService,
+            ProviderLanguageResolver providerLanguageResolver,
             ObjectMapper objectMapper
     ) {
         this.idempotencyService = idempotencyService;
@@ -103,6 +107,7 @@ public class LlmGatewayService {
         this.minimumWalletBalance = minimumWalletBalance;
         this.promptTemplateService = promptTemplateService;
         this.concurrencyLeaseService = concurrencyLeaseService;
+        this.providerLanguageResolver = providerLanguageResolver;
         this.objectMapper = objectMapper;
     }
 
@@ -254,11 +259,14 @@ public class LlmGatewayService {
             }
 
             LlmProvider provider = providerRegistry.resolve(providerId);
+            ProviderLanguageDirective languageDirective = providerLanguageResolver.resolve(
+                    providerId, routed.model().getModelId(), request.language());
             var renderedMessages = effectiveMessages(request);
             recordRequestBestEffort(job.getJobId(), renderedMessages);
             future = provider.generate(new CanonicalRequest(
                     routed.model().getModelId(), routed.model().getType(), renderedMessages, request.params(),
-                    routed.model().getTimeoutMs(), request.tools()
+                    routed.model().getTimeoutMs(), request.tools(), languageDirective,
+                    new ProviderRequestContext(tenantId, request.projectId())
             )).toFuture();
             inFlightJobRegistry.register(job.getJobId(), future);
 

@@ -54,6 +54,14 @@ public class VideoGenJobDialogueBeat {
     @Column(name = "voice_reference_url", columnDefinition = "text")
     private String voiceReferenceUrl;
 
+    /** Provider voice identity, captured at generation time for repeatable approval. */
+    @Column(name = "cloned_voice_id", length = 128)
+    private String clonedVoiceId;
+
+    /** Provider which owns {@link #clonedVoiceId}; never separate the opaque id from its owner. */
+    @Column(name = "cloned_voice_provider_id", length = 64)
+    private String clonedVoiceProviderId;
+
     @Column(name = "builtin_voice_id")
     private String builtinVoiceId;
 

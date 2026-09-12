@@ -51,13 +51,16 @@ public class ElevenLabsProvider implements LlmProvider {
     private static final int FLAT_CLONE_CHARGE_CHAR_EQUIVALENT = 1000;
 
     private final WebClient webClient;
+    private final PreProductionVoiceReferenceClient preProductionVoiceReferenceClient;
     private final String apiKey;
 
     public ElevenLabsProvider(
             @Value("${llm-gateway.elevenlabs.base-url}") String baseUrl,
-            @Value("${llm-gateway.elevenlabs.api-key}") String apiKey
+            @Value("${llm-gateway.elevenlabs.api-key}") String apiKey,
+            PreProductionVoiceReferenceClient preProductionVoiceReferenceClient
     ) {
         this.apiKey = apiKey;
+        this.preProductionVoiceReferenceClient = preProductionVoiceReferenceClient;
         // Same 256KB-default-buffer problem as GoogleGeminiProvider -- raw audio/mpeg bytes,
         // base64-inlined into LlmResponse.content, routinely exceed that for anything beyond a
         // couple seconds of speech. 16MB matches creator-service's proven GoogleGenAiClientFactory
@@ -113,13 +116,11 @@ public class ElevenLabsProvider implements LlmProvider {
         if (params.get("voice_settings") != null) {
             body.put("voice_settings", params.get("voice_settings"));
         }
-        // Optional BCP-47 language hint -- the caller (video-generation-service's
-        // BeatDubbingService) sends this when the project's dialogueLanguage is set, so
-        // eleven_multilingual_v2 doesn't misidentify the target language from romanized text
-        // alone. Same passthrough shape as voice_settings above.
-        Object languageCode = params.get("language_code");
-        if (languageCode != null && !String.valueOf(languageCode).isBlank()) {
-            body.put("language_code", languageCode);
+        // Only the resolver's typed directive may add a provider language parameter. The
+        // eleven_multilingual_v2 mapping is OMIT, because ElevenLabs rejects language_code.
+        ProviderLanguageDirective languageDirective = request.languageDirective();
+        if (languageDirective != null && languageDirective.shouldSendToProvider()) {
+            body.put(languageDirective.providerParameterName(), languageDirective.providerLanguageCode());
         }
 
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : 30000;
@@ -149,40 +150,33 @@ public class ElevenLabsProvider implements LlmProvider {
                         new LlmProviderException("ElevenLabs call failed: " + ex.getMessage(), true, ex));
     }
 
-    /** {@code params.reference_audio_url} (same param name {@code FalAiProvider.voiceCloneRequestBody}
-     * uses) is fetched, then re-uploaded as multipart to {@code POST /v1/voices/add} -- ElevenLabs'
+    /** {@code params.cast_profile_id} is resolved through pre-production-service using trusted
+     * request context, then re-uploaded as multipart to {@code POST /v1/voices/add} -- ElevenLabs'
      * actual documented contract takes a file, not a URL. {@code params.name} is optional; without
      * it every clone would collide on ElevenLabs' own default name, so a unique fallback is
      * generated. Result content is the bare {@code voice_id} string, same shape a caller gets back
      * from fal.ai's voice_clone (no synthesized audio -- see class javadoc). */
     private Mono<LlmResponse> cloneVoice(CanonicalRequest request) {
         Map<String, Object> params = request.params() == null ? Map.of() : request.params();
-        String referenceAudioUrl = String.valueOf(params.getOrDefault("reference_audio_url", ""));
-        if (referenceAudioUrl.isBlank() || "null".equals(referenceAudioUrl)) {
-            return Mono.error(new LlmProviderException("params.reference_audio_url is required for ElevenLabs voice cloning", false));
-        }
+        UUID castProfileId = castProfileId(params);
         String name = String.valueOf(params.getOrDefault("name", "")).isBlank()
                 ? "clone-" + UUID.randomUUID()
                 : String.valueOf(params.get("name"));
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : 60000;
 
-        return WebClient.create().get()
-                .uri(referenceAudioUrl)
-                .retrieve()
-                .bodyToMono(byte[].class)
-                .timeout(Duration.ofMillis(timeoutMs))
-                .flatMap(audioBytes -> {
-                    if (audioBytes == null || audioBytes.length == 0) {
-                        return Mono.error(new LlmProviderException("reference_audio_url returned no audio to clone from", false));
+        return preProductionVoiceReferenceClient.fetch(request.requestContext(), castProfileId)
+                .flatMap(reference -> {
+                    if (reference.bytes() == null || reference.bytes().length == 0) {
+                        return Mono.error(new LlmProviderException("Cast profile returned no audio to clone from", false));
                     }
                     MultipartBodyBuilder multipart = new MultipartBodyBuilder();
                     multipart.part("name", name);
-                    multipart.part("files", new ByteArrayResource(audioBytes) {
+                    multipart.part("files[]", new ByteArrayResource(reference.bytes()) {
                         @Override
                         public String getFilename() {
-                            return "reference.mp3";
+                            return reference.filename();
                         }
-                    });
+                    }).contentType(reference.contentType());
                     return webClient.post()
                             .uri("/v1/voices/add")
                             .header("xi-api-key", apiKey)
@@ -191,6 +185,7 @@ public class ElevenLabsProvider implements LlmProvider {
                             .bodyToMono(Map.class)
                             .timeout(Duration.ofMillis(timeoutMs));
                 })
+                .timeout(Duration.ofMillis(timeoutMs))
                 .map(response -> {
                     Object voiceId = response == null ? null : response.get("voice_id");
                     if (voiceId == null || String.valueOf(voiceId).isBlank()) {
@@ -209,6 +204,18 @@ public class ElevenLabsProvider implements LlmProvider {
                         ex.getStatusCode().is5xxServerError(), ex))
                 .onErrorMap(ex -> !(ex instanceof LlmProviderException), ex ->
                         new LlmProviderException("ElevenLabs voice clone call failed: " + ex.getMessage(), true, ex));
+    }
+
+    private UUID castProfileId(Map<String, Object> params) {
+        String value = String.valueOf(params.getOrDefault("cast_profile_id", ""));
+        if (value.isBlank() || "null".equals(value)) {
+            throw new LlmProviderException("params.cast_profile_id is required for ElevenLabs voice cloning", false);
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ex) {
+            throw new LlmProviderException("params.cast_profile_id must be a UUID", false, ex);
+        }
     }
 
     /** Verified against ElevenLabs' real, documented {@code POST /v1/music} -- {@code prompt}

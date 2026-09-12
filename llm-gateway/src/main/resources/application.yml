@@ -130,3 +130,4 @@ llm-gateway:
   elevenlabs:
     api-key: ${ELEVENLABS_API_KEY:}
     base-url: ${LLM_GATEWAY_ELEVENLABS_BASE_URL:https://api.elevenlabs.io}
+  pre-production-service-url: ${PRE_PRODUCTION_SERVICE_URL:http://pre-production-service.apps.svc.cluster.local:8080}

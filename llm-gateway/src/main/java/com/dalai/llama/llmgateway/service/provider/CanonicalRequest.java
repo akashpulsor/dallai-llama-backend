@@ -21,6 +21,20 @@ public record CanonicalRequest(
         List<ChatMessage> messages,
         Map<String, Object> params,
         int timeoutMs,
-        List<ToolDefinition> tools
+        List<ToolDefinition> tools,
+        ProviderLanguageDirective languageDirective,
+        ProviderRequestContext requestContext
 ) {
+    /** Keeps provider-adapter tests and legacy internal callers compatible. */
+    public CanonicalRequest(String modelId, String modelType, List<ChatMessage> messages,
+                            Map<String, Object> params, int timeoutMs, List<ToolDefinition> tools) {
+        this(modelId, modelType, messages, params, timeoutMs, tools, null, null);
+    }
+
+    /** Keeps callers which only need provider-language routing source-compatible. */
+    public CanonicalRequest(String modelId, String modelType, List<ChatMessage> messages,
+                            Map<String, Object> params, int timeoutMs, List<ToolDefinition> tools,
+                            ProviderLanguageDirective languageDirective) {
+        this(modelId, modelType, messages, params, timeoutMs, tools, languageDirective, null);
+    }
 }

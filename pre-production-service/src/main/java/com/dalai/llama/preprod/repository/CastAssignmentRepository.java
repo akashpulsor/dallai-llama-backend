@@ -15,6 +15,8 @@ public interface CastAssignmentRepository extends JpaRepository<CastAssignment, 
 
     Optional<CastAssignment> findByProjectIdAndScriptCharacterId(UUID projectId, UUID scriptCharacterId);
 
+    boolean existsByProjectIdAndCastProfileId(UUID projectId, UUID castProfileId);
+
     /** How many distinct projects a cast profile has actually been cast into -- the Cast Library's
      * "used in N projects" count. Distinct on project id since the same profile can be assigned to
      * more than one character within the same project (a narrator reusing an on-screen actor). */

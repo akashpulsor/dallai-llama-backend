@@ -50,6 +50,26 @@ public class PreProductionServiceClient {
                 new ParameterizedTypeReference<PreProductionViews.PrepareBundleView>() {}, tenantId, projectId);
     }
 
+    /** Claims a cast profile's provider clone identity without replacing a previously stored one. */
+    public PreProductionViews.ClonedVoiceIdentityView persistClonedVoiceIfAbsent(
+            UUID tenantId, UUID projectId, UUID castProfileId, String clonedVoiceId, String providerId, String voiceIdentityType) {
+        try {
+            return webClient.put()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/cast-profiles/{castProfileId}/cloned-voice",
+                            tenantId, projectId, castProfileId)
+                    .bodyValue(new PreProductionViews.PersistClonedVoiceRequest(clonedVoiceId, providerId, voiceIdentityType))
+                    .retrieve()
+                    .bodyToMono(PreProductionViews.ClonedVoiceIdentityView.class)
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw VideoGenException.upstream(
+                    "pre-production-service persist cloned voice failed status=%s body=%s"
+                            .formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        } catch (RuntimeException ex) {
+            throw VideoGenException.upstream("pre-production-service persist cloned voice failed: " + ex.getMessage(), ex);
+        }
+    }
+
     // --- Project-scoped reads ---
 
     public Optional<PreProductionViews.ContinuityBibleView> getContinuityBible(UUID tenantId, UUID projectId) {

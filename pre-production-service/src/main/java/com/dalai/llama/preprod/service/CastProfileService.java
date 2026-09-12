@@ -2,13 +2,17 @@ package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.domain.CastProfileType;
 import com.dalai.llama.preprod.domain.MediaAssetType;
+import com.dalai.llama.preprod.domain.VoiceIdentityType;
 import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.dto.CastProfileView;
+import com.dalai.llama.preprod.dto.ClonedVoiceIdentityView;
+import com.dalai.llama.preprod.dto.PersistClonedVoiceRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
+import com.dalai.llama.preprod.repository.ProjectRepository;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.http.Method;
@@ -28,17 +32,20 @@ public class CastProfileService {
 
     private final CastProfileRepository castProfileRepository;
     private final CastAssignmentRepository castAssignmentRepository;
+    private final ProjectRepository projectRepository;
     private final MediaAssetService mediaAssetService;
     private final MinioClient publicMinioClient;
 
     public CastProfileService(
             CastProfileRepository castProfileRepository,
             CastAssignmentRepository castAssignmentRepository,
+            ProjectRepository projectRepository,
             MediaAssetService mediaAssetService,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient
     ) {
         this.castProfileRepository = castProfileRepository;
         this.castAssignmentRepository = castAssignmentRepository;
+        this.projectRepository = projectRepository;
         this.mediaAssetService = mediaAssetService;
         this.publicMinioClient = publicMinioClient;
     }
@@ -46,6 +53,7 @@ public class CastProfileService {
     @Transactional
     public CastProfileView create(UUID tenantId, CreateCastProfileRequest request) {
         CastProfileType profileType = request.profileType() == null ? CastProfileType.ACTOR : request.profileType();
+        VoiceIdentity identity = initialVoiceIdentity(profileType, request);
         OffsetDateTime now = OffsetDateTime.now();
         CastProfile profile = castProfileRepository.save(CastProfile.builder()
                 .tenantId(tenantId)
@@ -59,7 +67,11 @@ public class CastProfileService {
                 .gender(profileType == CastProfileType.ACTOR ? request.gender() : null)
                 .voiceRefBucket(profileType == CastProfileType.ACTOR ? request.voiceRefBucket() : null)
                 .voiceRefObjectKey(profileType == CastProfileType.ACTOR ? request.voiceRefObjectKey() : null)
-                .builtinVoiceId(profileType == CastProfileType.ACTOR ? request.builtinVoiceId() : null)
+                // Retained as a compatibility mirror for older readers; new code uses the provider pair below.
+                .builtinVoiceId(profileType == CastProfileType.ACTOR ? identity.legacyBuiltinVoiceId() : null)
+                .clonedVoiceId(profileType == CastProfileType.ACTOR ? identity.voiceId() : null)
+                .clonedVoiceProviderId(profileType == CastProfileType.ACTOR ? identity.providerId() : null)
+                .voiceIdentityType(profileType == CastProfileType.ACTOR ? identity.type() : null)
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -87,6 +99,9 @@ public class CastProfileService {
         profile.setVoiceRefBucket(request.voiceRefBucket());
         profile.setVoiceRefObjectKey(request.voiceRefObjectKey());
         profile.setBuiltinVoiceId(null);
+        profile.setClonedVoiceId(null);
+        profile.setClonedVoiceProviderId(null);
+        profile.setVoiceIdentityType(VoiceIdentityType.HUMAN);
         profile.setUpdatedAt(OffsetDateTime.now());
         CastProfile saved = castProfileRepository.save(profile);
         mediaAssetService.registerIfAbsent(tenantId, request.voiceRefBucket(), request.voiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
@@ -100,11 +115,92 @@ public class CastProfileService {
     public CastProfileView selectBuiltinVoice(UUID tenantId, UUID castProfileId, SelectCastProfileBuiltinVoiceRequest request) {
         CastProfile profile = requireCastProfile(tenantId, castProfileId);
         requireActorProfile(profile);
-        profile.setBuiltinVoiceId(request.builtinVoiceId());
+        // The frontend received these directly from GET /v1/voices/builtin: providerVoiceId is
+        // the usable TTS voice id and providerId prevents routing that opaque id to the wrong provider.
+        profile.setBuiltinVoiceId(request.clonedVoiceId()); // legacy-reader compatibility
         profile.setVoiceRefBucket(null);
         profile.setVoiceRefObjectKey(null);
+        profile.setClonedVoiceId(request.clonedVoiceId());
+        profile.setClonedVoiceProviderId(request.providerId());
+        profile.setVoiceIdentityType(VoiceIdentityType.AI);
         profile.setUpdatedAt(OffsetDateTime.now());
         return toView(castProfileRepository.save(profile));
+    }
+
+    /**
+     * Stores a provider clone identity once, without letting retries or concurrent requests
+     * replace the first identity. The response always describes the identity that is now durable.
+     */
+    @Transactional
+    public ClonedVoiceIdentityView persistClonedVoiceIfAbsent(
+            UUID tenantId, UUID projectId, UUID castProfileId, PersistClonedVoiceRequest request) {
+        CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        requireProjectScope(tenantId, projectId, profile);
+        requireActorProfile(profile);
+
+        int claimed = castProfileRepository.persistClonedVoiceIfAbsent(
+                tenantId, castProfileId, request.clonedVoiceId(), request.providerId(),
+                request.voiceIdentityType(), OffsetDateTime.now());
+        if (claimed == 1) {
+            return new ClonedVoiceIdentityView(
+                    request.clonedVoiceId(), request.providerId(), request.voiceIdentityType(), true);
+        }
+
+        CastProfile existing = requireCastProfile(tenantId, castProfileId);
+        if (hasClonedVoiceIdentity(existing)) {
+            return new ClonedVoiceIdentityView(
+                    existing.getClonedVoiceId(), existing.getClonedVoiceProviderId(),
+                    existing.getVoiceIdentityType(), false);
+        }
+        throw PreProductionException.conflict(
+                "Cast profile " + castProfileId + " cannot claim a cloned voice while a built-in voice is selected");
+    }
+
+    /** Reusable library profiles are valid for every tenant project; project-local profiles are not. */
+    private void requireProjectScope(UUID tenantId, UUID projectId, CastProfile profile) {
+        projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        if (profile.getProjectId() != null && !profile.getProjectId().equals(projectId)) {
+            throw PreProductionException.notFound("Cast profile " + profile.getId() + " is not available in project " + projectId);
+        }
+    }
+
+    private boolean hasClonedVoiceIdentity(CastProfile profile) {
+        return profile.getClonedVoiceId() != null && !profile.getClonedVoiceId().isBlank()
+                && profile.getClonedVoiceProviderId() != null && !profile.getClonedVoiceProviderId().isBlank()
+                && profile.getVoiceIdentityType() != null;
+    }
+
+    /** Resolves creation input into the one durable voice-identity model. Human samples deliberately
+     * have no provider voice id yet: Prepare All Dialogues creates it after the profile exists. */
+    private VoiceIdentity initialVoiceIdentity(CastProfileType profileType, CreateCastProfileRequest request) {
+        if (profileType != CastProfileType.ACTOR) {
+            return VoiceIdentity.NONE;
+        }
+        if (hasText(request.voiceRefBucket()) && hasText(request.voiceRefObjectKey())) {
+            return new VoiceIdentity(null, null, null, VoiceIdentityType.HUMAN);
+        }
+        boolean hasCloneId = hasText(request.clonedVoiceId());
+        boolean hasProviderId = hasText(request.clonedVoiceProviderId());
+        if (hasCloneId != hasProviderId) {
+            throw PreProductionException.badRequest("clonedVoiceId and clonedVoiceProviderId must be supplied together");
+        }
+        if (hasCloneId) {
+            return new VoiceIdentity(request.clonedVoiceId(), request.clonedVoiceProviderId(), request.clonedVoiceId(), VoiceIdentityType.AI);
+        }
+        if (hasText(request.builtinVoiceId())) {
+            // Pre-provider-id clients only ever selected ElevenLabs voices. New clients must send the pair above.
+            return new VoiceIdentity(request.builtinVoiceId(), "elevenlabs", request.builtinVoiceId(), VoiceIdentityType.AI);
+        }
+        return new VoiceIdentity(null, null, null, null);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private record VoiceIdentity(String voiceId, String providerId, String legacyBuiltinVoiceId, VoiceIdentityType type) {
+        private static final VoiceIdentity NONE = new VoiceIdentity(null, null, null, null);
     }
 
     private void requireActorProfile(CastProfile profile) {
@@ -142,7 +238,8 @@ public class CastProfileService {
         return new CastProfileView(profile.getId(), profile.getProjectId(), profile.getProfileType(), profile.getDisplayName(),
                 profile.getFaceRefBucket(), profile.getFaceRefObjectKey(), signedUrl(profile.getFaceRefBucket(), profile.getFaceRefObjectKey()),
                 profile.getDescription(), profile.getAge(), profile.getGender(), profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(),
-                profile.getBuiltinVoiceId(), projectCount);
+                profile.getBuiltinVoiceId(), profile.getClonedVoiceId(), profile.getClonedVoiceProviderId(),
+                profile.getVoiceIdentityType(), projectCount);
     }
 
     /** Display-only, so any presign failure degrades to no photo rather than a broken cast list. */

@@ -243,18 +243,19 @@ public class ShotContextAssemblyService {
                 .map(b -> {
                     BeatVoice voice = resolveBeatVoice(tenantId, script, b.getCharacterKey(), assemblyContext, voiceByCharacterKey);
                     return new DialogueBeat(b.getStartSeconds(), b.getDurationSeconds(), b.getText(), b.getCharacterKey(),
-                            voice.referenceUrl(), voice.builtinVoiceId(), shot.getEmotion(), languageCode);
+                            voice.referenceUrl(), voice.clonedVoiceId(), voice.clonedVoiceProviderId(),
+                            voice.builtinVoiceId(), shot.getEmotion(), languageCode);
                 })
                 .collect(Collectors.toList());
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),
                 base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(), dialogueBeats);
     }
 
-    /** A beat's speaking character resolves to at most one of a cloned-sample signed URL or a
-     * stock built-in voice id -- never both (service layer already keeps them mutually exclusive
-     * on {@code CastProfile}), and possibly neither if the character has no usable cast voice. */
-    private record BeatVoice(String referenceUrl, String builtinVoiceId) {
-        static final BeatVoice NONE = new BeatVoice(null, null);
+    /** A beat's speaking character resolves to a prepared clone, raw sample, or stock voice. A
+     * prepared clone wins: it is the reusable result of a successful Prepare All Dialogues call. */
+    private record BeatVoice(String referenceUrl, String clonedVoiceId, String clonedVoiceProviderId,
+                             String builtinVoiceId) {
+        static final BeatVoice NONE = new BeatVoice(null, null, null, null);
     }
 
     private BeatVoice resolveBeatVoice(UUID tenantId, Script script, String characterKey,
@@ -270,10 +271,12 @@ public class ShotContextAssemblyService {
                 : resolveCastProfile(tenantId, script, characterKey);
         BeatVoice voice = BeatVoice.NONE;
         if (profile != null) {
-            if (profile.getVoiceRefBucket() != null && profile.getVoiceRefObjectKey() != null) {
-                voice = new BeatVoice(signedUrl(profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey()), null);
-            } else if (profile.getBuiltinVoiceId() != null) {
-                voice = new BeatVoice(null, profile.getBuiltinVoiceId());
+            if (hasText(profile.getClonedVoiceId()) && hasText(profile.getClonedVoiceProviderId())) {
+                voice = new BeatVoice(null, profile.getClonedVoiceId(), profile.getClonedVoiceProviderId(), null);
+            } else if (hasText(profile.getVoiceRefBucket()) && hasText(profile.getVoiceRefObjectKey())) {
+                voice = new BeatVoice(signedUrl(profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey()), null, null, null);
+            } else if (hasText(profile.getBuiltinVoiceId())) {
+                voice = new BeatVoice(null, null, null, profile.getBuiltinVoiceId());
             }
         }
         cache.put(characterKey, voice);
@@ -288,6 +291,10 @@ public class ShotContextAssemblyService {
                 .flatMap(character -> castAssignmentRepository.findByProjectIdAndScriptCharacterId(script.getProjectId(), character.getId()))
                 .flatMap(assignment -> castProfileRepository.findByIdAndTenantId(assignment.getCastProfileId(), tenantId))
                 .orElse(null);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String signedUrl(String bucket, String objectKey) {

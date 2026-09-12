@@ -1,6 +1,7 @@
 package com.dalai.llama.preprod.dto;
 
 import com.dalai.llama.preprod.domain.CastProfileType;
+import com.dalai.llama.preprod.domain.VoiceIdentityType;
 
 import java.util.UUID;
 
@@ -18,6 +19,9 @@ public record CastProfileView(
         String voiceRefBucket,
         String voiceRefObjectKey,
         String builtinVoiceId,
+        String clonedVoiceId,
+        String clonedVoiceProviderId,
+        VoiceIdentityType voiceIdentityType,
         long projectCount
 ) {
 }

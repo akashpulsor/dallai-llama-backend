@@ -1,6 +1,7 @@
 package com.dalai.llama.preprod.domain.entity;
 
 import com.dalai.llama.preprod.domain.CastProfileType;
+import com.dalai.llama.preprod.domain.VoiceIdentityType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -87,6 +88,19 @@ public class CastProfile {
      * sample is uploaded, and {@code selectBuiltinVoice} clears voiceRef* when this is set. */
     @Column(name = "builtin_voice_id", length = 128)
     private String builtinVoiceId;
+
+    /** Provider-owned TTS voice id. AI profiles receive it from the built-in catalog; HUMAN
+     * profiles receive it only after Prepare All Dialogues clones their uploaded sample. */
+    @Column(name = "cloned_voice_id", length = 128)
+    private String clonedVoiceId;
+
+    /** Provider which owns {@link #clonedVoiceId}; kept with the ID so it cannot be misrouted. */
+    @Column(name = "cloned_voice_provider_id", length = 64)
+    private String clonedVoiceProviderId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "voice_identity_type", length = 16)
+    private VoiceIdentityType voiceIdentityType;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

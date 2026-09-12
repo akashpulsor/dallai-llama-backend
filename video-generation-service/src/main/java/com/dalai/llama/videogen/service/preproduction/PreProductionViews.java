@@ -53,7 +53,21 @@ public final class PreProductionViews {
             String voiceRefBucket,
             String voiceRefObjectKey,
             String builtinVoiceId,
+            String clonedVoiceId,
+            String clonedVoiceProviderId,
+            String voiceIdentityType,
             long projectCount
+    ) {}
+
+    /** Request mirror for the internal set-if-absent cloned voice endpoint. */
+    public record PersistClonedVoiceRequest(String clonedVoiceId, String providerId, String voiceIdentityType) {}
+
+    /** Effective clone identity returned by pre-production-service after the conditional write. */
+    public record ClonedVoiceIdentityView(
+            String clonedVoiceId,
+            String providerId,
+            String voiceIdentityType,
+            boolean newlyPersisted
     ) {}
 
     /** Slim mirror of pre-prod's ShotView -- only the fields the prepare-scene assembler actually

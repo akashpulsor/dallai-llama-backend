@@ -1,12 +1,13 @@
 package com.dalai.llama.preprod.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-/** {@code builtinVoiceId} is llm-gateway's {@code BuiltinVoiceView.providerVoiceId} -- handed over
- * as-is from a prior {@code GET /v1/voices/builtin} call, not re-validated against that catalog
- * here (same "trust a value obtained from a prior real call" convention as {@link
- * UpdateCastProfileVoiceRequest}'s bucket/objectKey). */
+/** Provider voice identity selected from llm-gateway's {@code GET /v1/voices/builtin}. The picker
+ * submits {@code providerVoiceId} as {@code clonedVoiceId} and {@code providerId} unchanged; both
+ * are required because a provider voice id is only meaningful to its owning provider. */
 public record SelectCastProfileBuiltinVoiceRequest(
-        @NotBlank String builtinVoiceId
+        @NotBlank @Size(max = 128) String clonedVoiceId,
+        @NotBlank @Size(max = 64) String providerId
 ) {
 }

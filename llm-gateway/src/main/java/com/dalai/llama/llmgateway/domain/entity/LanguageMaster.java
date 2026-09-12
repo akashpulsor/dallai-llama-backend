@@ -25,6 +25,22 @@ public class LanguageMaster {
     @Column(name = "language_code", length = 16)
     private String languageCode;
 
+    /** Stable platform language identifier (e.g. {@code}). */
+    @Column(name = "platform_code", nullable = false, length = 3)
+    private String platformCode;
+
+    /** Optional ISO-15924 script subtag. */
+    @Column(name = "script_code", length = 4)
+    private String scriptCode;
+
+    /** Optional ISO-3166-1 or UN M.49 region subtag. */
+    @Column(name = "region_code", length = 3)
+    private String regionCode;
+
+    /** Language selected for a partial platform code, e.g. {@code hi}. */
+    @Column(name = "default_language", nullable = false)
+    private Boolean defaultLanguage;
+
     @Column(name = "display_name", nullable = false, length = 128)
     private String displayName;
 
