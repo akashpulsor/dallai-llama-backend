@@ -6,7 +6,7 @@ import com.dalai.llama.preprod.domain.entity.CastProfile;
 import com.dalai.llama.preprod.dto.ClonedVoiceIdentityView;
 import com.dalai.llama.preprod.dto.PersistClonedVoiceRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
-import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
+import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
 import com.dalai.llama.preprod.repository.ProjectRepository;
@@ -86,8 +86,8 @@ class CastProfileServiceTest {
         given(castProfileRepository.findByIdAndTenantId(castProfileId, tenantId)).willReturn(Optional.of(profile));
         given(castProfileRepository.save(profile)).willReturn(profile);
 
-        service.selectBuiltinVoice(tenantId, castProfileId,
-                new SelectCastProfileBuiltinVoiceRequest("provider-voice-42", "elevenlabs"));
+        selectBuiltinVoice(tenantId, castProfileId,
+                new SelectCastProfileBuiltinVoiceRequest(castProfileId, null, "provider-voice-42", "elevenlabs"));
 
         assertThat(profile.getVoiceIdentityType()).isEqualTo(VoiceIdentityType.AI);
         assertThat(profile.getClonedVoiceId()).isEqualTo("provider-voice-42");
@@ -107,7 +107,8 @@ class CastProfileServiceTest {
         given(castProfileRepository.findByIdAndTenantId(castProfileId, tenantId)).willReturn(Optional.of(profile));
         given(castProfileRepository.save(profile)).willReturn(profile);
 
-        service.updateVoice(tenantId, castProfileId, new UpdateCastProfileVoiceRequest("media", "voices/actor.wav"));
+        service.updateVoice(new UpdateCastProfileVoiceCommand(tenantId, castProfileId, castProfileId, null,
+                VoiceIdentityType.HUMAN, "media", "voices/actor.wav", null, null));
 
         assertThat(profile.getVoiceIdentityType()).isEqualTo(VoiceIdentityType.HUMAN);
         assertThat(profile.getVoiceRefBucket()).isEqualTo("media");
@@ -115,6 +116,110 @@ class CastProfileServiceTest {
         assertThat(profile.getClonedVoiceId()).isNull();
         assertThat(profile.getClonedVoiceProviderId()).isNull();
     }
+    @Test
+    void rejectsPayloadCastIdDifferentFromUrl() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> selectBuiltinVoice(
+                UUID.randomUUID(), UUID.randomUUID(),
+                new SelectCastProfileBuiltinVoiceRequest(UUID.randomUUID(), null, "voice", "elevenlabs")))
+                .isInstanceOf(PreProductionException.class).hasMessageContaining("must match");
+        org.mockito.Mockito.verifyNoInteractions(castProfileRepository);
+    }
+
+    @Test
+    void validatesProjectScopeBeforeSavingVoice() {
+        UUID tenantId = UUID.randomUUID();
+        UUID castId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        CastProfile profile = actorProfile(castId, tenantId);
+        profile.setProjectId(projectId);
+        given(castProfileRepository.findByIdAndTenantId(castId, tenantId)).willReturn(Optional.of(profile));
+        given(projectRepository.findByIdAndTenantId(projectId, tenantId))
+                .willReturn(Optional.of(mock(com.dalai.llama.preprod.domain.entity.Project.class)));
+        given(castProfileRepository.save(profile)).willReturn(profile);
+        selectBuiltinVoice(tenantId, castId,
+                new SelectCastProfileBuiltinVoiceRequest(castId, projectId, "voice", "elevenlabs"));
+        assertThat(profile.getClonedVoiceId()).isEqualTo("voice");
+        assertThat(profile.getClonedVoiceProviderId()).isEqualTo("elevenlabs");
+        org.mockito.Mockito.verify(projectRepository).findByIdAndTenantId(projectId, tenantId);
+        org.mockito.Mockito.verify(castProfileRepository).save(profile);
+    }
+
+    @Test
+    void rejectsMissingOrDifferentProjectWithoutSaving() {
+        UUID tenantId = UUID.randomUUID();
+        UUID castId = UUID.randomUUID();
+        UUID otherProject = UUID.randomUUID();
+        CastProfile profile = actorProfile(castId, tenantId);
+        profile.setProjectId(UUID.randomUUID());
+        given(castProfileRepository.findByIdAndTenantId(castId, tenantId)).willReturn(Optional.of(profile));
+        given(projectRepository.findByIdAndTenantId(otherProject, tenantId))
+                .willReturn(Optional.of(mock(com.dalai.llama.preprod.domain.entity.Project.class)));
+        for (UUID projectId : new UUID[]{null, otherProject}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> selectBuiltinVoice(tenantId, castId,
+                    new SelectCastProfileBuiltinVoiceRequest(castId, projectId, "voice", "elevenlabs")))
+                    .isInstanceOf(PreProductionException.class);
+        }
+        org.mockito.Mockito.verify(castProfileRepository, org.mockito.Mockito.never()).save(any());
+        assertThat(profile.getClonedVoiceId()).isNull();
+    }
+
+    @Test
+    void rejectsCastOrProjectOutsideTenant() {
+        UUID tenantId = UUID.randomUUID();
+        UUID castId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        var request = new SelectCastProfileBuiltinVoiceRequest(castId, projectId, "voice", "elevenlabs");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> selectBuiltinVoice(tenantId, castId, request))
+                .isInstanceOf(PreProductionException.class).hasMessageContaining("No cast profile");
+        given(castProfileRepository.findByIdAndTenantId(castId, tenantId))
+                .willReturn(Optional.of(actorProfile(castId, tenantId)));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> selectBuiltinVoice(tenantId, castId, request))
+                .isInstanceOf(PreProductionException.class).hasMessageContaining("No project");
+        org.mockito.Mockito.verify(castProfileRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    private void selectBuiltinVoice(UUID tenantId, UUID castId, SelectCastProfileBuiltinVoiceRequest request) {
+        service.updateVoice(new UpdateCastProfileVoiceCommand(
+                tenantId, castId, request.castProfileId(), request.projectId(),
+                VoiceIdentityType.AI, null, null,
+                request.clonedVoiceId(), request.providerId()));
+    }
+
+    @Test
+    void switchingHumanToAiClearsStoredSample() {
+        UUID tenantId = UUID.randomUUID();
+        UUID castId = UUID.randomUUID();
+        CastProfile profile = actorProfile(castId, tenantId);
+        profile.setVoiceRefBucket("media");
+        profile.setVoiceRefObjectKey("sample.wav");
+        profile.setVoiceIdentityType(VoiceIdentityType.HUMAN);
+        given(castProfileRepository.findByIdAndTenantId(castId, tenantId)).willReturn(Optional.of(profile));
+        given(castProfileRepository.save(profile)).willReturn(profile);
+        service.updateVoice(new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null,
+                VoiceIdentityType.AI, null, null, "selected-voice", "elevenlabs"));
+        assertThat(profile.getVoiceRefBucket()).isNull();
+        assertThat(profile.getVoiceRefObjectKey()).isNull();
+        assertThat(profile.getVoiceIdentityType()).isEqualTo(VoiceIdentityType.AI);
+        assertThat(profile.getClonedVoiceId()).isEqualTo("selected-voice");
+        assertThat(profile.getClonedVoiceProviderId()).isEqualTo("elevenlabs");
+    }
+
+    @Test
+    void rejectsMissingTypeMissingFieldsAndMixedIdentities() {
+        UUID tenantId = UUID.randomUUID();
+        UUID castId = UUID.randomUUID();
+        for (UpdateCastProfileVoiceCommand command : java.util.List.of(
+                new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null, null, null, null, null, null),
+                new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null, VoiceIdentityType.HUMAN, "media", null, null, null),
+                new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null, VoiceIdentityType.AI, null, null, "voice", null),
+                new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null, VoiceIdentityType.HUMAN, "media", "sample.wav", "voice", "elevenlabs"),
+                new UpdateCastProfileVoiceCommand(tenantId, castId, castId, null, VoiceIdentityType.AI, "media", "sample.wav", "voice", "elevenlabs"))) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateVoice(command))
+                    .isInstanceOf(PreProductionException.class);
+        }
+        org.mockito.Mockito.verifyNoInteractions(castProfileRepository);
+    }
+
     private static CastProfile actorProfile(UUID castProfileId, UUID tenantId) {
         return CastProfile.builder()
                 .id(castProfileId)

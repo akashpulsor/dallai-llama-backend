@@ -8,7 +8,9 @@ import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.CreateCastAssignmentRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
+import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceCommand;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
+import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.service.CastAssignmentService;
 import com.dalai.llama.preprod.service.CastMediaUploadService;
 import com.dalai.llama.preprod.service.CastProfileService;
@@ -54,13 +56,18 @@ public class CastController extends BaseController {
     @PutMapping("/v1/cast-profiles/{castProfileId}/voice")
     public ResponseEntity<CastProfileView> updateVoice(
             @PathVariable UUID castProfileId, @Valid @RequestBody UpdateCastProfileVoiceRequest request) {
-        return ResponseEntity.ok(castProfileService.updateVoice(tenant().tenantId(), castProfileId, request));
+        return ResponseEntity.ok(castProfileService.updateVoice(new UpdateCastProfileVoiceCommand(
+                tenant().tenantId(), castProfileId, request.castProfileId(), request.projectId(),
+                request.voiceIdentityType(), request.voiceRefBucket(), request.voiceRefObjectKey(),
+                request.clonedVoiceId(), request.providerId())));
     }
 
     @PutMapping("/v1/cast-profiles/{castProfileId}/builtin-voice")
     public ResponseEntity<CastProfileView> selectBuiltinVoice(
             @PathVariable UUID castProfileId, @Valid @RequestBody SelectCastProfileBuiltinVoiceRequest request) {
-        return ResponseEntity.ok(castProfileService.selectBuiltinVoice(tenant().tenantId(), castProfileId, request));
+        return ResponseEntity.ok(castProfileService.selectBuiltinVoice(new SelectCastProfileBuiltinVoiceCommand(
+                tenant().tenantId(), castProfileId, request.castProfileId(), request.projectId(),
+                request.clonedVoiceId(), request.providerId())));
     }
 
     @GetMapping("/v1/cast-profiles")

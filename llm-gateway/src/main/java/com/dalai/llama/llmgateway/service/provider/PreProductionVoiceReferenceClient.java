@@ -48,7 +48,7 @@ public class PreProductionVoiceReferenceClient {
                         return response.createException().flatMap(Mono::error);
                     }
                     MediaType contentType = response.headers().contentType().orElse(MediaType.APPLICATION_OCTET_STREAM);
-                    String filename = filename(response.headers(), castProfileId);
+                    String filename = filename(response.headers().asHttpHeaders(), castProfileId);
                     return response.bodyToMono(byte[].class)
                             .map(bytes -> new VoiceReference(bytes, filename, contentType));
                 })

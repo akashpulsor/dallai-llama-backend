@@ -8,8 +8,8 @@ import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ClonedVoiceIdentityView;
 import com.dalai.llama.preprod.dto.PersistClonedVoiceRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
-import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
-import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
+import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceCommand;
+import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
 import com.dalai.llama.preprod.repository.ProjectRepository;
@@ -85,48 +85,62 @@ public class CastProfileService {
         return toView(profile);
     }
 
-    /** The only way a cast profile's voice reference gets set today is at creation time
-     * ({@link #create}) -- a profile created before an actor's voice sample was ready (or one
-     * shared across characters, like a narrator reusing an on-screen actor's profile) had no way
-     * to add or change it afterward. Same upload -> attach pattern as create: the caller already
-     * has bucket/objectKey from {@code POST /v1/cast-profiles/media}. ACTOR-only, like every other
-     * voice field on this entity -- a PRODUCT/NARRATOR profile has no dialogue to dub. Uploading a
-     * real sample supersedes any previously-picked built-in voice. */
+    /** Selects a HUMAN uploaded sample or an AI provider identity, clearing the other representation. */
     @Transactional
-    public CastProfileView updateVoice(UUID tenantId, UUID castProfileId, UpdateCastProfileVoiceRequest request) {
+    public CastProfileView updateVoice(UpdateCastProfileVoiceCommand request) {
+        UUID tenantId = request.tenantId();
+        UUID castProfileId = request.routeCastProfileId();
+        if (tenantId == null || castProfileId == null || !castProfileId.equals(request.castProfileId())) {
+            throw PreProductionException.badRequest("Tenant is required and castProfileId must match the URL cast profile ID");
+        }
+        if (request.voiceIdentityType() == null) {
+            throw PreProductionException.badRequest("voiceIdentityType is required");
+        }
+        boolean human = request.voiceIdentityType() == VoiceIdentityType.HUMAN;
+        if (human && (blank(request.voiceRefBucket()) || blank(request.voiceRefObjectKey()))) {
+            throw PreProductionException.badRequest("HUMAN voice requires voiceRefBucket and voiceRefObjectKey");
+        }
+        if (!human && (blank(request.clonedVoiceId()) || blank(request.providerId()))) {
+            throw PreProductionException.badRequest("AI voice requires clonedVoiceId and providerId");
+        }
+        if (human && (!blank(request.clonedVoiceId()) || !blank(request.providerId()))
+                || !human && (!blank(request.voiceRefBucket()) || !blank(request.voiceRefObjectKey()))) {
+            throw PreProductionException.badRequest("Voice sample fields and provider identity fields are mutually exclusive");
+        }
         CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        if (request.projectId() != null) {
+            requireProjectScope(tenantId, request.projectId(), profile);
+        } else if (profile.getProjectId() != null) {
+            throw PreProductionException.badRequest("projectId is required for a project cast profile");
+        }
         requireActorProfile(profile);
-        profile.setVoiceRefBucket(request.voiceRefBucket());
-        profile.setVoiceRefObjectKey(request.voiceRefObjectKey());
-        profile.setBuiltinVoiceId(null);
-        profile.setClonedVoiceId(null);
-        profile.setClonedVoiceProviderId(null);
-        profile.setVoiceIdentityType(VoiceIdentityType.HUMAN);
+        profile.setVoiceRefBucket(human ? request.voiceRefBucket() : null);
+        profile.setVoiceRefObjectKey(human ? request.voiceRefObjectKey() : null);
+        profile.setBuiltinVoiceId(human ? null : request.clonedVoiceId());
+        profile.setClonedVoiceId(human ? null : request.clonedVoiceId());
+        profile.setClonedVoiceProviderId(human ? null : request.providerId());
+        profile.setVoiceIdentityType(request.voiceIdentityType());
         profile.setUpdatedAt(OffsetDateTime.now());
         CastProfile saved = castProfileRepository.save(profile);
-        mediaAssetService.registerIfAbsent(tenantId, request.voiceRefBucket(), request.voiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
+        if (human) {
+            mediaAssetService.registerIfAbsent(tenantId, request.voiceRefBucket(), request.voiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
+        }
         return toView(saved);
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     /** Alternative to {@link #updateVoice} for a character with no recorded sample to clone: picks
      * a stock ElevenLabs voice (see llm-gateway's {@code builtin_voice} table) instead. Clears any
      * previously-uploaded sample -- the two are alternative choices, not additive. */
     @Transactional
-    public CastProfileView selectBuiltinVoice(UUID tenantId, UUID castProfileId, SelectCastProfileBuiltinVoiceRequest request) {
-        CastProfile profile = requireCastProfile(tenantId, castProfileId);
-        requireActorProfile(profile);
-        // The frontend received these directly from GET /v1/voices/builtin: providerVoiceId is
-        // the usable TTS voice id and providerId prevents routing that opaque id to the wrong provider.
-        profile.setBuiltinVoiceId(request.clonedVoiceId()); // legacy-reader compatibility
-        profile.setVoiceRefBucket(null);
-        profile.setVoiceRefObjectKey(null);
-        profile.setClonedVoiceId(request.clonedVoiceId());
-        profile.setClonedVoiceProviderId(request.providerId());
-        profile.setVoiceIdentityType(VoiceIdentityType.AI);
-        profile.setUpdatedAt(OffsetDateTime.now());
-        return toView(castProfileRepository.save(profile));
+    public CastProfileView selectBuiltinVoice(SelectCastProfileBuiltinVoiceCommand request) {
+        return updateVoice(new UpdateCastProfileVoiceCommand(
+                request.tenantId(), request.routeCastProfileId(), request.castProfileId(), request.projectId(),
+                VoiceIdentityType.AI, null, null, request.clonedVoiceId(), request.providerId()));
     }
-
     /**
      * Stores a provider clone identity once, without letting retries or concurrent requests
      * replace the first identity. The response always describes the identity that is now durable.
