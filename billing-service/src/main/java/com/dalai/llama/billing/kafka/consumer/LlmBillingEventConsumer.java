@@ -88,12 +88,25 @@ public class LlmBillingEventConsumer {
                 billedCost,
                 "LLM_GATEWAY",
                 event.getJobId(),
-                "LLM usage: " + event.getModelId(),
+                "AI usage: " + friendlyModelName(event.getModelId()),
                 null,
                 event.getJobId().toString(),
                 event.getCurrency() == null ? "USD" : event.getCurrency(),
                 event.getCreatedAt() == null ? Instant.now() : event.getCreatedAt().toInstant()
         ));
+    }
+
+    /** The wallet ledger is user-facing -- {@code modelId} as llm-gateway sends it is
+     * provider-qualified (e.g. {@code fal-ai/bytedance/seedance}, {@code elevenlabs/instant-voice-
+     * clone}) and would otherwise put our vendor stack directly in front of a creator reading their
+     * own transaction history. Keep only the final path segment, which is the actual model name; the
+     * routing/vendor prefix is exactly the internal detail this description isn't for. */
+    private String friendlyModelName(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            return "AI model";
+        }
+        int lastSlash = modelId.lastIndexOf('/');
+        return lastSlash < 0 ? modelId : modelId.substring(lastSlash + 1);
     }
 
     private UUID parseTenantId(String tenantId) {

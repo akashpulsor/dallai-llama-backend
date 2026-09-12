@@ -5,6 +5,7 @@ import com.dalai.llama.billing.domain.entity.RecurringCharge;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.enums.BillingStateType;
 import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import com.dalai.llama.billing.dto.response.CallAuthorizationResponse;
 import com.dalai.llama.billing.repository.BillingStateRepository;
@@ -141,7 +142,8 @@ public class InternalBillingController {
 
         // Debit wallet
         String description = request.description != null ? request.description : request.type;
-        walletService.debit(tenantId, request.amount, request.type + ":" + description, request.subscriptionId);
+        walletService.debit(tenantId, request.amount, TransactionType.SUBSCRIPTION, request.type + ":" + description,
+                request.subscriptionId, null, description, null);
 
         // Re-evaluate billing state
         billingStateService.evaluateState(tenantId);
@@ -309,7 +311,8 @@ public class InternalBillingController {
         usageRecordRepository.save(record);
 
         // Debit wallet
-        walletService.debit(tenantId, request.amount, "DID_RENTAL:" + request.didNumber,request.subscriptionId);
+        walletService.debit(tenantId, request.amount, TransactionType.DID_RENTAL, "DID_RENTAL:" + request.didNumber,
+                request.subscriptionId, null, "DID rental: " + request.didNumber, null);
 
         // Evaluate billing state
         billingStateService.evaluateState(tenantId);
@@ -358,7 +361,8 @@ public class InternalBillingController {
     public ResponseEntity<Void> manualCredit(
             @PathVariable UUID tenantId,
             @Valid @RequestBody AdjustmentRequest request) {
-        walletService.credit(tenantId, request.amount, "ADJUSTMENT:" + request.reason);
+        walletService.credit(tenantId, request.amount, TransactionType.ADJUSTMENT_CREDIT, "ADJUSTMENT:" + request.reason,
+                null, null, request.reason);
         billingStateService.evaluateState(tenantId);
         log.info("Manual credit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();
@@ -369,7 +373,8 @@ public class InternalBillingController {
     public ResponseEntity<Void> manualDebit(
             @PathVariable UUID tenantId,
             @Valid @RequestBody AdjustmentRequest request) {
-        walletService.debit(tenantId, request.amount, "ADJUSTMENT:" + request.reason,request.subscriptionId);
+        walletService.debit(tenantId, request.amount, TransactionType.ADJUSTMENT_DEBIT, "ADJUSTMENT:" + request.reason,
+                request.subscriptionId, null, request.reason, null);
         billingStateService.evaluateState(tenantId);
         log.info("Manual debit for tenant {}: ₹{} - {}", tenantId, request.amount, request.reason);
         return ResponseEntity.ok().build();

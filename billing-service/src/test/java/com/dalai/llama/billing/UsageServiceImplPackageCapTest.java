@@ -3,6 +3,7 @@ package com.dalai.llama.billing;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.Wallet;
 import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.repository.WalletRepository;
@@ -86,9 +87,12 @@ class UsageServiceImplPackageCapTest {
         verify(walletService).debit(
                 eq(tenantId),
                 eq(new BigDecimal("99.0000")),
+                eq(TransactionType.USAGE_DEDUCTION),
                 eq("USAGE:AI_VIDEO_SECONDS:CREATOR_VIDEO_PACKAGE_USAGE"),
                 eq(null),
-                any(String.class)
+                any(String.class),
+                eq("Late fal.ai usage"),
+                eq(null)
         );
     }
 }

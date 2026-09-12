@@ -3,6 +3,7 @@ package com.dalai.llama.billing.service.impl;
 import com.dalai.llama.billing.domain.entity.Cdr;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
 import com.dalai.llama.billing.domain.entity.Wallet;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.domain.exception.WalletNotFoundException;
 import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.repository.WalletRepository;
@@ -99,9 +100,12 @@ public class UsageServiceImpl implements UsageService {
             walletService.debit(
                     request.tenantId(),
                     record.getTotalCost(),
+                    TransactionType.USAGE_DEDUCTION,
                     usageReference(request),
                     request.subscriptionId(),
-                    idempotencyKey
+                    idempotencyKey,
+                    request.description(),
+                    request.projectId()
             );
             log.info(
                     "Debited wallet for billable usage tenantId={} metric={} quantity={} sourceType={} sourceId={} sourceCurrency={} walletCurrency={} rawCost={} billedCost={} billingMarginPercent={} idempotencyKey={}",

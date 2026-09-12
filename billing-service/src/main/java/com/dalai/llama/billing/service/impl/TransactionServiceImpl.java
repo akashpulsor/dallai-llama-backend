@@ -47,6 +47,22 @@ public class TransactionServiceImpl implements TransactionService {
             UUID subscriptionId,
             String idempotencyKey
     ) {
+        recordTransaction(tenantId, walletId, amount, type, reference, subscriptionId, idempotencyKey, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void recordTransaction(
+            UUID tenantId,
+            UUID walletId,
+            BigDecimal amount,
+            TransactionType type,
+            String reference,
+            UUID subscriptionId,
+            String idempotencyKey,
+            String description,
+            UUID projectId
+    ) {
         // Idempotency check
         if (idempotencyKey != null && transactionRepository.existsByIdempotencyKey(idempotencyKey)) {
             return; // Already processed
@@ -63,13 +79,14 @@ public class TransactionServiceImpl implements TransactionService {
                 .tenantId(tenantId)
                 .walletId(walletId)
                 .subscriptionId(subscriptionId)
+                .projectId(projectId)
                 .amount(amount)
                 .balanceBefore(balanceBefore)
                 .balanceAfter(balanceAfter)
                 .type(type)
                 .reference(reference)
                 .idempotencyKey(idempotencyKey)
-                .description(generateDescription(type, reference))
+                .description(description != null && !description.isBlank() ? description : generateDescription(type, reference))
                 .createdAt(Instant.now())
                 .build();
 

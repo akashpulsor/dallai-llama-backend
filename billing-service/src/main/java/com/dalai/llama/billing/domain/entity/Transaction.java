@@ -33,6 +33,11 @@ public class Transaction {
     @Column(name = "subscription_id")
     private UUID subscriptionId;
 
+    // Raw FK passthrough, no project name/lookup here -- null for charges not tied to a project
+    // (recharges, DID rental, subscription fees). Mirrors usage_records.project_id (V19).
+    @Column(name = "project_id")
+    private UUID projectId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TransactionType type;

@@ -89,6 +89,13 @@ public class WalletServiceImpl implements WalletService {
     @Transactional
     public void credit(UUID tenantId, BigDecimal amount, String reference,
                        UUID subscriptionId, String idempotencyKey) {
+        credit(tenantId, amount, TransactionType.RECHARGE, reference, subscriptionId, idempotencyKey, null);
+    }
+
+    @Override
+    @Transactional
+    public void credit(UUID tenantId, BigDecimal amount, TransactionType type, String reference,
+                        UUID subscriptionId, String idempotencyKey, String description) {
         // Check idempotency
         if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
             return; // Already processed
@@ -101,8 +108,8 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount, TransactionType.RECHARGE,
-                reference, subscriptionId, idempotencyKey
+                tenantId, wallet.getId(), amount, type,
+                reference, subscriptionId, idempotencyKey, description, null
         );
 
     }
@@ -123,6 +130,13 @@ public class WalletServiceImpl implements WalletService {
     @Transactional
     public void debit(UUID tenantId, BigDecimal amount, String reference,
                       UUID subscriptionId, String idempotencyKey) {
+        debit(tenantId, amount, TransactionType.USAGE_DEDUCTION, reference, subscriptionId, idempotencyKey, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void debit(UUID tenantId, BigDecimal amount, TransactionType type, String reference,
+                       UUID subscriptionId, String idempotencyKey, String description, UUID projectId) {
         // Check idempotency
         if (idempotencyKey != null && transactionService.existsByIdempotencyKey(idempotencyKey)) {
             return; // Already processed
@@ -140,19 +154,21 @@ public class WalletServiceImpl implements WalletService {
         walletRepository.save(wallet);
 
         transactionService.recordTransaction(
-                tenantId, wallet.getId(), amount.negate(), TransactionType.USAGE_DEDUCTION,
-                reference, subscriptionId, idempotencyKey
+                tenantId, wallet.getId(), amount.negate(), type,
+                reference, subscriptionId, idempotencyKey, description, projectId
         );
         log.info(
-                "WALLET_DEBIT_AUDIT tenantId={} walletId={} amount={} balanceBefore={} balanceAfter={} reference={} subscriptionId={} idempotencyKey={}",
+                "WALLET_DEBIT_AUDIT tenantId={} walletId={} amount={} balanceBefore={} balanceAfter={} type={} reference={} subscriptionId={} idempotencyKey={} projectId={}",
                 tenantId,
                 wallet.getId(),
                 amount,
                 balanceBefore,
                 wallet.getBalance(),
+                type,
                 reference,
                 subscriptionId,
-                idempotencyKey
+                idempotencyKey,
+                projectId
         );
     }
 

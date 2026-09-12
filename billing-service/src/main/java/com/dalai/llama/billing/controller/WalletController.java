@@ -119,6 +119,7 @@ public class WalletController {
                         .balanceAfter(tx.getBalanceAfter())
                         .reference(tx.getReference())
                         .description(tx.getDescription())
+                        .projectId(tx.getProjectId())
                         .createdAt(tx.getCreatedAt())
                         .build())
                 .toList();

@@ -17,5 +17,6 @@ public class TransactionResponse {
     private BigDecimal balanceAfter;
     private String reference;
     private String description;
+    private UUID projectId;
     private Instant createdAt;
 }
