@@ -190,7 +190,7 @@ public class CloneVoiceService {
 
         String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode, ttsKey);
 
-        return new CloneVoiceResult(mode, voiceId, audioDataUri);
+        return new CloneVoiceResult(shot.id(), mode, voiceId, audioDataUri);
     }
 
     private boolean hasPersistedClonedVoice(PreProductionViews.CastProfileView profile) {
@@ -296,5 +296,5 @@ public class CloneVoiceService {
         }
     }
 
-    public record CloneVoiceResult(String mode, String providerVoiceId, String audioDataUri) {}
+    public record CloneVoiceResult(UUID shotId, String mode, String providerVoiceId, String audioDataUri) {}
 }
