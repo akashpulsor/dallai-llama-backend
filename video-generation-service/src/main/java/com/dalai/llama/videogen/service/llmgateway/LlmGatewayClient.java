@@ -52,7 +52,7 @@ public class LlmGatewayClient {
     public LlmGatewayEstimateResponse estimate(String tenantId, LlmGatewayChatRequest request) {
         try {
             return webClient.post()
-                    .uri("/api/v1/internal/tenants/{tenantId}/estimate")
+                    .uri("/api/v1/internal/tenants/{tenantId}/estimate", tenantId)
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(LlmGatewayEstimateResponse.class)
