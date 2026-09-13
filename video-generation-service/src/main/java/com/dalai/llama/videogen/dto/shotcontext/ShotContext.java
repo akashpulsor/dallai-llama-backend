@@ -22,6 +22,28 @@ public record ShotContext(
         @Valid Technical technical,
         List<@Valid ContinuityAnchor> continuityAnchors,
         @Valid AudioAmbience audioAmbience,
-        List<@Valid DialogueBeat> dialogueBeats
+        List<@Valid DialogueBeat> dialogueBeats,
+        /** The shot's own already-rendered frames (storyboard / production still / motion-graphic
+         * preview). Additive and nullable per this record's contract above, so an older caller's
+         * JSON body -- or the pre-hoc arity below -- still deserializes. */
+        List<@Valid ReferenceFrame> referenceFrames
 ) {
+
+    /** Pre-referenceFrames arity, kept so existing callers and tests compile unchanged. */
+    public ShotContext(
+            String shotRef,
+            Narrative narrative,
+            List<Character> characters,
+            Environment environment,
+            Lighting lighting,
+            Camera camera,
+            ProductBrand productBrand,
+            Technical technical,
+            List<ContinuityAnchor> continuityAnchors,
+            AudioAmbience audioAmbience,
+            List<DialogueBeat> dialogueBeats
+    ) {
+        this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
+                continuityAnchors, audioAmbience, dialogueBeats, null);
+    }
 }

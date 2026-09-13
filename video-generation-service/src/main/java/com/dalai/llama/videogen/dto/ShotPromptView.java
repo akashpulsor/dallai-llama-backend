@@ -24,6 +24,13 @@ public record ShotPromptView(
          * same order sent to the model -- what the video was actually conditioned on, not just
          * the text. Empty when the shot had none. */
         List<String> referenceImageUrls,
+        /** Every saved reference for this prompt, images AND audio, each tagged with its kind and
+         * slot. {@link #referenceImageUrls} above stays the model-facing list (image kinds only,
+         * in slot order) because that is what fills the provider's reference-image slots; this is
+         * the human-facing one -- it lets the UI show thumbnails of the exact frames, the
+         * character voice sample and the background music track that went into this prompt,
+         * rather than the creator having to trust that the right assets were picked up. */
+        List<PromptReferenceView> references,
         /** Null when the shot pinned its own model (no recommendation ran). No reasoning field --
          * that's only ever ephemeral narration from the recommendation call, never persisted. */
         String recommendedModelId,

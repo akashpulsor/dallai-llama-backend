@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -43,10 +44,20 @@ public class PrepareOrchestrationService {
     private final ShotPromptRepository shotPromptRepository;
     private final PreProductionServiceClient preProductionClient;
 
-    public BatchResult prepareShotsBatch(TenantContext ctx, UUID projectId, List<UUID> shotIds) {
-        if (shotIds == null || shotIds.isEmpty()) {
-            throw VideoGenException.badRequest("prepare-batch requires at least one shotId");
-        }
+    /**
+     * Prepares the given shots, or -- when {@code shotIds} is null/empty -- every shot the project
+     * has. "Prepare all shots" is the common UI action and the caller shouldn't have to enumerate
+     * ids the bundle already carries; the checkbox selection in the UI is the narrowing case, not
+     * the default. Note the ordering: the bundle is the source of truth for "all shots", so the
+     * target list can only be resolved after it's fetched.
+     *
+     * <p>{@code overrides} (dialogue/captions flags, pinned model, resolution) apply to every shot
+     * in the batch -- they're the choices the creator makes once for the whole project, not
+     * per-shot tweaks.
+     */
+    public BatchResult prepareShotsBatch(TenantContext ctx, UUID projectId, List<UUID> shotIds,
+                                         ShotContextAssemblyService.PrepareShotOverrides overrides) {
+
         // Model catalog first, once for the whole batch -- every shot's recommendation reuses it
         // instead of each shot re-fetching the same list from llm-gateway.
         List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog =
@@ -63,8 +74,22 @@ public class PrepareOrchestrationService {
         // prompt length) once here, right after we learn what the model is, instead of each shot
         // re-fetching it from llm-gateway. computeIfAbsent inside prepareShot() still covers a
         // shot with its own per-shot model override that isn't this one.
+        List<UUID> targetShotIds = shotIds == null || shotIds.isEmpty()
+                ? allShotIdsInShootingOrder(bundle)
+                : shotIds;
+        if (targetShotIds.isEmpty()) {
+            log.info("prepare-batch NO-OP projectId={} -- project has no shots to prepare", projectId);
+            return new BatchResult(List.of(), List.of());
+        }
+
         Map<String, Integer> maxPromptLengthCache = new HashMap<>();
-        String preferredVideoModel = bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel();
+        // An explicit modelPin in the request beats the project's stored preference -- it's what
+        // the creator has selected in the dropdown right now, which may not have been PUT to
+        // project-config yet. Same precedence buildTechnical() applies per shot.
+        String pinnedModel = overrides == null ? null : overrides.modelPin();
+        String preferredVideoModel = pinnedModel != null && !pinnedModel.isBlank()
+                ? pinnedModel
+                : (bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel());
         if (preferredVideoModel != null && !preferredVideoModel.isBlank()) {
             maxPromptLengthCache.put(preferredVideoModel, promptBuilderService.maxPromptLengthFor(preferredVideoModel));
         }
@@ -75,18 +100,21 @@ public class PrepareOrchestrationService {
         // is reserved for an infrastructure error that broke the loop.
         scenePreparationService.markStatus(ctx.tenantId(), projectId, ScenePreparationStatus.PREPARING);
         long batchStartMs = System.currentTimeMillis();
-        log.info("prepare-batch START projectId={} shotCount={} bundleShotsInBundle={}",
-                projectId, shotIds.size(), bundle.shots() == null ? 0 : bundle.shots().size());
+        log.info("prepare-batch START projectId={} shotCount={} selection={} bundleShotsInBundle={}",
+                projectId, targetShotIds.size(),
+                shotIds == null || shotIds.isEmpty() ? "ALL" : "EXPLICIT",
+                bundle.shots() == null ? 0 : bundle.shots().size());
         List<ShotPromptView> prepared = new ArrayList<>();
         List<FailedShot> failed = new ArrayList<>();
-        ShotContextAssemblyService.PrepareShotOverrides overrides =
-                new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null, null);
+        ShotContextAssemblyService.PrepareShotOverrides effectiveOverrides = overrides == null
+                ? new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null, null)
+                : overrides;
         try {
-            for (UUID shotId : shotIds) {
+            for (UUID shotId : targetShotIds) {
                 long shotStartMs = System.currentTimeMillis();
                 try {
                     ShotContextAssemblyService.AssembledShot assembled = shotContextAssemblyService
-                            .assembleFromBundle(ctx.tenantId(), projectId, shotId, overrides, bundle);
+                            .assembleFromBundle(ctx.tenantId(), projectId, shotId, effectiveOverrides, bundle);
                     GenerateShotRequest generateRequest = new GenerateShotRequest(
                             projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
                     ShotGenerationOrchestrator.PreparedShot preparedShot =
@@ -120,14 +148,38 @@ public class PrepareOrchestrationService {
         return new BatchResult(prepared, failed);
     }
 
-    /** All prepared shot prompts for a project, one row per shot (latest version wins). Video
-     * workspace calls this once on page load to render the full editable list without N GETs. */
+    /** Every shot id in the bundle, ordered by shotNumber so the batch prepares in shooting order
+     * and the UI's progress log reads top-to-bottom. Shots without a number sort last rather than
+     * blowing up the comparator. */
+    private List<UUID> allShotIdsInShootingOrder(PreProductionViews.PrepareBundleView bundle) {
+        if (bundle.shots() == null) {
+            return List.of();
+        }
+        return bundle.shots().stream()
+                .map(PreProductionViews.ShotBundleView::shot)
+                .filter(shot -> shot != null && shot.id() != null)
+                .sorted(Comparator.comparing(
+                        PreProductionViews.ShotView::shotNumber,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(PreProductionViews.ShotView::id)
+                .toList();
+    }
+
+    /** All prepared shot prompts for a project, one row per shot (latest version wins). The video
+     * workspace calls this once on page load so a prepared prompt survives a refresh -- prepare
+     * results used to live only in React state, so reloading the page lost every prompt the
+     * creator had just paid to build and the cards went back to looking unprepared.
+     *
+     * <p>Deduped on shot_id, not job_id: re-preparing a shot creates a new job, so a job-keyed
+     * dedupe returns the same shot several times and the UI shows a stale prompt for it. Rows
+     * predating the shot_id column (V20) fall back to job_id so they still appear exactly once.  */
     public List<ShotPromptView> listProjectShotPrompts(UUID tenantId, UUID projectId) {
-        List<ShotPrompt> all = shotPromptRepository.findByProjectIdOrderByJobIdAscCreatedAtDesc(projectId);
-        Set<UUID> seenJobs = new HashSet<>();
+        List<ShotPrompt> all = shotPromptRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        Set<Object> seenShots = new HashSet<>();
         List<ShotPromptView> latestPerShot = new ArrayList<>();
         for (ShotPrompt p : all) {
-            if (seenJobs.add(p.getJobId())) {
+            Object key = p.getShotId() != null ? p.getShotId() : p.getJobId();
+            if (seenShots.add(key)) {
                 latestPerShot.add(shotGenerationOrchestrator.getPrompt(tenantId, p.getPromptId()));
             }
         }

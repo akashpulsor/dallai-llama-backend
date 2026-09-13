@@ -14,11 +14,13 @@ import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.FoleyCueView;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
 import com.dalai.llama.videogen.dto.GenerateShotResponse;
+import com.dalai.llama.videogen.dto.PromptReferenceView;
 import com.dalai.llama.videogen.dto.RejectRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
 import com.dalai.llama.videogen.dto.VideoGenJobView;
 import com.dalai.llama.videogen.dto.shotcontext.Character;
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
+import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.repository.FoleyCueRepository;
 import com.dalai.llama.videogen.repository.ShotPromptReferenceRepository;
@@ -169,7 +171,7 @@ public class ShotGenerationOrchestrator {
         List<DerivedFoleyCue> cues = foleyCueService.deriveCues(projectId, shotContext);
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
-                projectId, builtPrompt.positive(), maxPromptLength);
+                projectId, builtPrompt.positive(), maxPromptLength, modelId);
         CostEstimate estimate = costEstimationService.estimate(
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId);
 
@@ -256,7 +258,18 @@ public class ShotGenerationOrchestrator {
 
     /** User edited a prepared prompt -- save a NEW ShotPrompt row with parent_prompt_id pointing
      * back at {@code promptId}, everything else copied. Uses ShotPrompt's existing versioning
-     * columns; {@code listPromptsForShot} already returns newest-first, so history is preserved. */
+     * columns; {@code listPromptsForShot} already returns newest-first, so history is preserved.
+     *
+     * <p>The new row keeps the parent's job_id, and {@link #approve} dispatches the newest prompt
+     * for a job -- so editing then approving generates from the edited text, with no extra
+     * plumbing.
+     *
+     * <p>The attachments and the source-row ids are copied onto the new row deliberately. They
+     * used to be dropped: an edited prompt had no {@code shot_prompt_reference} rows, so
+     * approving it dispatched with an EMPTY reference-image list and the video silently lost the
+     * character faces and the shot's own frame. Editing wording is not a request to throw away
+     * what the shot looks like. Dropping shot_id also detached the row from its shot, which is
+     * what the project-wide prompt listing keys on. */
     public ShotPromptView saveEditedPrompt(UUID tenantId, UUID promptId, String editedPositive) {
         ShotPrompt parent = shotPromptRepository.findById(promptId)
                 .filter(p -> p.getTenantId().equals(tenantId))
@@ -281,9 +294,18 @@ public class ShotGenerationOrchestrator {
                 .dialogueFlag(parent.getDialogueFlag())
                 .captionsFlag(parent.getCaptionsFlag())
                 .shipped(false)
+                .shotId(parent.getShotId())
+                .cameraPlanId(parent.getCameraPlanId())
+                .lightingPlanId(parent.getLightingPlanId())
+                .productReferenceId(parent.getProductReferenceId())
+                .backgroundMusicId(parent.getBackgroundMusicId())
+                .recommendedModelId(parent.getRecommendedModelId())
+                .promptBundleSnapshotAt(parent.getPromptBundleSnapshotAt())
                 .createdAt(OffsetDateTime.now())
                 .build();
         shotPromptRepository.save(edited);
+        copyReferences(parent.getPromptId(), edited.getPromptId());
+        copyFoleyCues(parent.getPromptId(), edited.getPromptId());
         return toPromptView(edited);
     }
 
@@ -442,6 +464,7 @@ public class ShotGenerationOrchestrator {
                 job.map(j -> j.getApprovalStatus().name()).orElse(null),
                 job.map(j -> j.getStatus().name()).orElse(null),
                 resolveReferenceImageUrls(prompt.getPromptId()),
+                resolveReferences(prompt.getPromptId()),
                 prompt.getRecommendedModelId(),
                 job.map(VideoGenJob::getEstimatedCost).orElse(null),
                 job.map(VideoGenJob::getCostCurrency).orElse(null)
@@ -468,6 +491,23 @@ public class ShotGenerationOrchestrator {
     private void saveReferences(UUID promptId, ShotContext shotContext) {
         List<ShotPromptReference> references = new ArrayList<>();
         int slot = 0;
+        // The shot's own frame goes in slot 0, ahead of the character/product references. For an
+        // image-to-video model the first reference slot is the frame it actually conditions on,
+        // so the picture of this exact shot has to lead -- a face crop in slot 0 with the
+        // storyboard buried behind it is the wrong way round.
+        if (shotContext.referenceFrames() != null) {
+            for (ReferenceFrame frame : shotContext.referenceFrames()) {
+                if (frame != null && frame.kind() != null && frame.bucket() != null && frame.objectKey() != null) {
+                    references.add(ShotPromptReference.builder()
+                            .promptId(promptId)
+                            .refKind(frame.kind())
+                            .bucket(frame.bucket())
+                            .objectKey(frame.objectKey())
+                            .slotIndex(slot++)
+                            .build());
+                }
+            }
+        }
         if (shotContext.characters() != null) {
             for (Character character : shotContext.characters()) {
                 if (character.faceRefBucket() != null && character.faceRefObjectKey() != null) {
@@ -558,6 +598,53 @@ public class ShotGenerationOrchestrator {
                 .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
                 .map(ref -> videoAssetPersistenceService.presignedUrl(ref.getBucket(), ref.getObjectKey()))
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    /** Clones a prompt's attachments onto its edited successor, slot order preserved -- the
+     * images the model conditions on are a property of the shot, not of one wording of it. */
+    private void copyReferences(UUID fromPromptId, UUID toPromptId) {
+        List<ShotPromptReference> copies = shotPromptReferenceRepository.findByPromptId(fromPromptId).stream()
+                .map(ref -> ShotPromptReference.builder()
+                        .promptId(toPromptId)
+                        .refKind(ref.getRefKind())
+                        .bucket(ref.getBucket())
+                        .objectKey(ref.getObjectKey())
+                        .slotIndex(ref.getSlotIndex())
+                        .build())
+                .toList();
+        if (!copies.isEmpty()) {
+            shotPromptReferenceRepository.saveAll(copies);
+        }
+    }
+
+    /** Foley cues describe the shot's sound design, which a prompt reword doesn't invalidate --
+     * and re-deriving them would mean another paid LLM call on every save. */
+    private void copyFoleyCues(UUID fromPromptId, UUID toPromptId) {
+        List<FoleyCue> copies = foleyCueRepository.findByPromptIdOrderByTimestampMsAsc(fromPromptId).stream()
+                .map(cue -> FoleyCue.builder()
+                        .promptId(toPromptId)
+                        .timestampMs(cue.getTimestampMs())
+                        .cueType(cue.getCueType())
+                        .description(cue.getDescription())
+                        .build())
+                .toList();
+        if (!copies.isEmpty()) {
+            foleyCueRepository.saveAll(copies);
+        }
+    }
+
+    /** Same rows as {@link #resolveReferenceImageUrls} but nothing filtered out -- the audio kinds
+     * are included so the creator can hear the voice sample and the music bed that this prompt
+     * pulled in, not just see the pictures. */
+    private List<PromptReferenceView> resolveReferences(UUID promptId) {
+        return shotPromptReferenceRepository.findByPromptId(promptId).stream()
+                .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
+                .map(ref -> new PromptReferenceView(
+                        ref.getRefKind().name(),
+                        videoAssetPersistenceService.presignedUrl(ref.getBucket(), ref.getObjectKey()),
+                        ref.getSlotIndex(),
+                        !isImageReference(ref.getRefKind())))
+                .toList();
     }
 
     private static boolean isImageReference(ReferenceKind kind) {

@@ -85,15 +85,22 @@ public class PrepareSceneController {
     @PostMapping("/projects/{projectId}/shots/prepare-batch")
     public ResponseEntity<PrepareShotsBatchResponse> prepareShotsBatch(
             @PathVariable UUID projectId,
-            @Valid @RequestBody PrepareShotsBatchRequest request
+            @Valid @RequestBody(required = false) PrepareShotsBatchRequest request
     ) {
         TenantContext ctx = TenantContextHolder.get();
+        ShotContextAssemblyService.PrepareShotOverrides overrides = request == null
+                ? new ShotContextAssemblyService.PrepareShotOverrides(null, null, null, null, null)
+                : new ShotContextAssemblyService.PrepareShotOverrides(
+                        request.featureFlagOverrides(), request.modelPin(), null, null,
+                        request.resolutionOverride());
         PrepareOrchestrationService.BatchResult result = prepareOrchestrationService.prepareShotsBatch(
-                ctx, projectId, request == null ? null : request.shotIds());
+                ctx, projectId, request == null ? null : request.shotIds(), overrides);
         return ResponseEntity.ok(new PrepareShotsBatchResponse(
                 result.prepared(),
                 result.failed().stream().map(f -> new FailedShot(f.shotId(), f.reason())).toList()));
     }
+
+
 
     @GetMapping("/projects/{projectId}/shot-prompts")
     public ResponseEntity<List<ShotPromptView>> listProjectShotPrompts(@PathVariable UUID projectId) {
@@ -136,7 +143,21 @@ public class PrepareSceneController {
 
     public record UpdateShotPromptRequest(@jakarta.validation.constraints.NotBlank String positive) {}
 
-    public record PrepareShotsBatchRequest(@jakarta.validation.constraints.NotEmpty List<UUID> shotIds) {}
+    /** {@code shotIds} empty (or the whole body omitted) means "prepare every shot in the
+     * project" -- the UI's default "Prepare all shots" action. A non-empty list is the narrowing
+     * case: the shots the user ticked.
+     *
+     * <p>The override fields mirror {@link PrepareShotRequest} and apply to every shot in the
+     * batch: the dialogue/captions flags, the pinned video model and the resolution are all
+     * project-wide choices the creator makes once above the grid, so the batch has to carry them
+     * the same way a single prepare does -- otherwise "Prepare all shots" would silently ignore
+     * the selections sitting right next to the button. */
+    public record PrepareShotsBatchRequest(
+            List<UUID> shotIds,
+            FeatureFlags featureFlagOverrides,
+            String modelPin,
+            String resolutionOverride
+    ) {}
 
     public record PrepareShotsBatchResponse(List<ShotPromptView> prepared, List<FailedShot> failed) {}
 

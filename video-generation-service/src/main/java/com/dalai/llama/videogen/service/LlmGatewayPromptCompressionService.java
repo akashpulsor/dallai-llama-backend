@@ -33,11 +33,15 @@ public class LlmGatewayPromptCompressionService implements PromptCompressionServ
     }
 
     @Override
-    public CompressionResult compressIfNeeded(UUID projectId, String prompt, int maxLength) {
+    public CompressionResult compressIfNeeded(UUID projectId, String prompt, int maxLength, String targetModelId) {
         if (prompt == null || prompt.length() <= maxLength) {
             return new CompressionResult(prompt, false, prompt == null ? 0 : prompt.length(), prompt == null ? 0 : prompt.length(), true);
         }
         UUID tenantId = TenantContextHolder.get().tenantId();
+        // targetModel lets the PROMPT_COMPRESSION template rewrite into the shape that model reads
+        // best (Wan wants one flowing descriptive sentence; Seedance wants labelled lines) instead
+        // of blindly shortening a structure the model does not parse anyway. Blank rather than
+        // null: the template interpolates it as text.
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "prompt-compression-" + UUID.randomUUID(),
@@ -46,7 +50,8 @@ public class LlmGatewayPromptCompressionService implements PromptCompressionServ
                         List.of(new LlmGatewayMessage("user", prompt)),
                         Map.of(),
                         "PROMPT_COMPRESSION",
-                        Map.of("maxLength", String.valueOf(maxLength)),
+                        Map.of("maxLength", String.valueOf(maxLength),
+                                "targetModel", targetModelId == null ? "" : targetModelId),
                         projectId
                 )
         );

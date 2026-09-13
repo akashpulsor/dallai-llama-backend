@@ -47,10 +47,62 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
         return new Built(composePositive(tenantId, shotContext, flags), negativePromptComposer.compose(shotContext, flags));
     }
 
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /** Appends only the parts the shot actually specifies, grouped so the model reads one lens
+     * line rather than six loose adjectives. Grouping also keeps the cost down: an unspecified
+     * group contributes nothing instead of a line of empty labels.
+     *
+     * <p>Body/exposure/filtration are folded into one "Shot on" line because a video model treats
+     * them as look, not as instructions it can act on individually. */
+    private void addCinematography(List<String> lines, PromptDtos.Camera camera) {
+        if (camera == null) {
+            return;
+        }
+        addGroup(lines, "Framing", camera.framing(), camera.subjectPlacement(), camera.headroom(),
+                camera.leadRoom(), camera.visualBalance());
+        addGroup(lines, "Camera position", camera.positionHeight(), camera.positionDistance(),
+                camera.positionLateral(), camera.positionElevation(), camera.positionOrientation());
+        addGroup(lines, "Lens", camera.lensFocalLength(), camera.lensType(), camera.lensOpticalFormat(),
+                camera.lensDistortion(), camera.lensCompression(), camera.lensCharacter());
+        addGroup(lines, "Focus", camera.focusTarget(), camera.focusDistance(), camera.depthOfField(),
+                camera.rackFocus(), camera.focusBehaviour());
+        addGroup(lines, "Camera movement", camera.movementType(), camera.movementTrajectory(),
+                camera.movementSpeed(), camera.movementAcceleration(), camera.movementRotation(),
+                camera.movementSubjectRelationship(), camera.support());
+        addGroup(lines, "Motion", camera.shutterAngle(), camera.motionBlur(), camera.slowMotion());
+        addGroup(lines, "Shot on", camera.cameraBody(), camera.sensor(), camera.captureFormat(),
+                camera.recordingCharacteristics(), camera.aperture(), camera.iso(), camera.shutter(),
+                camera.ndFilter(), camera.dynamicRange(), camera.filtrationDiffusion(), camera.filtrationNd(),
+                camera.filtrationPolarizer(), camera.filtrationSpecialty());
+        addGroup(lines, "Image character", camera.contrast(), camera.colorResponse(), camera.grain(),
+                camera.halation(), camera.bloom(), camera.sharpness(), camera.flare());
+    }
+
+    private void addGroup(List<String> lines, String label, String... values) {
+        List<String> present = new ArrayList<>();
+        for (String value : values) {
+            if (hasText(value)) {
+                present.add(value.trim());
+            }
+        }
+        if (!present.isEmpty()) {
+            lines.add(label + ": " + String.join(", ", present));
+        }
+    }
+
     private String composePositive(String tenantId, PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
         List<String> lines = new ArrayList<>();
         if (shotContext.narrative() != null && shotContext.narrative().scriptLine() != null) {
             lines.add("Action: " + shotContext.narrative().scriptLine());
+        }
+        // The project's story frame (hook, beat plan, arc). Every shot in a project carries the
+        // same one -- that is deliberate: it is what stops each shot being generated as if it were
+        // a standalone clip with no idea what the film around it is doing.
+        if (shotContext.narrative() != null && hasText(shotContext.narrative().screenplaySlug())) {
+            lines.add("Story context: " + shotContext.narrative().screenplaySlug());
         }
         if (shotContext.characters() != null) {
             for (PromptDtos.Character character : shotContext.characters()) {
@@ -62,12 +114,19 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
             if (shotContext.environment().location() != null) lines.add("Location: " + shotContext.environment().location());
             if (shotContext.environment().weather() != null) lines.add("Weather: " + shotContext.environment().weather());
         }
-        if (shotContext.lighting() != null && shotContext.lighting().keyLightNote() != null) {
-            lines.add("Lighting: " + shotContext.lighting().keyLightNote());
+        if (shotContext.lighting() != null) {
+            if (shotContext.lighting().keyLightNote() != null) {
+                lines.add("Lighting: " + shotContext.lighting().keyLightNote());
+            }
+            // Was populated by the caller and read by nobody until now.
+            if (hasText(shotContext.lighting().mood())) {
+                lines.add("Lighting mood: " + shotContext.lighting().mood());
+            }
         }
         if (shotContext.camera() != null && shotContext.camera().cameraNote() != null) {
             lines.add("Camera: " + shotContext.camera().cameraNote());
         }
+        addCinematography(lines, shotContext.camera());
         if (shotContext.productBrand() != null && Boolean.TRUE.equals(shotContext.productBrand().isProductHeroShot())
                 && shotContext.productBrand().productPlacement() != null) {
             lines.add("Product: " + shotContext.productBrand().productPlacement());

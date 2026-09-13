@@ -102,7 +102,94 @@ public final class PreProductionViews {
             String textOverlay,
             String soundDesign,
             String editingNotes,
-            String retentionGoal
+            String retentionGoal,
+            // Everything below was already on the wire from pre-production-service's ShotView and
+            // was being dropped here on deserialize -- this record declared 28 of its 50 fields,
+            // so Jackson silently discarded the rest and the shot plan never reached a prompt.
+            String creatorDirection,
+            String subtitlePosition,
+            String mobileFocusArea,
+            String safeZoneNotes,
+            String executionDifficulty,
+            String cinematicExecution,
+            String sketchPrompt,
+            String coverageType,
+            String screenDirection,
+            Integer peopleInFrame,
+            String culturalReferences,
+            String productShotType,
+            String directorNote,
+            CinematographyView cinematography,
+            ShotCastView cast
+    ) {}
+
+    /** The shot's full cinematography spec (pre-prod stores these as flat {@code cine_*} columns).
+     * Mirrors pre-production-service's CinematographyView field-for-field. */
+    public record CinematographyView(
+            String cameraBody,
+            String sensor,
+            String captureFormat,
+            String recordingCharacteristics,
+            String positionHeight,
+            String positionDistance,
+            String positionLateral,
+            String positionElevation,
+            String positionOrientation,
+            String lensFocalLength,
+            String lensType,
+            String lensOpticalFormat,
+            String lensDistortion,
+            String lensCompression,
+            String lensCharacter,
+            String framing,
+            String subjectPlacement,
+            String headroom,
+            String leadRoom,
+            String visualBalance,
+            String focusTarget,
+            String focusDistance,
+            String depthOfField,
+            String rackFocus,
+            String focusBehaviour,
+            String movementType,
+            String movementTrajectory,
+            String movementSpeed,
+            String movementAcceleration,
+            String movementRotation,
+            String movementSubjectRelationship,
+            String support,
+            String aperture,
+            String iso,
+            String shutter,
+            String ndFilter,
+            String dynamicRange,
+            String shutterAngle,
+            String motionBlur,
+            String slowMotion,
+            String filtrationDiffusion,
+            String filtrationNd,
+            String filtrationPolarizer,
+            String filtrationSpecialty,
+            String contrast,
+            String colorResponse,
+            String grain,
+            String halation,
+            String bloom,
+            String sharpness,
+            String flare
+    ) {}
+
+    /** Who is actually in THIS shot, already resolved by pre-production from the shot's
+     * primaryCharacterKey through ScriptCharacter to the cast assignment. Null for a shot with no
+     * primary character or a NARRATOR (never in frame). */
+    public record ShotCastView(
+            String characterKey,
+            String characterName,
+            String characterType,
+            UUID castProfileId,
+            String castDisplayName,
+            String castFaceImageUrl,
+            boolean hasVoiceSample
     ) {}
 
     public record ShotDialogueBeatView(
@@ -166,9 +253,23 @@ public final class PreProductionViews {
 
     /** Slim mirror of pre-prod's ScriptView -- only the fields the dialogue-beat cast resolver
      * uses. Additional fields on pre-prod's ScriptView are silently ignored by Jackson. */
+    /** Mirrors pre-production-service's ScriptView. The narrative fields (hook, beat plan, arc,
+     * logline...) were on the wire all along -- this record declared only id/projectId/characters,
+     * so the story the shots are meant to tell never reached the prompt. beatPlan in particular
+     * was persisted by V43 specifically so it would stop being thrown away. */
     public record ScriptView(
             UUID id,
             UUID projectId,
+            String pacingStyle,
+            String emotionalArc,
+            String hookStrategy,
+            String logline,
+            String centralConflict,
+            String endingPayoff,
+            String setting,
+            String hook,
+            String beatPlan,
+            String storytellingType,
             List<ScriptCharacterView> characters
     ) {}
 

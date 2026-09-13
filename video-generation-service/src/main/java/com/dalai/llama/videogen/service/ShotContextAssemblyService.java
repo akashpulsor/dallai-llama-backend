@@ -1,11 +1,12 @@
 package com.dalai.llama.videogen.service;
 
+import com.dalai.llama.videogen.domain.AnchorType;
 import com.dalai.llama.videogen.domain.AspectRatio;
 import com.dalai.llama.videogen.domain.MoodProfile;
+import com.dalai.llama.videogen.domain.ReferenceKind;
 import com.dalai.llama.videogen.domain.ShotSize;
 import com.dalai.llama.videogen.domain.TimeOfDay;
 import com.dalai.llama.videogen.domain.VideoResolution;
-import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.shotcontext.AudioAmbience;
 import com.dalai.llama.videogen.dto.shotcontext.Camera;
@@ -16,6 +17,7 @@ import com.dalai.llama.videogen.dto.shotcontext.Environment;
 import com.dalai.llama.videogen.dto.shotcontext.Lighting;
 import com.dalai.llama.videogen.dto.shotcontext.Narrative;
 import com.dalai.llama.videogen.dto.shotcontext.ProductBrand;
+import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.dto.shotcontext.Technical;
 import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
@@ -38,9 +40,9 @@ import java.util.stream.Collectors;
  * image, product reference, background music) and assemble a fully-populated {@link ShotContext}
  * for {@link ShotGenerationOrchestrator} to build a prompt from.
  *
- * <p>Requires {@link ScenePreparationService#prepareProject} to have run first (409 otherwise)
- * -- the project's continuity/config template is a prerequisite for a coherent per-shot prompt.
- * Deterministic, no LLM in this step; the LLM only enters at prompt compression downstream.
+ * <p>Self-contained: everything needed comes from the prepare bundle, including the project's
+ * continuity locks. Deterministic, no LLM in this step; the LLM only enters at prompt compression
+ * downstream.
  *
  * <p>Missing optional sources (a shot with no camera plan yet, no cast reference, etc.)
  * degrade to null on the corresponding {@code ShotContext} field -- every field on that DTO is
@@ -52,7 +54,6 @@ import java.util.stream.Collectors;
 public class ShotContextAssemblyService {
 
     private final PreProductionServiceClient preProductionClient;
-    private final ScenePreparationService scenePreparationService;
 
     /** Convenience: single-shot prepare. Fetches the fat bundle once from pre-prod, then
      * delegates to {@link #assembleFromBundle} so the same code path serves both the per-shot
@@ -67,10 +68,11 @@ public class ShotContextAssemblyService {
     public AssembledShot assembleFromBundle(
             UUID tenantId, UUID projectId, UUID shotId, PrepareShotOverrides overrides,
             PreProductionViews.PrepareBundleView bundle) {
-        ProjectScenePreparation projectPrep = scenePreparationService.getPreparation(tenantId, projectId)
-                .orElseThrow(() -> VideoGenException.conflict(
-                        "Project has not been prepared yet -- call POST /v1/scenes/projects/" + projectId + "/prepare first"));
-
+        // No ProjectScenePreparation gate here any more. It used to 409 unless Stage 1 (POST
+        // /projects/{id}/prepare) had run, but the only thing this method took from that row was
+        // the continuity template -- and it never actually read it, since buildContinuityAnchors
+        // returned an empty list. The locks now come from the bundle directly, so requiring
+        // Stage 1 first was gating a real prepare on a row that contributed nothing.
         PreProductionViews.ShotBundleView shotBundle = bundle.shots().stream()
                 .filter(sb -> sb.shot() != null && shotId.equals(sb.shot().id()))
                 .findFirst()
@@ -94,8 +96,8 @@ public class ShotContextAssemblyService {
 
         ShotContext shotContext = new ShotContext(
                 shot.shotRef(),
-                buildNarrative(shot),
-                buildCharacters(castAssignments, profilesById),
+                buildNarrative(shot, bundle.script()),
+                buildCharacters(castAssignments, profilesById, buildPerformanceDirection(shot)),
                 buildEnvironment(shot),
                 buildLighting(shot, shotBundle.lightingPlan(), lightingImage),
                 buildCamera(shot, shotBundle.cameraPlan(), cameraPlanImage),
@@ -103,10 +105,11 @@ public class ShotContextAssemblyService {
                 buildTechnical(shot, overrides,
                         bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel(),
                         bundle.projectConfig() == null ? null : bundle.projectConfig().preferredTtsModel()),
-                buildContinuityAnchors(projectPrep),
+                buildContinuityAnchors(bundle.continuityBible()),
                 buildAudioAmbience(shot, shotBundle.backgroundMusic()),
                 buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion(),
-                        bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage())
+                        bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage()),
+                buildReferenceFrames(shotImages)
         );
 
         FeatureFlags flagsOverride = overrides == null ? null : overrides.featureFlagOverrides();
@@ -121,17 +124,44 @@ public class ShotContextAssemblyService {
         return new AssembledShot(shotContext, flagsOverride, overrides == null ? null : overrides.modelPin(), sources);
     }
 
-    private Narrative buildNarrative(PreProductionViews.ShotView shot) {
-        if (shot.scriptLine() == null && shot.action() == null) {
+    /** {@code screenplaySlug} carries the project's story frame -- hook, beat plan, arc, logline.
+     * Every shot in a project shares it, which is the point: a shot generated with no idea what
+     * the film is doing around it is why shots stop feeling like one piece. It rides in the slug
+     * field because that is the only free-text slot Narrative has; arcPosition stays null since
+     * pre-production's bundle carries no per-shot screenplay scene to compute it from. */
+    private Narrative buildNarrative(PreProductionViews.ShotView shot, PreProductionViews.ScriptView script) {
+        String storyFrame = buildStoryFrame(script);
+        if (shot.scriptLine() == null && shot.action() == null && storyFrame == null) {
             return null;
         }
         String scriptLine = shot.scriptLine() != null ? shot.scriptLine() : shot.action();
-        return new Narrative(scriptLine, null, null);
+        return new Narrative(scriptLine, storyFrame, null);
     }
 
+    private String buildStoryFrame(PreProductionViews.ScriptView script) {
+        if (script == null) {
+            return null;
+        }
+        return joinNonBlank(" | ",
+                labelled("Logline", script.logline()),
+                labelled("Hook", script.hook()),
+                labelled("Hook strategy", script.hookStrategy()),
+                labelled("Beat plan", script.beatPlan()),
+                labelled("Emotional arc", script.emotionalArc()),
+                labelled("Central conflict", script.centralConflict()),
+                labelled("Ending payoff", script.endingPayoff()),
+                labelled("Pacing", script.pacingStyle()),
+                labelled("Storytelling type", script.storytellingType()),
+                labelled("Setting", script.setting()));
+    }
+
+    /** {@code performance} is this shot's own expression/body-language/emotion direction, folded
+     * into each character's performanceDirection -- those columns describe how the people in THIS
+     * shot should act, so they belong on the character, not in a camera or editing note. */
     private List<Character> buildCharacters(
             List<PreProductionViews.CastAssignmentView> castAssignments,
-            Map<UUID, PreProductionViews.CastProfileView> profilesById) {
+            Map<UUID, PreProductionViews.CastProfileView> profilesById,
+            String performance) {
         List<Character> result = new ArrayList<>();
         for (PreProductionViews.CastAssignmentView assignment : castAssignments) {
             PreProductionViews.CastProfileView profile = profilesById.get(assignment.castProfileId());
@@ -140,12 +170,20 @@ public class ShotContextAssemblyService {
                     profile == null ? null : profile.faceRefBucket(),
                     profile == null ? null : profile.faceRefObjectKey(),
                     assignment.wardrobeNote(),
-                    assignment.performanceDirection(),
+                    joinNonBlank(" | ", assignment.performanceDirection(), performance),
                     profile == null ? null : profile.voiceRefBucket(),
                     profile == null ? null : profile.voiceRefObjectKey()
             ));
         }
         return result;
+    }
+
+    /** The shot's performance direction, from the columns that describe how it should be played. */
+    private String buildPerformanceDirection(PreProductionViews.ShotView shot) {
+        return joinNonBlank(" | ",
+                labelled("Expression", shot.expression()),
+                labelled("Body language", shot.bodyLanguage()),
+                labelled("Emotion", shot.emotion()));
     }
 
     private Environment buildEnvironment(PreProductionViews.ShotView shot) {
@@ -198,17 +236,47 @@ public class ShotContextAssemblyService {
                 log.warn("Unknown cameraShotSize from pre-production: {}", shot.cameraShotSize());
             }
         }
-        String note = shot.cameraNote();
-        if (plan != null && plan.blockingMap() != null && !plan.blockingMap().isBlank()) {
-            note = (note == null ? "" : note + " | ") + plan.blockingMap();
-        }
-        if (shotSize == null && note == null && image == null) {
+        // cameraNote is the catch-all for the shot's own free-text camera direction. Angle,
+        // movement, lens and composition live as their own columns and had nowhere to go before
+        // the Camera record was widened; they fold in here rather than becoming five more
+        // top-level fields the strategies would each have to know about individually.
+        String note = joinNonBlank(" | ",
+                shot.cameraNote(),
+                labelled("Angle", shot.cameraAngle()),
+                labelled("Movement", shot.cameraMovement()),
+                labelled("Lens", shot.lensSuggestion()),
+                labelled("Composition", shot.composition()),
+                labelled("Screen direction", shot.screenDirection()),
+                labelled("Coverage", shot.coverageType()),
+                plan == null ? null : plan.blockingMap());
+        PreProductionViews.CinematographyView cine = shot.cinematography();
+        if (shotSize == null && note == null && image == null && cine == null) {
             return null;
+        }
+        if (cine == null) {
+            return new Camera(shotSize, note,
+                    image == null ? null : image.bucket(),
+                    image == null ? null : image.objectKey());
         }
         return new Camera(
                 shotSize, note,
                 image == null ? null : image.bucket(),
-                image == null ? null : image.objectKey()
+                image == null ? null : image.objectKey(),
+                cine.cameraBody(), cine.sensor(), cine.captureFormat(), cine.recordingCharacteristics(),
+                cine.positionHeight(), cine.positionDistance(), cine.positionLateral(),
+                cine.positionElevation(), cine.positionOrientation(),
+                cine.lensFocalLength(), cine.lensType(), cine.lensOpticalFormat(),
+                cine.lensDistortion(), cine.lensCompression(), cine.lensCharacter(),
+                cine.framing(), cine.subjectPlacement(), cine.headroom(), cine.leadRoom(), cine.visualBalance(),
+                cine.focusTarget(), cine.focusDistance(), cine.depthOfField(), cine.rackFocus(), cine.focusBehaviour(),
+                cine.movementType(), cine.movementTrajectory(), cine.movementSpeed(),
+                cine.movementAcceleration(), cine.movementRotation(), cine.movementSubjectRelationship(),
+                cine.support(),
+                cine.aperture(), cine.iso(), cine.shutter(), cine.ndFilter(), cine.dynamicRange(),
+                cine.shutterAngle(), cine.motionBlur(), cine.slowMotion(),
+                cine.filtrationDiffusion(), cine.filtrationNd(), cine.filtrationPolarizer(), cine.filtrationSpecialty(),
+                cine.contrast(), cine.colorResponse(), cine.grain(), cine.halation(),
+                cine.bloom(), cine.sharpness(), cine.flare()
         );
     }
 
@@ -235,10 +303,33 @@ public class ShotContextAssemblyService {
                 log.warn("Unknown aspectRatio from pre-production: {}", shot.aspectRatio());
             }
         }
-        String editingNotes = shot.editingNotes();
-        if (overrides != null && overrides.customNotes() != null && !overrides.customNotes().isBlank()) {
-            editingNotes = (editingNotes == null ? "" : editingNotes + " | ") + overrides.customNotes();
-        }
+        // The shot's direction and delivery-format notes. These are free-text instructions with no
+        // structured home on ShotContext, so they ride along with the editing notes rather than
+        // each gaining a top-level field every prompt strategy would have to learn.
+        //
+        // Everything the shot plan says is included. Nothing is held back here on the grounds that
+        // it might not fit -- PROMPT_COMPRESSION rewrites to length and is instructed to drop
+        // workflow notes first if it ever truly has to, so the decision about what survives is
+        // made once, with the whole prompt in view, instead of being pre-empted per field here.
+        //
+        // The one real exclusion is sketchPrompt: it is the instruction for generating the
+        // storyboard SKETCH, not a description of this video. Including it would tell the model to
+        // draw a storyboard frame.
+        String editingNotes = joinNonBlank(" | ",
+                shot.editingNotes(),
+                labelled("Direction", shot.creatorDirection()),
+                labelled("Director note", shot.directorNote()),
+                labelled("Cinematic execution", shot.cinematicExecution()),
+                labelled("Retention goal", shot.retentionGoal()),
+                labelled("Mobile focus area", shot.mobileFocusArea()),
+                labelled("Safe zone", shot.safeZoneNotes()),
+                labelled("On-screen text", shot.textOverlay()),
+                labelled("Subtitle position", shot.subtitlePosition()),
+                labelled("Cultural references", shot.culturalReferences()),
+                labelled("Product shot type", shot.productShotType()),
+                labelled("Execution difficulty", shot.executionDifficulty()),
+                labelled("People in frame", shot.peopleInFrame() == null ? null : String.valueOf(shot.peopleInFrame())),
+                overrides == null ? null : overrides.customNotes());
         // Precedence: per-request override (user picked a model on THIS prepare) beats the
         // project-wide dropdown pin (creator picked a default for the project) beats auto-resolve
         // (the strategy resolver's own default). Feeds ProviderPromptStrategyResolver.resolve(modelId).
@@ -250,12 +341,42 @@ public class ShotContextAssemblyService {
         return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes, ttsModel);
     }
 
-    private List<ContinuityAnchor> buildContinuityAnchors(ProjectScenePreparation prep) {
-        // ProjectScenePreparation stores the template text; the individual continuity locks
-        // aren't broken back out here -- they're already folded into templateText which the
-        // caller can consume alongside the composed prompt. Return empty rather than fabricating
-        // an anchor type that the enum doesn't support.
-        return List.of();
+    /** The project's continuity locks, as anchors on every shot's context. llm-gateway's prompt
+     * strategies already render these ("Continuity: ..." in the default/Seedance line shape, a
+     * clause in Wan's) -- this is the step that was missing, so until now the locks reached no
+     * prompt at all and each shot was composed as if the project had no continuity rules.
+     *
+     * <p>Read from the prepare bundle, which both the single-shot and the batch path already
+     * fetch, so wardrobe/set/camera/lighting locks cost no extra call.
+     *
+     * <p>Category maps to the anchor type by scope: an identity or wardrobe lock holds across the
+     * whole campaign, a set/camera/lighting lock is scene-local, and a prop lock is its own type.
+     * The category name is kept in the description because that's the only part the model
+     * actually reads -- "WARDROBE_APPEARANCE: Maya: red kurta" tells it what kind of constraint
+     * it is, where the bare value wouldn't. */
+    private List<ContinuityAnchor> buildContinuityAnchors(PreProductionViews.ContinuityBibleView bible) {
+        if (bible == null || bible.locks() == null) {
+            return List.of();
+        }
+        return bible.locks().stream()
+                .filter(lock -> hasText(lock.value()))
+                .map(lock -> new ContinuityAnchor(
+                        anchorTypeFor(lock.category()),
+                        null,
+                        hasText(lock.category()) ? lock.category() + ": " + lock.value() : lock.value(),
+                        null))
+                .toList();
+    }
+
+    private AnchorType anchorTypeFor(String category) {
+        if (category == null) {
+            return AnchorType.LOCAL_SCENE;
+        }
+        return switch (category) {
+            case "CHARACTER_IDENTITY", "WARDROBE_APPEARANCE" -> AnchorType.GLOBAL_CAMPAIGN;
+            case "SET_PROP" -> AnchorType.PROP;
+            default -> AnchorType.LOCAL_SCENE;
+        };
     }
 
     private AudioAmbience buildAudioAmbience(
@@ -366,6 +487,51 @@ public class ShotContextAssemblyService {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /** Joins the non-blank parts, or null when nothing survives -- so a field that every source
+     * left empty stays absent rather than becoming a dangling separator in the prompt. */
+    private static String joinNonBlank(String separator, String... parts) {
+        StringBuilder joined = new StringBuilder();
+        for (String part : parts) {
+            if (hasText(part)) {
+                if (joined.length() > 0) {
+                    joined.append(separator);
+                }
+                joined.append(part.trim());
+            }
+        }
+        return joined.length() == 0 ? null : joined.toString();
+    }
+
+    /** "Angle: low, looking up" -- the label carries the meaning once several columns are folded
+     * into one free-text field, where the bare value would just read as another clause. */
+    private static String labelled(String label, String value) {
+        return hasText(value) ? label + ": " + value.trim() : null;
+    }
+
+    /** The shot's own frame, as a single reference. Preference order is deliberate: an approved
+     * PRODUCTION still is the closest thing to "what this shot must look like", a STORYBOARD frame
+     * is the rough stand-in when no still exists, and MOTION_GRAPHIC is the equivalent for MG
+     * shots (which never get PRODUCTION/STORYBOARD at all). Only one is attached -- handing an
+     * image model both a polished still and its own rough sketch of the same beat pulls the
+     * generation in two directions.
+     *
+     * <p>LIGHTING and CAMERA_PLAN are not included here: those already flow onto the ShotContext
+     * as Lighting.dpLightingImage* / Camera.cameraPlanImage* and are saved by saveReferences from
+     * there, so adding them again would double up the rows. */
+    private List<ReferenceFrame> buildReferenceFrames(List<PreProductionViews.ShotImageView> images) {
+        PreProductionViews.ShotImageView frame = pickImage(images, "PRODUCTION");
+        if (frame == null) {
+            frame = pickImage(images, "STORYBOARD");
+        }
+        if (frame == null) {
+            frame = pickImage(images, "MOTION_GRAPHIC");
+        }
+        if (frame == null || frame.bucket() == null || frame.objectKey() == null) {
+            return List.of();
+        }
+        return List.of(new ReferenceFrame(ReferenceKind.STORYBOARD, frame.bucket(), frame.objectKey()));
     }
 
     private PreProductionViews.ShotImageView pickImage(List<PreProductionViews.ShotImageView> images, String kind) {

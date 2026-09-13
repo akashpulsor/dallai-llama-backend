@@ -57,11 +57,77 @@ public final class PromptDtos {
             String dpLightingImageObjectKey
     ) {}
 
+    /** Structural mirror of video-generation-service's Camera -- the full cinematography taxonomy.
+     * It used to declare only the first four fields, so everything the shot plan said about body,
+     * lens, focus, movement, exposure and look was dropped here on deserialize even when the
+     * caller sent it. All nullable: "not specified by this shot". */
     public record Camera(
             String shotSize,
             String cameraNote,
             String cameraPlanImageBucket,
-            String cameraPlanImageObjectKey
+            String cameraPlanImageObjectKey,
+
+            String cameraBody,
+            String sensor,
+            String captureFormat,
+            String recordingCharacteristics,
+
+            String positionHeight,
+            String positionDistance,
+            String positionLateral,
+            String positionElevation,
+            String positionOrientation,
+
+            String lensFocalLength,
+            String lensType,
+            String lensOpticalFormat,
+            String lensDistortion,
+            String lensCompression,
+            String lensCharacter,
+
+            String framing,
+            String subjectPlacement,
+            String headroom,
+            String leadRoom,
+            String visualBalance,
+
+            String focusTarget,
+            String focusDistance,
+            String depthOfField,
+            String rackFocus,
+            String focusBehaviour,
+
+            String movementType,
+            String movementTrajectory,
+            String movementSpeed,
+            String movementAcceleration,
+            String movementRotation,
+            String movementSubjectRelationship,
+
+            String support,
+
+            String aperture,
+            String iso,
+            String shutter,
+            String ndFilter,
+            String dynamicRange,
+
+            String shutterAngle,
+            String motionBlur,
+            String slowMotion,
+
+            String filtrationDiffusion,
+            String filtrationNd,
+            String filtrationPolarizer,
+            String filtrationSpecialty,
+
+            String contrast,
+            String colorResponse,
+            String grain,
+            String halation,
+            String bloom,
+            String sharpness,
+            String flare
     ) {}
 
     public record ProductBrand(
