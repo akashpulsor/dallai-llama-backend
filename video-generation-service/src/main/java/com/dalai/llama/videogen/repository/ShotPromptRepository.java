@@ -21,4 +21,9 @@ public interface ShotPromptRepository extends JpaRepository<ShotPrompt, UUID> {
     List<ShotPrompt> findByProjectIdOrderByCreatedAtDesc(UUID projectId);
 
     Optional<ShotPrompt> findFirstByJobIdAndShippedTrue(UUID jobId);
+
+    /** Every prompt ever built for a shot, newest first -- used to find the most recent one that
+     * already carries derived foley cues, so re-preparing a shot reuses them instead of paying
+     * for the same derivation again. */
+    List<ShotPrompt> findByShotIdOrderByCreatedAtDesc(UUID shotId);
 }

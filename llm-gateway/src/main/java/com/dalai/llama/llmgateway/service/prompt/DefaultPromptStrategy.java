@@ -19,16 +19,13 @@ import java.util.List;
 public class DefaultPromptStrategy implements ProviderPromptStrategy {
 
     private final NegativePromptComposer negativePromptComposer;
-    private final DialoguePhonemeService dialoguePhonemeService;
     private final int maxPromptLength;
 
     public DefaultPromptStrategy(
             NegativePromptComposer negativePromptComposer,
-            DialoguePhonemeService dialoguePhonemeService,
             @Value("${llm-gateway.prompt-format.default-max-prompt-length:2000}") int maxPromptLength
     ) {
         this.negativePromptComposer = negativePromptComposer;
-        this.dialoguePhonemeService = dialoguePhonemeService;
         this.maxPromptLength = maxPromptLength;
     }
 
@@ -146,8 +143,13 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
         }
         String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().scriptLine() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
-            String respelled = dialoguePhonemeService.respellDialogue(tenantId, dialogueLine, "en");
-            lines.add("Dialogue/VO: " + respelled);
+            // The line goes in as written. Phonetic respelling used to happen here, which put a
+            // synchronous PHONEME_GUIDE LLM round-trip inside prompt composition -- 14-22s per
+            // shot, the single largest cost in prepare. It bought nothing: respelling exists to
+            // help a TTS engine pronounce a line, and by this point the dialogue has already been
+            // dubbed by BeatDubbingService. The video model is being told what is said, not asked
+            // to say it.
+            lines.add("Dialogue/VO: " + dialogueLine);
         }
         return String.join("\n", lines);
     }

@@ -20,7 +20,6 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
     private static final int WAN_MAX_PROMPT_LENGTH = 1000;
 
     private final NegativePromptComposer negativePromptComposer;
-    private final DialoguePhonemeService dialoguePhonemeService;
 
     @Override
     public boolean supports(String modelId) {
@@ -158,8 +157,9 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
         }
         String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().scriptLine() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
-            String respelled = dialoguePhonemeService.respellDialogue(tenantId, dialogueLine, "en");
-            clauses.add("with spoken line: \"" + respelled + "\"");
+            // As written -- see DefaultPromptStrategy for why the phonetic respelling round-trip
+            // is gone: the dialogue is already dubbed by the time a prompt is composed.
+            clauses.add("with spoken line: \"" + dialogueLine + "\"");
         }
         return String.join(", ", clauses);
     }

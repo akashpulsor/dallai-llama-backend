@@ -168,7 +168,7 @@ public class ShotGenerationOrchestrator {
         // per-model composition shape and prompt-length limit, instead of the pre-refactor single
         // global default.
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
-        List<DerivedFoleyCue> cues = foleyCueService.deriveCues(projectId, shotContext);
+        List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
                 projectId, builtPrompt.positive(), maxPromptLength, modelId);
@@ -598,6 +598,38 @@ public class ShotGenerationOrchestrator {
                 .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
                 .map(ref -> videoAssetPersistenceService.presignedUrl(ref.getBucket(), ref.getObjectKey()))
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    /** A shot's foley cue sheet describes its sound design, which does not change because the
+     * shot was prepared a second time -- so the cues are carried forward from the shot's most
+     * recent prompt that has them, and only derived when the shot has none at all.
+     *
+     * <p>This is a backfill, not the end state: deriving cues belongs in pre-production alongside
+     * the rest of the shot plan, where it happens once when the shot is planned. Doing it here
+     * means every prepare pays an LLM round-trip for a cue sheet the shot should already own.
+     * Once pre-production carries the cues in the prepare bundle, this method reads them from
+     * there and the derivation call goes away entirely.
+     *
+     * <p>A shot with no shotId (the legacy direct-generate path, which has no pre-production row
+     * to look back at) always derives, exactly as before. */
+    private List<DerivedFoleyCue> resolveFoleyCues(UUID projectId, ShotContext shotContext,
+                                                   ShotContextAssemblyService.ShotPromptSources sources) {
+        UUID shotId = sources == null ? null : sources.shotId();
+        if (shotId != null) {
+            for (ShotPrompt previous : shotPromptRepository.findByShotIdOrderByCreatedAtDesc(shotId)) {
+                List<FoleyCue> existing = foleyCueRepository.findByPromptIdOrderByTimestampMsAsc(previous.getPromptId());
+                if (!existing.isEmpty()) {
+                    log.debug("Reusing {} foley cues from promptId={} for shotId={}",
+                            existing.size(), previous.getPromptId(), shotId);
+                    return existing.stream()
+                            .map(cue -> new DerivedFoleyCue(cue.getTimestampMs(),
+                                    cue.getCueType() == null ? null : cue.getCueType().name(),
+                                    cue.getDescription()))
+                            .toList();
+                }
+            }
+        }
+        return foleyCueService.deriveCues(projectId, shotContext);
     }
 
     /** Clones a prompt's attachments onto its edited successor, slot order preserved -- the

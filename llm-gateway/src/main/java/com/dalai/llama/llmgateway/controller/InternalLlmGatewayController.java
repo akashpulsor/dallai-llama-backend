@@ -77,7 +77,14 @@ public class InternalLlmGatewayController {
         return builtinVoiceSyncService.syncFromElevenLabs();
     }
 
-    @PostMapping("/v1/{tenantId}/estimate")
+    /** {@code /tenants/{tenantId}/estimate} to match every other tenant-scoped route on this
+     * controller. The original mapping was {@code /v1/{tenantId}/estimate}, which resolved to
+     * {@code /api/v1/internal/v1/{tenantId}/estimate} -- a doubled {@code v1} nobody would guess,
+     * and video-generation-service's client duly guessed {@code /tenants/...} like its siblings.
+     * The miss surfaced as a 500, not a 404: with no route matched, Spring fell through to static
+     * resource handling and the gateway's exception handler turned NoResourceFoundException into
+     * an internal error. The old path is kept so an unredeployed caller does not break. */
+    @PostMapping({"/tenants/{tenantId}/estimate", "/v1/{tenantId}/estimate"})
     public ResponseEntity<EstimateResponse> estimate(
             @PathVariable String tenantId,
             @Valid @RequestBody ChatRequest request
