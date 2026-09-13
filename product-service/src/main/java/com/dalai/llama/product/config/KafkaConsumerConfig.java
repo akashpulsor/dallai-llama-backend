@@ -1,6 +1,7 @@
 package com.dalai.llama.product.config;
 
 
+import com.dalai.llama.product.domain.event.RecurringChargeOutcomeEvent;
 import com.dalai.llama.product.domain.event.SubscriptionActivationFailedEvent;
 import com.dalai.llama.product.domain.event.WalletDeductedForSubscriptionEvent;
 import com.dalai.llama.tenant.domain.event.ProvisioningCompletedEvent;
@@ -83,5 +84,11 @@ public class KafkaConsumerConfig {
     public ConcurrentKafkaListenerContainerFactory<String, ProvisioningCompletedEvent>
     provisioningCompletedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
         return buildFactory(ProvisioningCompletedEvent.class, kafkaErrorHandler);
+    }
+
+    @Bean(name = "recurringChargeOutcomeListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, RecurringChargeOutcomeEvent>
+    recurringChargeOutcomeListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(RecurringChargeOutcomeEvent.class, kafkaErrorHandler);
     }
 }

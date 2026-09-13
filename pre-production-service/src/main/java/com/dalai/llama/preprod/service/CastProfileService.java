@@ -35,24 +35,38 @@ public class CastProfileService {
     private final ProjectRepository projectRepository;
     private final MediaAssetService mediaAssetService;
     private final MinioClient publicMinioClient;
+    private final CreatorVideoEntitlementClient entitlementClient;
 
     public CastProfileService(
             CastProfileRepository castProfileRepository,
             CastAssignmentRepository castAssignmentRepository,
             ProjectRepository projectRepository,
             MediaAssetService mediaAssetService,
-            @Qualifier("publicMinioClient") MinioClient publicMinioClient
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
+            CreatorVideoEntitlementClient entitlementClient
     ) {
         this.castProfileRepository = castProfileRepository;
         this.castAssignmentRepository = castAssignmentRepository;
         this.projectRepository = projectRepository;
         this.mediaAssetService = mediaAssetService;
         this.publicMinioClient = publicMinioClient;
+        this.entitlementClient = entitlementClient;
     }
 
     @Transactional
     public CastProfileView create(UUID tenantId, CreateCastProfileRequest request) {
         CastProfileType profileType = request.profileType() == null ? CastProfileType.ACTOR : request.profileType();
+        // Only ACTOR (character) uploads are gated -- a PRODUCT profile's photo is core ad-creation
+        // functionality, not the "character image/voice upload" Pro feature.
+        if (profileType == CastProfileType.ACTOR) {
+            CreatorVideoEntitlementClient.Entitlements entitlements = entitlementClient.get(tenantId);
+            if (hasText(request.faceRefBucket())) {
+                entitlementClient.require(tenantId, entitlements.imageUploadEnabled(), "uploading a character reference image");
+            }
+            if (hasText(request.voiceRefBucket())) {
+                entitlementClient.require(tenantId, entitlements.characterVoiceUploadEnabled(), "uploading a character voice sample");
+            }
+        }
         VoiceIdentity identity = initialVoiceIdentity(profileType, request);
         OffsetDateTime now = OffsetDateTime.now();
         CastProfile profile = castProfileRepository.save(CastProfile.builder()
@@ -106,6 +120,12 @@ public class CastProfileService {
         if (human && (!blank(request.clonedVoiceId()) || !blank(request.providerId()))
                 || !human && (!blank(request.voiceRefBucket()) || !blank(request.voiceRefObjectKey()))) {
             throw PreProductionException.badRequest("Voice sample fields and provider identity fields are mutually exclusive");
+        }
+        // Only the HUMAN (uploaded sample) path is the gated feature -- picking a built-in/AI
+        // voice needs no upload and isn't restricted.
+        if (human) {
+            entitlementClient.require(tenantId, entitlementClient.get(tenantId).characterVoiceUploadEnabled(),
+                    "uploading a character voice sample");
         }
         CastProfile profile = requireCastProfile(tenantId, castProfileId);
         if (request.projectId() != null) {

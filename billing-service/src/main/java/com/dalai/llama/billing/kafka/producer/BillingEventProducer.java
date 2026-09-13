@@ -48,4 +48,10 @@ public class BillingEventProducer {
     public void publishRefundInitiated(RefundInitiatedEvent event) {
         kafkaTemplate.send("billing.refund.initiated", event.getTenantId().toString(), event);
     }
+
+    /** See {@link RecurringChargeOutcomeEvent} javadoc for why this only fires for
+     * subscription-linked recurring charges. */
+    public void publishRecurringChargeOutcome(RecurringChargeOutcomeEvent event) {
+        kafkaTemplate.send("billing.recurring-charge.outcome", event.getTenantId().toString(), event);
+    }
 }

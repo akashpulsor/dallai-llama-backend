@@ -16,6 +16,8 @@ import java.util.UUID;
  * - PLATFORM_FEE: Monthly plan fee
  * - DID_RENTAL: Monthly DID rental
  * - AGENT_FEE: Per-agent monthly fee
+ * - SUBSCRIPTION: Generic product-agnostic plan renewal (e.g. creator-video) -- product-service
+ *   owns what happens to the subscription on success/failure, this row is just the billing clock.
  */
 @Entity
 @Table(name = "recurring_charges", indexes = {
@@ -107,6 +109,7 @@ public class RecurringCharge {
     private LocalDate calculateNextChargeDate() {
         return switch (frequency) {
             case "WEEKLY" -> nextChargeDate.plusWeeks(1);
+            case "QUARTERLY" -> nextChargeDate.plusMonths(3);
             case "YEARLY" -> nextChargeDate.plusYears(1);
             default -> nextChargeDate.plusMonths(1); // MONTHLY
         };

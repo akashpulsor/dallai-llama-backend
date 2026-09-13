@@ -153,6 +153,9 @@ pre-production:
     # webhook lands), a timed-out lock verify leaves the project permanently unlocked until the
     # client retries -- see ProjectLockService.
     timeout-ms: ${BILLING_SERVICE_TIMEOUT_MS:30000}
+  product:
+    base-url: ${PRODUCT_SERVICE_BASE_URL:http://product-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRODUCT_SERVICE_TIMEOUT_MS:5000}
   pricing:
     # The platform's own flat rate for a client-facing "pay to lock" charge -- a single number
     # for now (no per-project-type pricing yet). The creator's own ProjectConfig-adjacent

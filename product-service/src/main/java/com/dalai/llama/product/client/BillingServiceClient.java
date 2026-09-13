@@ -108,6 +108,34 @@ public class BillingServiceClient {
         }
     }
 
+    /** Same wallet-debit endpoint as {@link #chargeSubscription}, without the DID-specific
+     * description -- for products with no telephony resource attached (e.g. creator-video). */
+    public void chargeProductSubscription(UUID tenantId, UUID subscriptionId, BigDecimal amount, String description) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("amount", amount);
+            body.put("type", "SUBSCRIPTION");
+            body.put("description", description);
+            body.put("subscriptionId", subscriptionId.toString());
+
+            ChargeResponse resp = client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/charge", tenantId)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(ChargeResponse.class)
+                    .block();
+
+            if (resp != null && !resp.success()) {
+                throw new RuntimeException("Charge failed: " + resp.message());
+            }
+
+            log.info("Charged subscription {} for tenant {}: ₹{}", subscriptionId, tenantId, amount);
+        } catch (WebClientResponseException e) {
+            log.error("Failed to charge subscription: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to charge subscription", e);
+        }
+    }
+
     public void chargeSubscription(UUID tenantId, UUID subscriptionId, BigDecimal amount, String planCode, String didNumber) {
         try {
             Map<String, Object> body = new HashMap<>();
@@ -248,6 +276,38 @@ public class BillingServiceClient {
         }
     }
 
+    public void pauseRecurringCharges(UUID tenantId, UUID subscriptionId) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}/pause",
+                            tenantId, subscriptionId)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Paused recurring charges for tenant {} subscription {}", tenantId, subscriptionId);
+        } catch (Exception e) {
+            log.error("Failed to pause recurring charges for tenant {} subscription {}: {}",
+                    tenantId, subscriptionId, e.getMessage());
+        }
+    }
+
+    public void resumeRecurringCharges(UUID tenantId, UUID subscriptionId, java.time.LocalDate nextChargeDate) {
+        try {
+            client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}/resume",
+                            tenantId, subscriptionId)
+                    .bodyValue(Map.of("nextChargeDate", nextChargeDate.toString()))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Resumed recurring charges for tenant {} subscription {} nextChargeDate {}",
+                    tenantId, subscriptionId, nextChargeDate);
+        } catch (Exception e) {
+            log.error("Failed to resume recurring charges for tenant {} subscription {}: {}",
+                    tenantId, subscriptionId, e.getMessage());
+        }
+    }
+
     // ==================== REQUEST DTOs ====================
 
     public record RecurringChargeRequest(
@@ -283,6 +343,13 @@ public class BillingServiceClient {
 
         public static RecurringChargeRequest agentFee(BigDecimal amount, int agentCount, UUID subscriptionId) {
             return new RecurringChargeRequest("AGENT_FEE", amount, "MONTHLY", null, null, subscriptionId, agentCount + " agent seats");
+        }
+
+        /** Generic product-agnostic plan renewal (type=SUBSCRIPTION) -- frequency is whatever the
+         * plan's own {@code BillingCycle} is (MONTHLY/QUARTERLY/YEARLY), unlike the PBX factories
+         * above which are always monthly. */
+        public static RecurringChargeRequest subscriptionFee(BigDecimal amount, String frequency, UUID subscriptionId, String description) {
+            return new RecurringChargeRequest("SUBSCRIPTION", amount, frequency, "PLAN", subscriptionId, subscriptionId, description);
         }
     }
 }

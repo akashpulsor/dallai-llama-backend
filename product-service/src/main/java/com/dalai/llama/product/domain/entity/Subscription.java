@@ -1,5 +1,6 @@
 package com.dalai.llama.product.domain.entity;
 
+import com.dalai.llama.product.domain.entity.enums.BillingCycle;
 import com.dalai.llama.product.domain.entity.enums.SubscriptionStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -111,6 +112,16 @@ public class Subscription {
     @Column(name = "cancelled_at")
     private Instant cancelledAt;
 
+    @Column(name = "paused_at")
+    private Instant pausedAt;
+
+    // Snapshot from Plan.billingCycle at subscribe time -- a later plan price/cycle change
+    // shouldn't retroactively change an already-active subscription's renewal cadence. Null for
+    // every product that doesn't model a cycle yet (see BillingCycle's javadoc).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "billing_cycle", length = 20)
+    private BillingCycle billingCycle;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -154,7 +165,7 @@ public class Subscription {
     public void activate() {
         this.status = SubscriptionStatus.ACTIVE;
         this.activatedAt = Instant.now();
-        this.expiresAt = Instant.now().plusSeconds(30L * 24 * 60 * 60);
+        this.expiresAt = Instant.now().plus(cycleDuration());
     }
 
     public void suspend() {
@@ -165,6 +176,46 @@ public class Subscription {
     public void cancel() {
         this.status = SubscriptionStatus.CANCELLED;
         this.cancelledAt = Instant.now();
+    }
+
+    /** User-initiated hold -- see {@link SubscriptionStatus#PAUSED} javadoc. Only valid from
+     * ACTIVE; billing/expiry tracking stops until {@link #resume()}. */
+    public void pause() {
+        if (status != SubscriptionStatus.ACTIVE) {
+            throw new IllegalStateException("Cannot pause a subscription in status " + status);
+        }
+        this.status = SubscriptionStatus.PAUSED;
+        this.pausedAt = Instant.now();
+    }
+
+    /** Resumes from a pause with a fresh cycle starting now -- no proration of the paused time,
+     * matching the product decision to keep pause/resume simple rather than track remaining days. */
+    public void resume() {
+        if (status != SubscriptionStatus.PAUSED) {
+            throw new IllegalStateException("Cannot resume a subscription in status " + status);
+        }
+        this.status = SubscriptionStatus.ACTIVE;
+        this.pausedAt = null;
+        this.expiresAt = Instant.now().plus(cycleDuration());
+    }
+
+    /** A renewal charge failed -- see {@link SubscriptionStatus#PAST_DUE} javadoc. Entitlements
+     * drop immediately (the entitlement resolver only grants paid entitlements to ACTIVE
+     * subscriptions); the recurring charge itself keeps retrying independently in billing-service,
+     * and a later successful retry calls {@link #activate()} again to recover. */
+    public void markPastDue() {
+        this.status = SubscriptionStatus.PAST_DUE;
+    }
+
+    private java.time.Duration cycleDuration() {
+        if (billingCycle == null) {
+            return java.time.Duration.ofDays(30); // Unchanged default for products with no cycle modeled yet.
+        }
+        return switch (billingCycle) {
+            case MONTHLY -> java.time.Duration.ofDays(30);
+            case QUARTERLY -> java.time.Duration.ofDays(91);
+            case YEARLY -> java.time.Duration.ofDays(365);
+        };
     }
 
     public boolean isActive() {

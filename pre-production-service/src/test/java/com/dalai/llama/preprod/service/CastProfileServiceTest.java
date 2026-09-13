@@ -26,12 +26,22 @@ class CastProfileServiceTest {
 
     private final CastProfileRepository castProfileRepository = mock(CastProfileRepository.class);
     private final ProjectRepository projectRepository = mock(ProjectRepository.class);
+    private final CreatorVideoEntitlementClient entitlementClient = mock(CreatorVideoEntitlementClient.class);
     private final CastProfileService service = new CastProfileService(
             castProfileRepository,
             mock(CastAssignmentRepository.class),
             projectRepository,
             mock(MediaAssetService.class),
-            mock(MinioClient.class));
+            mock(MinioClient.class),
+            entitlementClient);
+
+    {
+        // Permissive by default -- these tests exercise voice-identity persistence logic, not
+        // entitlement gating (that's CreatorVideoEntitlementClient's own concern).
+        given(entitlementClient.get(any())).willReturn(new CreatorVideoEntitlementClient.Entitlements(
+                true, true, true, true, true, true, true, true));
+        org.mockito.Mockito.doCallRealMethod().when(entitlementClient).require(any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
 
     @Test
     void persistsTheFirstHumanCloneIdentity() {

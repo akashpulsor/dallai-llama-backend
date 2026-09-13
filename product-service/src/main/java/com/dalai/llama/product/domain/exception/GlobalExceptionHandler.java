@@ -37,6 +37,12 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.NOT_FOUND, "DID_NOT_FOUND", ex.getMessage());
     }
 
+    @ExceptionHandler(SubscriptionNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleSubscriptionNotFound(SubscriptionNotFoundException ex) {
+        log.warn("Subscription not found: {}", ex.getMessage());
+        return buildResponse(HttpStatus.NOT_FOUND, "SUBSCRIPTION_NOT_FOUND", ex.getMessage());
+    }
+
     // ==================== 409 CONFLICT ====================
 
     @ExceptionHandler(DidNotAvailableException.class)

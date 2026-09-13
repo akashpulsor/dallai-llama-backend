@@ -1,6 +1,7 @@
 package com.dalai.llama.product.domain.entity;
 
 import com.dalai.llama.product.domain.entity.enums.AiStackType;
+import com.dalai.llama.product.domain.entity.enums.BillingCycle;
 import com.dalai.llama.product.domain.entity.enums.PlanTier;
 import jakarta.persistence.*;
 import lombok.*;
@@ -82,4 +83,12 @@ public class Plan {
     @Column(name = "included_channels")
     @Builder.Default
     private Integer includedChannels = 1;
+
+    // Null = not modeled for this product (every existing PBX plan today) -- see BillingCycle's
+    // own javadoc. New products (creator-video) set this explicitly; one Plan row per cycle
+    // (CREATOR_VIDEO_PRO_MONTHLY/_QUARTERLY/_YEARLY) rather than a single plan multiplying price
+    // by cycle, so each cadence's price can be tuned independently later without a schema change.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "billing_cycle", length = 20)
+    private BillingCycle billingCycle;
 }

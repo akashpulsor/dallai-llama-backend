@@ -32,6 +32,10 @@ public class PostProductionException extends RuntimeException {
         return new PostProductionException(HttpStatus.CONFLICT, message);
     }
 
+    public static PostProductionException forbidden(String message) {
+        return new PostProductionException(HttpStatus.FORBIDDEN, message);
+    }
+
     public static PostProductionException upstream(String message) {
         return new PostProductionException(HttpStatus.BAD_GATEWAY, message);
     }

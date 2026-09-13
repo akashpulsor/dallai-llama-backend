@@ -51,6 +51,7 @@ public class InternalProductController {
     private final SubscriptionService subscriptionService;
     private final SipEndpointRepository sipEndpointRepository;
     private final com.dalai.llama.product.service.DidService didService;
+    private final com.dalai.llama.product.service.CreatorVideoEntitlementService creatorVideoEntitlementService;
 
     // ==================== SUBSCRIPTION ENDPOINTS ====================
 
@@ -115,6 +116,22 @@ public class InternalProductController {
                 entitlementService.getEffectiveEntitlements(tenantId)
         );
     }
+
+    /**
+     * Server-side authorization check for creator-video features -- called by whichever backend
+     * service actually performs a gated action (pre-production-service for cast image/voice
+     * uploads, patch-editor's edit/upscale endpoints, the brief-share endpoint) at the moment of
+     * the action, not just once on page load. The frontend's own entitlement fetch (same data,
+     * different endpoint -- see {@code CreatorVideoSubscriptionController}) is a UX convenience
+     * only; this is the enforcement point a client can't bypass by ignoring what the UI shows.
+     */
+    @GetMapping("/tenants/{tenantId}/creator-video/entitlements")
+    @Operation(summary = "Get creator-video entitlements for tenant (internal, for server-side authorization)")
+    public com.dalai.llama.product.dto.creatorvideo.CreatorVideoEntitlementsResponse getCreatorVideoEntitlements(
+            @PathVariable UUID tenantId) {
+        return creatorVideoEntitlementService.getEntitlementsByTenant(tenantId);
+    }
+
 
     /**
      * Called by PBX Core to get DID info by number

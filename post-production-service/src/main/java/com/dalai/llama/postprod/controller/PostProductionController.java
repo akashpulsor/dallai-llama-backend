@@ -10,6 +10,7 @@ import com.dalai.llama.postprod.dto.PreviewVoiceRequest;
 import com.dalai.llama.postprod.dto.VideoGenerationView;
 import com.dalai.llama.postprod.dto.VoicePreviewView;
 import com.dalai.llama.postprod.service.AudioGenerationResult;
+import com.dalai.llama.postprod.service.CreatorVideoEntitlementClient;
 import com.dalai.llama.postprod.service.FoleyGenerationService;
 import com.dalai.llama.postprod.service.MusicGenerationService;
 import com.dalai.llama.postprod.service.PostProductionOrchestrator;
@@ -41,6 +42,7 @@ public class PostProductionController {
     private final MusicGenerationService musicGenerationService;
     private final VoicePreviewService voicePreviewService;
     private final UpscaleGenerationService upscaleGenerationService;
+    private final CreatorVideoEntitlementClient entitlementClient;
 
     public PostProductionController(
             PostProductionOrchestrator orchestrator,
@@ -48,7 +50,8 @@ public class PostProductionController {
             FoleyGenerationService foleyGenerationService,
             MusicGenerationService musicGenerationService,
             VoicePreviewService voicePreviewService,
-            UpscaleGenerationService upscaleGenerationService
+            UpscaleGenerationService upscaleGenerationService,
+            CreatorVideoEntitlementClient entitlementClient
     ) {
         this.orchestrator = orchestrator;
         this.llmGatewayClient = llmGatewayClient;
@@ -56,6 +59,7 @@ public class PostProductionController {
         this.musicGenerationService = musicGenerationService;
         this.voicePreviewService = voicePreviewService;
         this.upscaleGenerationService = upscaleGenerationService;
+        this.entitlementClient = entitlementClient;
     }
 
     /** "I want to listen how the cloned voice sounds" -- see VoicePreviewService. */
@@ -101,8 +105,10 @@ public class PostProductionController {
      * Blocks until the upscaled video is ready (same synchronous shape as foley/music above). */
     @PostMapping("/v1/post-production/upscale")
     public ResponseEntity<VideoGenerationView> upscale(@Valid @RequestBody GenerateUpscaleRequest request) {
+        UUID tenantId = tenant().tenantId();
+        entitlementClient.require(tenantId, entitlementClient.get(tenantId).upscalingEnabled(), "video upscaling");
         UpscaleGenerationResult result = upscaleGenerationService.upscale(
-                tenant().tenantId(), "post-prod-upscale-" + UUID.randomUUID(),
+                tenantId, "post-prod-upscale-" + UUID.randomUUID(),
                 request.sourceVideoUrl(), request.model(), request.durationSeconds());
         return ResponseEntity.ok(new VideoGenerationView(request.model(), result.videoUrl()));
     }

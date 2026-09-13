@@ -40,5 +40,22 @@ public enum SubscriptionStatus {
      */
     EXPIRED,
 
-    PROVISIONING_FAILED
+    PROVISIONING_FAILED,
+
+    /**
+     * User-initiated hold: billing stops, entitlements drop to the product's free tier, resumable
+     * without re-subscribing. Distinct from SUSPENDED (a billing-issue state the platform imposes)
+     * and CANCELLED (terminal). Only meaningful for products with no physical resources to release
+     * on pause (e.g. creator-video) -- PBX products keep provisioned DIDs/trunks either way, so
+     * this status simply isn't reached on that saga path.
+     */
+    PAUSED,
+
+    /**
+     * A recurring renewal charge failed (insufficient wallet balance). Entitlements drop to the
+     * free tier immediately -- no grace period -- but the subscription is not cancelled: the
+     * scheduler keeps retrying the same recurring charge daily, and a later successful retry
+     * flips this back to ACTIVE automatically once the tenant tops up.
+     */
+    PAST_DUE
 }

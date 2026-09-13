@@ -34,6 +34,11 @@ public class PreProductionException extends RuntimeException {
     public static PreProductionException conflict(String message) {
         return new PreProductionException(HttpStatus.CONFLICT, message);
     }
+
+    public static PreProductionException forbidden(String message) {
+        return new PreProductionException(HttpStatus.FORBIDDEN, message);
+    }
+
     public static PreProductionException paymentRequired(String message) {
         return new PreProductionException(HttpStatus.PAYMENT_REQUIRED, message);
     }

@@ -225,6 +225,43 @@ public class InternalBillingController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}/pause
+     * Stop billing a subscription's recurring charge without cancelling it (called by
+     * product-service on subscription pause). Wires up {@link RecurringCharge#pause()}, which
+     * existed on the entity with no caller until now.
+     */
+    @PostMapping("/recurring-charges/subscription/{subscriptionId}/pause")
+    @Operation(summary = "Pause recurring charges by subscription")
+    @Transactional
+    public ResponseEntity<Void> pauseRecurringChargesBySubscription(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID subscriptionId) {
+        log.info("Pausing recurring charges for tenant {} subscription {}", tenantId, subscriptionId);
+        recurringChargeRepository.pauseBySubscriptionId(subscriptionId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * POST /api/v1/internal/tenants/{tenantId}/recurring-charges/subscription/{subscriptionId}/resume
+     * Resume a paused subscription's recurring charge, billing again from {@code nextChargeDate}
+     * (the caller's fresh cycle end, not recalculated here -- see the repository method's javadoc).
+     */
+    @PostMapping("/recurring-charges/subscription/{subscriptionId}/resume")
+    @Operation(summary = "Resume recurring charges by subscription")
+    @Transactional
+    public ResponseEntity<Void> resumeRecurringChargesBySubscription(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID subscriptionId,
+            @RequestBody ResumeRecurringChargeRequest request) {
+        log.info("Resuming recurring charges for tenant {} subscription {} nextChargeDate {}",
+                tenantId, subscriptionId, request.nextChargeDate());
+        recurringChargeRepository.resumeBySubscriptionId(subscriptionId, request.nextChargeDate());
+        return ResponseEntity.noContent().build();
+    }
+
+    public record ResumeRecurringChargeRequest(@NotNull LocalDate nextChargeDate) {}
+
     // ==================== CALL AUTHORIZATION ====================
 
     /**

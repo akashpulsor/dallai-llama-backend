@@ -35,4 +35,17 @@ public interface RecurringChargeRepository extends JpaRepository<RecurringCharge
     @Query("UPDATE RecurringCharge rc SET rc.status = 'CANCELLED', rc.updatedAt = CURRENT_TIMESTAMP " +
             "WHERE rc.subscriptionId = :subscriptionId")
     void cancelBySubscriptionId(@Param("subscriptionId") UUID subscriptionId);
+
+    @Modifying
+    @Query("UPDATE RecurringCharge rc SET rc.status = 'PAUSED', rc.updatedAt = CURRENT_TIMESTAMP " +
+            "WHERE rc.subscriptionId = :subscriptionId AND rc.status = 'ACTIVE'")
+    void pauseBySubscriptionId(@Param("subscriptionId") UUID subscriptionId);
+
+    /** {@code nextChargeDate} is supplied by the caller (product-service, which already computed
+     * the resumed subscription's fresh cycle end) rather than recalculated here -- avoids
+     * billing-service needing to know a second product's cycle-length rules. */
+    @Modifying
+    @Query("UPDATE RecurringCharge rc SET rc.status = 'ACTIVE', rc.nextChargeDate = :nextChargeDate, rc.updatedAt = CURRENT_TIMESTAMP " +
+            "WHERE rc.subscriptionId = :subscriptionId AND rc.status = 'PAUSED'")
+    void resumeBySubscriptionId(@Param("subscriptionId") UUID subscriptionId, @Param("nextChargeDate") LocalDate nextChargeDate);
 }

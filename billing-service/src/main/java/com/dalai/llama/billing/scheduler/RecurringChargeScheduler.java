@@ -1,6 +1,10 @@
 package com.dalai.llama.billing.scheduler;
 
 import com.dalai.llama.billing.domain.entity.RecurringCharge;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
+import com.dalai.llama.billing.domain.event.RecurringChargeOutcomeEvent;
+import com.dalai.llama.billing.domain.exception.InsufficientBalanceException;
+import com.dalai.llama.billing.kafka.producer.BillingEventProducer;
 import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.WalletService;
@@ -10,6 +14,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -25,6 +30,7 @@ public class RecurringChargeScheduler {
     private final RecurringChargeRepository chargeRepository;
     private final WalletService walletService;
     private final BillingStateService billingStateService;
+    private final BillingEventProducer eventProducer;
 
     /**
      * Process all due recurring charges
@@ -64,32 +70,57 @@ public class RecurringChargeScheduler {
      * @return true if charged, false if skipped
      */
     private boolean processCharge(RecurringCharge charge) {
-        // Check if tenant has sufficient balance
-        var balance = walletService.getBalance(charge.getTenantId());
-
-        if (balance.compareTo(charge.getAmount()) < 0) {
-            log.warn("Insufficient balance for recurring charge {} - tenant: {}, required: {}, available: {}",
-                    charge.getType(), charge.getTenantId(), charge.getAmount(), balance);
-            // Don't skip - still debit to trigger GRACE state
-        }
-
-        // Debit wallet
         String reference = String.format("%s:%s", charge.getType(),
                 charge.getDescription() != null ? charge.getDescription() : charge.getId());
 
-        walletService.debit(charge.getTenantId(), charge.getAmount(), reference,charge.getSubscriptionId());
+        try {
+            walletService.debit(charge.getTenantId(), charge.getAmount(), chargeType(charge), reference,
+                    charge.getSubscriptionId(), null, charge.getDescription(), null);
+        } catch (InsufficientBalanceException ex) {
+            // Balance really is short -- debit() refuses rather than going negative. Leave
+            // nextChargeDate untouched so tomorrow's run retries the same charge (self-healing
+            // once the tenant tops up); just report the miss for whoever owns subscriptionId to
+            // react to (e.g. product-service dropping a creator-video subscription's entitlements).
+            log.warn("Recurring charge {} failed for tenant {} - insufficient balance: {}",
+                    charge.getId(), charge.getTenantId(), ex.getMessage());
+            publishOutcome(charge, false, ex.getMessage());
+            return false;
+        }
 
         // Update charge
         charge.markCharged();
         chargeRepository.save(charge);
 
-        // Evaluate billing state (may trigger GRACE or SUSPENDED)
+        // Evaluate billing state (may trigger GRACE or SUSPENDED) -- PBX charges only care about
+        // this; subscription-linked charges react to the outcome event below instead.
         billingStateService.evaluateState(charge.getTenantId());
+
+        publishOutcome(charge, true, null);
 
         log.info("Processed recurring charge {} for tenant {}: ₹{}",
                 charge.getType(), charge.getTenantId(), charge.getAmount());
 
         return true;
+    }
+
+    private void publishOutcome(RecurringCharge charge, boolean succeeded, String failureReason) {
+        if (charge.getSubscriptionId() == null) {
+            return; // No subscription lifecycle to react to (plain PBX platform/DID/agent fee).
+        }
+        eventProducer.publishRecurringChargeOutcome(RecurringChargeOutcomeEvent.builder()
+                .recurringChargeId(charge.getId())
+                .tenantId(charge.getTenantId())
+                .subscriptionId(charge.getSubscriptionId())
+                .chargeType(charge.getType())
+                .amount(charge.getAmount())
+                .succeeded(succeeded)
+                .failureReason(failureReason)
+                .occurredAt(Instant.now())
+                .build());
+    }
+
+    private TransactionType chargeType(RecurringCharge charge) {
+        return "DID_RENTAL".equals(charge.getType()) ? TransactionType.DID_RENTAL : TransactionType.SUBSCRIPTION;
     }
 
     /**

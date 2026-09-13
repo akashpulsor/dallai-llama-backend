@@ -109,6 +109,9 @@ post-production:
   video-gen:
     base-url: ${VIDEO_GEN_BASE_URL:http://video-generation-service.apps.svc.cluster.local:8080}
     timeout-ms: ${VIDEO_GEN_TIMEOUT_MS:15000}
+  product:
+    base-url: ${PRODUCT_SERVICE_BASE_URL:http://product-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${PRODUCT_SERVICE_TIMEOUT_MS:5000}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:200000}
