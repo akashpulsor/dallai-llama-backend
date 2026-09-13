@@ -13,8 +13,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -37,6 +39,7 @@ public class PrepareOrchestrationService {
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final ShotGenerationOrchestrator shotGenerationOrchestrator;
     private final ModelRecommendationService modelRecommendationService;
+    private final PromptBuilderService promptBuilderService;
     private final ShotPromptRepository shotPromptRepository;
     private final PreProductionServiceClient preProductionClient;
 
@@ -54,6 +57,17 @@ public class PrepareOrchestrationService {
         PreProductionViews.PrepareBundleView bundle = preProductionClient.getPrepareBundle(ctx.tenantId(), projectId)
                 .orElseThrow(() -> VideoGenException.upstream(
                         "pre-production-service returned no prepare bundle for project " + projectId));
+
+        // Most projects pin one video model project-wide (projectConfig.preferredVideoModel), so
+        // every shot in the loop resolves to the same modelId. Fetch that model's config (max
+        // prompt length) once here, right after we learn what the model is, instead of each shot
+        // re-fetching it from llm-gateway. computeIfAbsent inside prepareShot() still covers a
+        // shot with its own per-shot model override that isn't this one.
+        Map<String, Integer> maxPromptLengthCache = new HashMap<>();
+        String preferredVideoModel = bundle.projectConfig() == null ? null : bundle.projectConfig().preferredVideoModel();
+        if (preferredVideoModel != null && !preferredVideoModel.isBlank()) {
+            maxPromptLengthCache.put(preferredVideoModel, promptBuilderService.maxPromptLengthFor(preferredVideoModel));
+        }
 
         // Toggle project scene preparation status so a UI polling GET /preparation sees
         // PREPARING while the loop runs, READY when it exits cleanly, FAILED on an unhandled
@@ -76,7 +90,8 @@ public class PrepareOrchestrationService {
                     GenerateShotRequest generateRequest = new GenerateShotRequest(
                             projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
                     ShotGenerationOrchestrator.PreparedShot preparedShot =
-                            shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources(), videoModelCatalog);
+                            shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources(),
+                                    videoModelCatalog, maxPromptLengthCache);
                     ShotPromptView view = shotGenerationOrchestrator.getPrompt(ctx.tenantId(), preparedShot.prompt().getPromptId());
                     prepared.add(view);
                     log.info("prepare-batch shot OK projectId={} shotId={} promptId={} elapsedMs={}",

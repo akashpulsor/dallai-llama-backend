@@ -35,6 +35,7 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -118,7 +119,7 @@ public class ShotGenerationOrchestrator {
      * auto-approve-then-approve dispatch step it always did -- the external {@code POST
      * /v1/shots/generate} contract is unchanged. */
     public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request) {
-        return prepareShot(tenantContext, request, null, null);
+        return prepareShot(tenantContext, request, null, null, null);
     }
 
     /** Full form: {@code sources} carries the pre-prod row ids that fed this composed prompt.
@@ -127,16 +128,21 @@ public class ShotGenerationOrchestrator {
      * doesn't know the ids -- the row still saves, just without the audit pointers. */
     public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request,
                                     ShotContextAssemblyService.ShotPromptSources sources) {
-        return prepareShot(tenantContext, request, sources, null);
+        return prepareShot(tenantContext, request, sources, null, null);
     }
 
     /** Batch form: {@code videoModelCatalog} is fetched once by the caller (see {@code
      * PrepareOrchestrationService.prepareShotsBatch}) and reused for every shot's model
-     * recommendation instead of each shot re-fetching the same catalog. Null falls back to a
-     * per-shot fetch, same as the two shorter overloads. */
+     * recommendation instead of each shot re-fetching the same catalog. {@code
+     * maxPromptLengthCache} is a mutable map the caller owns across the whole batch loop -- most
+     * projects pin one video model for every shot (project config's {@code preferredVideoModel}),
+     * so without this every shot would re-hit llm-gateway's max-length endpoint for the same
+     * model id. Either argument null falls back to a per-shot fetch, same as the shorter
+     * overloads. */
     public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request,
                                     ShotContextAssemblyService.ShotPromptSources sources,
-                                    List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog) {
+                                    List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog,
+                                    Map<String, Integer> maxPromptLengthCache) {
         UUID tenantId = tenantContext.tenantId();
         UUID projectId = request.projectId();
         ShotContext shotContext = request.shotContext();
@@ -161,8 +167,9 @@ public class ShotGenerationOrchestrator {
         // global default.
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
         List<DerivedFoleyCue> cues = foleyCueService.deriveCues(projectId, shotContext);
+        int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
-                projectId, builtPrompt.positive(), promptBuilderService.maxPromptLengthFor(modelId));
+                projectId, builtPrompt.positive(), maxPromptLength);
         CostEstimate estimate = costEstimationService.estimate(
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId);
 
@@ -619,6 +626,16 @@ public class ShotGenerationOrchestrator {
         return cues.stream()
                 .map(c -> new FoleyCueView(c.timestampMs(), c.cueType(), c.description()))
                 .toList();
+    }
+
+    /** Null cache (single-shot callers) always fetches fresh. A shared cache (batch callers) is
+     * populated on first use per model id, so N shots pinned to the same model hit llm-gateway's
+     * max-length endpoint once instead of N times. */
+    private int resolveMaxPromptLength(String modelId, Map<String, Integer> maxPromptLengthCache) {
+        if (maxPromptLengthCache == null) {
+            return promptBuilderService.maxPromptLengthFor(modelId);
+        }
+        return maxPromptLengthCache.computeIfAbsent(modelId, promptBuilderService::maxPromptLengthFor);
     }
 
     private ShotSignature deriveShotSignature(ShotContext shotContext) {
