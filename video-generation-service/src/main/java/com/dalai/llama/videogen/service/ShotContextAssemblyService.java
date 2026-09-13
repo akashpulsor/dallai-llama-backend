@@ -97,7 +97,7 @@ public class ShotContextAssemblyService {
         ShotContext shotContext = new ShotContext(
                 shot.shotRef(),
                 buildNarrative(shot, bundle.script()),
-                buildCharacters(castAssignments, profilesById, buildPerformanceDirection(shot)),
+                buildCharacters(scopeToShot(shot, castAssignments), profilesById, buildPerformanceDirection(shot)),
                 buildEnvironment(shot),
                 buildLighting(shot, shotBundle.lightingPlan(), lightingImage),
                 buildCamera(shot, shotBundle.cameraPlan(), cameraPlanImage),
@@ -154,6 +154,34 @@ public class ShotContextAssemblyService {
                 labelled("Pacing", script.pacingStyle()),
                 labelled("Storytelling type", script.storytellingType()),
                 labelled("Setting", script.setting()));
+    }
+
+    /** Narrows the project's cast to the people actually in THIS shot.
+     *
+     * <p>castAssignments is project-scope -- every character in the project -- so using it whole
+     * put every character on every shot, and every one of their face crops became a reference
+     * image on every shot. A two-hander in a five-character project was conditioned on five
+     * faces, and a B-roll shot of a product on all five as well.
+     *
+     * <p>pre-production already resolves who is in a shot (shot.cast, from primaryCharacterKey
+     * through ScriptCharacter to the cast assignment), so this matches on that. A shot with no
+     * resolved cast -- no primary character, or a NARRATOR, who is never in frame -- gets no
+     * characters, which is the correct answer for B-roll, product and motion-graphic shots.
+     * Falls back to the full list only when the bundle carries no cast at all, so a shot planned
+     * before pre-production populated it behaves as it did before rather than losing its cast. */
+    private List<PreProductionViews.CastAssignmentView> scopeToShot(
+            PreProductionViews.ShotView shot,
+            List<PreProductionViews.CastAssignmentView> castAssignments) {
+        if (shot.cast() == null) {
+            return hasText(shot.primaryCharacterKey()) ? List.of() : castAssignments;
+        }
+        UUID castProfileId = shot.cast().castProfileId();
+        if (castProfileId == null) {
+            return List.of();
+        }
+        return castAssignments.stream()
+                .filter(assignment -> castProfileId.equals(assignment.castProfileId()))
+                .toList();
     }
 
     /** {@code performance} is this shot's own expression/body-language/emotion direction, folded

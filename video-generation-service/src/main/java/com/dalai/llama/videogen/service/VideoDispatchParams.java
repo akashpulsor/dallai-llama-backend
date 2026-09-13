@@ -20,8 +20,26 @@ public record VideoDispatchParams(
         Long seed,
         /** Wire value of VideoResolution (see that enum's javadoc), or null to leave the
          * provider's own default untouched. */
-        String resolution
+        String resolution,
+        /** The same attachments as {@link #referenceImageUrls}, each still carrying what it IS --
+         * the shot's own frame, a character's face, the product, the lighting plan. The flat URL
+         * list above cannot say which is which, so a provider builder had no way to put the
+         * frame in the image-to-video slot and the faces in the identity slots; it could only
+         * take them in order and hope. Audio attachments (a character's voice sample, the music
+         * bed) are carried here too and are exactly why the tagging matters: untagged, they are
+         * one more URL in a list of images. */
+        List<TaggedReference> references
 ) {
+
+    /** One attachment and its kind. {@code kind} is a
+     * {@link com.dalai.llama.videogen.domain.ReferenceKind} name; {@code audio} says which medium
+     * the URL is, so a builder never has to infer it from the kind. */
+    public record TaggedReference(String kind, String url, int slotIndex, boolean audio) {}
+
+    public VideoDispatchParams(Integer durationSeconds, String aspectRatio, Boolean generateAudio,
+                               List<String> referenceImageUrls, Long seed, String resolution) {
+        this(durationSeconds, aspectRatio, generateAudio, referenceImageUrls, seed, resolution, List.of());
+    }
     public VideoDispatchParams(Integer durationSeconds, String aspectRatio) {
         this(durationSeconds, aspectRatio, null, null, null, null);
     }

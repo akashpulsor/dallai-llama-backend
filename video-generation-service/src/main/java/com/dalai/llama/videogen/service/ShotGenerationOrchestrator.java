@@ -344,8 +344,16 @@ public class ShotGenerationOrchestrator {
             long seed = deriveSeed(job.getProjectId());
             job.setSeedUsed(seed);
             videoGenJobRepository.save(job);
+            // Tagged alongside the flat list: same attachments, but each still saying what it is,
+            // so a provider builder can route the shot frame, the face crops, the product still
+            // and the audio to the right slots instead of taking a bare array in order.
+            List<VideoDispatchParams.TaggedReference> taggedReferences = resolveReferences(prompt.getPromptId()).stream()
+                    .map(ref -> new VideoDispatchParams.TaggedReference(
+                            ref.kind(), ref.url(), ref.slotIndex(), ref.audio()))
+                    .toList();
             VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
-                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution());
+                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution(),
+                    taggedReferences);
             DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
 
             String outputUri = result.outputUri();
