@@ -85,7 +85,7 @@ public class ShotProductReferenceService {
 
     @Transactional
     public AnalyzeShotProductReferenceView analyze(UUID tenantId, UUID shotId, ProductReferenceClassification classification, MultipartFile file) {
-        requireShot(tenantId, shotId);
+        Shot shot = requireShot(tenantId, shotId);
         if (file == null || file.isEmpty()) {
             throw PreProductionException.badRequest("No file was uploaded");
         }
@@ -96,8 +96,8 @@ public class ShotProductReferenceService {
         upload(objectKey, file, contentType);
 
         ShotProductReferenceAnalysisResult parsed = classification == ProductReferenceClassification.CAST
-                ? analyzeCast(tenantId, shotId, dataUri)
-                : analyzeInspiration(tenantId, shotId, dataUri);
+                ? analyzeCast(tenantId, shot.getProjectId(), shotId, dataUri)
+                : analyzeInspiration(tenantId, shot.getProjectId(), shotId, dataUri);
 
         return new AnalyzeShotProductReferenceView(bucket, objectKey, classification,
                 parsed.personDescription(), parsed.detectedSubject(), parsed.dominantMood(),
@@ -150,23 +150,23 @@ public class ShotProductReferenceService {
                         this::toView
                 ));
     }
-    private ShotProductReferenceAnalysisResult analyzeCast(UUID tenantId, UUID shotId, String dataUri) {
+    private ShotProductReferenceAnalysisResult analyzeCast(UUID tenantId, UUID projectId, UUID shotId, String dataUri) {
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "shot-product-reference-cast-" + shotId,
                 new LlmGatewayChatRequest(defaultModel,
                         List.of(new LlmGatewayMessage("user", "Describe the person or product in this reference photo.", List.of(dataUri))),
-                        JsonExtraction.JSON_MODE_PARAMS, TASK_KEY_CAST, Map.of()));
+                        JsonExtraction.JSON_MODE_PARAMS, TASK_KEY_CAST, Map.of()).withProjectId(projectId));
         return parse(response, TASK_KEY_CAST);
     }
 
-    private ShotProductReferenceAnalysisResult analyzeInspiration(UUID tenantId, UUID shotId, String dataUri) {
+    private ShotProductReferenceAnalysisResult analyzeInspiration(UUID tenantId, UUID projectId, UUID shotId, String dataUri) {
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "shot-product-reference-inspiration-" + shotId,
                 new LlmGatewayChatRequest(defaultModel,
                         List.of(new LlmGatewayMessage("user", "Analyze this style/mood reference photo.", List.of(dataUri))),
-                        JsonExtraction.JSON_MODE_PARAMS, TASK_KEY_INSPIRATION, Map.of()));
+                        JsonExtraction.JSON_MODE_PARAMS, TASK_KEY_INSPIRATION, Map.of()).withProjectId(projectId));
         return parse(response, TASK_KEY_INSPIRATION);
     }
 
@@ -181,8 +181,8 @@ public class ShotProductReferenceService {
         }
     }
 
-    private void requireShot(UUID tenantId, UUID shotId) {
-        shotRepository.findByIdAndTenantId(shotId, tenantId).orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+    private Shot requireShot(UUID tenantId, UUID shotId) {
+        return shotRepository.findByIdAndTenantId(shotId, tenantId).orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
     }
 
     private String toDataUri(MultipartFile file, String contentType) {

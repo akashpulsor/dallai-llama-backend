@@ -15,5 +15,5 @@ public interface ShotCritic {
 
     CriticRole role();
 
-    List<CriticFindingItem> critique(UUID tenantId, ShotContext plan);
+    List<CriticFindingItem> critique(UUID tenantId, UUID projectId, ShotContext plan);
 }

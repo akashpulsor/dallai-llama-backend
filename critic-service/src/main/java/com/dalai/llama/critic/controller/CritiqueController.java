@@ -62,7 +62,8 @@ public class CritiqueController extends BaseController {
      * index (see {@code SimilarFeedbackService}'s architecture note). */
     @GetMapping("/v1/critiques/similar-feedback")
     public ResponseEntity<List<SimilarFeedbackView>> similarFeedback(
-            @RequestParam String query, @RequestParam(defaultValue = "5") int limit) {
-        return ResponseEntity.ok(similarFeedbackService.findSimilarViews(tenant().tenantId(), query, limit));
+            @RequestParam String query, @RequestParam(defaultValue = "5") int limit,
+            @RequestParam(required = false) UUID projectId) {
+        return ResponseEntity.ok(similarFeedbackService.findSimilarViews(tenant().tenantId(), projectId, query, limit));
     }
 }

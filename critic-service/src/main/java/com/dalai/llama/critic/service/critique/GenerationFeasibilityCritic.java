@@ -39,7 +39,7 @@ class GenerationFeasibilityCritic implements ShotCritic {
     }
 
     @Override
-    public List<CriticFindingItem> critique(UUID tenantId, ShotContext plan) {
+    public List<CriticFindingItem> critique(UUID tenantId, UUID projectId, ShotContext plan) {
         Technical technical = plan.technical();
         String targetModel = technical == null ? null : technical.targetModel();
         if (targetModel == null || targetModel.isBlank()) {

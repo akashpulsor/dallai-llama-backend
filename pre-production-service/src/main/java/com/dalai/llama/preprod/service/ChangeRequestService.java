@@ -115,7 +115,7 @@ public class ChangeRequestService {
                 .flatMap(s -> shotImageRepository.findByShotIdAndKind(s.getId(), kind))
                 .map(image -> image.getOnScreenText())
                 .orElse(null);
-        return shotImageEditPromptComposer.compose(tenantId, rawNote, currentOnScreenText);
+        return shotImageEditPromptComposer.compose(tenantId, projectId, rawNote, currentOnScreenText);
     }
 
     @Transactional(readOnly = true)

@@ -274,7 +274,7 @@ public class ShotImageService {
         mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.STORYBOARD_IMAGE);
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_GENERATED", kind + " image stored at " + objectKey);
 
-        annotateFromVisionAnalysis(tenantId, image);
+        annotateFromVisionAnalysis(tenantId, shot.getProjectId(), image);
         return toView(image);
     }
 
@@ -286,8 +286,8 @@ public class ShotImageService {
      * same call the lock path was already paying for, just moved earlier and per-image. Never
      * fails the caller -- the description helper degrades to {@code Description.EMPTY} on any
      * error, matching its own class-level "never breaks the shot pipeline" contract. */
-    private void annotateFromVisionAnalysis(UUID tenantId, ShotImage image) {
-        ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, image);
+    private void annotateFromVisionAnalysis(UUID tenantId, UUID projectId, ShotImage image) {
+        ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, projectId, image);
         // Anything other than a full success (the describe helper degrades to null-fields
         // Description.EMPTY on any failure) is a "haven't successfully analyzed yet" state --
         // leave the row alone so the frontend keeps auto-firing reanalyze until it succeeds.
@@ -314,12 +314,14 @@ public class ShotImageService {
      * alongside the raw photo itself as a second visual signal. */
     @Transactional
     public ShotImageView generateWithInspiration(UUID tenantId, UUID shotId, ShotImageKind kind, String note, List<MultipartFile> inspirationImages) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         List<String> dataUris = inspirationImages.stream()
                 .map(this::toDataUri)
                 .filter(java.util.Objects::nonNull)
                 .toList();
         String styleDirection = dataUris.stream()
-                .map(uri -> shotImageDescriptionService.analyzeInspiration(tenantId, uri))
+                .map(uri -> shotImageDescriptionService.analyzeInspiration(tenantId, shot.getProjectId(), uri))
                 .filter(java.util.Objects::nonNull)
                 .collect(Collectors.joining("\n"));
         String combinedNote = styleDirection.isBlank()
@@ -390,7 +392,7 @@ public class ShotImageService {
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_UPLOADED",
                 kind + " image replaced by manual upload, stored at " + objectKey);
 
-        annotateFromVisionAnalysis(tenantId, image);
+        annotateFromVisionAnalysis(tenantId, shot.getProjectId(), image);
         return toView(image);
     }
 
@@ -419,11 +421,11 @@ public class ShotImageService {
      * it just refreshes the cached fields, never touches the image bytes. */
     @Transactional
     public ShotImageView reanalyzeVisualDescription(UUID tenantId, UUID shotId, ShotImageKind kind) {
-        shotRepository.findByIdAndTenantId(shotId, tenantId)
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         ShotImage image = shotImageRepository.findByShotIdAndKind(shotId, kind)
                 .orElseThrow(() -> PreProductionException.notFound("Shot " + shotId + " has no " + kind + " image yet"));
-        annotateFromVisionAnalysis(tenantId, image);
+        annotateFromVisionAnalysis(tenantId, shot.getProjectId(), image);
         return toView(image);
     }
 
@@ -448,7 +450,7 @@ public class ShotImageService {
                 .toList();
         int fired = 0;
         for (ShotImage image : images) {
-            annotateFromVisionAnalysis(tenantId, image);
+            annotateFromVisionAnalysis(tenantId, projectId, image);
             fired++;
         }
         return fired;

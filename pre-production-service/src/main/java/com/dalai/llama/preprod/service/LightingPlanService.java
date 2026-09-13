@@ -84,13 +84,13 @@ public class LightingPlanService {
                                     "timeOfDay", shot.getTimeOfDay() == null ? "not specified" : shot.getTimeOfDay().toString(),
                                     "action", nullSafe(shot.getAction()) + critiqueFeedback,
                                     "referenceAnalysis", referenceAnalysis
-                            )));
+                            )).withProjectId(shot.getProjectId()));
 
             parsed = parse(response);
             if (attempt == MAX_GENERATION_ATTEMPTS) {
                 break;
             }
-            PlanCritiqueResult critique = critique(tenantId, shotId, parsed);
+            PlanCritiqueResult critique = critique(tenantId, shot.getProjectId(), shotId, parsed);
             if (!critique.isFail()) {
                 break;
             }
@@ -191,7 +191,7 @@ public class LightingPlanService {
 
     /** One critique call per attempt. Never blocks generation on a parse failure: an unparseable
      * critique is treated as a pass (no feedback to act on), not a hard failure. */
-    private PlanCritiqueResult critique(UUID tenantId, UUID shotId, LightingPlanGenerationResult parsed) {
+    private PlanCritiqueResult critique(UUID tenantId, UUID projectId, UUID shotId, LightingPlanGenerationResult parsed) {
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -203,7 +203,7 @@ public class LightingPlanService {
                                     "keyLightGear", nullSafe(parsed.keyLightGear()),
                                     "fillLightGear", nullSafe(parsed.fillLightGear()),
                                     "buildSteps", nullSafe(parsed.buildSteps())
-                            )));
+                            )).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return new PlanCritiqueResult("PASS", List.of());
             }

@@ -29,13 +29,13 @@ abstract class AbstractLlmShotCritic implements ShotCritic {
     protected abstract String taskKey();
 
     @Override
-    public List<CriticFindingItem> critique(UUID tenantId, ShotContext plan) {
+    public List<CriticFindingItem> critique(UUID tenantId, UUID projectId, ShotContext plan) {
         String planJson = writePlanJson(plan);
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 taskKey() + "-" + UUID.randomUUID(),
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                        JsonExtraction.JSON_MODE_PARAMS, taskKey(), Map.of("shotPlanJson", planJson)));
+                        JsonExtraction.JSON_MODE_PARAMS, taskKey(), Map.of("shotPlanJson", planJson), projectId));
         CriticResponse parsed = parseResponse(response);
         return parsed.findings() == null ? List.of() : parsed.findings();
     }

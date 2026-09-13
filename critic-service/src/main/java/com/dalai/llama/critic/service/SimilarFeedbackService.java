@@ -53,19 +53,19 @@ public class SimilarFeedbackService {
     }
 
     @Transactional(readOnly = true)
-    public List<SimilarFeedbackView> findSimilarViews(UUID tenantId, String queryText, int limit) {
-        return findSimilar(tenantId, queryText, limit).stream()
+    public List<SimilarFeedbackView> findSimilarViews(UUID tenantId, UUID projectId, String queryText, int limit) {
+        return findSimilar(tenantId, projectId, queryText, limit).stream()
                 .map(f -> new SimilarFeedbackView(f.getSessionId(), f.isApproved(), f.getEditLocations(), f.getReason(), f.getCreatedAt()))
                 .toList();
     }
 
     @Transactional(readOnly = true)
-    public List<CritiqueFeedback> findSimilar(UUID tenantId, String queryText, int limit) {
+    public List<CritiqueFeedback> findSimilar(UUID tenantId, UUID projectId, String queryText, int limit) {
         List<CritiqueFeedback> candidates = critiqueFeedbackRepository.findByTenantIdAndEmbeddingIsNotNull(tenantId);
         if (candidates.isEmpty() || queryText == null || queryText.isBlank()) {
             return List.of();
         }
-        String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, queryText);
+        String raw = llmGatewayClient.embed(tenantId.toString(), projectId, embeddingModel, queryText);
         double[] query = EmbeddingParser.parse(objectMapper, raw);
 
         return candidates.stream()

@@ -75,7 +75,7 @@ public class MotionGraphicPlanService {
                                 "scriptLine", nullSafe(shot.getScriptLine()),
                                 "textOverlay", nullSafe(shot.getTextOverlay()),
                                 "durationSeconds", String.valueOf(shot.getDurationSeconds() == null ? 4 : shot.getDurationSeconds())
-                        )));
+                        )).withProjectId(shot.getProjectId()));
 
         MotionGraphicPlanGenerationResult parsed = parse(response);
 

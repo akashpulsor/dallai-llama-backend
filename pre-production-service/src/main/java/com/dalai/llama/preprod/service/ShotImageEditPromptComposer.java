@@ -41,7 +41,7 @@ public class ShotImageEditPromptComposer {
         this.defaultModel = defaultModel;
     }
 
-    public String compose(UUID tenantId, String creatorNote, String currentOnScreenText) {
+    public String compose(UUID tenantId, UUID projectId, String creatorNote, String currentOnScreenText) {
         if (creatorNote == null || creatorNote.isBlank()) {
             return creatorNote;
         }
@@ -53,7 +53,7 @@ public class ShotImageEditPromptComposer {
                     "shot-image-edit-compose-" + UUID.randomUUID(),
                     new LlmGatewayChatRequest(defaultModel,
                             List.of(new LlmGatewayMessage("user", userMessage)),
-                            JsonExtraction.JSON_MODE_PARAMS, TASK_KEY, Map.of()));
+                            JsonExtraction.JSON_MODE_PARAMS, TASK_KEY, Map.of()).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return creatorNote;
             }

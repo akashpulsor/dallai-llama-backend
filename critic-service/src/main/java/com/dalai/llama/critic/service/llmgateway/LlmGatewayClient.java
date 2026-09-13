@@ -45,10 +45,10 @@ public class LlmGatewayClient {
     /** Embedding models route through the same {@code /v1/chat} call as everything else -- see
      * llm-gateway's GoogleGeminiProvider, which branches on model type internally. Returns the
      * raw response string (a JSON array of doubles); parse with {@link EmbeddingParser}. */
-    public String embed(String tenantId, String embeddingModelId, String text) {
+    public String embed(String tenantId, java.util.UUID projectId, String embeddingModelId, String text) {
         LlmGatewayChatResponse response = chat(tenantId, "embed-" + java.util.UUID.randomUUID(),
                 new LlmGatewayChatRequest(embeddingModelId, java.util.List.of(new LlmGatewayChatRequest.LlmGatewayMessage("user", text)),
-                        null, null, null));
+                        null, null, null, projectId));
         return response == null ? null : response.response();
     }
 

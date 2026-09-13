@@ -50,7 +50,7 @@ public class CritiqueFeedbackService {
         String feedbackText = feedbackText(request);
         double[] embedding = null;
         if (!feedbackText.isBlank()) {
-            String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, feedbackText);
+            String raw = llmGatewayClient.embed(tenantId.toString(), session.getProjectId(), embeddingModel, feedbackText);
             embedding = EmbeddingParser.parse(objectMapper, raw);
         }
 

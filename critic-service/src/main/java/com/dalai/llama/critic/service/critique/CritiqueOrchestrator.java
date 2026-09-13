@@ -71,7 +71,7 @@ public class CritiqueOrchestrator {
                 "Running pre-flight review for shot " + plan.shotRef());
 
         String querySummary = plan.narrative() == null ? plan.shotRef() : String.valueOf(plan.narrative().scriptLine());
-        List<CritiqueFeedback> similarFeedback = similarFeedbackService.findSimilar(tenantId, querySummary, 3);
+        List<CritiqueFeedback> similarFeedback = similarFeedbackService.findSimilar(tenantId, request.projectId(), querySummary, 3);
         if (!similarFeedback.isEmpty()) {
             critiqueThoughtService.log(tenantId, sessionId, "SIMILAR_FEEDBACK_FOUND",
                     "Found " + similarFeedback.size() + " similar past human feedback item(s) for this tenant"
@@ -85,7 +85,7 @@ public class CritiqueOrchestrator {
         hardConstraintFindings.forEach(item -> allFindings.add(new RoledFinding(CriticRole.HARD_CONSTRAINTS, item)));
 
         for (ShotCritic critic : critics) {
-            List<CriticFindingItem> items = critic.critique(tenantId, plan);
+            List<CriticFindingItem> items = critic.critique(tenantId, request.projectId(), plan);
             long blocking = items.stream().filter(i -> SeverityParser.parse(i.severity()) == CritiqueSeverity.P1).count();
             critiqueThoughtService.log(tenantId, sessionId, critic.role() + "_CRITIQUED",
                     critic.role() + " raised " + items.size() + " finding(s), " + blocking + " blocking");
@@ -105,7 +105,7 @@ public class CritiqueOrchestrator {
             critiqueThoughtService.log(tenantId, sessionId, "REVISION_STARTED",
                     "Blocking finding(s) present -- invoking revision planner");
             try {
-                revision = revisionPlannerService.revise(tenantId, plan, toRevisionInput(allFindings));
+                revision = revisionPlannerService.revise(tenantId, request.projectId(), plan, toRevisionInput(allFindings));
                 revisedPlan = revision.revisedPlan();
                 verdict = CritiqueVerdict.PASS;
                 critiqueThoughtService.log(tenantId, sessionId, "REVISION_COMPLETED",

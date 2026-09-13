@@ -442,7 +442,7 @@ public class ScriptGenerationService {
                     "hook-beat-plan-" + projectId,
                     new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                             JsonExtraction.JSON_MODE_PARAMS, HOOK_BEAT_PLAN_TASK_KEY,
-                            Map.of("brief", briefText, "durationSeconds", String.valueOf(durationSeconds))));
+                            Map.of("brief", briefText, "durationSeconds", String.valueOf(durationSeconds))).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return "";
             }
@@ -487,7 +487,7 @@ public class ScriptGenerationService {
                                     "logline", parsed.logline() == null ? "" : parsed.logline(),
                                     "centralConflict", parsed.centralConflict() == null ? "" : parsed.centralConflict(),
                                     "hook", parsed.hook() == null ? "" : parsed.hook()
-                            )));
+                            )).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return new ScriptCritiqueResult("PASS", null, null, null, null, List.of());
             }

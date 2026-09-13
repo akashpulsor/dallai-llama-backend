@@ -39,7 +39,7 @@ public class RevisionPlannerService {
         this.defaultModel = defaultModel;
     }
 
-    public RevisionPlanResponse revise(UUID tenantId, ShotContext originalPlan, List<FindingForRevision> findings) {
+    public RevisionPlanResponse revise(UUID tenantId, UUID projectId, ShotContext originalPlan, List<FindingForRevision> findings) {
         String planJson = writeJson(originalPlan, "shot plan");
         String findingsJson = writeJson(findings, "findings");
 
@@ -48,7 +48,7 @@ public class RevisionPlannerService {
                 TASK_KEY + "-" + UUID.randomUUID(),
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("shotPlanJson", planJson, "findingsJson", findingsJson)));
+                        Map.of("shotPlanJson", planJson, "findingsJson", findingsJson), projectId));
 
         if (response == null || response.response() == null || response.response().isBlank()) {
             throw CriticException.upstream("llm-gateway returned no content for " + TASK_KEY);

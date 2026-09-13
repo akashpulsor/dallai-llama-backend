@@ -54,12 +54,12 @@ public class ShotImageDescriptionService {
 
     /** Every field on {@link Description} is nullable and any parse/network error degrades to
      * {@link Description#EMPTY} rather than throwing -- an unreadable image never fails the caller. */
-    public Description describe(UUID tenantId, ShotImage image) {
+    public Description describe(UUID tenantId, UUID projectId, ShotImage image) {
         try {
             byte[] bytes = downloadBytes(image.getBucket(), image.getObjectKey());
             String mimeType = mimeTypeFor(image.getObjectKey());
             String dataUri = "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(bytes);
-            String response = call(tenantId, "shot-image-describe-" + image.getId(), dataUri, DESCRIBE_TASK_KEY);
+            String response = call(tenantId, projectId, "shot-image-describe-" + image.getId(), dataUri, DESCRIBE_TASK_KEY);
             if (response == null) {
                 return Description.EMPTY;
             }
@@ -84,9 +84,9 @@ public class ShotImageDescriptionService {
      * plain-text style-direction block to append to the next generation prompt; never fails the
      * caller -- an unreadable reference photo just means no extra style direction, the raw image
      * (still passed separately as inlineData) is the fallback signal. */
-    public String analyzeInspiration(UUID tenantId, String dataUri) {
+    public String analyzeInspiration(UUID tenantId, UUID projectId, String dataUri) {
         try {
-            String response = call(tenantId, "inspiration-analyze-" + UUID.randomUUID(), dataUri, INSPIRATION_TASK_KEY);
+            String response = call(tenantId, projectId, "inspiration-analyze-" + UUID.randomUUID(), dataUri, INSPIRATION_TASK_KEY);
             if (response == null) {
                 return null;
             }
@@ -99,12 +99,12 @@ public class ShotImageDescriptionService {
         }
     }
 
-    private String call(UUID tenantId, String idempotencyKey, String dataUri, String taskKey) {
+    private String call(UUID tenantId, UUID projectId, String idempotencyKey, String dataUri, String taskKey) {
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 idempotencyKey,
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "", List.of(dataUri))),
-                        JsonExtraction.JSON_MODE_PARAMS, taskKey, Map.of()));
+                        JsonExtraction.JSON_MODE_PARAMS, taskKey, Map.of()).withProjectId(projectId));
         if (response == null || response.response() == null || response.response().isBlank()) {
             return null;
         }

@@ -84,13 +84,13 @@ public class CameraPlanService {
                                     "cameraShotSize", shot.getCameraShotSize() == null ? "not specified" : shot.getCameraShotSize().toString(),
                                     "action", nullSafe(shot.getAction()) + critiqueFeedback,
                                     "referenceAnalysis", referenceAnalysis
-                            )));
+                            )).withProjectId(shot.getProjectId()));
 
             parsed = parse(response);
             if (attempt == MAX_GENERATION_ATTEMPTS) {
                 break;
             }
-            PlanCritiqueResult critique = critique(tenantId, shotId, parsed);
+            PlanCritiqueResult critique = critique(tenantId, shot.getProjectId(), shotId, parsed);
             if (!critique.isFail()) {
                 break;
             }
@@ -193,7 +193,7 @@ public class CameraPlanService {
     }
     /** One critique call per attempt. Never blocks generation on a parse failure: an unparseable
      * critique is treated as a pass (no feedback to act on), not a hard failure. */
-    private PlanCritiqueResult critique(UUID tenantId, UUID shotId, CameraPlanGenerationResult parsed) {
+    private PlanCritiqueResult critique(UUID tenantId, UUID projectId, UUID shotId, CameraPlanGenerationResult parsed) {
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -205,7 +205,7 @@ public class CameraPlanService {
                                     "executionSteps", nullSafe(parsed.executionSteps()),
                                     "gimbalEnabled", String.valueOf(Boolean.TRUE.equals(parsed.gimbalEnabled())),
                                     "safetyFlags", nullSafe(parsed.safetyFlags())
-                            )));
+                            )).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return new PlanCritiqueResult("PASS", List.of());
             }
