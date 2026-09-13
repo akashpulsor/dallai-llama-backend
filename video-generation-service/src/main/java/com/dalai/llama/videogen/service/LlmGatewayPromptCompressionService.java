@@ -33,7 +33,7 @@ public class LlmGatewayPromptCompressionService implements PromptCompressionServ
     }
 
     @Override
-    public CompressionResult compressIfNeeded(String prompt, int maxLength) {
+    public CompressionResult compressIfNeeded(UUID projectId, String prompt, int maxLength) {
         if (prompt == null || prompt.length() <= maxLength) {
             return new CompressionResult(prompt, false, prompt == null ? 0 : prompt.length(), prompt == null ? 0 : prompt.length(), true);
         }
@@ -46,7 +46,8 @@ public class LlmGatewayPromptCompressionService implements PromptCompressionServ
                         List.of(new LlmGatewayMessage("user", prompt)),
                         Map.of(),
                         "PROMPT_COMPRESSION",
-                        Map.of("maxLength", String.valueOf(maxLength))
+                        Map.of("maxLength", String.valueOf(maxLength)),
+                        projectId
                 )
         );
         String compressed = response == null || response.response() == null ? prompt : response.response();

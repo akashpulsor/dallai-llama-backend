@@ -35,7 +35,7 @@ public class LlmGatewayFoleyCueService implements FoleyCueService {
     }
 
     @Override
-    public List<DerivedFoleyCue> deriveCues(ShotContext shotContext) {
+    public List<DerivedFoleyCue> deriveCues(UUID projectId, ShotContext shotContext) {
         int durationMs = shotContext.technical() != null && shotContext.technical().durationSeconds() != null
                 ? shotContext.technical().durationSeconds() * 1000
                 : 5000;
@@ -52,7 +52,8 @@ public class LlmGatewayFoleyCueService implements FoleyCueService {
                             List.of(new LlmGatewayMessage("user", shotDescription)),
                             Map.of(),
                             "FOLEY_CUE_DERIVATION",
-                            Map.of()
+                            Map.of(),
+                            projectId
                     )
             );
         } catch (RuntimeException ex) {

@@ -40,7 +40,7 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
     }
 
     @Override
-    public ModelRecommendation recommend(ShotSignature shotSignature) {
+    public ModelRecommendation recommend(UUID projectId, ShotSignature shotSignature) {
         UUID tenantId = TenantContextHolder.get().tenantId();
         List<LlmGatewayModelSummary> videoModels;
         try {
@@ -68,7 +68,8 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
                             List.of(new LlmGatewayMessage("user", userMessage)),
                             Map.of(),
                             "MODEL_RECOMMENDATION",
-                            Map.of()
+                            Map.of(),
+                            projectId
                     )
             );
         } catch (RuntimeException ex) {

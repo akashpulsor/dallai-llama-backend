@@ -138,7 +138,7 @@ public class ShotGenerationOrchestrator {
         ModelRecommendation recommendation = null;
         String modelId = pinnedModel;
         if (modelId == null || modelId.isBlank()) {
-            recommendation = modelRecommendationService.recommend(deriveShotSignature(shotContext));
+            recommendation = modelRecommendationService.recommend(projectId, deriveShotSignature(shotContext));
             modelId = recommendation != null && recommendation.recommendedModel() != null
                     ? recommendation.recommendedModel()
                     : defaultModel;
@@ -148,9 +148,9 @@ public class ShotGenerationOrchestrator {
         // per-model composition shape and prompt-length limit, instead of the pre-refactor single
         // global default.
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
-        List<DerivedFoleyCue> cues = foleyCueService.deriveCues(shotContext);
+        List<DerivedFoleyCue> cues = foleyCueService.deriveCues(projectId, shotContext);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
-                builtPrompt.positive(), promptBuilderService.maxPromptLengthFor(modelId));
+                projectId, builtPrompt.positive(), promptBuilderService.maxPromptLengthFor(modelId));
         CostEstimate estimate = costEstimationService.estimate(
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId);
 
