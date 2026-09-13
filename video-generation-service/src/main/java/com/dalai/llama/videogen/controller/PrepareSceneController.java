@@ -4,6 +4,7 @@ import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
+import com.dalai.llama.videogen.service.PrepareBatchRunner;
 import com.dalai.llama.videogen.service.PrepareOrchestrationService;
 import com.dalai.llama.videogen.service.ScenePreparationService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
@@ -45,6 +46,7 @@ public class PrepareSceneController {
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final ShotGenerationOrchestrator shotGenerationOrchestrator;
     private final PrepareOrchestrationService prepareOrchestrationService;
+    private final PrepareBatchRunner prepareBatchRunner;
 
     @PostMapping("/projects/{projectId}/prepare")
     public ResponseEntity<ProjectScenePreparationView> prepareProject(@PathVariable UUID projectId) {
@@ -83,7 +85,7 @@ public class PrepareSceneController {
     }
 
     @PostMapping("/projects/{projectId}/shots/prepare-batch")
-    public ResponseEntity<PrepareShotsBatchResponse> prepareShotsBatch(
+    public ResponseEntity<PrepareShotsBatchAcceptedResponse> prepareShotsBatch(
             @PathVariable UUID projectId,
             @Valid @RequestBody(required = false) PrepareShotsBatchRequest request
     ) {
@@ -93,11 +95,17 @@ public class PrepareSceneController {
                 : new ShotContextAssemblyService.PrepareShotOverrides(
                         request.featureFlagOverrides(), request.modelPin(), null, null,
                         request.resolutionOverride());
-        PrepareOrchestrationService.BatchResult result = prepareOrchestrationService.prepareShotsBatch(
+        boolean started = prepareBatchRunner.submit(
                 ctx, projectId, request == null ? null : request.shotIds(), overrides);
-        return ResponseEntity.ok(new PrepareShotsBatchResponse(
-                result.prepared(),
-                result.failed().stream().map(f -> new FailedShot(f.shotId(), f.reason())).toList()));
+        // 202, not 200: the batch runs off the request thread and the prompts are not ready yet.
+        // The caller watches GET /projects/{id}/preparation for the status and reads prompts from
+        // GET /projects/{id}/shot-prompts as they land -- both endpoints it already calls on page
+        // load, so progress is just the page refreshing itself.
+        return ResponseEntity.accepted().body(new PrepareShotsBatchAcceptedResponse(
+                started ? "PREPARING" : "ALREADY_RUNNING",
+                started
+                        ? "Preparing shots. Poll the project's preparation status for progress."
+                        : "A prepare is already running for this project."));
     }
 
 
@@ -159,7 +167,10 @@ public class PrepareSceneController {
             String resolutionOverride
     ) {}
 
-    public record PrepareShotsBatchResponse(List<ShotPromptView> prepared, List<FailedShot> failed) {}
+    /** What a 202 from prepare-batch carries. {@code status} is PREPARING when this request
+     * started a batch, or ALREADY_RUNNING when one was already going for the project -- in which
+     * case nothing new was queued and the caller should just watch the existing run. */
+    public record PrepareShotsBatchAcceptedResponse(String status, String message) {}
 
     public record FailedShot(UUID shotId, String reason) {}
 }
