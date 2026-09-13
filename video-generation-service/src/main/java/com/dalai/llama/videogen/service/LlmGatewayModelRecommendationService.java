@@ -42,13 +42,22 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
     @Override
     public ModelRecommendation recommend(UUID projectId, ShotSignature shotSignature) {
         UUID tenantId = TenantContextHolder.get().tenantId();
-        List<LlmGatewayModelSummary> videoModels;
+        return recommend(projectId, shotSignature, fetchVideoModelCatalog(tenantId));
+    }
+
+    @Override
+    public List<LlmGatewayModelSummary> fetchVideoModelCatalog(UUID tenantId) {
         try {
-            videoModels = llmGatewayClient.listModels(tenantId.toString(), "video");
+            return llmGatewayClient.listModels(tenantId.toString(), "video");
         } catch (RuntimeException ex) {
             log.warn("Could not fetch video model catalog for recommendation, skipping: {}", ex.getMessage());
-            return null;
+            return List.of();
         }
+    }
+
+    @Override
+    public ModelRecommendation recommend(UUID projectId, ShotSignature shotSignature, List<LlmGatewayModelSummary> videoModels) {
+        UUID tenantId = TenantContextHolder.get().tenantId();
         if (videoModels == null || videoModels.isEmpty()) {
             return null;
         }

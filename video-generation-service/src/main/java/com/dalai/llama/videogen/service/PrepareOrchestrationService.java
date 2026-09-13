@@ -36,6 +36,7 @@ public class PrepareOrchestrationService {
     private final ScenePreparationService scenePreparationService;
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final ShotGenerationOrchestrator shotGenerationOrchestrator;
+    private final ModelRecommendationService modelRecommendationService;
     private final ShotPromptRepository shotPromptRepository;
     private final PreProductionServiceClient preProductionClient;
 
@@ -43,6 +44,11 @@ public class PrepareOrchestrationService {
         if (shotIds == null || shotIds.isEmpty()) {
             throw VideoGenException.badRequest("prepare-batch requires at least one shotId");
         }
+        // Model catalog first, once for the whole batch -- every shot's recommendation reuses it
+        // instead of each shot re-fetching the same list from llm-gateway.
+        List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog =
+                modelRecommendationService.fetchVideoModelCatalog(ctx.tenantId());
+
         // Pull the fat bundle once and reuse across every shot in the loop -- the whole point of
         // this endpoint over per-shot fan-out. See PreProductionServiceClient.getPrepareBundle.
         PreProductionViews.PrepareBundleView bundle = preProductionClient.getPrepareBundle(ctx.tenantId(), projectId)
@@ -70,7 +76,7 @@ public class PrepareOrchestrationService {
                     GenerateShotRequest generateRequest = new GenerateShotRequest(
                             projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
                     ShotGenerationOrchestrator.PreparedShot preparedShot =
-                            shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources());
+                            shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources(), videoModelCatalog);
                     ShotPromptView view = shotGenerationOrchestrator.getPrompt(ctx.tenantId(), preparedShot.prompt().getPromptId());
                     prepared.add(view);
                     log.info("prepare-batch shot OK projectId={} shotId={} promptId={} elapsedMs={}",
