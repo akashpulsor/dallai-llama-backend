@@ -244,6 +244,9 @@ public final class PreProductionViews {
             OffsetDateTime createdAt
     ) {}
 
+    /** Mirrors pre-production-service's ShotFoleyCueView. */
+    public record ShotFoleyCueView(Integer timestampMs, String cueType, String description) {}
+
     public record ShotBackgroundMusicView(
             UUID id,
             String signedUrl,
@@ -316,6 +319,16 @@ public final class PreProductionViews {
             LightingPlanView lightingPlan,
             List<ShotImageView> shotImages,
             ShotBackgroundMusicView backgroundMusic,
-            ShotProductReferenceView productReference
-    ) {}
+            ShotProductReferenceView productReference,
+            /** Derived once by pre-production when the shot was planned. */
+            List<ShotFoleyCueView> foleyCues
+    ) {
+
+        /** Pre-foleyCues arity, for callers and tests that build a bundle by hand. */
+        public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
+                              LightingPlanView lightingPlan, List<ShotImageView> shotImages,
+                              ShotBackgroundMusicView backgroundMusic, ShotProductReferenceView productReference) {
+            this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference, List.of());
+        }
+    }
 }

@@ -87,6 +87,7 @@ public class ShotListGenerationService {
     private final MotionGraphicPlanService motionGraphicPlanService;
     private final LightingPlanService lightingPlanService;
     private final CameraPlanService cameraPlanService;
+    private final ShotFoleyCueService shotFoleyCueService;
     private final ShotImageService shotImageService;
     private final MinioClient publicMinioClient;
     private final String defaultModel;
@@ -109,6 +110,7 @@ public class ShotListGenerationService {
             MotionGraphicPlanService motionGraphicPlanService,
             LightingPlanService lightingPlanService,
             CameraPlanService cameraPlanService,
+            ShotFoleyCueService shotFoleyCueService,
             ShotImageService shotImageService,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
@@ -131,6 +133,7 @@ public class ShotListGenerationService {
         this.motionGraphicPlanService = motionGraphicPlanService;
         this.lightingPlanService = lightingPlanService;
         this.cameraPlanService = cameraPlanService;
+        this.shotFoleyCueService = shotFoleyCueService;
         this.shotImageService = shotImageService;
         this.publicMinioClient = publicMinioClient;
         this.defaultModel = defaultModel;
@@ -297,6 +300,14 @@ public class ShotListGenerationService {
                 cameraPlanService.generate(tenantId, shot.id());
             } catch (Exception ex) {
                 log.warn("Could not auto-plan camera for shot {}: {}", shot.id(), ex.getMessage());
+            }
+            // Derived here, once, rather than on every prepare in video-generation-service. Same
+            // best-effort contract as the other plans: no cue sheet is a shot that generates
+            // without one, not a failed shot list.
+            try {
+                shotFoleyCueService.generate(tenantId, shot.id());
+            } catch (Exception ex) {
+                log.warn("Could not auto-derive foley cues for shot {}: {}", shot.id(), ex.getMessage());
             }
         }
     }

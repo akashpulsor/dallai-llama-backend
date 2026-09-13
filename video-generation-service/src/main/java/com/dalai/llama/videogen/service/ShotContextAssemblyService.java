@@ -119,7 +119,8 @@ public class ShotContextAssemblyService {
                 shotBundle.lightingPlan() == null ? null : shotBundle.lightingPlan().id(),
                 shotBundle.productReference() == null ? null : shotBundle.productReference().id(),
                 shotBundle.backgroundMusic() == null ? null : shotBundle.backgroundMusic().id(),
-                OffsetDateTime.now()
+                OffsetDateTime.now(),
+                shotBundle.foleyCues() == null ? List.of() : shotBundle.foleyCues()
         );
         return new AssembledShot(shotContext, flagsOverride, overrides == null ? null : overrides.modelPin(), sources);
     }
@@ -556,8 +557,20 @@ public class ShotContextAssemblyService {
             UUID lightingPlanId,
             UUID productReferenceId,
             UUID backgroundMusicId,
-            OffsetDateTime bundleSnapshotAt
-    ) {}
+            OffsetDateTime bundleSnapshotAt,
+            /** The shot's foley cue sheet as pre-production derived it when the shot was planned.
+             * Carried here rather than on ShotContext because cues are not prompt content -- they
+             * are saved against the prompt row and read at dispatch; the prompt text itself never
+             * mentions them. Empty for a shot pre-production has not derived cues for yet. */
+            List<PreProductionViews.ShotFoleyCueView> foleyCues
+    ) {
+
+        /** Pre-foleyCues arity, for callers that have no bundle to read cues from. */
+        public ShotPromptSources(UUID shotId, UUID cameraPlanId, UUID lightingPlanId, UUID productReferenceId,
+                                 UUID backgroundMusicId, OffsetDateTime bundleSnapshotAt) {
+            this(shotId, cameraPlanId, lightingPlanId, productReferenceId, backgroundMusicId, bundleSnapshotAt, List.of());
+        }
+    }
 
     /** Optional per-call overrides the UI can pass through -- everything nullable, defaults apply
      * when a field is omitted. */

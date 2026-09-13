@@ -13,6 +13,9 @@ public record ShotBundleView(
         LightingPlanView lightingPlan,
         List<ShotImageView> shotImages,
         ShotBackgroundMusicView backgroundMusic,
-        ShotProductReferenceView productReference
+        ShotProductReferenceView productReference,
+        /** Derived once when the shot is planned, carried here so video-generation-service
+         * reads the cue sheet instead of paying to re-derive it on every prepare. */
+        List<ShotFoleyCueView> foleyCues
 ) {
 }

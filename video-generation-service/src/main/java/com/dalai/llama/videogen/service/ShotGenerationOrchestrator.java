@@ -604,16 +604,24 @@ public class ShotGenerationOrchestrator {
      * shot was prepared a second time -- so the cues are carried forward from the shot's most
      * recent prompt that has them, and only derived when the shot has none at all.
      *
-     * <p>This is a backfill, not the end state: deriving cues belongs in pre-production alongside
-     * the rest of the shot plan, where it happens once when the shot is planned. Doing it here
-     * means every prepare pays an LLM round-trip for a cue sheet the shot should already own.
-     * Once pre-production carries the cues in the prepare bundle, this method reads them from
-     * there and the derivation call goes away entirely.
-     *
-     * <p>A shot with no shotId (the legacy direct-generate path, which has no pre-production row
-     * to look back at) always derives, exactly as before. */
+     * <p>Three sources, in order. Pre-production's cues from the prepare bundle, which is where
+     * derivation now lives -- one cue sheet per shot, produced when the shot is planned. Failing
+     * that, the shot's own most recent prompt that has cues, which covers every shot planned
+     * before pre-production owned this. Only a shot with neither derives here, and that call is
+     * on its way out: it exists for the legacy direct-generate path, which has no pre-production
+     * row to read from. */
     private List<DerivedFoleyCue> resolveFoleyCues(UUID projectId, ShotContext shotContext,
                                                    ShotContextAssemblyService.ShotPromptSources sources) {
+        // Preferred source: pre-production derived these once when the shot was planned and the
+        // prepare bundle carries them, so prepare costs nothing for a cue sheet.
+        if (sources != null && sources.foleyCues() != null && !sources.foleyCues().isEmpty()) {
+            return sources.foleyCues().stream()
+                    .map(cue -> new DerivedFoleyCue(
+                            cue.timestampMs() == null ? 0 : cue.timestampMs(),
+                            cue.cueType(),
+                            cue.description()))
+                    .toList();
+        }
         UUID shotId = sources == null ? null : sources.shotId();
         if (shotId != null) {
             for (ShotPrompt previous : shotPromptRepository.findByShotIdOrderByCreatedAtDesc(shotId)) {

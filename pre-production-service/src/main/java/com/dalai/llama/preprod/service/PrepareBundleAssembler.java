@@ -1,6 +1,7 @@
 package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.dto.CameraPlanView;
+import com.dalai.llama.preprod.dto.ShotFoleyCueView;
 import com.dalai.llama.preprod.dto.CastAssignmentView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ContinuityBibleView;
@@ -57,6 +58,7 @@ public class PrepareBundleAssembler {
     private final ShotImageService shotImageService;
     private final ShotBackgroundMusicService shotBackgroundMusicService;
     private final ShotProductReferenceService shotProductReferenceService;
+    private final ShotFoleyCueService shotFoleyCueService;
 
 
     public PrepareBundleView assemble(UUID tenantId, UUID projectId) {
@@ -81,6 +83,7 @@ public class PrepareBundleAssembler {
         Map<UUID, List<ShotImageView>> imagesByShot = shotImageService.listByShotIds(tenantId, shotIds);
         Map<UUID, ShotBackgroundMusicView> musicByShot = shotBackgroundMusicService.listByShotIds(tenantId, shotIds);
         Map<UUID, ShotProductReferenceView> productRefsByShot = shotProductReferenceService.listByShotIds(tenantId, shotIds);
+        Map<UUID, List<ShotFoleyCueView>> foleyCuesByShot = shotFoleyCueService.listByShotIds(shotIds);
 
         List<ShotBundleView> shotBundles = new ArrayList<>(shots.size());
         for (ShotView shot : shots) {
@@ -93,7 +96,8 @@ public class PrepareBundleAssembler {
                     lightingPlansByShot.get(shotId),
                     imagesByShot.getOrDefault(shotId, List.of()),
                     musicByShot.get(shotId),
-                    productRefsByShot.get(shotId)
+                    productRefsByShot.get(shotId),
+                    foleyCuesByShot.getOrDefault(shotId, List.of())
             ));
         }
 
@@ -113,7 +117,8 @@ public class PrepareBundleAssembler {
         List<ShotImageView> shotImages = softList(() -> shotImageService.list(tenantId, shotId), "shot-images", shotId);
         ShotBackgroundMusicView backgroundMusic = softGet(() -> shotBackgroundMusicService.get(tenantId, shotId), "background-music", shotId);
         ShotProductReferenceView productReference = softGet(() -> shotProductReferenceService.get(tenantId, shotId), "product-reference", shotId);
-        return new ShotBundleView(shot, beats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference);
+        List<ShotFoleyCueView> foleyCues = softList(() -> shotFoleyCueService.get(shotId), "foley-cues", shotId);
+        return new ShotBundleView(shot, beats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference, foleyCues);
     }
 
 
