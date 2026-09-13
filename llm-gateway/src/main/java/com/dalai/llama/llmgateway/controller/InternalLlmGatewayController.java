@@ -146,9 +146,10 @@ public class InternalLlmGatewayController {
 
     @PostMapping("/prompt/format")
     public PromptDtos.PromptFormatResponse formatPrompt(
+            @RequestHeader("X-Tenant-ID") String tenantId,
             @Valid @RequestBody PromptDtos.PromptFormatRequest request) {
 
-        return promptFormatService.format(request);
+        return promptFormatService.format(tenantId, request);
     }
 
     @GetMapping("/prompt/max-length")

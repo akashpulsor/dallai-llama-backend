@@ -9,5 +9,8 @@ package com.dalai.llama.llmgateway.service.prompt;
  */
 public interface DialoguePhonemeService {
 
-    String respellDialogue(String dialogueLine, String languageCode);
+    /** {@code tenantId} is the real calling tenant, forwarded from the prompt-format request's
+     * X-Tenant-ID header -- this respelling is a billable LLM call, so it must be charged and
+     * wallet-checked against the tenant that asked for it, never a placeholder. */
+    String respellDialogue(String tenantId, String dialogueLine, String languageCode);
 }

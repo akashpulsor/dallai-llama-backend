@@ -24,6 +24,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class WalletServiceImpl implements WalletService {
 
+    private static final UUID ZERO_UUID = new UUID(0L, 0L);
+
     private final WalletRepository walletRepository;
     private final TransactionService transactionService;
     private final BillingEventProducer eventProducer;
@@ -39,9 +41,19 @@ public class WalletServiceImpl implements WalletService {
                 .orElseGet(() -> createMissingWallet(tenantId, false));
     }
 
+    /** The nil UUID is never a real tenant -- it only ever arrives from a caller that failed to
+     * propagate tenant identity. Auto-creating a zero-balance wallet for it turned that bug into
+     * a convincing "402 Insufficient wallet balance" (and left a junk wallet row behind), which
+     * is how a placeholder phoneme-tenant id in llm-gateway stayed hidden in production. Refuse
+     * loudly instead; every other unknown tenant keeps the existing recovery behaviour. */
     @Override
     @Transactional
     public Wallet getOrCreateWallet(UUID tenantId) {
+        if (tenantId == null || ZERO_UUID.equals(tenantId)) {
+            throw new IllegalArgumentException(
+                    "Refusing to resolve a wallet for placeholder tenantId=" + tenantId
+                            + " -- the caller did not propagate a real tenant id");
+        }
         return walletRepository.findByTenantId(tenantId)
                 .orElseGet(() -> {
                     log.warn("Wallet missing for tenantId={}, creating default wallet", tenantId);

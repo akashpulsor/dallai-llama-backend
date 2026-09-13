@@ -14,11 +14,11 @@ public class PromptFormatService {
 
     private final ProviderPromptStrategyResolver strategyResolver;
 
-    public PromptDtos.PromptFormatResponse format(PromptDtos.PromptFormatRequest request) {
+    public PromptDtos.PromptFormatResponse format(String tenantId, PromptDtos.PromptFormatRequest request) {
         long startMs = System.currentTimeMillis();
 
         ProviderPromptStrategy strategy = strategyResolver.resolve(request.modelId());
-        ProviderPromptStrategy.Built built = strategy.build(request.shotContext(), request.flags());
+        ProviderPromptStrategy.Built built = strategy.build(tenantId, request.shotContext(), request.flags());
 
         int positiveLen = built.positive() == null ? 0 : built.positive().length();
         int negativeLen = built.negative() == null ? 0 : built.negative().length();

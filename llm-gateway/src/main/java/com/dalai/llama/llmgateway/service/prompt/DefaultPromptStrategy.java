@@ -43,11 +43,11 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
     }
 
     @Override
-    public Built build(PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
-        return new Built(composePositive(shotContext, flags), negativePromptComposer.compose(shotContext, flags));
+    public Built build(String tenantId, PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
+        return new Built(composePositive(tenantId, shotContext, flags), negativePromptComposer.compose(shotContext, flags));
     }
 
-    private String composePositive(PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
+    private String composePositive(String tenantId, PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
         List<String> lines = new ArrayList<>();
         if (shotContext.narrative() != null && shotContext.narrative().scriptLine() != null) {
             lines.add("Action: " + shotContext.narrative().scriptLine());
@@ -87,7 +87,7 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
         }
         String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().scriptLine() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
-            String respelled = dialoguePhonemeService.respellDialogue(dialogueLine, "en");
+            String respelled = dialoguePhonemeService.respellDialogue(tenantId, dialogueLine, "en");
             lines.add("Dialogue/VO: " + respelled);
         }
         return String.join("\n", lines);

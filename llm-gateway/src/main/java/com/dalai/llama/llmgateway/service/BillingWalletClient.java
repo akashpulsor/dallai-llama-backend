@@ -56,13 +56,18 @@ public class BillingWalletClient {
                     .retrieve()
                     .bodyToMono(WalletBalanceResponse.class)
                     .block(Duration.ofMillis(timeoutMs));
-            if (response == null) {
-                return new WalletCheck(BigDecimal.ZERO, null, null);
+            // A missing/unreadable balance is a failed lookup, NOT a zero balance. Returning
+            // BigDecimal.ZERO here made every upstream failure look like "this tenant is broke",
+            // which the wallet guard then reported as a 402 the caller could do nothing about.
+            if (response == null || response.balance() == null) {
+                throw new WalletBalanceCheckException(
+                        "billing-service returned no wallet balance for tenantId=" + tenantId, null);
             }
-            BigDecimal balance = response.balance() == null ? BigDecimal.ZERO : response.balance();
-            return new WalletCheck(balance, response.projectSpendOk(), response.projectSpendTotal());
+            return new WalletCheck(response.balance(), response.projectSpendOk(), response.projectSpendTotal());
         } catch (WebClientResponseException.NotFound ex) {
-            return new WalletCheck(BigDecimal.ZERO, null, null);
+            throw new WalletBalanceCheckException("No wallet found for tenantId=" + tenantId, ex);
+        } catch (WalletBalanceCheckException ex) {
+            throw ex;
         } catch (RuntimeException ex) {
             throw new WalletBalanceCheckException("Unable to verify wallet balance for tenantId=" + tenantId, ex);
         }

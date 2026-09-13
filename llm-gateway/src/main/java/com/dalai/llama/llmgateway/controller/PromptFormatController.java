@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,9 +31,10 @@ public class PromptFormatController {
 
     @PostMapping("/v1/prompt/format")
     public ResponseEntity<PromptDtos.PromptFormatResponse> format(
+            @RequestHeader("X-Tenant-ID") String tenantId,
             @Valid @RequestBody PromptDtos.PromptFormatRequest request) {
 
-        return ResponseEntity.ok(promptFormatService.format(request));
+        return ResponseEntity.ok(promptFormatService.format(tenantId, request));
     }
 
     @GetMapping("/v1/prompt/max-length")

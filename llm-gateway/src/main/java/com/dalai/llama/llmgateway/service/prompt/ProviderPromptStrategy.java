@@ -21,7 +21,9 @@ public interface ProviderPromptStrategy {
 
     int maxPromptLength();
 
-    Built build(PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags effectiveFlags);
+    /** {@code tenantId} is threaded through purely so dialogue phoneme respelling -- a billable
+     * LLM call made during composition -- bills the real calling tenant. */
+    Built build(String tenantId, PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags effectiveFlags);
 
     /** Result of {@link #build} -- composed positive and negative prompt text. Internal shape;
      * the controller wraps this into a {@link PromptDtos.PromptFormatResponse} on the way out. */

@@ -24,30 +24,27 @@ public class LlmGatewayDialoguePhonemeService implements DialoguePhonemeService 
 
     private final LlmGatewayService llmGatewayService;
     private final String defaultModel;
-    private final String phonemeTenantId;
 
     public LlmGatewayDialoguePhonemeService(
             LlmGatewayService llmGatewayService,
-            @Value("${llm-gateway.prompt-format.phoneme-model:gemini-2.5-flash}") String defaultModel,
-            @Value("${llm-gateway.prompt-format.phoneme-tenant-id:00000000-0000-0000-0000-000000000000}") String phonemeTenantId
+            @Value("${llm-gateway.prompt-format.phoneme-model:gemini-2.5-flash}") String defaultModel
     ) {
         this.llmGatewayService = llmGatewayService;
         this.defaultModel = defaultModel;
-        this.phonemeTenantId = phonemeTenantId;
     }
 
     @Override
-    public String respellDialogue(String dialogueLine, String languageCode) {
+    public String respellDialogue(String tenantId, String dialogueLine, String languageCode) {
         if (dialogueLine == null || dialogueLine.isBlank()) {
             return dialogueLine;
         }
-        String guide = generatePhonemeGuide(dialogueLine, languageCode);
+        String guide = generatePhonemeGuide(tenantId, dialogueLine, languageCode);
         return applyRespelling(dialogueLine, guide);
     }
 
-    private String generatePhonemeGuide(String dialogueLine, String languageCode) {
+    private String generatePhonemeGuide(String tenantId, String dialogueLine, String languageCode) {
         ChatResponse response = llmGatewayService.chat(
-                phonemeTenantId,
+                tenantId,
                 "phoneme-guide-" + UUID.randomUUID(),
                 new ChatRequest(
                         null,

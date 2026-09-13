@@ -34,7 +34,7 @@ public class SeedancePromptStrategy implements ProviderPromptStrategy {
     }
 
     @Override
-    public Built build(PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
-        return defaultPromptStrategy.build(shotContext, flags);
+    public Built build(String tenantId, PromptDtos.ShotContext shotContext, PromptDtos.FeatureFlags flags) {
+        return defaultPromptStrategy.build(tenantId, shotContext, flags);
     }
 }
