@@ -431,6 +431,7 @@ public class ShotGenerationOrchestrator {
         return new ShotPromptView(
                 prompt.getPromptId(),
                 prompt.getJobId(),
+                prompt.getShotId(),
                 prompt.getPromptOriginal(),
                 prompt.getPromptCompressed(),
                 prompt.getNegativePrompt(),
@@ -440,7 +441,10 @@ public class ShotGenerationOrchestrator {
                 cues,
                 job.map(j -> j.getApprovalStatus().name()).orElse(null),
                 job.map(j -> j.getStatus().name()).orElse(null),
-                resolveReferenceImageUrls(prompt.getPromptId())
+                resolveReferenceImageUrls(prompt.getPromptId()),
+                prompt.getRecommendedModelId(),
+                job.map(VideoGenJob::getEstimatedCost).orElse(null),
+                job.map(VideoGenJob::getCostCurrency).orElse(null)
         );
     }
 

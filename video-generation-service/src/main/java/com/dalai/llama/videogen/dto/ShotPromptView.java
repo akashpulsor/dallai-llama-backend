@@ -1,11 +1,13 @@
 package com.dalai.llama.videogen.dto;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
 public record ShotPromptView(
         UUID promptId,
         UUID jobId,
+        UUID shotId,
         String promptOriginal,
         String promptCompressed,
         String negativePrompt,
@@ -21,6 +23,11 @@ public record ShotPromptView(
         /** Signed URLs for this prompt's saved character-face/product-hero references, in the
          * same order sent to the model -- what the video was actually conditioned on, not just
          * the text. Empty when the shot had none. */
-        List<String> referenceImageUrls
+        List<String> referenceImageUrls,
+        /** Null when the shot pinned its own model (no recommendation ran). No reasoning field --
+         * that's only ever ephemeral narration from the recommendation call, never persisted. */
+        String recommendedModelId,
+        BigDecimal estimatedCost,
+        String costCurrency
 ) {
 }
