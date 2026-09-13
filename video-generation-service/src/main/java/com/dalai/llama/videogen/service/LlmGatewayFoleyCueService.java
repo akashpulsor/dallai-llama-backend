@@ -50,7 +50,7 @@ public class LlmGatewayFoleyCueService implements FoleyCueService {
                     new LlmGatewayChatRequest(
                             defaultModel,
                             List.of(new LlmGatewayMessage("user", shotDescription)),
-                            Map.of(),
+                            JsonExtraction.JSON_MODE_PARAMS,
                             "FOLEY_CUE_DERIVATION",
                             Map.of(),
                             projectId
@@ -70,7 +70,7 @@ public class LlmGatewayFoleyCueService implements FoleyCueService {
             return List.of();
         }
         try {
-            return List.of(objectMapper.readValue(json, DerivedFoleyCue[].class));
+            return List.of(objectMapper.readValue(JsonExtraction.stripCodeFence(json), DerivedFoleyCue[].class));
         } catch (Exception ex) {
             log.warn("Could not parse foley cue JSON, discarding cue sheet for this generation: {}", ex.getMessage());
             return List.of();

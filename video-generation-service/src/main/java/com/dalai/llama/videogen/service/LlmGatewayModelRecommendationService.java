@@ -75,7 +75,7 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
                     new LlmGatewayChatRequest(
                             defaultModel,
                             List.of(new LlmGatewayMessage("user", userMessage)),
-                            Map.of(),
+                            JsonExtraction.JSON_MODE_PARAMS,
                             "MODEL_RECOMMENDATION",
                             Map.of(),
                             projectId
@@ -93,7 +93,7 @@ public class LlmGatewayModelRecommendationService implements ModelRecommendation
             return null;
         }
         try {
-            Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+            Map<String, Object> parsed = objectMapper.readValue(JsonExtraction.stripCodeFence(json), Map.class);
             return new ModelRecommendation(
                     String.valueOf(parsed.get("recommendedModel")),
                     String.valueOf(parsed.get("reasoning"))
