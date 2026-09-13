@@ -150,6 +150,15 @@ public class InternalShotAssemblyController {
         return ResponseEntity.ok(shotDialogueBeatService.list(tenantId, shotId));
     }
 
+    public record SaveBeatClonedVoiceRequest(String clonedVoiceId) {}
+
+    @org.springframework.web.bind.annotation.PutMapping("/shots/{shotId}/dialogue-beats/{beatId}/cloned-voice")
+    public ResponseEntity<ShotDialogueBeatView> saveBeatClonedVoice(
+            @PathVariable UUID tenantId, @PathVariable UUID shotId, @PathVariable UUID beatId,
+            @org.springframework.web.bind.annotation.RequestBody SaveBeatClonedVoiceRequest request) {
+        return ResponseEntity.ok(shotDialogueBeatService.saveClonedVoice(tenantId, shotId, beatId, request.clonedVoiceId()));
+    }
+
     @GetMapping("/shots/{shotId}/camera-plan")
     public ResponseEntity<CameraPlanView> cameraPlan(@PathVariable UUID tenantId, @PathVariable UUID shotId) {
         return ResponseEntity.ok(cameraPlanService.get(tenantId, shotId));

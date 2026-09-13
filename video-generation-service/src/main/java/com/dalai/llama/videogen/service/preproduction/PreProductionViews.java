@@ -111,7 +111,8 @@ public final class PreProductionViews {
             java.math.BigDecimal startSeconds,
             java.math.BigDecimal durationSeconds,
             String text,
-            String characterKey
+            String characterKey,
+            String clonedVoiceId
     ) {}
 
     public record CameraPlanView(

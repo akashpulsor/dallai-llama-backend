@@ -9,6 +9,7 @@ public record ShotDialogueBeatView(
         BigDecimal startSeconds,
         BigDecimal durationSeconds,
         String text,
-        String characterKey
+        String characterKey,
+        String clonedVoiceId
 ) {
 }

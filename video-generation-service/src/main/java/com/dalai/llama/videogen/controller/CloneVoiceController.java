@@ -40,6 +40,14 @@ public class CloneVoiceController {
         return ResponseEntity.ok(cloneVoiceService.cloneProject(tenantId, request.projectId()));
     }
 
+    @org.springframework.web.bind.annotation.GetMapping("/v1/clone/projects/{projectId}/audio")
+    public ResponseEntity<List<com.dalai.llama.videogen.service.CloneAudioService.CloneAudioView>> savedAudio(
+            @org.springframework.web.bind.annotation.PathVariable UUID projectId) {
+        UUID tenantId = TenantContextHolder.get().tenantId();
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+                .body(cloneVoiceService.listSavedAudio(tenantId, projectId));
+    }
+
     public record CloneVoiceRequest(UUID projectId, UUID shotId, String text) {}
 
     public record CloneProjectRequest(UUID projectId) {}

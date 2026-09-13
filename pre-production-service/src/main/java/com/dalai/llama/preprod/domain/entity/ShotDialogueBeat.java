@@ -56,6 +56,9 @@ public class ShotDialogueBeat {
     @Column(name = "character_key", length = 160)
     private String characterKey;
 
+    @Column(name = "cloned_voice_id", columnDefinition = "text")
+    private String clonedVoiceId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

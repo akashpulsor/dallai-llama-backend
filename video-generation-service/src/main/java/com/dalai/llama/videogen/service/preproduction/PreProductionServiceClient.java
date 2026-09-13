@@ -70,6 +70,18 @@ public class PreProductionServiceClient {
         }
     }
 
+    public void saveBeatClonedVoice(UUID tenantId, UUID shotId, UUID beatId, String clonedVoiceId) {
+        try {
+            webClient.put()
+                    .uri("/api/v1/internal/tenants/{tenantId}/shots/{shotId}/dialogue-beats/{beatId}/cloned-voice",
+                            tenantId, shotId, beatId)
+                    .bodyValue(java.util.Map.of("clonedVoiceId", clonedVoiceId))
+                    .retrieve().toBodilessEntity().block(Duration.ofMillis(timeoutMs));
+        } catch (RuntimeException ex) {
+            throw VideoGenException.upstream("Failed to save dialogue beat cloned voice: " + ex.getMessage(), ex);
+        }
+    }
+
     // --- Project-scoped reads ---
 
     public Optional<PreProductionViews.ContinuityBibleView> getContinuityBible(UUID tenantId, UUID projectId) {

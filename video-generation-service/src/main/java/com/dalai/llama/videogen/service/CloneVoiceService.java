@@ -49,16 +49,19 @@ public class CloneVoiceService {
 
     private final PreProductionServiceClient preProductionServiceClient;
     private final LlmGatewayClient llmGatewayClient;
+    private final CloneAudioService cloneAudioService;
     private final String voiceCloneModel;
     private final String voiceCloneProviderId;
     private final String ttsModel;
 
     public CloneVoiceService(PreProductionServiceClient preProductionServiceClient, LlmGatewayClient llmGatewayClient,
+                             CloneAudioService cloneAudioService,
                              @Value("${video-gen.llm-gateway.default-voice-clone-model}") String voiceCloneModel,
                              @Value("${video-gen.llm-gateway.default-voice-clone-provider-id}") String voiceCloneProviderId,
                              @Value("${video-gen.llm-gateway.default-tts-model}") String ttsModel) {
         this.preProductionServiceClient = preProductionServiceClient;
         this.llmGatewayClient = llmGatewayClient;
+        this.cloneAudioService = cloneAudioService;
         this.voiceCloneModel = voiceCloneModel;
         this.voiceCloneProviderId = voiceCloneProviderId;
         this.ttsModel = ttsModel;
@@ -77,7 +80,19 @@ public class CloneVoiceService {
                 .findFirst()
                 .orElseThrow(() -> VideoGenException.badRequest("Shot " + shotId + " is not in project " + projectId));
 
-        CloneVoiceResult result = cloneVoice(tenantId, projectId, shotBundle, text, bundle);
+        String clonedLine = text == null || text.isBlank() ? defaultLineFor(shotBundle.shot()) : text.trim();
+        List<PreProductionViews.ShotDialogueBeatView> matchingBeats = shotBundle.dialogueBeats() == null ? List.of()
+                : shotBundle.dialogueBeats().stream()
+                .filter(beat -> beat.text() != null && clonedLine.equals(beat.text().trim())).toList();
+        UUID firstBeatId = matchingBeats.isEmpty() ? null : matchingBeats.get(0).id();
+        CloneVoiceResult result = cloneVoice(tenantId, projectId, shotBundle, text, bundle, firstBeatId);
+        for (PreProductionViews.ShotDialogueBeatView beat : matchingBeats) {
+            if (!beat.id().equals(firstBeatId)) {
+                cloneAudioService.save(tenantId, projectId, shotId, beat.id(), clonedLine,
+                        result.mode(), result.providerVoiceId(), result.audioDataUri());
+            }
+            preProductionServiceClient.saveBeatClonedVoice(tenantId, shotId, beat.id(), result.providerVoiceId());
+        }
 
         log.info("clone-voice completed projectId={} shotId={} mode={} elapsedMs={}", projectId, shotId, result.mode(), System.currentTimeMillis() - startMs);
 
@@ -122,7 +137,8 @@ public class CloneVoiceService {
 
                 log.debug("clone-project processing beat projectId={} shotId={} beatId={}", projectId, shot.id(), beat.id());
 
-                CloneVoiceResult result = cloneVoice(tenantId, projectId, shotBundle, beat.text(), bundle);
+                CloneVoiceResult result = cloneVoice(tenantId, projectId, shotBundle, beat.text(), bundle, beat.id());
+                preProductionServiceClient.saveBeatClonedVoice(tenantId, shot.id(), beat.id(), result.providerVoiceId());
                 results.add(result);
 
                 log.debug("clone-project completed beat projectId={} shotId={} beatId={} mode={}", projectId, shot.id(), beat.id(), result.mode());
@@ -135,7 +151,7 @@ public class CloneVoiceService {
         return results;
     }
 
-    private CloneVoiceResult cloneVoice(UUID tenantId, UUID projectId, PreProductionViews.ShotBundleView shotBundle, String text, PreProductionViews.PrepareBundleView bundle) {
+    private CloneVoiceResult cloneVoice(UUID tenantId, UUID projectId, PreProductionViews.ShotBundleView shotBundle, String text, PreProductionViews.PrepareBundleView bundle, UUID beatId) {
         PreProductionViews.ShotView shot = shotBundle.shot();
         String characterKey = shot.primaryCharacterKey();
 
@@ -190,7 +206,8 @@ public class CloneVoiceService {
 
         String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode, ttsKey);
 
-        return new CloneVoiceResult(shot.id(), mode, voiceId, audioDataUri);
+        String audioUrl = cloneAudioService.save(tenantId, projectId, shot.id(), beatId, line, mode, voiceId, audioDataUri);
+        return new CloneVoiceResult(shot.id(), mode, voiceId, audioDataUri, audioUrl, beatId, line);
     }
 
     private boolean hasPersistedClonedVoice(PreProductionViews.CastProfileView profile) {
@@ -296,5 +313,20 @@ public class CloneVoiceService {
         }
     }
 
-    public record CloneVoiceResult(UUID shotId, String mode, String providerVoiceId, String audioDataUri) {}
+    public List<CloneAudioService.CloneAudioView> listSavedAudio(UUID tenantId, UUID projectId) {
+        PreProductionViews.PrepareBundleView bundle = preProductionServiceClient.getPrepareBundle(tenantId, projectId)
+                .orElseThrow(() -> VideoGenException.badRequest("No prepare-bundle for project " + projectId));
+        Map<UUID, PreProductionViews.ShotBundleView> shots = new HashMap<>();
+        if (bundle.shots() != null) bundle.shots().forEach(shot -> shots.put(shot.shot().id(), shot));
+        return cloneAudioService.list(tenantId, projectId).stream().filter(audio -> {
+            PreProductionViews.ShotBundleView shot = shots.get(audio.shotId());
+            if (shot == null) return false;
+            if (audio.beatId() == null) return audio.text().equals(defaultLineFor(shot.shot()));
+            return shot.dialogueBeats() != null && shot.dialogueBeats().stream().anyMatch(beat ->
+                    audio.beatId().equals(beat.id()) && beat.text() != null && audio.text().equals(beat.text().trim()));
+        }).toList();
+    }
+
+    public record CloneVoiceResult(UUID shotId, String mode, String providerVoiceId, String audioDataUri,
+                                   String audioUrl, UUID beatId, String text) {}
 }

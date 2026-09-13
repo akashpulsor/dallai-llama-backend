@@ -158,6 +158,20 @@ public class ShotDialogueBeatService {
         shotDialogueBeatRepository.delete(beat);
     }
 
+    @Transactional
+    public ShotDialogueBeatView saveClonedVoice(UUID tenantId, UUID shotId, UUID beatId, String clonedVoiceId) {
+        requireShot(tenantId, shotId);
+        if (clonedVoiceId == null || clonedVoiceId.isBlank()) {
+            throw PreProductionException.badRequest("clonedVoiceId is required");
+        }
+        ShotDialogueBeat beat = shotDialogueBeatRepository.findByIdAndTenantId(beatId, tenantId)
+                .filter(b -> b.getShotId().equals(shotId))
+                .orElseThrow(() -> PreProductionException.notFound("No dialogue beat " + beatId + " for shot " + shotId));
+        beat.setClonedVoiceId(clonedVoiceId);
+        beat.setUpdatedAt(OffsetDateTime.now());
+        return toView(shotDialogueBeatRepository.save(beat));
+    }
+
     private Shot requireShot(UUID tenantId, UUID shotId) {
         return shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
@@ -196,6 +210,6 @@ public class ShotDialogueBeatService {
 
     private ShotDialogueBeatView toView(ShotDialogueBeat beat) {
         return new ShotDialogueBeatView(beat.getId(), beat.getOrderIndex(), beat.getStartSeconds(),
-                beat.getDurationSeconds(), beat.getText(), beat.getCharacterKey());
+                beat.getDurationSeconds(), beat.getText(), beat.getCharacterKey(), beat.getClonedVoiceId());
     }
 }

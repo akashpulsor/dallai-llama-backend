@@ -181,7 +181,7 @@ public class ProjectLockService {
         List<ShotImage> toDescribe = bestImages.stream().filter(i -> i.getDescription() == null).toList();
         Map<UUID, ShotImageDescriptionService.Description> newDescriptions = new java.util.concurrent.ConcurrentHashMap<>();
         toDescribe.parallelStream().forEach(image -> {
-            ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, image);
+            ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, projectId, image);
             if (described != null && described.description() != null && !described.description().isBlank()) {
                 newDescriptions.put(image.getId(), described);
             }
