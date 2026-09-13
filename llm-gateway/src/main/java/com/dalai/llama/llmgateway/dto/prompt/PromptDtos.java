@@ -36,7 +36,10 @@ public final class PromptDtos {
             List<DialogueBeat> dialogueBeats
     ) {}
 
-    public record Narrative(String scriptLine, String screenplaySlug, String arcPosition) {}
+    /** {@code dialogue} is what the character says; {@code scriptLine} is what happens in frame.
+     * They used to be the same field read twice, so a shot's action and its spoken line came out
+     * as the same sentence printed twice. */
+    public record Narrative(String scriptLine, String screenplaySlug, String arcPosition, String dialogue) {}
 
     public record Character(
             String castId,

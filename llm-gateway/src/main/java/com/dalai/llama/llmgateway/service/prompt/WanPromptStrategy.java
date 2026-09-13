@@ -155,7 +155,7 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
                 }
             });
         }
-        String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().scriptLine() : null;
+        String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().dialogue() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
             // As written -- see DefaultPromptStrategy for why the phonetic respelling round-trip
             // is gone: the dialogue is already dubbed by the time a prompt is composed.

@@ -141,7 +141,7 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
                 && !shotContext.technical().editingNotes().isBlank()) {
             lines.add("Editing: " + shotContext.technical().editingNotes());
         }
-        String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().scriptLine() : null;
+        String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().dialogue() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
             // The line goes in as written. Phonetic respelling used to happen here, which put a
             // synchronous PHONEME_GUIDE LLM round-trip inside prompt composition -- 14-22s per

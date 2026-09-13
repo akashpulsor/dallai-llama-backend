@@ -353,7 +353,12 @@ public class LlmGatewayService {
     public EstimateResponse estimate(String tenantId, ChatRequest request) {
         RoutedModel routed = modelRouterService.route(tenantId, request.modelId());
         int estimatedInputTokens = estimateTokens(request);
-        BigDecimal estimatedCost = routed.rateCard().getInputTokenCost().multiply(BigDecimal.valueOf(estimatedInputTokens));
+        // Through computeCost, not the raw token path. Video, upscale, music and lip_sync are
+        // duration-priced and their rate cards carry input_token_cost = 0 -- which is exactly why
+        // computeCost exists -- so estimating them by tokens returned $0 for every video model,
+        // every time. The caller supplies duration_seconds in params the same way dispatch does.
+        BigDecimal estimatedCost = computeCost(routed.rateCard(), routed.model().getType(),
+                estimatedInputTokens, 0, request.params());
         return new EstimateResponse(routed.model().getModelId(), estimatedInputTokens, estimatedCost, routed.rateCard().getRateCardId());
     }
 

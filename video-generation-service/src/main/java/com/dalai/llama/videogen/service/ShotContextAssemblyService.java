@@ -132,11 +132,26 @@ public class ShotContextAssemblyService {
      * pre-production's bundle carries no per-shot screenplay scene to compute it from. */
     private Narrative buildNarrative(PreProductionViews.ShotView shot, PreProductionViews.ScriptView script) {
         String storyFrame = buildStoryFrame(script);
-        if (shot.scriptLine() == null && shot.action() == null && storyFrame == null) {
+        String dialogue = dialogueFor(shot);
+        // What happens in frame. Prefer the shot's action; scriptLine stands in when a shot has no
+        // separate action written, which is common for dialogue shots where the line IS the beat.
+        String action = hasText(shot.action()) ? shot.action() : shot.scriptLine();
+        if (!hasText(action) && !hasText(dialogue) && storyFrame == null) {
             return null;
         }
-        String scriptLine = shot.scriptLine() != null ? shot.scriptLine() : shot.action();
-        return new Narrative(scriptLine, storyFrame, null);
+        return new Narrative(action, storyFrame, null, dialogue);
+    }
+
+    /** The spoken line. voiceOver is the field the creator edits to change what is said, so it
+     * wins; scriptLine counts as dialogue only for DIALOGUE shots, where it is the spoken line
+     * rather than scene direction. Same rule the video workspace applies when deciding whether a
+     * shot has anything to dub, so what the creator sees on the card and what reaches the prompt
+     * agree. */
+    private String dialogueFor(PreProductionViews.ShotView shot) {
+        if (hasText(shot.voiceOver())) {
+            return shot.voiceOver();
+        }
+        return "DIALOGUE".equals(shot.shotType()) && hasText(shot.scriptLine()) ? shot.scriptLine() : null;
     }
 
     private String buildStoryFrame(PreProductionViews.ScriptView script) {

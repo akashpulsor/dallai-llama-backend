@@ -173,7 +173,8 @@ public class ShotGenerationOrchestrator {
         CompressionResult compression = promptCompressionService.compressIfNeeded(
                 projectId, builtPrompt.positive(), maxPromptLength, modelId);
         CostEstimate estimate = costEstimationService.estimate(
-                compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId);
+                compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId,
+                shotContext.technical() == null ? null : shotContext.technical().durationSeconds());
 
         boolean muteAudio = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
 

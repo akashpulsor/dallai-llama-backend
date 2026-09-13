@@ -22,11 +22,18 @@ public class LlmGatewayCostEstimationService implements CostEstimationService {
     }
 
     @Override
-    public CostEstimate estimate(String prompt, String modelId) {
+    public CostEstimate estimate(String prompt, String modelId, Integer durationSeconds) {
         UUID tenantId = TenantContextHolder.get().tenantId();
+        // duration_seconds is the param name fal.ai itself uses, and the one llm-gateway's
+        // computeCost reads to price a duration-priced model. Without it a video estimate is
+        // priced off input tokens, whose rate is 0 for these models -- which is why every
+        // estimate came back as zero.
+        Map<String, Object> params = durationSeconds == null
+                ? Map.of()
+                : Map.of("duration_seconds", durationSeconds);
         LlmGatewayEstimateResponse response = llmGatewayClient.estimate(
                 tenantId.toString(),
-                new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt)), Map.of(), null, null)
+                new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt)), params, null, null)
         );
         BigDecimal cost = response == null || response.estimatedCost() == null ? BigDecimal.ZERO : response.estimatedCost();
         return new CostEstimate(cost, "USD");
