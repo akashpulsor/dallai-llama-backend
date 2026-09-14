@@ -4,7 +4,7 @@ import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
-import com.dalai.llama.videogen.service.PrepareBatchRunner;
+import com.dalai.llama.videogen.service.PrepareBatchJobService;
 import com.dalai.llama.videogen.service.PrepareOrchestrationService;
 import com.dalai.llama.videogen.service.ScenePreparationService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
@@ -46,7 +46,7 @@ public class PrepareSceneController {
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final ShotGenerationOrchestrator shotGenerationOrchestrator;
     private final PrepareOrchestrationService prepareOrchestrationService;
-    private final PrepareBatchRunner prepareBatchRunner;
+    private final PrepareBatchJobService prepareBatchJobService;
 
     @PostMapping("/projects/{projectId}/prepare")
     public ResponseEntity<ProjectScenePreparationView> prepareProject(@PathVariable UUID projectId) {
@@ -95,20 +95,36 @@ public class PrepareSceneController {
                 : new ShotContextAssemblyService.PrepareShotOverrides(
                         request.featureFlagOverrides(), request.modelPin(), null, null,
                         request.resolutionOverride());
-        boolean started = prepareBatchRunner.submit(
+        PrepareBatchJobService.Accepted accepted = prepareBatchJobService.submit(
                 ctx, projectId, request == null ? null : request.shotIds(), overrides);
         // 202, not 200: the batch runs off the request thread and the prompts are not ready yet.
         // The caller watches GET /projects/{id}/preparation for the status and reads prompts from
         // GET /projects/{id}/shot-prompts as they land -- both endpoints it already calls on page
         // load, so progress is just the page refreshing itself.
         return ResponseEntity.accepted().body(new PrepareShotsBatchAcceptedResponse(
-                started ? "PREPARING" : "ALREADY_RUNNING",
-                started
-                        ? "Preparing shots. Poll the project's preparation status for progress."
+                accepted.job().getId(),
+                accepted.job().getStatus().name(),
+                accepted.started()
+                        ? "Preparing shots. Poll the batch status for progress."
                         : "A prepare is already running for this project."));
     }
 
 
+
+    /** Latest prepare batch for the project -- what the video workspace polls while shots are
+     * being prepared. 404 when the project has never had one. */
+    @GetMapping("/projects/{projectId}/prepare-batch")
+    public ResponseEntity<PrepareBatchStatusView> getPrepareBatchStatus(@PathVariable UUID projectId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return prepareBatchJobService.latestForProject(ctx.tenantId(), projectId)
+                .map(job -> ResponseEntity.ok(new PrepareBatchStatusView(
+                        job.getId(), job.getStatus().name(),
+                        job.getPreparedCount() == null ? 0 : job.getPreparedCount(),
+                        job.getFailedCount() == null ? 0 : job.getFailedCount(),
+                        job.getErrorMessage(), job.getCreatedAt(), job.getCompletedAt())))
+                .orElseThrow(() -> VideoGenException.notFound(
+                        "Project " + projectId + " has no prepare batch yet"));
+    }
 
     @GetMapping("/projects/{projectId}/shot-prompts")
     public ResponseEntity<List<ShotPromptView>> listProjectShotPrompts(@PathVariable UUID projectId) {
@@ -167,10 +183,15 @@ public class PrepareSceneController {
             String resolutionOverride
     ) {}
 
-    /** What a 202 from prepare-batch carries. {@code status} is PREPARING when this request
-     * started a batch, or ALREADY_RUNNING when one was already going for the project -- in which
-     * case nothing new was queued and the caller should just watch the existing run. */
-    public record PrepareShotsBatchAcceptedResponse(String status, String message) {}
+    /** What a 202 from prepare-batch carries. {@code jobId} identifies the batch to poll --
+     * the same id whether this call queued it or joined one already running for the project. */
+    public record PrepareShotsBatchAcceptedResponse(UUID jobId, String status, String message) {}
+
+    /** Progress of a prepare batch. {@code status} is PENDING/RUNNING while live and
+     * SUCCEEDED/FAILED once done; the counts are filled in when it finishes. */
+    public record PrepareBatchStatusView(
+            UUID jobId, String status, int preparedCount, int failedCount,
+            String errorMessage, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
 
     public record FailedShot(UUID shotId, String reason) {}
 }

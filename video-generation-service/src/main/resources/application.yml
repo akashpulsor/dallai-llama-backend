@@ -118,6 +118,12 @@ video-gen:
   # dedicated ProviderPromptStrategy for. Per-model strategies override this.
   provider:
     default-max-prompt-length: ${VIDEO_GEN_DEFAULT_MAX_PROMPT_LENGTH:2000}
+  # Prepare-batch runs on this service's own Kafka worker side rather than the request thread.
+  # The consumer group IS the concurrency control -- tune parallelism by partition count, not by
+  # a thread pool nobody can see or change without a redeploy.
+  prepare:
+    requested-topic: ${VIDEO_GEN_PREPARE_REQUESTED_TOPIC:videogen.prepare.requested}
+    requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}
