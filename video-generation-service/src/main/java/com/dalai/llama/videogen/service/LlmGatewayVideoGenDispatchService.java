@@ -18,17 +18,52 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
 
     private final LlmGatewayClient llmGatewayClient;
 
+
+    /**
+     * Appended to every video generation's negative prompt.
+     *
+     * <p>Generation is multimodal -- the model performs the dialogue rather than having it laid
+     * over afterwards -- so how the line is delivered is decided here or not at all. Two failures
+     * matter and they pull against each other: a line that runs past the shot gets cut off
+     * mid-word, and a line hurried to fit stops being intelligible. Naming only the first invites
+     * the second, so both are named.
+     *
+     * <p>Appended rather than replacing what the prompt-format library returns: that carries the
+     * shot's own visual negatives, which are still wanted. A model that ignores these is no worse
+     * off than before -- this cannot make delivery worse, only better.
+     */
+    private static final String SPEECH_NEGATIVES = String.join(", ",
+            "speech cut off mid-word",
+            "dialogue truncated before the line finishes",
+            "audio ending abruptly while the speaker is still talking",
+            "rushed or sped-up delivery",
+            "unnaturally fast speech",
+            "garbled or slurred words",
+            "muffled, inaudible or unclear voice",
+            "mumbling");
+
     public LlmGatewayVideoGenDispatchService(LlmGatewayClient llmGatewayClient) {
         this.llmGatewayClient = llmGatewayClient;
+    }
+
+
+    /** The shot's own negatives plus the speech ones, or just the speech ones when a shot has
+     * none of its own -- the delivery constraints apply to every shot that speaks, and a shot
+     * without visual negatives is not a shot that may be cut off mid-sentence. */
+    private String withSpeechNegatives(String shotNegatives) {
+        if (shotNegatives == null || shotNegatives.isBlank()) {
+            return SPEECH_NEGATIVES;
+        }
+        return shotNegatives.strip().endsWith(",")
+                ? shotNegatives.strip() + " " + SPEECH_NEGATIVES
+                : shotNegatives.strip() + ", " + SPEECH_NEGATIVES;
     }
 
     @Override
     public DispatchResult dispatch(VideoGenJob job, String positivePrompt, String negativePrompt, VideoDispatchParams params) {
         String tenantId = job.getTenantId().toString();
         Map<String, Object> videoParams = new LinkedHashMap<>();
-        if (negativePrompt != null && !negativePrompt.isBlank()) {
-            videoParams.put("negative_prompt", negativePrompt);
-        }
+        videoParams.put("negative_prompt", withSpeechNegatives(negativePrompt));
         if (params != null && params.durationSeconds() != null) {
             videoParams.put("duration_seconds", params.durationSeconds());
         }
