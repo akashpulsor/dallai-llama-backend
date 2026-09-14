@@ -36,12 +36,14 @@ public class JobPersistenceService {
     /** @return the claimed row, or empty if a concurrent duplicate won the race on the unique
      * (tenant_id, idempotency_key) index -- the caller should re-read and treat it as a replay. */
     @Transactional
-    public Optional<LlmJob> claimNewJob(String tenantId, String idempotencyKey, String modelId, UUID projectId) {
+    public Optional<LlmJob> claimNewJob(String tenantId, String idempotencyKey, String modelId, UUID projectId,
+                                       String taskKey) {
         LlmJob job = LlmJob.builder()
                 .jobId(UUID.randomUUID())
                 .tenantId(tenantId)
                 .modelId(modelId)
                 .projectId(projectId)
+                .taskKey(taskKey)
                 .status(JobStatus.PROCESSING)
                 .mode("sync")
                 .idempotencyKey(idempotencyKey)

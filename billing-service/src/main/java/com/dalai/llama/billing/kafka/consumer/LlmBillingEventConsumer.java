@@ -92,7 +92,9 @@ public class LlmBillingEventConsumer {
                 null,
                 event.getJobId().toString(),
                 event.getCurrency() == null ? "USD" : event.getCurrency(),
-                event.getCreatedAt() == null ? Instant.now() : event.getCreatedAt().toInstant()
+                event.getCreatedAt() == null ? Instant.now() : event.getCreatedAt().toInstant(),
+                event.getTaskKey(),
+                event.getModelType()
         ));
     }
 

@@ -128,7 +128,8 @@ public class LlmGatewayService {
         // claiming a row -- a rejected request should never leave a PROCESSING row behind.
         modelRouterService.route(tenantId, request.modelId());
         requireSufficientBalance(tenantId, request.projectId());
-        Optional<LlmJob> claimed = jobPersistenceService.claimNewJob(tenantId, idempotencyKey, request.modelId(), request.projectId());
+        Optional<LlmJob> claimed = jobPersistenceService.claimNewJob(
+                tenantId, idempotencyKey, request.modelId(), request.projectId(), request.taskKey());
         if (claimed.isPresent()) {
             return dispatch(claimed.get(), tenantId, request, 1);
         }
@@ -397,9 +398,19 @@ public class LlmGatewayService {
     }
 
     private void publishBillingEvent(LlmJob job, int inputTokens, int outputTokens, BigDecimal cost, JobStatus status) {
+        // taskKey and modelType go out as raw facts, not as a category. Deciding that
+        // PRE_PROD_SHOT_LIST_GENERATE is "pre-production" is a billing-statement concern and
+        // belongs with the statement, not in the gateway that only knows it ran a prompt.
+        String modelType = null;
+        try {
+            modelType = modelRouterService.route(job.getTenantId(), job.getModelId()).model().getType();
+        } catch (RuntimeException ex) {
+            log.debug("Could not resolve model type for billing event modelId={}: {}", job.getModelId(), ex.getMessage());
+        }
         billingEventPublisher.publish(new BillingEvent(
                 UUID.randomUUID(), job.getJobId(), job.getTenantId(), job.getProjectId(), job.getModelId(),
-                inputTokens, outputTokens, cost, "USD", status.name(), OffsetDateTime.now()
+                inputTokens, outputTokens, cost, "USD", status.name(), OffsetDateTime.now(),
+                job.getTaskKey(), modelType
         ));
     }
 

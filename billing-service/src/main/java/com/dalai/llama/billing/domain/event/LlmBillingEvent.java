@@ -29,6 +29,14 @@ public class LlmBillingEvent {
     private String tenantId;
     private UUID projectId;
     private String modelId;
+
+    /** What the call was for -- llm-gateway's prompt template key. Null for calls that use no
+     * template. Billing groups a statement by this. */
+    private String taskKey;
+
+    /** model_master.type, the fallback grouping for calls with no task key (music, TTS, the
+     * video models themselves). */
+    private String modelType;
     private int inputTokens;
     private int outputTokens;
     private BigDecimal cost;

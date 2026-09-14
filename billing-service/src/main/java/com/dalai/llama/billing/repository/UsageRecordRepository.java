@@ -15,6 +15,9 @@ public interface UsageRecordRepository extends JpaRepository<UsageRecord, UUID> 
 
     List<UsageRecord> findByTenantId(UUID tenantId);
 
+    /** Newest first -- the order a statement is read in. */
+    List<UsageRecord> findByTenantIdOrderByRecordedAtDesc(UUID tenantId);
+
     List<UsageRecord> findByTenantIdAndRecordedAtBetween(UUID tenantId, Instant from, Instant to);
 
     @Query("SELECT COALESCE(SUM(u.totalCost), 0) FROM UsageRecord u " +

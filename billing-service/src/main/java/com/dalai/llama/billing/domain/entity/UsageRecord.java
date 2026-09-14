@@ -1,5 +1,6 @@
 package com.dalai.llama.billing.domain.entity;
 
+import com.dalai.llama.billing.domain.UsageStage;
 import com.dalai.llama.billing.domain.entity.enums.BillingUnit;
 import com.dalai.llama.billing.domain.entity.enums.UsageMetric;
 import jakarta.persistence.*;
@@ -45,6 +46,18 @@ public class UsageRecord {
 
     @Column(nullable = false, precision = 15, scale = 4)
     private BigDecimal totalCost;
+
+    /** llm-gateway's prompt template key -- what this call was for. Null for calls that use no
+     * template, and for rows written before it was captured. */
+    @Column(name = "task_key", length = 64)
+    private String taskKey;
+
+    /** Our grouping of {@link #taskKey} into a phase a creator recognises. Stored alongside the
+     * key rather than derived on read, so a statement stays stable even if the grouping is
+     * revised later. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "stage", length = 32)
+    private UsageStage stage;
 
     private String sourceType;
     private UUID sourceId;

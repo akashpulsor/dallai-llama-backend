@@ -90,6 +90,11 @@ public class LlmJob {
     /** The project this call belongs to, forwarded by the caller -- lets costs be summed per
      * project without llm-gateway knowing anything about what a project is. Null for calls with
      * no project context (estimates, internal/non-project calls). */
+    /** What this call was for -- the prompt template's task key. Null on rows written before it
+     * was captured, and on calls that use no template at all. */
+    @Column(name = "task_key", length = 64)
+    private String taskKey;
+
     @Column(name = "project_id")
     private UUID projectId;
 }

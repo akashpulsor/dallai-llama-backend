@@ -10,6 +10,7 @@ import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.TransactionService;
+import com.dalai.llama.billing.domain.UsageStage;
 import com.dalai.llama.billing.service.CurrencyConversionService;
 import com.dalai.llama.billing.service.UsageService;
 import com.dalai.llama.billing.service.WalletService;
@@ -87,6 +88,11 @@ public class UsageServiceImpl implements UsageService {
                 .unit(request.unit())
                 .unitCost(billedUnitCost)
                 .totalCost(billedTotalCost)
+                .taskKey(request.taskKey())
+                // Derived once, on write. A statement read months later then shows the grouping
+                // that was in force when the money was spent, rather than silently re-grouping
+                // history every time the mapping is revised.
+                .stage(UsageStage.from(request.taskKey(), request.modelType()))
                 .sourceType(request.sourceType())
                 .sourceId(request.sourceId())
                 .description(request.description())

@@ -21,6 +21,20 @@ public record BillingEvent(
         BigDecimal cost,
         String currency,
         String status,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        /** What the call was for (prompt template task key), and what kind of model ran it.
+         * Raw facts: the consumer decides which stage of the pipeline they belong to. Either can
+         * be null -- a call with no template has no task key, and a model that cannot be routed
+         * has no type. */
+        String taskKey,
+        String modelType
 ) {
+
+    /** Pre-taskKey arity, so an older publisher still constructs. */
+    public BillingEvent(UUID eventId, UUID jobId, String tenantId, UUID projectId, String modelId,
+                        int inputTokens, int outputTokens, BigDecimal cost, String currency,
+                        String status, OffsetDateTime createdAt) {
+        this(eventId, jobId, tenantId, projectId, modelId, inputTokens, outputTokens, cost, currency,
+                status, createdAt, null, null);
+    }
 }
