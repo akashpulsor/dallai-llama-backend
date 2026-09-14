@@ -182,6 +182,16 @@ public class ShotListGenerationService {
         return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                 JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
                 Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys),
+                        // The script itself is written in the project's dialogue language, and
+                        // without being told otherwise the model mirrors that language into every
+                        // descriptive field too -- producing Hindi camera notes and scene
+                        // descriptions that then flow into the video prompt. The template uses
+                        // this to keep descriptions English and let only spoken/on-screen text
+                        // follow the project's language.
+                        "dialogueLanguage", projectConfig == null || projectConfig.getDialogueLanguage() == null
+                                || projectConfig.getDialogueLanguage().isBlank()
+                                ? "English"
+                                : projectConfig.getDialogueLanguage(),
                         "aspectRatio", configuredAspectRatio == null ? "no preference set -- choose what suits each shot" : configuredAspectRatio.toString(),
                         "motionGraphicsGuidance", preferMotionGraphics
                                 ? "This project prefers MOTION_GRAPHIC for any text/data/graphic-driven beat -- classify those shots as MOTION_GRAPHIC rather than ACTION or B_ROLL."
