@@ -151,6 +151,18 @@ public class InternalLlmGatewayController {
                 .toList();
     }
 
+    /** Internal mirror of {@code LlmGatewayController.cancel()} -- same JWT-chain problem as
+     * {@link #models} and {@link #languages()}: video-generation-service cancels a running
+     * shot through its own dispatch service, carrying X-Tenant-ID and no JWT, so the end-user
+     * path answered 401 and the cancel never reached the provider. */
+    @PostMapping("/jobs/{jobId}/cancel")
+    public JobStatusResponse cancelJob(
+            @RequestHeader("X-Tenant-ID") String tenantId,
+            @PathVariable UUID jobId
+    ) {
+        return llmGatewayService.cancel(tenantId, jobId);
+    }
+
     @PostMapping("/prompt/format")
     public PromptDtos.PromptFormatResponse formatPrompt(
             @RequestHeader("X-Tenant-ID") String tenantId,

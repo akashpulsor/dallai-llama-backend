@@ -66,14 +66,14 @@ public class LlmGatewayClient {
     public LlmGatewayJobStatusResponse cancel(String tenantId, UUID llmGatewayJobId) {
         try {
             return webClient.post()
-                    .uri("/v1/jobs/{jobId}/cancel", llmGatewayJobId)
+                    .uri("/api/v1/internal/jobs/{jobId}/cancel", llmGatewayJobId)
                     .header("X-Tenant-ID", tenantId)
                     .retrieve()
                     .bodyToMono(LlmGatewayJobStatusResponse.class)
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw new LlmGatewayCallException(
-                    "llm-gateway /v1/jobs/%s/cancel failed status=%s body=%s"
+                    "llm-gateway cancel for job %s failed status=%s body=%s"
                             .formatted(llmGatewayJobId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
