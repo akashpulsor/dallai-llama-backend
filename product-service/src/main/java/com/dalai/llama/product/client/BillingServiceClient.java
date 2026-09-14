@@ -250,7 +250,8 @@ public class BillingServiceClient {
             BigDecimal totalAmount,
             BigDecimal planAmount,
             BigDecimal walletCredit,
-            String currency
+            String currency,
+            String razorpayKeyId
     ) {}
 
     // ==================== RESPONSE DTOs ====================

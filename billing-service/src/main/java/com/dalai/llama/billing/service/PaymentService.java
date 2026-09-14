@@ -76,7 +76,11 @@ public interface PaymentService {
             BigDecimal totalAmount,
             BigDecimal planAmount,
             BigDecimal walletCredit,
-            String currency
+            String currency,
+            /** Razorpay's publishable key. Returned with the order because the caller that has to
+             * open checkout is not billing -- product-service hands this to the browser, and a
+             * second copy of the key configured elsewhere is one more thing to get out of step. */
+            String razorpayKeyId
     ) {}
 
     record PaymentOrderResult(

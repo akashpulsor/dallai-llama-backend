@@ -16,8 +16,17 @@ public record CreatorVideoSubscriptionResponse(
         BigDecimal price,
         String currency,
         Instant currentPeriodEnd,
-        // Populated only when status = INSUFFICIENT_BALANCE, same recharge-prompt shape used elsewhere.
+        // Populated when the wallet cannot cover the plan.
         BigDecimal currentWalletBalance,
-        BigDecimal shortFallAmount
+        BigDecimal shortFallAmount,
+        /** Everything the browser needs to open Razorpay checkout for the shortfall, when
+         * status = PAYMENT_REQUIRED. The order is created here rather than left to the caller:
+         * a client that has to work out how much to charge, create its own order and then retry
+         * is a client that can get any of those three steps wrong, which is exactly what kept
+         * happening. */
+        UUID paymentId,
+        String gatewayOrderId,
+        String razorpayKeyId,
+        BigDecimal amountDue
 ) {
 }

@@ -451,6 +451,7 @@ public class InternalBillingController {
                         .planAmount(result.planAmount())
                         .walletCredit(result.walletCredit())
                         .currency(result.currency())
+                        .razorpayKeyId(result.razorpayKeyId())
                         .build();
 
         return ResponseEntity.ok(response);
@@ -484,7 +485,8 @@ public class InternalBillingController {
             BigDecimal totalAmount,
             BigDecimal planAmount,
             BigDecimal walletCredit,
-            String currency
+            String currency,
+            String razorpayKeyId
     ) {}
     // ==================== REQUEST/RESPONSE CLASSES ====================
 

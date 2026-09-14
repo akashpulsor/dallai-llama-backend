@@ -17,6 +17,8 @@ import com.dalai.llama.product.repository.SubscriptionRepository;
 import com.dalai.llama.product.service.CreatorVideoEntitlementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import java.math.BigDecimal;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,15 +76,45 @@ public class CreatorVideoSubscriptionService {
 
         BillingServiceClient.WalletBalanceResponse balance = billingClient.getCurrentBalance(tenantId);
         if (balance.balance().compareTo(plan.getMonthlyPrice()) < 0) {
-            return CreatorVideoSubscriptionResponse.builder()
-                    .status("INSUFFICIENT_BALANCE")
-                    .planCode(plan.getCode())
-                    .planName(plan.getName())
-                    .price(plan.getMonthlyPrice())
-                    .currency(balance.currency())
-                    .currentWalletBalance(balance.balance())
-                    .shortFallAmount(plan.getMonthlyPrice().subtract(balance.balance()))
-                    .build();
+            // Create the Razorpay order here rather than answering "you are short" and leaving the
+            // caller to work out how much, create its own order, and retry. Those were three
+            // steps a client could get wrong, and did: the browser had to parse a shortfall out
+            // of an error body, round it, top the wallet up and subscribe again, and any break in
+            // that chain looked to the creator like a subscribe button that simply refused.
+            BigDecimal shortfall = plan.getMonthlyPrice().subtract(balance.balance());
+            try {
+                BillingServiceClient.SubscriptionPaymentResponse payment = billingClient.createSubscriptionPayment(
+                        tenantId, plan.getCode(), plan.getMonthlyPrice(), balance.balance(),
+                        subscription == null ? null : subscription.getId());
+                return CreatorVideoSubscriptionResponse.builder()
+                        .status("PAYMENT_REQUIRED")
+                        .planCode(plan.getCode())
+                        .planName(plan.getName())
+                        .price(plan.getMonthlyPrice())
+                        .currency(payment.currency() == null ? balance.currency() : payment.currency())
+                        .currentWalletBalance(balance.balance())
+                        .shortFallAmount(shortfall)
+                        .paymentId(payment.paymentId())
+                        .gatewayOrderId(payment.gatewayOrderId())
+                        .razorpayKeyId(payment.razorpayKeyId())
+                        .amountDue(payment.totalAmount())
+                        .build();
+            } catch (RuntimeException ex) {
+                // Razorpay or billing is down. Fall back to the old shape so the creator is told
+                // they are short rather than shown a generic failure -- still actionable by
+                // recharging the wallet by hand.
+                log.warn("Could not create subscription payment order tenantId={} planCode={}: {}",
+                        tenantId, plan.getCode(), ex.getMessage());
+                return CreatorVideoSubscriptionResponse.builder()
+                        .status("INSUFFICIENT_BALANCE")
+                        .planCode(plan.getCode())
+                        .planName(plan.getName())
+                        .price(plan.getMonthlyPrice())
+                        .currency(balance.currency())
+                        .currentWalletBalance(balance.balance())
+                        .shortFallAmount(shortfall)
+                        .build();
+            }
         }
 
         // Reuse the same row across a cancel -> resubscribe or a self-healed past-due recovery,

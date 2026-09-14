@@ -82,7 +82,13 @@ public class CreatorVideoSubscriptionController {
     @Operation(summary = "Subscribe", description = "Charges the wallet immediately and activates the subscription, or returns INSUFFICIENT_BALANCE")
     public ResponseEntity<CreatorVideoSubscriptionResponse> subscribe(@Valid @RequestBody CreatorVideoSubscribeRequest request) {
         CreatorVideoSubscriptionResponse response = subscriptionService.subscribe(request);
-        HttpStatus status = "INSUFFICIENT_BALANCE".equals(response.status()) ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.CREATED;
+        // PAYMENT_REQUIRED comes back 200, not 402. It is not a failure -- it carries a live
+        // Razorpay order the caller is meant to act on, and every HTTP client in this codebase
+        // treats a non-2xx as a rejected promise whose body is awkward to reach. Returning it as
+        // an error is what made the browser drop the checkout details on the floor.
+        HttpStatus status = "INSUFFICIENT_BALANCE".equals(response.status())
+                ? HttpStatus.PAYMENT_REQUIRED
+                : HttpStatus.CREATED;
         return ResponseEntity.status(status).body(response);
     }
 

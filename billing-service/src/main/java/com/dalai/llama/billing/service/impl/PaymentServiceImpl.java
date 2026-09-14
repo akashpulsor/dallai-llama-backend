@@ -412,7 +412,8 @@ public class PaymentServiceImpl implements PaymentService {
                 totalAmount,
                 planAmount,
                 walletCredit,
-                payment.getCurrency()
+                payment.getCurrency(),
+                razorpayKeyId
         );
     }
 
