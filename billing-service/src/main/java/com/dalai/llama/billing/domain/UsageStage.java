@@ -78,6 +78,21 @@ public enum UsageStage {
         };
     }
 
+    /** One line saying what this stage actually paid for, so a creator reading a number on the
+     * statement knows which part of their own process produced it. */
+    public String description() {
+        return switch (this) {
+            case IDEATION -> "Finding and shaping the idea: trends, idea options, critiques and the marketing plan.";
+            case PRE_PRODUCTION -> "Turning the idea into a plan: script, screenplay, shot list, camera and lighting plans.";
+            case SHOT_IMAGES -> "Generating and describing the still frames each shot is built from.";
+            case VIDEO_GENERATION -> "Preparing each shot for render: model choice, prompt compression and foley cues.";
+            case AUDIO -> "Voice, dialogue and music: cloning, narration, translation and background tracks.";
+            case POST_PRODUCTION -> "Finishing the cut: upscaling, lip-sync and muxing audio onto video.";
+            case ASSISTANT -> "The in-app assistant answering and acting on your instructions.";
+            case OTHER -> "Charges recorded before spend was categorised, or from a call with no category.";
+        };
+    }
+
     /** What a creator sees on the statement. */
     public String label() {
         return switch (this) {

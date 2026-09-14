@@ -1,6 +1,7 @@
 package com.dalai.llama.billing.service;
 
 import com.dalai.llama.billing.domain.entity.enums.TransactionType;
+import com.dalai.llama.billing.domain.TaskLabel;
 import com.dalai.llama.billing.domain.UsageStage;
 import com.dalai.llama.billing.domain.entity.Transaction;
 import com.dalai.llama.billing.domain.entity.UsageRecord;
@@ -63,14 +64,21 @@ public class WalletStatementService {
 
         Map<UsageStage, StageTotal> byStage = new EnumMap<>(UsageStage.class);
         BigDecimal spent = BigDecimal.ZERO;
+        BigDecimal totalTokens = BigDecimal.ZERO;
         for (UsageRecord record : usage) {
             UsageStage stage = record.getStage() == null ? UsageStage.OTHER : record.getStage();
             BigDecimal cost = record.getTotalCost() == null ? BigDecimal.ZERO : record.getTotalCost();
+            // Quantity is the billed unit -- tokens for an LLM call, seconds for a render. Summed
+            // per stage because cost alone cannot tell a creator whether a stage is expensive
+            // because it ran often or because each run was large.
+            BigDecimal units = record.getQuantity() == null ? BigDecimal.ZERO : record.getQuantity();
             StageTotal current = byStage.get(stage);
             byStage.put(stage, current == null
-                    ? new StageTotal(stage, stage.label(), cost, 1)
-                    : new StageTotal(stage, stage.label(), current.amount().add(cost), current.calls() + 1));
+                    ? new StageTotal(stage, stage.label(), stage.description(), cost, units, 1)
+                    : new StageTotal(stage, stage.label(), stage.description(),
+                            current.amount().add(cost), current.units().add(units), current.calls() + 1));
             spent = spent.add(cost);
+            totalTokens = totalTokens.add(units);
         }
 
         List<StageTotal> stages = new ArrayList<>(byStage.values());
@@ -84,6 +92,7 @@ public class WalletStatementService {
                 lastCredit == null ? null : lastCredit.getDescription(),
                 spent,
                 usage.size(),
+                totalTokens,
                 currencyConversionService.normalize(null),
                 stages);
     }
@@ -99,7 +108,11 @@ public class WalletStatementService {
                         r.getRecordedAt(),
                         r.getStage() == null ? UsageStage.OTHER.label() : r.getStage().label(),
                         r.getTaskKey(),
-                        r.getDescription(),
+                        // What happened, in words. The task key stays on the line for anyone
+                        // reconciling against logs, but it is not what a bill should read.
+                        TaskLabel.describe(r.getTaskKey()) != null
+                                ? TaskLabel.describe(r.getTaskKey())
+                                : r.getDescription(),
                         r.getProjectId(),
                         r.getQuantity(),
                         r.getUnit() == null ? null : r.getUnit().name(),
@@ -111,12 +124,12 @@ public class WalletStatementService {
      * against, which is the only form in which this data is genuinely checkable. */
     public String csv(List<StatementLine> lines, String currency) {
         StringBuilder out = new StringBuilder();
-        out.append("Date,Stage,Task,Description,Project,Quantity,Unit,Amount (").append(currency).append(")\n");
+        out.append("Date,Stage,What happened,Task key,Project,Quantity,Unit,Amount (").append(currency).append(")\n");
         for (StatementLine line : lines) {
             out.append(csvCell(line.recordedAt() == null ? "" : line.recordedAt().toString())).append(',')
                     .append(csvCell(line.stage())).append(',')
-                    .append(csvCell(line.taskKey())).append(',')
                     .append(csvCell(line.description())).append(',')
+                    .append(csvCell(line.taskKey())).append(',')
                     .append(csvCell(line.projectId() == null ? "" : line.projectId().toString())).append(',')
                     .append(csvCell(line.quantity() == null ? "" : line.quantity().toPlainString())).append(',')
                     .append(csvCell(line.unit())).append(',')
@@ -142,11 +155,14 @@ public class WalletStatementService {
             String lastCreditDescription,
             BigDecimal spentSince,
             int callsSince,
+            /** Billed units across the period -- tokens for LLM work, seconds for renders. */
+            BigDecimal unitsSince,
             String currency,
             List<StageTotal> stages
     ) {}
 
-    public record StageTotal(UsageStage stage, String label, BigDecimal amount, int calls) {}
+    public record StageTotal(UsageStage stage, String label, String description,
+                             BigDecimal amount, BigDecimal units, int calls) {}
 
     public record StatementLine(
             Instant recordedAt,
