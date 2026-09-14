@@ -394,7 +394,8 @@ public class ShotGenerationOrchestrator {
             // no bed comes back unchanged, and a failed mix keeps the unmixed video -- same
             // best-effort contract as auto-dub above, since losing a finished render over a
             // background track would be the wrong trade.
-            outputUri = backgroundMusicMixService.mixIfPresent(job.getJobId(), prompt.getPromptId(), outputUri);
+            outputUri = backgroundMusicMixService.mixIfPresent(
+                    job.getTenantId(), job.getJobId(), prompt.getPromptId(), prompt.getShotId(), outputUri);
 
             // Copy the provider's own hosted result into our MinIO -- durable, and this is what
             // GET /v1/jobs/{id}/video (the UI-facing endpoint) actually serves.

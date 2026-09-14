@@ -46,22 +46,30 @@ public class BackgroundMusicMixService {
 
     private final ShotPromptReferenceRepository shotPromptReferenceRepository;
     private final VideoAssetPersistenceService assetPersistenceService;
+    private final com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient preProductionClient;
     private final double musicVolume;
     private final long ffmpegTimeoutSeconds;
+    private final String defaultMixBucket;
 
     public BackgroundMusicMixService(
             ShotPromptReferenceRepository shotPromptReferenceRepository,
             VideoAssetPersistenceService assetPersistenceService,
+            com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient preProductionClient,
             /** Bed level relative to whatever is already on the video. 0.18 is a conventional
              * under-dialogue bed -- audible, never competing. Tunable without a redeploy because
              * the right number is a taste judgement, not an engineering one. */
             @Value("${video-gen.background-music.volume:0.18}") double musicVolume,
-            @Value("${video-gen.background-music.ffmpeg-timeout-seconds:300}") long ffmpegTimeoutSeconds
+            @Value("${video-gen.background-music.ffmpeg-timeout-seconds:300}") long ffmpegTimeoutSeconds,
+            /** Where a mix goes when there is no reference row to borrow a bucket from -- the
+             * late-generated-music path above. */
+            @Value("${video-gen.minio.bucket:creator-assets}") String defaultMixBucket
     ) {
         this.shotPromptReferenceRepository = shotPromptReferenceRepository;
         this.assetPersistenceService = assetPersistenceService;
+        this.preProductionClient = preProductionClient;
         this.musicVolume = musicVolume;
         this.ffmpegTimeoutSeconds = ffmpegTimeoutSeconds;
+        this.defaultMixBucket = defaultMixBucket;
     }
 
     /**
@@ -69,9 +77,17 @@ public class BackgroundMusicMixService {
      * @return the mixed video's URL, or {@code videoUrl} unchanged when this shot has no music bed
      *         or the mix could not be done
      */
-    public String mixIfPresent(UUID jobId, UUID promptId, String videoUrl) {
-        Optional<ShotPromptReference> music = findMusicReference(promptId);
-        if (music.isEmpty()) {
+    public String mixIfPresent(UUID tenantId, UUID jobId, UUID promptId, UUID shotId, String videoUrl) {
+        Optional<ShotPromptReference> reference = findMusicReference(promptId);
+        // The reference is a snapshot taken at prepare time, so a creator who generates the bed
+        // AFTER preparing the shot has music that this prompt has never heard of. Ask
+        // pre-production for the shot's current track in that case -- generating music and then
+        // generating the video is the obvious order to do it in, and it should not silently
+        // produce a shot with no bed.
+        Optional<String> musicUrl = reference.isPresent()
+                ? Optional.empty()
+                : currentMusicUrl(tenantId, shotId);
+        if (reference.isEmpty() && musicUrl.isEmpty()) {
             return videoUrl;
         }
         Path workDir = null;
@@ -82,7 +98,11 @@ public class BackgroundMusicMixService {
             Path output = workDir.resolve("mixed.mp4");
 
             download(videoUrl, videoPath);
-            assetPersistenceService.downloadTo(music.get().getBucket(), music.get().getObjectKey(), musicPath);
+            if (reference.isPresent()) {
+                assetPersistenceService.downloadTo(reference.get().getBucket(), reference.get().getObjectKey(), musicPath);
+            } else {
+                download(musicUrl.get(), musicPath);
+            }
 
             runFfmpeg(videoPath, musicPath, output);
             if (!Files.exists(output) || Files.size(output) == 0) {
@@ -92,8 +112,9 @@ public class BackgroundMusicMixService {
 
             // Stored beside the shot's other output rather than overwriting it: the unmixed take
             // stays retrievable if the bed turns out to be wrong for the shot.
+            String bucket = reference.map(ShotPromptReference::getBucket).orElse(defaultMixBucket);
             VideoAssetPersistenceService.PersistedAsset persisted = assetPersistenceService.uploadFile(
-                    music.get().getBucket(), "mixed/%s.mp4".formatted(jobId), output);
+                    bucket, "mixed/%s.mp4".formatted(jobId), output);
             String mixedUrl = assetPersistenceService.presignedUrl(persisted.bucket(), persisted.objectKey());
             log.info("Mixed background music jobId={} promptId={} volume={}", jobId, promptId, musicVolume);
             return mixedUrl;
@@ -102,6 +123,23 @@ public class BackgroundMusicMixService {
             return videoUrl;
         } finally {
             deleteQuietly(workDir);
+        }
+    }
+
+    /** The shot's background music as pre-production holds it right now, rather than as this
+     * prompt captured it. Best-effort: pre-prod being unreachable means no bed, not a failed
+     * render. */
+    private Optional<String> currentMusicUrl(UUID tenantId, UUID shotId) {
+        if (tenantId == null || shotId == null) {
+            return Optional.empty();
+        }
+        try {
+            return preProductionClient.getBackgroundMusic(tenantId, shotId)
+                    .map(com.dalai.llama.videogen.service.preproduction.PreProductionViews.ShotBackgroundMusicView::signedUrl)
+                    .filter(url -> url != null && !url.isBlank());
+        } catch (RuntimeException ex) {
+            log.debug("No current background music for shotId={}: {}", shotId, ex.getMessage());
+            return Optional.empty();
         }
     }
 
