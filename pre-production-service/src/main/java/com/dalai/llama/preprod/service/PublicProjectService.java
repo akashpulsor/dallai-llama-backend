@@ -49,6 +49,7 @@ public class PublicProjectService {
     private final MinioClient publicMinioClient;
     private final com.dalai.llama.preprod.service.revenue.BillingClient billingClient;
     private final ClientReviewSessionService reviewSessionService;
+    private final ProjectConfigService projectConfigService;
     private final ReviewCommentService reviewCommentService;
     private final VideoGenClient videoGenClient;
 
@@ -67,7 +68,8 @@ public class PublicProjectService {
             com.dalai.llama.preprod.service.revenue.BillingClient billingClient,
             ClientReviewSessionService reviewSessionService,
             ReviewCommentService reviewCommentService,
-            VideoGenClient videoGenClient
+            VideoGenClient videoGenClient,
+            ProjectConfigService projectConfigService
     ) {
         this.reviewSessionService = reviewSessionService;
         this.reviewCommentService = reviewCommentService;
@@ -84,6 +86,7 @@ public class PublicProjectService {
         this.videoGenClient = videoGenClient;
         this.publicMinioClient = publicMinioClient;
         this.billingClient = billingClient;
+        this.projectConfigService = projectConfigService;
     }
 
     @Transactional(readOnly = true)
@@ -208,33 +211,54 @@ public class PublicProjectService {
         return reviewCommentService.list(identity.tenantId(), identity.projectId());
     }
 
-    /** The client's view of the assembled final video. Video is always previewable when
-     * available; the {@code videoUrl} field is stripped to null server-side when the creator
-     * has not flipped {@link com.dalai.llama.preprod.domain.entity.Project#isFinalVideoDownloadUnlocked}
-     * -- the URL never even reaches a locked client. */
+    /** The client's view of the assembled final video.
+     *
+     * <p>The creator's flag means published, i.e. the client may watch it. Until it is set,
+     * {@code videoUrl} is null and the URL never reaches the client at all; once it is set they
+     * can play the cut but are offered no way to save it -- the review page draws it to a canvas
+     * rather than handing over a video element. Worth being honest about what that buys: it stops
+     * a casual save, not a determined one, since the browser still fetches the file.
+     *
+     * <p>{@code aspectRatio} travels with it so the player can shape itself to the cut instead of
+     * guessing and letterboxing a vertical video into a landscape box.
+     */
     @Transactional(readOnly = true)
     public PublicFinalVideoView finalVideo(String token) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         ProjectView project = projectService.getByClientReviewToken(token);
+        String aspectRatio = aspectRatioName(identity);
         var maybe = videoGenClient.getLatestFinalVideo(identity.tenantId(), identity.projectId());
+        boolean published = project.finalVideoDownloadUnlocked();
         if (maybe.isEmpty()) {
-            return new PublicFinalVideoView(false, null, null, project.finalVideoDownloadUnlocked(), null);
+            return new PublicFinalVideoView(false, null, null, published, null, aspectRatio);
         }
         VideoGenClient.LatestFinalVideoView view = maybe.get();
-        boolean unlocked = project.finalVideoDownloadUnlocked();
-        String url = unlocked ? view.videoUrl() : null;
-        return new PublicFinalVideoView(view.videoUrl() != null, view.status(), url, unlocked, view.completedAt());
+        String url = published ? view.videoUrl() : null;
+        return new PublicFinalVideoView(
+                view.videoUrl() != null, view.status(), url, published, view.completedAt(), aspectRatio);
     }
 
-    /** Client-facing view of the project's assembled final video -- see
-     * {@link #finalVideo}. {@code available}=true means an assembly exists and is playable;
-     * {@code videoUrl} is populated when download is unlocked (server-enforced), null otherwise. */
+    /** Null rather than a guessed default when the project has no config yet -- the player can
+     * fall back to the video's own dimensions, which is better than forcing the wrong shape. */
+    private String aspectRatioName(ProjectService.ProjectIdentity identity) {
+        try {
+            var config = projectConfigService.get(identity.tenantId(), identity.projectId());
+            return config == null || config.aspectRatio() == null ? null : config.aspectRatio().name();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /** Client-facing view of the project's assembled final video -- see {@link #finalVideo}.
+     * {@code available}=true means an assembly exists; {@code videoUrl} is populated only once
+     * the creator has published it (server-enforced), null otherwise. */
     public record PublicFinalVideoView(
             boolean available,
             String status,
             String videoUrl,
-            boolean downloadUnlocked,
-            java.time.OffsetDateTime completedAt
+            boolean published,
+            java.time.OffsetDateTime completedAt,
+            String aspectRatio
     ) {}
 
     @Transactional(readOnly = true)
