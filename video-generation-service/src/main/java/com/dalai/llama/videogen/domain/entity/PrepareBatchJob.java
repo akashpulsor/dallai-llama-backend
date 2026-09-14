@@ -70,6 +70,10 @@ public class PrepareBatchJob {
     @Column(name = "failed_count", nullable = false)
     private Integer failedCount;
 
+    /** Shots this batch will attempt. Null until the consumer resolves it from the bundle. */
+    @Column(name = "total_count")
+    private Integer totalCount;
+
     @Column(name = "error_message", columnDefinition = "text")
     private String errorMessage;
 

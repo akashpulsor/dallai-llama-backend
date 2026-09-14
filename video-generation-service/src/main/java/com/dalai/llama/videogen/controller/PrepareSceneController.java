@@ -121,6 +121,7 @@ public class PrepareSceneController {
                         job.getId(), job.getStatus().name(),
                         job.getPreparedCount() == null ? 0 : job.getPreparedCount(),
                         job.getFailedCount() == null ? 0 : job.getFailedCount(),
+                        job.getTotalCount(),
                         job.getErrorMessage(), job.getCreatedAt(), job.getCompletedAt())))
                 .orElseThrow(() -> VideoGenException.notFound(
                         "Project " + projectId + " has no prepare batch yet"));
@@ -191,6 +192,9 @@ public class PrepareSceneController {
      * SUCCEEDED/FAILED once done; the counts are filled in when it finishes. */
     public record PrepareBatchStatusView(
             UUID jobId, String status, int preparedCount, int failedCount,
+            /** Shots this batch will attempt; null until the consumer has resolved it from the
+             * bundle, which is the brief window before the first shot starts. */
+            Integer totalCount,
             String errorMessage, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
 
     public record FailedShot(UUID shotId, String reason) {}

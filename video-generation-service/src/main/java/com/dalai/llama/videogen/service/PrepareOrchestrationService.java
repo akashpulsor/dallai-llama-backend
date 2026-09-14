@@ -57,6 +57,15 @@ public class PrepareOrchestrationService {
      */
     public BatchResult prepareShotsBatch(TenantContext ctx, UUID projectId, List<UUID> shotIds,
                                          ShotContextAssemblyService.PrepareShotOverrides overrides) {
+        return prepareShotsBatch(ctx, projectId, shotIds, overrides, ProgressListener.NOOP);
+    }
+
+    /** Progress form: {@code listener} is told the shot total once it is known and again after
+     * every shot, so a caller tracking the batch can report "4 of 13" while it runs instead of
+     * only a result at the end. */
+    public BatchResult prepareShotsBatch(TenantContext ctx, UUID projectId, List<UUID> shotIds,
+                                         ShotContextAssemblyService.PrepareShotOverrides overrides,
+                                         ProgressListener listener) {
 
         // Model catalog first, once for the whole batch -- every shot's recommendation reuses it
         // instead of each shot re-fetching the same list from llm-gateway.
@@ -99,6 +108,9 @@ public class PrepareOrchestrationService {
         // abort. Per-shot failures don't push the flag to FAILED -- they live in failed[]; FAILED
         // is reserved for an infrastructure error that broke the loop.
         scenePreparationService.markStatus(ctx.tenantId(), projectId, ScenePreparationStatus.PREPARING);
+        // The total is only knowable here: an empty shotIds means "every shot", which the bundle
+        // above is what resolves.
+        listener.onStart(targetShotIds.size());
         long batchStartMs = System.currentTimeMillis();
         log.info("prepare-batch START projectId={} shotCount={} selection={} bundleShotsInBundle={}",
                 projectId, targetShotIds.size(),
@@ -125,6 +137,7 @@ public class PrepareOrchestrationService {
                     log.info("prepare-batch shot OK projectId={} shotId={} promptId={} elapsedMs={}",
                             projectId, shotId, preparedShot.prompt().getPromptId(),
                             System.currentTimeMillis() - shotStartMs);
+                    listener.onProgress(prepared.size(), failed.size());
                 } catch (RuntimeException ex) {
                     // One shot's failure never stops the batch. Common causes: missing dialogue
                     // beats where the assembler expected them, a shot deleted mid-batch, a
@@ -133,6 +146,7 @@ public class PrepareOrchestrationService {
                             projectId, shotId, System.currentTimeMillis() - shotStartMs,
                             ex.getClass().getSimpleName(), ex.getMessage());
                     failed.add(new FailedShot(shotId, ex.getMessage()));
+                    listener.onProgress(prepared.size(), failed.size());
                 }
             }
             scenePreparationService.markStatus(ctx.tenantId(), projectId, ScenePreparationStatus.READY);
@@ -184,6 +198,19 @@ public class PrepareOrchestrationService {
             }
         }
         return latestPerShot;
+    }
+
+    /** Told the shot total once resolved, then after each shot finishes either way. Implementations
+     * must not throw: a failure to record progress is not a reason to abandon the batch. */
+    public interface ProgressListener {
+        ProgressListener NOOP = new ProgressListener() {
+            @Override public void onStart(int totalShots) {}
+            @Override public void onProgress(int prepared, int failed) {}
+        };
+
+        void onStart(int totalShots);
+
+        void onProgress(int prepared, int failed);
     }
 
     public record BatchResult(List<ShotPromptView> prepared, List<FailedShot> failed) {}

@@ -77,7 +77,8 @@ public class PrepareBatchRequestedConsumer {
         TenantContextHolder.set(ctx);
         try {
             PrepareOrchestrationService.BatchResult result = prepareOrchestrationService.prepareShotsBatch(
-                    ctx, job.getProjectId(), parseShotIds(job.getShotIds()), overridesFrom(job));
+                    ctx, job.getProjectId(), parseShotIds(job.getShotIds()), overridesFrom(job),
+                    progressWriter(job));
             markSucceeded(job, result.prepared().size(), result.failed().size());
         } catch (RuntimeException ex) {
             // prepareShotsBatch has already flipped the project's scene-preparation status to
@@ -87,6 +88,39 @@ public class PrepareBatchRequestedConsumer {
         } finally {
             TenantContextHolder.clear();
         }
+    }
+
+    /** Writes the running tally to the job row so the UI can show "4 of 13" while the batch is
+     * still going. Never throws: failing to record progress must not abandon a batch that is
+     * otherwise working, so a write error is logged and the shot loop carries on. */
+    private PrepareOrchestrationService.ProgressListener progressWriter(PrepareBatchJob job) {
+        return new PrepareOrchestrationService.ProgressListener() {
+            @Override
+            public void onStart(int totalShots) {
+                save(() -> {
+                    job.setTotalCount(totalShots);
+                    job.setUpdatedAt(OffsetDateTime.now());
+                });
+            }
+
+            @Override
+            public void onProgress(int prepared, int failed) {
+                save(() -> {
+                    job.setPreparedCount(prepared);
+                    job.setFailedCount(failed);
+                    job.setUpdatedAt(OffsetDateTime.now());
+                });
+            }
+
+            private void save(Runnable mutation) {
+                try {
+                    mutation.run();
+                    prepareBatchJobRepository.save(job);
+                } catch (RuntimeException ex) {
+                    log.warn("Could not record prepare-batch progress jobId={}: {}", job.getId(), ex.getMessage());
+                }
+            }
+        };
     }
 
     private void markRunning(PrepareBatchJob job) {
