@@ -4,6 +4,7 @@ import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
+import com.dalai.llama.videogen.dto.VideoGenJobView;
 import com.dalai.llama.videogen.service.PrepareBatchJobService;
 import com.dalai.llama.videogen.service.PrepareOrchestrationService;
 import com.dalai.llama.videogen.service.ScenePreparationService;
@@ -53,6 +54,42 @@ public class PrepareSceneController {
         TenantContext ctx = TenantContextHolder.get();
         ProjectScenePreparation prep = scenePreparationService.prepareProject(ctx.tenantId(), projectId);
         return ResponseEntity.ok(toView(prep));
+    }
+
+    /**
+     * Every generated shot clip in a project, each carrying a presigned URL the browser can
+     * fetch directly -- no Authorization header, so a plain fetch() or &lt;video src&gt; works.
+     *
+     * <p>Lives here rather than at the natural {@code GET /v1/projects/{id}/jobs} because that
+     * prefix is routed to pre-production-service at the gateway and never reaches this service.
+     * {@code /v1/jobs/{id}/video} does reach us but answers a 302 behind JWT auth, which a
+     * credential-less fetch cannot follow -- hence signing here instead.
+     *
+     * <p>Shots whose job has not produced an output yet come back with a null videoUrl rather
+     * than being dropped, so a caller can still list the shot and show why it is not ready.
+     */
+    @GetMapping("/projects/{projectId}/shot-videos")
+    public ResponseEntity<List<ShotVideoView>> listShotVideos(@PathVariable UUID projectId) {
+        TenantContext ctx = TenantContextHolder.get();
+        List<ShotVideoView> views = shotGenerationOrchestrator.listJobsForProject(ctx.tenantId(), projectId)
+                .stream()
+                .map(job -> new ShotVideoView(
+                        job.jobId(),
+                        job.shotRef(),
+                        job.status(),
+                        job.approvalStatus(),
+                        signedVideoUrlOrNull(ctx.tenantId(), job)))
+                .toList();
+        return ResponseEntity.ok(views);
+    }
+
+    private String signedVideoUrlOrNull(UUID tenantId, VideoGenJobView job) {
+        try {
+            return shotGenerationOrchestrator.getVideoUrl(tenantId, job.jobId());
+        } catch (VideoGenException ex) {
+            // Still running, failed, or never dispatched -- not an error for a listing.
+            return null;
+        }
     }
 
     @GetMapping("/projects/{projectId}/preparation")
@@ -167,6 +204,16 @@ public class PrepareSceneController {
     ) {}
 
     public record UpdateShotPromptRequest(@jakarta.validation.constraints.NotBlank String positive) {}
+
+    /** One generated shot clip. {@code videoUrl} is presigned and null until the job has a
+      * persisted output. */
+    public record ShotVideoView(
+            UUID jobId,
+            String shotRef,
+            String status,
+            String approvalStatus,
+            String videoUrl
+    ) {}
 
     /** {@code shotIds} empty (or the whole body omitted) means "prepare every shot in the
      * project" -- the UI's default "Prepare all shots" action. A non-empty list is the narrowing

@@ -32,11 +32,16 @@ public class LlmGatewayClient {
         this.timeoutMs = timeoutMs;
     }
 
+    /** Runs a model through llm-gateway -- upscale, dubbing, foley and music all land here.
+     *
+     * <p>Internal mirror rather than /v1/chat for the same reason as {@link #listModels}: the
+     * end-user path sits behind llm-gateway's JWT resource-server chain and this call carries
+     * no JWT, so it answered 401 for every capability this service offers. Tenant moves from the
+     * X-Tenant-ID header into the path, which is the shape the internal handler takes. */
     public LlmGatewayChatResponse chat(String tenantId, String idempotencyKey, LlmGatewayChatRequest request) {
         try {
             return webClient.post()
-                    .uri("/v1/chat")
-                    .header("X-Tenant-ID", tenantId)
+                    .uri("/api/v1/internal/tenants/{tenantId}/chat", tenantId)
                     .header("Idempotency-Key", idempotencyKey)
                     .bodyValue(request)
                     .retrieve()
@@ -44,17 +49,24 @@ public class LlmGatewayClient {
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "llm-gateway /v1/chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
 
     /** Every candidate model registered for a capability (type=lip_sync/tts/voice_clone/foley/
-     * music) -- lets a caller see what's actually available to try before picking one via a
-     * model override. */
+     * music/upscale) -- lets a caller see what's actually available to try before picking one
+     * via a model override.
+     *
+     * <p>Calls the internal mirror, not /v1/models: llm-gateway puts everything outside
+     * /api/v1/internal/** behind a JWT resource-server chain, and this is a service-to-service
+     * call carrying only X-Tenant-ID, so the end-user path always answered 401 -- surfaced live
+     * as "llm-gateway /v1/models failed status=401" on the editor's upscale model dropdown.
+     * video-generation-service's client hit the identical wall and was moved to the internal
+     * mirror; this one was left behind. */
     public List<LlmGatewayModelSummary> listModels(String tenantId, String type) {
         try {
             return webClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/v1/models").queryParamIfPresent("type", Optional.ofNullable(type)).build())
+                    .uri(uriBuilder -> uriBuilder.path("/api/v1/internal/models").queryParamIfPresent("type", Optional.ofNullable(type)).build())
                     .header("X-Tenant-ID", tenantId)
                     .retrieve()
                     .bodyToFlux(LlmGatewayModelSummary.class)
