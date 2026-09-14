@@ -146,7 +146,12 @@ public final class PromptDtos {
             String targetProvider,
             String targetModel,
             String voiceCloneModel,
-            String editingNotes
+            String editingNotes,
+            /** The resolution this shot will actually be rendered at -- the caller's own
+             * argument, already resolved from the per-request override or the project config.
+             * The caller has always sent it; this record simply did not declare it, so Jackson
+             * dropped it and the prompt had no idea what it was being rendered at. */
+            String resolution
     ) {}
 
     public record ContinuityAnchor(String anchorType, String subjectId, String description, String referenceObjectKey) {}

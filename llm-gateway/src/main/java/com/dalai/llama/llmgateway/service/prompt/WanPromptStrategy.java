@@ -155,6 +155,11 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
                 }
             });
         }
+        // The resolution actually being rendered, from the caller's argument.
+        if (shotContext.technical() != null && shotContext.technical().resolution() != null
+                && !shotContext.technical().resolution().isBlank()) {
+            clauses.add(shotContext.technical().resolution());
+        }
         String dialogueLine = shotContext.narrative() != null ? shotContext.narrative().dialogue() : null;
         if (flags != null && PromptDtos.FeatureFlags.ON.equals(flags.dialogue()) && dialogueLine != null && !dialogueLine.isBlank()) {
             // As written -- see DefaultPromptStrategy for why the phonetic respelling round-trip

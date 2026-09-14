@@ -137,6 +137,13 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
                 if (anchor.description() != null) lines.add("Continuity: " + anchor.description());
             });
         }
+        // The resolution the caller actually asked for -- resolved from the per-request override
+        // or the project config before it ever got here. The prompt states it because it is the
+        // one authority on the question; captureFormat describes the LOOK (codec, bit depth) and
+        // is not asked to carry a resolution.
+        if (shotContext.technical() != null && hasText(shotContext.technical().resolution())) {
+            lines.add("Output resolution: " + shotContext.technical().resolution());
+        }
         if (shotContext.technical() != null && shotContext.technical().editingNotes() != null
                 && !shotContext.technical().editingNotes().isBlank()) {
             lines.add("Editing: " + shotContext.technical().editingNotes());
