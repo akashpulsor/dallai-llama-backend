@@ -59,9 +59,29 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
                 : shotNegatives.strip() + ", " + SPEECH_NEGATIVES;
     }
 
+    /** Appends the delivery budget to the prompt: the seconds available and an explicit
+     * instruction to finish inside them without hurrying. Duration is the only timing figure
+     * this service currently holds -- fps lives on pre-production's shot and is not threaded
+     * through, so it is deliberately not asserted here rather than guessed at. */
+    private String withTiming(String positivePrompt, VideoDispatchParams params) {
+        if (params == null || params.durationSeconds() == null) {
+            return positivePrompt;
+        }
+        String timing = "TIMING: this shot is " + params.durationSeconds() + " seconds."
+                + " Speak the dialogue at a natural, clearly audible pace and finish it within that time."
+                + " Do not cut the line short, and do not speed it up to fit.";
+        return positivePrompt == null || positivePrompt.isBlank()
+                ? timing
+                : positivePrompt.strip() + System.lineSeparator() + timing;
+    }
     @Override
     public DispatchResult dispatch(VideoGenJob job, String positivePrompt, String negativePrompt, VideoDispatchParams params) {
         String tenantId = job.getTenantId().toString();
+        // State the budget in the request. The model is performing the line, not reading it, so
+        // "you have this many seconds" is the one instruction that decides whether it finishes.
+        // Said alongside the duration_seconds param rather than instead of it: the param sets the
+        // clip length, this tells the performance to land inside it.
+        String prompt = withTiming(positivePrompt, params);
         Map<String, Object> videoParams = new LinkedHashMap<>();
         videoParams.put("negative_prompt", withSpeechNegatives(negativePrompt));
         if (params != null && params.durationSeconds() != null) {
@@ -96,7 +116,7 @@ public class LlmGatewayVideoGenDispatchService implements VideoGenDispatchServic
                 "video-gen-job-" + job.getJobId(),
                 new LlmGatewayChatRequest(
                         job.getModelId(),
-                        List.of(new LlmGatewayMessage("user", positivePrompt)),
+                        List.of(new LlmGatewayMessage("user", prompt)),
                         videoParams,
                         null,
                         null,

@@ -153,10 +153,19 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
             // The line goes in as written. Phonetic respelling used to happen here, which put a
             // synchronous PHONEME_GUIDE LLM round-trip inside prompt composition -- 14-22s per
             // shot, the single largest cost in prepare. It bought nothing: respelling exists to
-            // help a TTS engine pronounce a line, and by this point the dialogue has already been
-            // dubbed by BeatDubbingService. The video model is being told what is said, not asked
-            // to say it.
+            // help a TTS engine pronounce a line, and the model reads the line directly.
             lines.add("Dialogue/VO: " + dialogueLine);
+            // The budget the line has to be delivered in. Generation is multimodal -- the model
+            // performs this dialogue -- so the seconds available decide whether it finishes the
+            // sentence. Without it a 3-second shot was handed a line that takes eighteen to say,
+            // and came back cut off mid-word. Both bounds are stated, because naming only the
+            // overrun invites the other failure: speech hurried until it cannot be understood.
+            if (shotContext.technical() != null && shotContext.technical().durationSeconds() != null
+                    && shotContext.technical().durationSeconds() > 0) {
+                lines.add("Delivery: speak this line at a natural, clearly audible pace and finish it"
+                        + " within " + shotContext.technical().durationSeconds() + " seconds."
+                        + " Do not cut it short, and do not rush it to fit.");
+            }
         }
         return String.join("\n", lines);
     }
