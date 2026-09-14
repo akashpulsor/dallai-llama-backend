@@ -25,7 +25,7 @@ import java.util.UUID;
  * individual calls behind it -- downloadable as CSV.
  */
 @RestController
-@RequestMapping("/api/v1/tenants/{tenantId}/wallet/statement")
+@RequestMapping("/api/v1/billing/{tenantId}/wallet/statement")
 @RequiredArgsConstructor
 @Tag(name = "Wallet statement")
 public class WalletStatementController {
