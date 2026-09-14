@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +27,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PrepareBatchJobService {
 
+    /** Generous against a slow shot, short against a creator waiting to retry: a shot takes
+     * seconds now that the phoneme round-trip is gone, so ten minutes without a single shot
+     * completing means the worker is gone, not busy. */
+    private static final Duration ABANDONED_AFTER = Duration.ofMinutes(10);
+
     private final PrepareBatchJobRepository prepareBatchJobRepository;
     private final PrepareBatchRequestedPublisher publisher;
 
@@ -38,7 +44,14 @@ public class PrepareBatchJobService {
                 .findFirstByProjectIdAndStatusInOrderByCreatedAtDesc(
                         projectId, List.of(PrepareBatchJobStatus.PENDING, PrepareBatchJobStatus.RUNNING));
         if (live.isPresent()) {
-            return new Accepted(live.get(), false);
+            if (!isAbandoned(live.get())) {
+                return new Accepted(live.get(), false);
+            }
+            // A worker that died mid-batch leaves its row RUNNING forever, and the partial unique
+            // index then refuses every future batch for the project -- the creator clicks Prepare,
+            // gets handed the dead job, and sees the previously saved prompts instead of new ones,
+            // with nothing to tell them why. Release it and let this request through.
+            releaseAbandoned(live.get());
         }
 
         PrepareBatchJob job;
@@ -66,6 +79,26 @@ public class PrepareBatchJobService {
             throw ex;
         }
         return new Accepted(job, true);
+    }
+
+    /** A live job whose progress stopped moving longer ago than a single shot could plausibly
+     * take. Judged on updated_at, which the progress listener touches after every shot, so a
+     * genuinely slow batch keeps renewing its claim and only a dead one ages out. */
+    private boolean isAbandoned(PrepareBatchJob job) {
+        OffsetDateTime lastProgress = job.getUpdatedAt() == null ? job.getCreatedAt() : job.getUpdatedAt();
+        return lastProgress != null && lastProgress.isBefore(OffsetDateTime.now().minus(ABANDONED_AFTER));
+    }
+
+    private void releaseAbandoned(PrepareBatchJob job) {
+        log.warn("Releasing abandoned prepare-batch jobId={} projectId={} lastProgressAt={} -- worker "
+                        + "presumed gone, allowing a new batch",
+                job.getId(), job.getProjectId(), job.getUpdatedAt());
+        job.setStatus(PrepareBatchJobStatus.FAILED);
+        job.setErrorMessage("Abandoned: no progress for " + ABANDONED_AFTER.toMinutes()
+                + " minutes, worker presumed gone");
+        job.setUpdatedAt(OffsetDateTime.now());
+        job.setCompletedAt(OffsetDateTime.now());
+        prepareBatchJobRepository.save(job);
     }
 
     // Not @Transactional: submit() calls this on itself, and Spring's proxy is bypassed on

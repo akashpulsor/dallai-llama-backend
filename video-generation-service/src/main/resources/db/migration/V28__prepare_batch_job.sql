@@ -22,13 +22,8 @@ CREATE TABLE prepare_batch_job (
     resolution_override  VARCHAR(16),
     dialogue_flag        VARCHAR(8),
     captions_flag        VARCHAR(8),
-    -- Updated as each shot finishes, not only at the end, so the UI can show "4 of 13" rather
-    -- than an unmoving spinner for the couple of minutes a batch takes.
     prepared_count       INTEGER NOT NULL DEFAULT 0,
     failed_count         INTEGER NOT NULL DEFAULT 0,
-    -- How many shots this batch will attempt. Not known until the consumer has the prepare
-    -- bundle (an empty shotIds means "every shot in the project"), so it stays null until then.
-    total_count          INTEGER,
     error_message        TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),

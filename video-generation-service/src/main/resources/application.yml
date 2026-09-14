@@ -67,6 +67,14 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         spring.json.trusted.packages: "*"
+        # A prepare-batch holds one record for as long as the whole project takes to prepare.
+        # The 5-minute default would declare the consumer dead mid-batch, rebalance, and hand the
+        # same batch to another consumer -- re-running shots that were already prepared and
+        # charged for. Well clear of a realistic batch, and the abandoned-job reclaim in
+        # PrepareBatchJobService is what covers a worker that genuinely dies.
+        max.poll.interval.ms: ${VIDEO_GEN_KAFKA_MAX_POLL_INTERVAL_MS:1800000}
+        # One batch at a time per consumer: the shot loop inside is deliberately sequential.
+        max.poll.records: 1
 
   data:
     redis:
