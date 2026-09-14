@@ -71,6 +71,35 @@ public class BillingCurrencyClient {
         return new Converted(amount.multiply(rate).setScale(2, RoundingMode.HALF_UP), target);
     }
 
+    /** What the wallet will actually lose: the provider's price converted into billing's
+     * currency and then marked up by the same margin billing debits at.
+     *
+     * <p>{@link #convert} alone is not a price. Quoting its output showed a creator INR 26.11
+     * for a render that then took INR 48.31, because the margin was applied at debit time and
+     * nowhere else. Both numbers come from billing in one response, so the quote and the
+     * charge move together whatever the margin is set to.
+     *
+     * <p>Margin missing (billing unreachable, or an older billing that does not send it) means
+     * the converted figure is returned unchanged -- under-quoting is bad, but inventing a
+     * margin here would recreate the second-copy problem this exists to avoid. */
+    public Converted price(BigDecimal amount, String sourceCurrency) {
+        Converted converted = convert(amount, sourceCurrency);
+        if (converted.amount() == null) {
+            return converted;
+        }
+        CurrencyRatesResponse rates = ratesOrNull();
+        BigDecimal marginPercent = rates == null ? null : rates.llmUsageMarginPercent();
+        if (marginPercent == null) {
+            log.warn("No usage margin from billing -- quoting the unmarked-up cost");
+            return converted;
+        }
+        BigDecimal multiplier = BigDecimal.valueOf(100).add(marginPercent)
+                .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP);
+        return new Converted(
+                converted.amount().multiply(multiplier).setScale(2, RoundingMode.HALF_UP),
+                converted.currency());
+    }
+
     private CurrencyRatesResponse ratesOrNull() {
         CachedRates current = cached;
         if (current != null && current.fetchedAt().plus(cacheTtl).isAfter(Instant.now())) {
@@ -96,7 +125,8 @@ public class BillingCurrencyClient {
 
     public record Converted(BigDecimal amount, String currency) {}
 
-    public record CurrencyRatesResponse(String defaultCurrency, Map<String, BigDecimal> rates) {}
+    public record CurrencyRatesResponse(String defaultCurrency, Map<String, BigDecimal> rates,
+                                        BigDecimal llmUsageMarginPercent) {}
 
     private record CachedRates(CurrencyRatesResponse rates, Instant fetchedAt) {}
 }

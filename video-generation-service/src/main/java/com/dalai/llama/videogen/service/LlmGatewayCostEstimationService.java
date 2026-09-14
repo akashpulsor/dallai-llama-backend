@@ -41,11 +41,14 @@ public class LlmGatewayCostEstimationService implements CostEstimationService {
         );
         BigDecimal cost = response == null || response.estimatedCost() == null ? BigDecimal.ZERO : response.estimatedCost();
         // Providers quote in USD; the wallet this will be charged against is in billing's own
-        // currency. Quote what the creator will actually be billed, using billing's rate rather
-        // than a second copy of it here -- an estimate in dollars beside a rupee balance is not a
-        // price anyone can act on. Falls back to USD, correctly labelled, if billing is
-        // unreachable.
-        BillingCurrencyClient.Converted converted = billingCurrencyClient.convert(cost, "USD");
-        return new CostEstimate(converted.amount(), converted.currency());
+        // currency, and billing marks usage up before it debits. price() applies both from one
+        // billing response, so this quotes what the wallet will actually lose.
+        //
+        // It used to convert only. That quoted the raw provider cost -- INR 26.11 on a render
+        // that then took INR 48.31 -- because the margin lived at debit time and nowhere else.
+        // An estimate that is not the charge is worse than no estimate: it is a number the
+        // creator budgets against and is then wrong about.
+        BillingCurrencyClient.Converted priced = billingCurrencyClient.price(cost, "USD");
+        return new CostEstimate(priced.amount(), priced.currency());
     }
 }
