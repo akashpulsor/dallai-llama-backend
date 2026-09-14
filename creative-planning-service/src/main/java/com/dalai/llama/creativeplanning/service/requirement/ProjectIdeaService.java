@@ -83,7 +83,7 @@ public class ProjectIdeaService {
                                 "keyMessage", orNotSpecified(current.getKeyMessage()),
                                 "tone", orNotSpecified(current.getTone()),
                                 "optionCount", String.valueOf(optionCount)
-                        )));
+                        )).withProjectId(projectId));
 
         OffsetDateTime now = OffsetDateTime.now();
         List<IdeaOption> saved = parseCandidates(response).stream()
