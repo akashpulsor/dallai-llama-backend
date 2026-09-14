@@ -140,7 +140,7 @@ video-gen:
     rates-cache-seconds: ${VIDEO_GEN_BILLING_RATES_CACHE_SECONDS:300}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
-    default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}
+    default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:bytedance/seedance-2.0/fast}
     default-compression-model: ${VIDEO_GEN_COMPRESSION_MODEL:gemini-2.5-flash}
     default-voice-clone-model: ${VIDEO_GEN_VOICE_CLONE_MODEL:elevenlabs/instant-voice-clone}
     default-voice-clone-provider-id: ${VIDEO_GEN_VOICE_CLONE_PROVIDER_ID:elevenlabs}
