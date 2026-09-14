@@ -443,6 +443,17 @@ public class ShotGenerationOrchestrator {
         return toPromptView(prompt);
     }
 
+    /** Prompt history for a shot by its own id, newest first. The shotRef variant above walks
+     * jobs to find prompts; a shot the creator has not generated yet has no job, so that path
+     * returns nothing for a prompt that plainly exists. Prompts carry shot_id directly, so this
+     * one asks the question the caller actually has an answer for. */
+    public List<ShotPromptView> listPromptsForShotId(UUID tenantId, UUID shotId) {
+        return shotPromptRepository.findByShotIdOrderByCreatedAtDesc(shotId).stream()
+                .filter(prompt -> tenantId.equals(prompt.getTenantId()))
+                .map(this::toPromptView)
+                .toList();
+    }
+
     public List<ShotPromptView> listPromptsForShot(UUID tenantId, String shotRef) {
         return videoGenJobRepository.findByTenantIdAndShotRefOrderByCreatedAtDesc(tenantId, shotRef).stream()
                 .flatMap(job -> shotPromptRepository.findByJobIdOrderByCreatedAtDesc(job.getJobId()).stream())

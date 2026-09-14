@@ -68,6 +68,23 @@ public class PrepareSceneController {
      * <p>Shots whose job has not produced an output yet come back with a null videoUrl rather
      * than being dropped, so a caller can still list the shot and show why it is not ready.
      */
+    /**
+     * Every prompt version ever written for a shot, newest first, each with the approval and job
+     * status it produced. Editing never overwrites -- {@code saveEditedPrompt} writes a new row
+     * whose parentPromptId is the one it came from -- so this chain is the shot's history, and a
+     * rejected prompt is still here to read or rewrite from.
+     *
+     * <p>Keyed by shot id, which is what a caller holding a shot already has. Not on
+     * {@code /v1/shots/...} like VideoGenController's shotRef variant, which the browser
+     * cannot reach: /v1/shots belongs to pre-production-service at the gateway, so requests for it
+     * never arrive here. Same query, reachable prefix.
+     */
+    @GetMapping("/shots/{shotId}/prompts")
+    public ResponseEntity<List<ShotPromptView>> listPromptVersions(@PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotGenerationOrchestrator.listPromptsForShotId(ctx.tenantId(), shotId));
+    }
+
     @GetMapping("/projects/{projectId}/shot-videos")
     public ResponseEntity<List<ShotVideoView>> listShotVideos(@PathVariable UUID projectId) {
         TenantContext ctx = TenantContextHolder.get();
