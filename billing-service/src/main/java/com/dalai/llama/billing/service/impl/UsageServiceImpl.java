@@ -10,6 +10,7 @@ import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.TransactionService;
+import com.dalai.llama.billing.service.CurrencyConversionService;
 import com.dalai.llama.billing.service.UsageService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
@@ -37,9 +38,7 @@ public class UsageServiceImpl implements UsageService {
     private final WalletService walletService;
     private final BillingStateService billingStateService;
     private final TransactionService transactionService;
-
-    @Value("${billing.currency.conversion-rates:INR_INR=1,USD_INR=95}")
-    private String conversionRatesConfig;
+    private final CurrencyConversionService currencyConversionService;
 
     @Value("${billing.creator-video-package.ai-short-starter-price-inr:5999}")
     private BigDecimal aiShortStarterPriceInr;
@@ -185,45 +184,11 @@ public class UsageServiceImpl implements UsageService {
     }
 
     private BigDecimal convertCurrency(BigDecimal amount, String sourceCurrency, String targetCurrency, int scale) {
-        if (amount == null || amount.signum() == 0) {
-            return BigDecimal.ZERO.setScale(scale, RoundingMode.HALF_UP);
-        }
-        if (sourceCurrency.equals(targetCurrency)) {
-            return amount.setScale(scale, RoundingMode.HALF_UP);
-        }
-        BigDecimal rate = conversionRates().get(sourceCurrency + "_" + targetCurrency);
-        if (rate == null) {
-            throw new IllegalArgumentException(
-                    "No billing currency conversion rate configured for " + sourceCurrency + "_" + targetCurrency
-            );
-        }
-        return amount.multiply(rate).setScale(scale, RoundingMode.HALF_UP);
-    }
-
-    private Map<String, BigDecimal> conversionRates() {
-        Map<String, BigDecimal> rates = new HashMap<>();
-        rates.put("INR_INR", BigDecimal.ONE);
-        if (conversionRatesConfig == null || conversionRatesConfig.isBlank()) {
-            return rates;
-        }
-        String[] entries = conversionRatesConfig.split("[,;]");
-        for (String entry : entries) {
-            if (entry == null || entry.isBlank()) {
-                continue;
-            }
-            String[] parts = entry.trim().split("[:=]", 2);
-            if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
-                continue;
-            }
-            rates.put(parts[0].trim().toUpperCase(Locale.ROOT), new BigDecimal(parts[1].trim()));
-        }
-        return rates;
+        return currencyConversionService.convert(amount, sourceCurrency, targetCurrency, scale);
     }
 
     private String normalizeCurrency(String currency) {
-        return currency == null || currency.isBlank()
-                ? "INR"
-                : currency.trim().toUpperCase(Locale.ROOT);
+        return currencyConversionService.normalize(currency);
     }
 
     private String usageReference(BillableUsageRequest request) {

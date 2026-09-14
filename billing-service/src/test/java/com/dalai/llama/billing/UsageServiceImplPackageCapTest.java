@@ -9,6 +9,7 @@ import com.dalai.llama.billing.repository.UsageRecordRepository;
 import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.BillingStateService;
+import com.dalai.llama.billing.service.CurrencyConversionService;
 import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import com.dalai.llama.billing.service.impl.UsageServiceImpl;
@@ -38,14 +39,18 @@ class UsageServiceImplPackageCapTest {
         WalletService walletService = mock(WalletService.class);
         BillingStateService billingStateService = mock(BillingStateService.class);
         TransactionService transactionService = mock(TransactionService.class);
+        // Real, not mocked: the rates it parses are what this test's amounts depend on, and the
+        // conversion is pure arithmetic over config -- stubbing it would only restate the answer.
+        CurrencyConversionService currencyConversionService = new CurrencyConversionService();
+        ReflectionTestUtils.setField(currencyConversionService, "conversionRatesConfig", "INR_INR=1,USD_INR=95");
         UsageServiceImpl service = new UsageServiceImpl(
                 usageRepository,
                 walletRepository,
                 walletService,
                 billingStateService,
-                transactionService
+                transactionService,
+                currencyConversionService
         );
-        ReflectionTestUtils.setField(service, "conversionRatesConfig", "INR_INR=1,USD_INR=95");
         ReflectionTestUtils.setField(service, "aiShortStarterPriceInr", new BigDecimal("5999"));
 
         UUID tenantId = UUID.randomUUID();

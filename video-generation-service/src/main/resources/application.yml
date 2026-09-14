@@ -124,6 +124,12 @@ video-gen:
   prepare:
     requested-topic: ${VIDEO_GEN_PREPARE_REQUESTED_TOPIC:videogen.prepare.requested}
     requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
+  # Billing owns the exchange rate a render is quoted at, so the estimate shown to a creator and
+  # the debit that follows it cannot drift apart.
+  billing:
+    base-url: ${BILLING_SERVICE_BASE_URL:http://billing-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${VIDEO_GEN_BILLING_TIMEOUT_MS:5000}
+    rates-cache-seconds: ${VIDEO_GEN_BILLING_RATES_CACHE_SECONDS:300}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     default-video-model: ${VIDEO_GEN_DEFAULT_MODEL:seedance-v1}

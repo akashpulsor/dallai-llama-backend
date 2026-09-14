@@ -1,5 +1,6 @@
 package com.dalai.llama.videogen.service;
 
+import com.dalai.llama.videogen.service.billing.BillingCurrencyClient;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
@@ -16,9 +17,12 @@ import java.util.UUID;
 public class LlmGatewayCostEstimationService implements CostEstimationService {
 
     private final LlmGatewayClient llmGatewayClient;
+    private final BillingCurrencyClient billingCurrencyClient;
 
-    public LlmGatewayCostEstimationService(LlmGatewayClient llmGatewayClient) {
+    public LlmGatewayCostEstimationService(LlmGatewayClient llmGatewayClient,
+                                           BillingCurrencyClient billingCurrencyClient) {
         this.llmGatewayClient = llmGatewayClient;
+        this.billingCurrencyClient = billingCurrencyClient;
     }
 
     @Override
@@ -36,6 +40,12 @@ public class LlmGatewayCostEstimationService implements CostEstimationService {
                 new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt)), params, null, null)
         );
         BigDecimal cost = response == null || response.estimatedCost() == null ? BigDecimal.ZERO : response.estimatedCost();
-        return new CostEstimate(cost, "USD");
+        // Providers quote in USD; the wallet this will be charged against is in billing's own
+        // currency. Quote what the creator will actually be billed, using billing's rate rather
+        // than a second copy of it here -- an estimate in dollars beside a rupee balance is not a
+        // price anyone can act on. Falls back to USD, correctly labelled, if billing is
+        // unreachable.
+        BillingCurrencyClient.Converted converted = billingCurrencyClient.convert(cost, "USD");
+        return new CostEstimate(converted.amount(), converted.currency());
     }
 }
