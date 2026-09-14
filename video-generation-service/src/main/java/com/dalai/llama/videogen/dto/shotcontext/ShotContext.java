@@ -29,6 +29,13 @@ public record ShotContext(
         List<@Valid ReferenceFrame> referenceFrames
 ) {
 
+    /** The same shot with a different narrative -- used when the dialogue has to be shortened to
+     * fit the shot's duration, which replaces one field and must leave the rest untouched. */
+    public ShotContext withNarrative(Narrative replacement) {
+        return new ShotContext(shotRef, replacement, characters, environment, lighting, camera,
+                productBrand, technical, continuityAnchors, audioAmbience, dialogueBeats, referenceFrames);
+    }
+
     /** Pre-referenceFrames arity, kept so existing callers and tests compile unchanged. */
     public ShotContext(
             String shotRef,

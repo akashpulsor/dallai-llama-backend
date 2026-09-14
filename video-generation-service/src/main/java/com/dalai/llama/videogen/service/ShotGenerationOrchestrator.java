@@ -55,6 +55,7 @@ public class ShotGenerationOrchestrator {
 
     private final ModelRecommendationService modelRecommendationService;
     private final PromptBuilderService promptBuilderService;
+    private final DialogueFitService dialogueFitService;
     private final PromptCompressionService promptCompressionService;
     private final FoleyCueService foleyCueService;
     private final CostEstimationService costEstimationService;
@@ -74,6 +75,7 @@ public class ShotGenerationOrchestrator {
     public ShotGenerationOrchestrator(
             ModelRecommendationService modelRecommendationService,
             PromptBuilderService promptBuilderService,
+            DialogueFitService dialogueFitService,
             PromptCompressionService promptCompressionService,
             FoleyCueService foleyCueService,
             CostEstimationService costEstimationService,
@@ -92,6 +94,7 @@ public class ShotGenerationOrchestrator {
     ) {
         this.modelRecommendationService = modelRecommendationService;
         this.promptBuilderService = promptBuilderService;
+        this.dialogueFitService = dialogueFitService;
         this.promptCompressionService = promptCompressionService;
         this.foleyCueService = foleyCueService;
         this.costEstimationService = costEstimationService;
@@ -179,6 +182,10 @@ public class ShotGenerationOrchestrator {
         // modelId is now resolved -- pass it through so the strategy resolver picks the right
         // per-model composition shape and prompt-length limit, instead of the pre-refactor single
         // global default.
+        // Settle the dialogue against the shot's duration before composing anything. A line that
+        // cannot be said in the time available comes back cut off mid-word, and finding that out
+        // after generating is finding it out after paying for it.
+        shotContext = dialogueFitService.fitDialogue(projectId, shotContext);
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);

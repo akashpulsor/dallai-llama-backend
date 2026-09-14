@@ -1,0 +1,132 @@
+package com.dalai.llama.videogen.service;
+
+import com.dalai.llama.videogen.dto.shotcontext.Narrative;
+import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
+import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Makes a shot's dialogue sayable in the time the shot runs for, before anything is generated.
+ *
+ * <p>Generation is multimodal: the model performs the line rather than having it laid over
+ * afterwards, so a line that takes longer to say than the shot lasts comes back cut off mid-word.
+ * Both obvious repairs are wrong. Stretching the shot means a client who bought sixty seconds is
+ * charged for ninety because the writing ran long. Hurrying the delivery means speech nobody can
+ * follow.
+ *
+ * <p>So it is fixed in the plan instead. This runs at prepare time, where a prompt call costs a
+ * fraction of a render, and a shot only reaches dispatch once its line and its duration agree --
+ * which is the point of planning at all: not to spend money discovering the problem.
+ *
+ * <p>Two seconds of overrun are left alone. A shot absorbs that much without anyone noticing, and
+ * rewriting a creator's words to save two seconds is the worse trade. Beyond that the line is
+ * shortened with its meaning intact, and the creator is told. It is meant to be rare.
+ *
+ * <p>Best-effort throughout: the gateway being unreachable, or answering with something
+ * unparseable, leaves the line exactly as written. Generating a shot with dialogue that may run
+ * long is better than not generating it.
+ */
+@Slf4j
+@Service
+public class DialogueFitService {
+
+    private static final String TASK_KEY = "VIDEO_DIALOGUE_FIT";
+
+    private final LlmGatewayClient llmGatewayClient;
+    private final ObjectMapper objectMapper;
+    private final String model;
+    private final boolean enabled;
+
+    public DialogueFitService(
+            LlmGatewayClient llmGatewayClient,
+            ObjectMapper objectMapper,
+            @Value("${video-gen.dialogue-fit.model:gemini-2.5-flash}") String model,
+            @Value("${video-gen.dialogue-fit.enabled:true}") boolean enabled
+    ) {
+        this.llmGatewayClient = llmGatewayClient;
+        this.objectMapper = objectMapper;
+        this.model = model;
+        this.enabled = enabled;
+    }
+
+    /** The shot context to generate from, with its dialogue shortened only if it had to be. */
+    public ShotContext fitDialogue(UUID projectId, ShotContext shotContext) {
+        if (!enabled || shotContext == null) {
+            return shotContext;
+        }
+        Narrative narrative = shotContext.narrative();
+        Integer duration = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
+        if (narrative == null || duration == null || duration <= 0) {
+            return shotContext;
+        }
+        String dialogue = narrative.dialogue();
+        if (dialogue == null || dialogue.isBlank()) {
+            return shotContext;
+        }
+
+        Fit fit = askGateway(projectId, dialogue, duration);
+        if (fit == null || fit.fits() || fit.fitted() == null || fit.fitted().isBlank()) {
+            return shotContext;
+        }
+
+        log.info("Shortened dialogue to fit its shot projectId={} duration={}s estimated={}s"
+                        + " -- original kept on the shot, generation uses the fitted line",
+                projectId, duration, fit.estimatedSeconds());
+        return shotContext.withNarrative(new Narrative(
+                narrative.scriptLine(), narrative.screenplaySlug(), narrative.arcPosition(), fit.fitted()));
+    }
+
+    private Fit askGateway(UUID projectId, String dialogue, int durationSeconds) {
+        try {
+            LlmGatewayChatResponse response = llmGatewayClient.chat(
+                    null,
+                    "dialogue-fit-" + UUID.randomUUID(),
+                    new LlmGatewayChatRequest(
+                            model,
+                            List.of(new LlmGatewayMessage("user", "")),
+                            Map.of(),
+                            TASK_KEY,
+                            Map.of("dialogue", dialogue, "durationSeconds", String.valueOf(durationSeconds)),
+                            projectId));
+            if (response == null || response.response() == null || response.response().isBlank()) {
+                return null;
+            }
+            JsonNode node = objectMapper.readTree(stripFence(response.response()));
+            return new Fit(
+                    node.path("fits").asBoolean(true),
+                    node.path("estimatedSeconds").asDouble(-1),
+                    node.path("fitted").isNull() ? null : node.path("fitted").asText(null));
+        } catch (Exception ex) {
+            // The line stands as written. A shot that may run long still beats no shot.
+            log.warn("Could not check dialogue against shot duration -- keeping the line as written: {}",
+                    ex.getMessage());
+            return null;
+        }
+    }
+
+    /** Models wrap JSON in a ```json fence often enough to be worth handling rather than failing. */
+    private String stripFence(String raw) {
+        String trimmed = raw.strip();
+        if (!trimmed.startsWith("```")) {
+            return trimmed;
+        }
+        int firstNewline = trimmed.indexOf('\n');
+        int lastFence = trimmed.lastIndexOf("```");
+        return firstNewline < 0 || lastFence <= firstNewline
+                ? trimmed
+                : trimmed.substring(firstNewline + 1, lastFence).strip();
+    }
+
+    private record Fit(boolean fits, double estimatedSeconds, String fitted) {}
+}
