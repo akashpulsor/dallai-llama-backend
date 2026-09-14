@@ -29,7 +29,10 @@ class BeatDubbingServiceTest {
     private final SceneEnergyStrategyResolver sceneEnergyStrategyResolver = mock(SceneEnergyStrategyResolver.class);
     private final BeatDubbingService service = new BeatDubbingService(
             llmGatewayClient, sceneEnergyStrategyResolver,
-            "elevenlabs/instant-voice-clone", "elevenlabs-tts-v1", "fal-ai/merge-audio-video");
+            "elevenlabs/instant-voice-clone", "elevenlabs-tts-v1", "fal-ai/merge-audio-video",
+            // Fitting the track to the shot needs somewhere to put the re-encoded audio; these
+            // tests only exercise the synthesis path, which never reaches it.
+            mock(VideoAssetPersistenceService.class), 1.5d, 300L, "creator-assets");
 
     @Test
     void preparedCloneUsesDirectTtsWithoutCloningTheRawSampleAgain() {

@@ -44,6 +44,9 @@ import java.util.UUID;
 @Service
 public class ShotGenerationOrchestrator {
 
+    /** A breath after the last word, so rounding does not clip it. */
+    private static final double DIALOGUE_TAIL_SECONDS = 0.4;
+
     private final ModelRecommendationService modelRecommendationService;
     private final PromptBuilderService promptBuilderService;
     private final PromptCompressionService promptCompressionService;
@@ -361,7 +364,17 @@ public class ShotGenerationOrchestrator {
                     .map(ref -> new VideoDispatchParams.TaggedReference(
                             ref.kind(), ref.url(), ref.slotIndex(), ref.audio()))
                     .toList();
-            VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
+            // The shot's planned duration is written before anyone knows how long the line takes
+            // to say. We hand the model that dialogue audio, so a shot shorter than its own audio
+            // gets a performance that stops mid-sentence -- the model speaks what fits and ends.
+            // Measure what we are feeding in and give the shot room for it.
+            Integer effectiveDuration = durationCoveringDialogue(
+                    job.getJobId(), job.getDurationSeconds(), taggedReferences);
+            if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
+                job.setDurationSeconds(effectiveDuration);
+                videoGenJobRepository.save(job);
+            }
+            VideoDispatchParams params = new VideoDispatchParams(effectiveDuration, job.getAspectRatio(),
                     job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution(),
                     taggedReferences);
             DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
@@ -724,6 +737,70 @@ public class ShotGenerationOrchestrator {
     /** Same rows as {@link #resolveReferenceImageUrls} but nothing filtered out -- the audio kinds
      * are included so the creator can hear the voice sample and the music bed that this prompt
      * pulled in, not just see the pictures. */
+
+    /**
+     * The duration this shot has to run for its dialogue to be heard in full.
+     *
+     * <p>Shot durations are planned in pre-production, before anyone knows how long the line
+     * actually takes to say. Generation is multimodal -- the dialogue audio is fed to the model --
+     * so a shot whose duration is shorter than that audio produces a performance that simply stops
+     * mid-sentence. Nothing downstream can recover it: the speech is baked into the generated
+     * video, not laid over it.
+     *
+     * <p>Measured with ffprobe against the reference we are about to send, which is the only
+     * figure that reflects the actual voice, language and pacing. Rounded up to the next whole
+     * second, plus a breath of tail so the last word is not clipped by rounding.
+     *
+     * <p>Never shortens a shot: a planned duration longer than the dialogue is a deliberate
+     * choice about pacing. Returns the planned duration unchanged if there is no audio reference,
+     * or if the probe fails -- generating at the planned length is better than not generating.
+     */
+    private Integer durationCoveringDialogue(UUID jobId, Integer plannedSeconds,
+                                             List<VideoDispatchParams.TaggedReference> references) {
+        if (references == null) {
+            return plannedSeconds;
+        }
+        double longestAudio = references.stream()
+                .filter(VideoDispatchParams.TaggedReference::audio)
+                .mapToDouble(ref -> probeDurationSeconds(ref.url()))
+                .max()
+                .orElse(-1);
+        if (longestAudio <= 0) {
+            return plannedSeconds;
+        }
+        int needed = (int) Math.ceil(longestAudio + DIALOGUE_TAIL_SECONDS);
+        if (plannedSeconds != null && plannedSeconds >= needed) {
+            return plannedSeconds;
+        }
+        log.info("Extending shot to fit its dialogue jobId={} planned={}s audio={}s generating={}s",
+                jobId, plannedSeconds, String.format(java.util.Locale.ROOT, "%.2f", longestAudio), needed);
+        return needed;
+    }
+
+    /** ffprobe straight at the presigned URL -- no download, and ffmpeg is already in this image
+     * for FinalRenderService's concat. Negative on any failure, which callers read as "unknown". */
+    private double probeDurationSeconds(String url) {
+        try {
+            Process process = new ProcessBuilder(List.of(
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", url))
+                    .redirectErrorStream(true)
+                    .start();
+            String output;
+            try (var in = process.getInputStream()) {
+                output = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            if (!process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return -1;
+            }
+            return Double.parseDouble(output.lines().findFirst().orElse("-1").trim());
+        } catch (Exception ex) {
+            log.warn("Could not probe dialogue audio duration: {}", ex.getMessage());
+            return -1;
+        }
+    }
+
     private List<PromptReferenceView> resolveReferences(UUID promptId) {
         return shotPromptReferenceRepository.findByPromptId(promptId).stream()
                 .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
