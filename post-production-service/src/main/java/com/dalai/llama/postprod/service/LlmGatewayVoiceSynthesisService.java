@@ -33,7 +33,9 @@ public class LlmGatewayVoiceSynthesisService implements VoiceSynthesisService {
     }
 
     @Override
-    public VoiceSynthesisResult synthesize(UUID tenantId, String idempotencyKey, String providerVoiceId, String referenceAudioUrl, String text, String language, String modelOverride) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public VoiceSynthesisResult synthesize(UUID tenantId, UUID projectId, String idempotencyKey, String providerVoiceId, String referenceAudioUrl, String text, String language, String modelOverride) {
         if (referenceAudioUrl == null || referenceAudioUrl.isBlank()) {
             throw PostProductionException.badRequest("No reference audio available to synthesize this cloned voice's speech");
         }

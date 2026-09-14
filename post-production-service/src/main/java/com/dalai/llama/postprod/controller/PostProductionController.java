@@ -88,7 +88,7 @@ public class PostProductionController {
     @PostMapping("/v1/post-production/foley")
     public ResponseEntity<AudioGenerationView> generateFoley(@Valid @RequestBody GenerateFoleyRequest request) {
         AudioGenerationResult result = foleyGenerationService.generateFoley(
-                tenant().tenantId(), "post-prod-foley-test-" + UUID.randomUUID(),
+                tenant().tenantId(), null /* standalone: an arbitrary hosted URL, no project behind it */, "post-prod-foley-test-" + UUID.randomUUID(),
                 request.sourceVideoUrl(), request.cueDescription(), request.model());
         return ResponseEntity.ok(new AudioGenerationView(request.model(), result.audioUrl()));
     }
@@ -96,7 +96,7 @@ public class PostProductionController {
     @PostMapping("/v1/post-production/music")
     public ResponseEntity<AudioGenerationView> generateMusic(@Valid @RequestBody GenerateMusicRequest request) {
         AudioGenerationResult result = musicGenerationService.generateMusic(
-                tenant().tenantId(), "post-prod-music-test-" + UUID.randomUUID(),
+                tenant().tenantId(), null /* standalone: an arbitrary hosted URL, no project behind it */, "post-prod-music-test-" + UUID.randomUUID(),
                 request.moodPrompt(), request.durationSeconds(), request.model());
         return ResponseEntity.ok(new AudioGenerationView(request.model(), result.audioUrl()));
     }
@@ -108,7 +108,7 @@ public class PostProductionController {
         UUID tenantId = tenant().tenantId();
         entitlementClient.require(tenantId, entitlementClient.get(tenantId).upscalingEnabled(), "video upscaling");
         UpscaleGenerationResult result = upscaleGenerationService.upscale(
-                tenantId, "post-prod-upscale-" + UUID.randomUUID(),
+                tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "post-prod-upscale-" + UUID.randomUUID(),
                 request.sourceVideoUrl(), request.model(), request.durationSeconds());
         return ResponseEntity.ok(new VideoGenerationView(request.model(), result.videoUrl()));
     }

@@ -40,7 +40,9 @@ public class LlmGatewayVoiceCloneGenerationService implements VoiceCloneGenerati
     }
 
     @Override
-    public VoiceCloneResult cloneVoice(UUID tenantId, String idempotencyKey, String referenceAudioUrl, String targetLanguage, String modelOverride) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public VoiceCloneResult cloneVoice(UUID tenantId, UUID projectId, String idempotencyKey, String referenceAudioUrl, String targetLanguage, String modelOverride) {
         if (referenceAudioUrl == null || referenceAudioUrl.isBlank()) {
             throw PostProductionException.badRequest("No reference audio available to clone a voice from");
         }

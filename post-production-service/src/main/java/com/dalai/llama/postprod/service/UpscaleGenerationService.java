@@ -8,5 +8,7 @@ import java.util.UUID;
  * a specific clip. */
 public interface UpscaleGenerationService {
 
-    UpscaleGenerationResult upscale(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String modelOverride, Double durationSeconds);
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    UpscaleGenerationResult upscale(UUID tenantId, UUID projectId, String idempotencyKey, String sourceVideoUrl, String modelOverride, Double durationSeconds);
 }

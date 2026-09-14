@@ -84,7 +84,7 @@ public class DubbingOrchestrator {
 
         try {
             TranscriptionResult transcription = transcriptionService.transcribe(
-                    tenantId, "dubbing-transcribe-" + jobId, sourceVideoUrl, null);
+                    tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "dubbing-transcribe-" + jobId, sourceVideoUrl, null);
             // Source language isn't independently known -- the transcription model doesn't
             // report it back distinctly from the transcript text itself in this best-effort
             // shape (see FalAiProvider's own caveat). Treated as unknown/auto rather than
@@ -93,19 +93,19 @@ public class DubbingOrchestrator {
             job = jobPersistenceService.recordTranscript(jobId, null, transcription.transcript());
 
             String translated = translationService.translate(
-                    tenantId.toString(), "dubbing-translate-" + jobId,
+                    tenantId.toString(), null /* standalone: an arbitrary hosted URL, no project behind it */, "dubbing-translate-" + jobId,
                     transcription.transcript(), job.getSourceLanguage(), targetLanguage);
             job = jobPersistenceService.recordTranslation(jobId, translated);
 
             VoiceCloneResult cloneResult = voiceCloneGenerationService.cloneVoice(
-                    tenantId, "dubbing-voiceclone-" + jobId, sourceVideoUrl, targetLanguage, null);
+                    tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "dubbing-voiceclone-" + jobId, sourceVideoUrl, targetLanguage, null);
 
             VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
-                    tenantId, "dubbing-tts-" + jobId,
+                    tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "dubbing-tts-" + jobId,
                     cloneResult.providerVoiceId(), sourceVideoUrl, translated, targetLanguage, null);
 
             var lipSyncResult = lipSyncGenerationService.syncLips(
-                    tenantId, "dubbing-lipsync-" + jobId, sourceVideoUrl, synthesis.audioUrl(), null, null);
+                    tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "dubbing-lipsync-" + jobId, sourceVideoUrl, synthesis.audioUrl(), null, null);
 
             AssetPersistenceService.PersistedAsset output = assetPersistenceService.persist(jobId, lipSyncResult.outputUri());
             return toView(jobPersistenceService.finishSuccess(jobId, output.bucket(), output.objectKey()));

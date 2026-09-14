@@ -35,7 +35,7 @@ public class DefaultVoicePreviewService implements VoicePreviewService {
         String referenceAudioUrl = assetPersistenceService.presignedUrl(
                 profile.getReferenceAudioBucket(), profile.getReferenceAudioObjectKey());
         VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
-                tenantId, "post-prod-preview-" + UUID.randomUUID(),
+                tenantId, profile.getProjectId(), "post-prod-preview-" + UUID.randomUUID(),
                 profile.getProviderVoiceId(), referenceAudioUrl, previewText, profile.getLanguage(), modelOverride);
 
         AssetPersistenceService.PersistedAsset asset = assetPersistenceService.persist(voiceProfileId, synthesis.audioUrl());

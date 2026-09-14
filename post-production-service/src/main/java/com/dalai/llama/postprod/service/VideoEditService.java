@@ -13,7 +13,10 @@ public interface VideoEditService {
     /** @param startSeconds/endSeconds null/null edits the whole clip; both set edits only that
      *                                  portion -- exactly the two modes described ("select a
      *                                  portion... or give complete video"). */
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
     VideoEditResult editVideo(
+            UUID projectId,
             UUID tenantId, String idempotencyKey, String sourceVideoUrl,
             Integer startSeconds, Integer endSeconds,
             String editInstruction, String referenceImageUrl, String modelOverride

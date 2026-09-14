@@ -30,7 +30,9 @@ public class LlmGatewayMusicGenerationService implements MusicGenerationService 
     }
 
     @Override
-    public AudioGenerationResult generateMusic(UUID tenantId, String idempotencyKey, String moodPrompt, Integer durationSeconds, String modelOverride) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public AudioGenerationResult generateMusic(UUID tenantId, UUID projectId, String idempotencyKey, String moodPrompt, Integer durationSeconds, String modelOverride) {
         if (moodPrompt == null || moodPrompt.isBlank()) {
             throw PostProductionException.badRequest("No mood/style prompt to generate music from");
         }

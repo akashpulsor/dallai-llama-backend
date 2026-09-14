@@ -11,5 +11,7 @@ import java.util.UUID;
  * DialogueSyncCoordinator's VoiceProfile reuse check), not something this call can act on alone. */
 public interface VoiceSynthesisService {
 
-    VoiceSynthesisResult synthesize(UUID tenantId, String idempotencyKey, String providerVoiceId, String referenceAudioUrl, String text, String language, String modelOverride);
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    VoiceSynthesisResult synthesize(UUID tenantId, UUID projectId, String idempotencyKey, String providerVoiceId, String referenceAudioUrl, String text, String language, String modelOverride);
 }

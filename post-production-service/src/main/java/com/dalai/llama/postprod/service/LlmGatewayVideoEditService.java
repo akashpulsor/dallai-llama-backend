@@ -30,7 +30,10 @@ public class LlmGatewayVideoEditService implements VideoEditService {
     }
 
     @Override
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
     public VideoEditResult editVideo(
+            UUID projectId,
             UUID tenantId, String idempotencyKey, String sourceVideoUrl,
             Integer startSeconds, Integer endSeconds,
             String editInstruction, String referenceImageUrl, String modelOverride

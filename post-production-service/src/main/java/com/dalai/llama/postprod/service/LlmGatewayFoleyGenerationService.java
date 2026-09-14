@@ -31,7 +31,9 @@ public class LlmGatewayFoleyGenerationService implements FoleyGenerationService 
     }
 
     @Override
-    public AudioGenerationResult generateFoley(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String cueDescription, String modelOverride) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public AudioGenerationResult generateFoley(UUID tenantId, UUID projectId, String idempotencyKey, String sourceVideoUrl, String cueDescription, String modelOverride) {
         if (cueDescription == null || cueDescription.isBlank()) {
             throw PostProductionException.badRequest("No foley cue description to generate from");
         }

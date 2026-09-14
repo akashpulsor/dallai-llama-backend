@@ -6,5 +6,7 @@ import java.util.UUID;
  * comment for why that's a named, not silent, gap). */
 public interface TranscriptionService {
 
-    TranscriptionResult transcribe(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String modelOverride);
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    TranscriptionResult transcribe(UUID tenantId, UUID projectId, String idempotencyKey, String sourceVideoUrl, String modelOverride);
 }

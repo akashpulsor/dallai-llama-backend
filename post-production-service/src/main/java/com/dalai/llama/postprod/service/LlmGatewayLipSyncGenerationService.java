@@ -39,7 +39,9 @@ public class LlmGatewayLipSyncGenerationService implements LipSyncGenerationServ
     private static final double DEFAULT_SHOT_DURATION_SECONDS = 4.0;
 
     @Override
-    public LipSyncResult syncLips(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride, Double durationSeconds) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public LipSyncResult syncLips(UUID tenantId, UUID projectId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride, Double durationSeconds) {
         if (sourceVideoUrl == null || sourceVideoUrl.isBlank()) {
             throw PostProductionException.badRequest("No source video to lip-sync");
         }

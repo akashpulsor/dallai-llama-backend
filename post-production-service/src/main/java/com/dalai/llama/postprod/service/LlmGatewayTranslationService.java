@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Translation is plain text -- reuses the existing /v1/chat text path (gemini-2.5-flash via
  * GoogleGeminiProvider, already live and working), not a fal.ai model. Same
@@ -29,7 +30,9 @@ public class LlmGatewayTranslationService implements TranslationService {
     }
 
     @Override
-    public String translate(String tenantId, String idempotencyKey, String transcript, String sourceLanguage, String targetLanguage) {
+        /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    public String translate(String tenantId, UUID projectId, String idempotencyKey, String transcript, String sourceLanguage, String targetLanguage) {
         if (transcript == null || transcript.isBlank()) {
             throw PostProductionException.badRequest("No transcript to translate");
         }

@@ -143,7 +143,7 @@ public class DialogueSyncCoordinator {
                             voiceProfile.getReferenceAudioBucket(), voiceProfile.getReferenceAudioObjectKey());
                 } else {
                     VoiceCloneResult cloneResult = voiceCloneGenerationService.cloneVoice(
-                            tenantId, "post-prod-voiceclone-" + job.getDialogueSyncJobId(),
+                            tenantId, projectId, "post-prod-voiceclone-" + job.getDialogueSyncJobId(),
                             shotDetails.referenceAudioUrl(), effectiveTargetLanguage, voiceCloneModel);
                     AssetPersistenceService.PersistedAsset referenceAsset =
                             assetPersistenceService.persist(job.getDialogueSyncJobId(), shotDetails.referenceAudioUrl());
@@ -170,7 +170,7 @@ public class DialogueSyncCoordinator {
                 // appears in; the actual audio for this specific line has to be synthesized fresh
                 // each time since the line differs per shot.
                 VoiceSynthesisResult synthesis = voiceSynthesisService.synthesize(
-                        tenantId, "post-prod-tts-" + job.getDialogueSyncJobId(),
+                        tenantId, projectId, "post-prod-tts-" + job.getDialogueSyncJobId(),
                         voiceProfile.getProviderVoiceId(), referenceAudioUrlForSynthesis, shotDetails.dialogueScript(), effectiveTargetLanguage, ttsModel);
                 dialogueAudioUrl = synthesis.audioUrl();
             }
@@ -180,7 +180,7 @@ public class DialogueSyncCoordinator {
             // duration (see LipSyncGenerationService's javadoc); billed at the documented
             // DEFAULT_SHOT_DURATION_SECONDS approximation instead.
             var lipSyncResult = lipSyncGenerationService.syncLips(
-                    tenantId, "post-prod-lipsync-" + job.getDialogueSyncJobId(), sourceVideoUrl, dialogueAudioUrl, lipSyncModel, null);
+                    tenantId, projectId, "post-prod-lipsync-" + job.getDialogueSyncJobId(), sourceVideoUrl, dialogueAudioUrl, lipSyncModel, null);
 
             // 5. Persist our own durable copy and show the pre-processed shot.
             AssetPersistenceService.PersistedAsset asset =

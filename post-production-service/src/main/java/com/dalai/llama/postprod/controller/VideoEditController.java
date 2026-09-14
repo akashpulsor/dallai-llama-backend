@@ -29,7 +29,7 @@ public class VideoEditController {
     public ResponseEntity<VideoEditView> editVideo(@Valid @RequestBody EditVideoRequest request) {
         UUID tenantId = TenantContextHolder.get().tenantId();
         VideoEditResult result = videoEditService.editVideo(
-                tenantId, "post-prod-video-edit-" + UUID.randomUUID(),
+                tenantId, null /* standalone: an arbitrary hosted URL, no project behind it */, "post-prod-video-edit-" + UUID.randomUUID(),
                 request.sourceVideoUrl(), request.startSeconds(), request.endSeconds(),
                 request.editInstruction(), request.referenceImageUrl(), request.model());
         return ResponseEntity.ok(new VideoEditView(request.model(), result.editedVideoUrl()));

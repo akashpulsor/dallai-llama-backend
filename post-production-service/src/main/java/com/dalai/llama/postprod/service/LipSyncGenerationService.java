@@ -13,5 +13,7 @@ public interface LipSyncGenerationService {
      *                        LlmGatewayLipSyncGenerationService falls back to the same
      *                        DEFAULT_SHOT_DURATION_SECONDS approximation
      *                        ShotListGenerationService's own shot-duration estimate already uses. */
-    LipSyncResult syncLips(UUID tenantId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride, Double durationSeconds);
+    /** {@code projectId} attributes this call's cost to the project that caused it in
+     * llm-gateway's llm_job log. Null for a standalone call that genuinely has no project. */
+    LipSyncResult syncLips(UUID tenantId, UUID projectId, String idempotencyKey, String sourceVideoUrl, String dialogueAudioUrl, String modelOverride, Double durationSeconds);
 }
