@@ -458,6 +458,40 @@ public class InternalBillingController {
     }
 
 
+    /**
+     * Creates a genuine Razorpay order for an amount the caller has already worked out --
+     * the same path that sits behind wallet recharge, exposed internally so a service that
+     * knows what a tenant still owes can hand the browser an order to pay.
+     *
+     * Deliberately separate from createSubscriptionPayment above, which settles a subscription
+     * out of a wallet that already holds the money and never talks to Razorpay at all.
+     * subscriptionId is optional here: a first-time subscriber has no subscription row yet.
+     */
+    @PostMapping("/payment-order")
+    @Operation(summary = "Create a Razorpay payment order")
+    public ResponseEntity<PaymentOrderResponse> createPaymentOrder(
+            @PathVariable UUID tenantId,
+            @Valid @RequestBody PaymentOrderRequest request) {
+
+        PaymentService.PaymentOrderResult order = paymentService.createPaymentOrder(
+                tenantId,
+                request.getCurrency(),
+                request.getAmount(),
+                request.getDescription(),
+                request.getSubscriptionId()
+        );
+
+        return ResponseEntity.ok(PaymentOrderResponse.builder()
+                .paymentId(order.paymentId())
+                .gatewayOrderId(order.gatewayOrderId())
+                .amount(order.amount())
+                .currency(order.currency())
+                .razorpayKeyId(order.keyId())
+                .status(order.status())
+                .build());
+    }
+
+
 // ==================== REQUEST / RESPONSE ====================
 
     @Getter
@@ -477,6 +511,34 @@ public class InternalBillingController {
         @NotNull
         private UUID subscriptionId;
     }
+
+    @Getter
+    @Setter
+    public static class PaymentOrderRequest {
+
+        @NotBlank
+        private String currency;
+
+        @NotNull
+        @DecimalMin("0.01")
+        private BigDecimal amount;
+
+        @NotBlank
+        private String description;
+
+        /** Optional -- a tenant subscribing for the first time has no subscription row yet. */
+        private UUID subscriptionId;
+    }
+
+    @Builder
+    public record PaymentOrderResponse(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal amount,
+            String currency,
+            String razorpayKeyId,
+            String status
+    ) {}
 
     @Builder
     public record SubscriptionPaymentResponse(

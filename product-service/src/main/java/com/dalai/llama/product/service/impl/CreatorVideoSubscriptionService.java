@@ -83,21 +83,28 @@ public class CreatorVideoSubscriptionService {
             // that chain looked to the creator like a subscribe button that simply refused.
             BigDecimal shortfall = plan.getMonthlyPrice().subtract(balance.balance());
             try {
-                BillingServiceClient.SubscriptionPaymentResponse payment = billingClient.createSubscriptionPayment(
-                        tenantId, plan.getCode(), plan.getMonthlyPrice(), balance.balance(),
+                // Bill only the shortfall. createSubscriptionPayment cannot serve this case --
+                // it settles a subscription out of a wallet that already holds the money, needs
+                // an existing subscription row, and never contacts Razorpay. This is the same
+                // order-creation path that sits behind wallet recharge, so what comes back is a
+                // real order the browser can open. Once it is paid the wallet is credited and
+                // the caller subscribes again, which now succeeds.
+                BillingServiceClient.PaymentOrderResponse order = billingClient.createPaymentOrder(
+                        tenantId, balance.currency(), shortfall,
+                        "Subscription top-up: " + plan.getName(),
                         subscription == null ? null : subscription.getId());
                 return CreatorVideoSubscriptionResponse.builder()
                         .status("PAYMENT_REQUIRED")
                         .planCode(plan.getCode())
                         .planName(plan.getName())
                         .price(plan.getMonthlyPrice())
-                        .currency(payment.currency() == null ? balance.currency() : payment.currency())
+                        .currency(order.currency() == null ? balance.currency() : order.currency())
                         .currentWalletBalance(balance.balance())
                         .shortFallAmount(shortfall)
-                        .paymentId(payment.paymentId())
-                        .gatewayOrderId(payment.gatewayOrderId())
-                        .razorpayKeyId(payment.razorpayKeyId())
-                        .amountDue(payment.totalAmount())
+                        .paymentId(order.paymentId())
+                        .gatewayOrderId(order.gatewayOrderId())
+                        .razorpayKeyId(order.razorpayKeyId())
+                        .amountDue(order.amount())
                         .build();
             } catch (RuntimeException ex) {
                 // Razorpay or billing is down. Fall back to the old shape so the creator is told

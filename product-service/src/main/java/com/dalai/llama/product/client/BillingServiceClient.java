@@ -108,6 +108,53 @@ public class BillingServiceClient {
         }
     }
 
+    /**
+     * Asks billing for a real Razorpay order covering {@code amount}.
+     *
+     * Not to be confused with {@link #createSubscriptionPayment}, which settles a subscription
+     * out of a wallet that already holds the money -- that one requires an existing
+     * subscription row and a funded wallet, so it cannot serve a tenant who is short.
+     */
+    public PaymentOrderResponse createPaymentOrder(
+            UUID tenantId,
+            String currency,
+            BigDecimal amount,
+            String description,
+            UUID subscriptionId
+    ) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("currency", currency);
+            body.put("amount", amount);
+            body.put("description", description);
+            body.put("subscriptionId", subscriptionId);
+
+            PaymentOrderResponse response = client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/payment-order", tenantId)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(PaymentOrderResponse.class)
+                    .block();
+
+            if (response == null) {
+                throw new RuntimeException("Null response from billing service");
+            }
+
+            log.info("Created payment order {} for tenant {} amount {}{}",
+                    response.gatewayOrderId(), tenantId, currency, amount);
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            log.error("Failed to create payment order: {} - {}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Failed to create payment order", e);
+        } catch (Exception e) {
+            log.error("Unexpected error creating payment order: {}", e.getMessage());
+            throw new RuntimeException("Failed to create payment order", e);
+        }
+    }
+
     /** Same wallet-debit endpoint as {@link #chargeSubscription}, without the DID-specific
      * description -- for products with no telephony resource attached (e.g. creator-video). */
     public void chargeProductSubscription(UUID tenantId, UUID subscriptionId, BigDecimal amount, String description) {
@@ -243,6 +290,15 @@ public class BillingServiceClient {
             throw new RuntimeException("Failed to record DID rental", e);
         }
     }
+
+    public record PaymentOrderResponse(
+            UUID paymentId,
+            String gatewayOrderId,
+            BigDecimal amount,
+            String currency,
+            String razorpayKeyId,
+            String status
+    ) {}
 
     public record SubscriptionPaymentResponse(
             UUID paymentId,
