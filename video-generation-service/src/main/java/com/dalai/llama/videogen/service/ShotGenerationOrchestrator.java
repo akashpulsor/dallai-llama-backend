@@ -59,6 +59,7 @@ public class ShotGenerationOrchestrator {
     private final VideoAssetPersistenceService videoAssetPersistenceService;
     private final VideoGenJobPersistenceService jobPersistenceService;
     private final BeatDubbingService beatDubbingService;
+    private final BackgroundMusicMixService backgroundMusicMixService;
     private final String defaultModel;
 
     public ShotGenerationOrchestrator(
@@ -77,6 +78,7 @@ public class ShotGenerationOrchestrator {
             VideoAssetPersistenceService videoAssetPersistenceService,
             VideoGenJobPersistenceService jobPersistenceService,
             BeatDubbingService beatDubbingService,
+            BackgroundMusicMixService backgroundMusicMixService,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
         this.modelRecommendationService = modelRecommendationService;
@@ -94,6 +96,7 @@ public class ShotGenerationOrchestrator {
         this.videoAssetPersistenceService = videoAssetPersistenceService;
         this.jobPersistenceService = jobPersistenceService;
         this.beatDubbingService = beatDubbingService;
+        this.backgroundMusicMixService = backgroundMusicMixService;
         this.defaultModel = defaultModel;
     }
 
@@ -385,6 +388,13 @@ public class ShotGenerationOrchestrator {
                 job.setDubSucceeded(dubSucceeded);
                 videoGenJobRepository.save(job);
             }
+
+            // Lay the shot's background music bed under whatever audio it now has. After the dub,
+            // deliberately: the bed goes under the dialogue, not the other way round. A shot with
+            // no bed comes back unchanged, and a failed mix keeps the unmixed video -- same
+            // best-effort contract as auto-dub above, since losing a finished render over a
+            // background track would be the wrong trade.
+            outputUri = backgroundMusicMixService.mixIfPresent(job.getJobId(), prompt.getPromptId(), outputUri);
 
             // Copy the provider's own hosted result into our MinIO -- durable, and this is what
             // GET /v1/jobs/{id}/video (the UI-facing endpoint) actually serves.

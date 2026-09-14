@@ -132,6 +132,12 @@ video-gen:
   prepare:
     requested-topic: ${VIDEO_GEN_PREPARE_REQUESTED_TOPIC:videogen.prepare.requested}
     requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
+  # The shot's music bed, laid under its finished audio by the container's own ffmpeg. fal's
+  # hosted ffmpeg apps take multiple tracks but expose no volume, so a bed mixed there would sit
+  # at unity against the dialogue.
+  background-music:
+    volume: ${VIDEO_GEN_BACKGROUND_MUSIC_VOLUME:0.18}
+    ffmpeg-timeout-seconds: ${VIDEO_GEN_BACKGROUND_MUSIC_FFMPEG_TIMEOUT_SECONDS:300}
   # Billing owns the exchange rate a render is quoted at, so the estimate shown to a creator and
   # the debit that follows it cannot drift apart.
   billing:

@@ -56,8 +56,40 @@ UPDATE rate_card SET per_second_cost = 0.1680000000 WHERE model_id = 'fal-ai/kli
 --    shape rate_card cannot express (flux-pulid bills per megapixel, not per second or token)
 --    would put an unpriceable model in front of a creator. Renamed anyway so the id is true and
 --    whoever needs one is renaming nothing, only pricing it and flipping status.
-UPDATE model_master SET model_id = 'fal-ai/flux-pulid', updated_at = now() WHERE model_id = 'flux-pulid-v1';
-UPDATE model_master SET model_id = 'fal-ai/musetalk',   updated_at = now() WHERE model_id = 'musetalk-v1';
+--    Renamed with the same copy/repoint/delete as above, not a bare UPDATE of model_master's
+--    primary key: rate_card (and every other child) holds an FK to it with no ON UPDATE CASCADE,
+--    so a straight PK update is refused outright.
+INSERT INTO model_master (model_id, provider_id, type, capabilities, context_window,
+                          supports_streaming, status, default_rpm, default_tpm, timeout_ms,
+                          created_at, updated_at)
+SELECT 'fal-ai/flux-pulid', provider_id, type, capabilities, context_window, supports_streaming,
+       status, default_rpm, default_tpm, timeout_ms, now(), now()
+FROM model_master WHERE model_id = 'flux-pulid-v1'
+ON CONFLICT (model_id) DO NOTHING;
+
+UPDATE rate_card                 SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+UPDATE tenant_model_override     SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+UPDATE llm_job                   SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+UPDATE model_supported_language  SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+UPDATE model_capability          SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+UPDATE provider_language_mapping SET model_id = 'fal-ai/flux-pulid' WHERE model_id = 'flux-pulid-v1';
+DELETE FROM model_master WHERE model_id = 'flux-pulid-v1';
+
+INSERT INTO model_master (model_id, provider_id, type, capabilities, context_window,
+                          supports_streaming, status, default_rpm, default_tpm, timeout_ms,
+                          created_at, updated_at)
+SELECT 'fal-ai/musetalk', provider_id, type, capabilities, context_window, supports_streaming,
+       status, default_rpm, default_tpm, timeout_ms, now(), now()
+FROM model_master WHERE model_id = 'musetalk-v1'
+ON CONFLICT (model_id) DO NOTHING;
+
+UPDATE rate_card                 SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+UPDATE tenant_model_override     SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+UPDATE llm_job                   SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+UPDATE model_supported_language  SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+UPDATE model_capability          SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+UPDATE provider_language_mapping SET model_id = 'fal-ai/musetalk' WHERE model_id = 'musetalk-v1';
+DELETE FROM model_master WHERE model_id = 'musetalk-v1';
 
 -- 4. Left deactivated for good: each is superseded by a real model already seeded here, so giving
 --    them slugs would only create a second way to reach the same thing.
