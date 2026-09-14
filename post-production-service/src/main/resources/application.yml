@@ -141,7 +141,7 @@ post-production:
     # ElevenLabs /v1/music endpoint) is both real and, per explicit direction, the actual path.
     default-music-model: ${POST_PROD_DEFAULT_MUSIC_MODEL:elevenlabs/music-v1}
     default-text-model: ${POST_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
-    default-video-edit-model: ${POST_PROD_DEFAULT_VIDEO_EDIT_MODEL:kling-edit-v1}
+    default-video-edit-model: ${POST_PROD_DEFAULT_VIDEO_EDIT_MODEL:fal-ai/kling-video/o1/video-to-video/edit}
     # fal-ai/topaz/upscale/video is fal.ai's real, documented Topaz Video Upscale app slug --
     # llm-gateway's V72 seed. Callers pick a different registered type=upscale model via
     # GenerateUpscaleRequest.model when one exists; this is only the fallback.
@@ -160,7 +160,7 @@ post-production:
   dubbing:
     source-prefix: ${POST_PROD_DUBBING_SOURCE_PREFIX:dubbing-sources}
     max-upload-size-mb: ${POST_PROD_MAX_UPLOAD_SIZE_MB:1024}
-    default-transcription-model: ${POST_PROD_DEFAULT_TRANSCRIPTION_MODEL:transcription-v1}
+    default-transcription-model: ${POST_PROD_DEFAULT_TRANSCRIPTION_MODEL:fal-ai/wizper}
   job:
     stale-after-minutes: ${POST_PROD_JOB_STALE_AFTER_MINUTES:15}
     giveup-after-minutes: ${POST_PROD_JOB_GIVEUP_AFTER_MINUTES:60}

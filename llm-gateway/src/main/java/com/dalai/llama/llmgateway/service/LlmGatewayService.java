@@ -403,14 +403,16 @@ public class LlmGatewayService {
         ));
     }
 
-    /** Video, upscale, and music are all duration-priced, not token-priced: fal.ai/ElevenLabs
+    /** Video, upscale, music, video-edit and transcription are all duration-priced, not
+     * token-priced: fal.ai/ElevenLabs
      * report 0/0 tokens for these (or, for ElevenLabs music, real credits don't map to a token
      * concept at all), so the token path always yielded $0. When the model's rate_card carries a
      * {@code per_second_cost}, cost = perSecondCost × duration_seconds (from request params --
      * the caller must supply this; see LlmGatewayUpscaleGenerationService for the video/upscale
      * case, ElevenLabsProvider.composeMusic's {@code music_length_ms} param for music). Every
      * other model type keeps the input/output-token path unchanged. */
-    private static final java.util.Set<String> DURATION_PRICED_TYPES = java.util.Set.of("video", "upscale", "music", "lip_sync");
+    private static final java.util.Set<String> DURATION_PRICED_TYPES =
+            java.util.Set.of("video", "upscale", "music", "lip_sync", "video_edit", "transcription");
 
     static BigDecimal computeCost(RateCard rateCard, String modelType, int inputTokens, int outputTokens,
                                    Map<String, Object> params) {
