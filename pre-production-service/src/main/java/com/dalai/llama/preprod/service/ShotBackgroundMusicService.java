@@ -125,11 +125,23 @@ public class ShotBackgroundMusicService {
                         this::toView
                 ));
     }
-    /** Joins every {@code ambient_bed} layer's description from {@code Shot.soundDesign} (a JSON
-     * array written at shot-list generation time, e.g. {@code [{"layerType": "ambient_bed",
-     * "description": "..."}]}) -- {@code sync_hit} layers are one-off foley cues, not background
-     * music, so they're deliberately excluded. Null/blank/unparseable soundDesign yields null, not
-     * an exception -- the caller turns that into a clear 400 instead. */
+    /** The soundscape to prompt music from, out of {@code Shot.soundDesign}.
+     *
+     * <p>Two shapes are accepted because two are written. The structured one is a JSON array of
+     * layers ({@code [{"layerType": "ambient_bed", "description": "..."}]}), and there only
+     * {@code ambient_bed} counts -- {@code sync_hit} layers are one-off foley cues, not background
+     * music. The other is plain prose ("Gentle, ambient office sounds; very subtle, contemplative
+     * music begins to swell."), which is what shot-list generation actually produces today.
+     *
+     * <p>Prose used to return null here, so every such shot answered "has no ambient_bed sound
+     * design planned to generate music from" -- while carrying a perfectly good description of
+     * its soundscape. The description is the prompt; it does not have to arrive as an array to be
+     * usable.
+     *
+     * <p>Still null for genuinely absent sound design, and still null for a layer array with no
+     * ambient_bed in it -- falling back to the whole array there would feed foley cues to a music
+     * model, which is the thing the layer split exists to prevent. The caller turns null into a
+     * clear 400. */
     private String ambientPrompt(Shot shot) {
         if (shot.getSoundDesign() == null || shot.getSoundDesign().isBlank()) {
             return null;
@@ -137,7 +149,9 @@ public class ShotBackgroundMusicService {
         try {
             JsonNode layers = objectMapper.readTree(shot.getSoundDesign());
             if (!layers.isArray()) {
-                return null;
+                // A JSON string, or a scalar -- either way it is prose describing the soundscape.
+                String prose = layers.isTextual() ? layers.asText() : shot.getSoundDesign();
+                return prose == null || prose.isBlank() ? null : prose.trim();
             }
             StringBuilder sb = new StringBuilder();
             for (JsonNode layer : layers) {
@@ -153,7 +167,8 @@ public class ShotBackgroundMusicService {
             }
             return sb.isEmpty() ? null : sb.toString();
         } catch (Exception ex) {
-            return null;
+            // Not JSON at all: plain prose, which is the common case in practice.
+            return shot.getSoundDesign().trim();
         }
     }
 
