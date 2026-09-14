@@ -45,7 +45,9 @@ public class EmbeddedDocumentService {
 
     @Transactional
     public void ingest(UUID tenantId, IngestDocumentRequest request) {
-        String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, request.content());
+        // scopeId is the project id (see ChatScopeType) -- carrying it through means this
+        // embedding's cost lands in llm_job attributed to the project that caused it.
+        String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, request.content(), request.scopeId());
         double[] embedding = EmbeddingParser.parse(objectMapper, raw);
 
         EmbeddedDocument document = embeddedDocumentRepository
@@ -74,7 +76,9 @@ public class EmbeddedDocumentService {
         if (candidates.isEmpty() || queryText == null || queryText.isBlank()) {
             return List.of();
         }
-        String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, queryText);
+        // Same scope the search is restricted to, so the query embedding is billed to the same
+        // project as the documents it is being matched against.
+        String raw = llmGatewayClient.embed(tenantId.toString(), embeddingModel, queryText, scopeId);
         double[] query = EmbeddingParser.parse(objectMapper, raw);
 
         return candidates.stream()

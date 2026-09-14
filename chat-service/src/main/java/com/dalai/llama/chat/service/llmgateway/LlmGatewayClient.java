@@ -46,10 +46,17 @@ public class LlmGatewayClient {
     /** Embedding models route through the same {@code /v1/chat} call -- see llm-gateway's
      * GoogleGeminiProvider, which branches on model type internally. Returns the raw response
      * string (a JSON array of doubles); parse with {@link EmbeddingParser}. */
-    public String embed(String tenantId, String embeddingModelId, String text) {
-        LlmGatewayChatResponse response = chat(tenantId, "embed-" + UUID.randomUUID(),
+    /** {@code projectId} is what makes an embedding traceable. llm-gateway records one llm_job
+     * row per call with its cost, and without a project on it that row cannot be attributed to
+     * anything -- every embedding this service made was landing in the log as spend belonging to
+     * no project. Null is still accepted: not every embed has a project scope, and an unscoped
+     * one is better logged unattributed than not logged. */
+    public String embed(String tenantId, String embeddingModelId, String text, UUID projectId) {
+        LlmGatewayChatRequest request =
                 new LlmGatewayChatRequest(embeddingModelId, List.of(new LlmGatewayChatRequest.LlmGatewayMessage("user", text)),
-                        null, null, null));
+                        null, null, null);
+        LlmGatewayChatResponse response = chat(tenantId, "embed-" + UUID.randomUUID(),
+                projectId == null ? request : request.withProjectId(projectId));
         return response == null ? null : response.response();
     }
 }
