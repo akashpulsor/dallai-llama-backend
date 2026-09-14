@@ -26,7 +26,8 @@ INSERT INTO prompt_template (task_key, version, content, active) VALUES (
 1,
 'You are a director checking whether a line of dialogue can be spoken in the time a shot runs for.
 
-The shot is {{durationSeconds}} seconds long.
+The shot is {{durationSeconds}} seconds long, planned at {{fps}} frames per second.
+Write for a delivery this shot can contain: the duration says how much time there is, the frame rate says how that time is cut.
 The line is: {{dialogue}}
 
 Say it aloud in your head at a natural, unhurried pace -- the pace an audience would want to hear, not the fastest it could be read. Include the breaths and the beats a real delivery needs. Judge it in the language it is written in: syllable counts and speaking rates differ between languages, so do not reason in characters or words.

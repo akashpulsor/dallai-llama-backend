@@ -3,6 +3,7 @@ package com.dalai.llama.videogen.service.preproduction;
 import com.dalai.llama.videogen.service.VideoGenException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -25,6 +26,7 @@ import java.util.UUID;
  * (e.g. no background music yet) degrades gracefully at the assembly layer instead of failing
  * the whole prepare call.
  */
+@Slf4j
 @Component
 public class PreProductionServiceClient {
 
@@ -67,6 +69,28 @@ public class PreProductionServiceClient {
                             .formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         } catch (RuntimeException ex) {
             throw VideoGenException.upstream("pre-production-service persist cloned voice failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** Writes a shortened spoken line back onto the shot.
+     *
+     * <p>When a line cannot be said in the seconds its shot has, the shortened version has to
+     * become the shot's line rather than a substitution made on the way to the model. The shot is
+     * where the creator reads and edits dialogue, so a shot still showing a line that was not the
+     * one performed is a shot nobody can reason about -- and the next prepare would re-shorten the
+     * original and might land somewhere else again.
+     *
+     * <p>Best-effort: a failure here leaves the shot as it was and generation still proceeds with
+     * the fitted line. The shot being briefly out of step is worth less than the render.
+     */
+    public void saveShotVoiceOver(UUID tenantId, UUID shotId, String voiceOver) {
+        try {
+            webClient.put()
+                    .uri("/api/v1/internal/tenants/{tenantId}/shots/{shotId}/voice-over", tenantId, shotId)
+                    .bodyValue(java.util.Map.of("voiceOver", voiceOver))
+                    .retrieve().toBodilessEntity().block(Duration.ofMillis(timeoutMs));
+        } catch (RuntimeException ex) {
+            log.warn("Could not save the shortened line back to shot {}: {}", shotId, ex.getMessage());
         }
     }
 

@@ -185,7 +185,8 @@ public class ShotGenerationOrchestrator {
         // Settle the dialogue against the shot's duration before composing anything. A line that
         // cannot be said in the time available comes back cut off mid-word, and finding that out
         // after generating is finding it out after paying for it.
-        shotContext = dialogueFitService.fitDialogue(projectId, shotContext);
+        shotContext = dialogueFitService.fitDialogue(
+                tenantId, projectId, sources == null ? null : sources.shotId(), shotContext);
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);

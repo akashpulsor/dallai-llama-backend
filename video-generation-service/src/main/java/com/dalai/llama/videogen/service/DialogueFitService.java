@@ -6,6 +6,7 @@ import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
+import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -44,24 +45,27 @@ public class DialogueFitService {
     private static final String TASK_KEY = "VIDEO_DIALOGUE_FIT";
 
     private final LlmGatewayClient llmGatewayClient;
+    private final PreProductionServiceClient preProductionServiceClient;
     private final ObjectMapper objectMapper;
     private final String model;
     private final boolean enabled;
 
     public DialogueFitService(
             LlmGatewayClient llmGatewayClient,
+            PreProductionServiceClient preProductionServiceClient,
             ObjectMapper objectMapper,
             @Value("${video-gen.dialogue-fit.model:gemini-2.5-flash}") String model,
             @Value("${video-gen.dialogue-fit.enabled:true}") boolean enabled
     ) {
         this.llmGatewayClient = llmGatewayClient;
+        this.preProductionServiceClient = preProductionServiceClient;
         this.objectMapper = objectMapper;
         this.model = model;
         this.enabled = enabled;
     }
 
     /** The shot context to generate from, with its dialogue shortened only if it had to be. */
-    public ShotContext fitDialogue(UUID projectId, ShotContext shotContext) {
+    public ShotContext fitDialogue(UUID tenantId, UUID projectId, UUID shotId, ShotContext shotContext) {
         if (!enabled || shotContext == null) {
             return shotContext;
         }
@@ -75,19 +79,23 @@ public class DialogueFitService {
             return shotContext;
         }
 
-        Fit fit = askGateway(projectId, dialogue, duration);
+        Fit fit = askGateway(projectId, dialogue, duration, shotContext.technical().fps());
         if (fit == null || fit.fits() || fit.fitted() == null || fit.fitted().isBlank()) {
             return shotContext;
         }
 
-        log.info("Shortened dialogue to fit its shot projectId={} duration={}s estimated={}s"
-                        + " -- original kept on the shot, generation uses the fitted line",
-                projectId, duration, fit.estimatedSeconds());
+        log.info("Shortened dialogue to fit its shot projectId={} shotId={} duration={}s estimated={}s",
+                projectId, shotId, duration, fit.estimatedSeconds());
+        // Onto the shot first, then generate from it. The shot is the line of record; a prompt
+        // built from text the shot does not hold is a shot the creator cannot reason about.
+        if (tenantId != null && shotId != null) {
+            preProductionServiceClient.saveShotVoiceOver(tenantId, shotId, fit.fitted());
+        }
         return shotContext.withNarrative(new Narrative(
                 narrative.scriptLine(), narrative.screenplaySlug(), narrative.arcPosition(), fit.fitted()));
     }
 
-    private Fit askGateway(UUID projectId, String dialogue, int durationSeconds) {
+    private Fit askGateway(UUID projectId, String dialogue, int durationSeconds, Integer fps) {
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     null,
@@ -97,7 +105,14 @@ public class DialogueFitService {
                             List.of(new LlmGatewayMessage("user", "")),
                             Map.of(),
                             TASK_KEY,
-                            Map.of("dialogue", dialogue, "durationSeconds", String.valueOf(durationSeconds)),
+                            // fps alongside duration: the plan says how long the shot runs and how
+                            // that time is cut, and a line has to be written for both. "unspecified"
+                            // rather than a guessed default -- an absent fps is the plan having no
+                            // opinion, and inventing one would put a number in the prompt that no
+                            // one chose.
+                            Map.of("dialogue", dialogue,
+                                    "durationSeconds", String.valueOf(durationSeconds),
+                                    "fps", fps == null ? "unspecified" : String.valueOf(fps)),
                             projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return null;

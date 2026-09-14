@@ -382,7 +382,8 @@ public class ShotContextAssemblyService {
                 : (projectPreferredModel != null && !projectPreferredModel.isBlank() ? projectPreferredModel : null);
         VideoResolution resolution = overrides == null ? null : VideoResolution.fromWireValue(overrides.resolutionOverride());
         String ttsModel = projectPreferredTtsModel != null && !projectPreferredTtsModel.isBlank() ? projectPreferredTtsModel : null;
-        return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes, ttsModel);
+        return new Technical(duration, aspectRatio, resolution, null, pinnedModel, null, editingNotes,
+                ttsModel, shot.fps());
     }
 
     /** The project's continuity locks, as anchors on every shot's context. llm-gateway's prompt

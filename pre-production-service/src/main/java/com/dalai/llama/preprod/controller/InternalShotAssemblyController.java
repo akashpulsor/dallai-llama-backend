@@ -14,6 +14,7 @@ import com.dalai.llama.preprod.dto.ShotDialogueBeatView;
 import com.dalai.llama.preprod.dto.ShotImageView;
 import com.dalai.llama.preprod.dto.ShotProductReferenceView;
 import com.dalai.llama.preprod.dto.ShotView;
+import com.dalai.llama.preprod.dto.UpdateShotRequest;
 import com.dalai.llama.preprod.service.CameraPlanService;
 import com.dalai.llama.preprod.service.CastAssignmentService;
 import com.dalai.llama.preprod.service.CastProfileService;
@@ -157,6 +158,24 @@ public class InternalShotAssemblyController {
             @PathVariable UUID tenantId, @PathVariable UUID shotId, @PathVariable UUID beatId,
             @org.springframework.web.bind.annotation.RequestBody SaveBeatClonedVoiceRequest request) {
         return ResponseEntity.ok(shotDialogueBeatService.saveClonedVoice(tenantId, shotId, beatId, request.clonedVoiceId()));
+    }
+
+    public record SaveShotVoiceOverRequest(String voiceOver) {}
+
+    /** Writes a shortened spoken line back onto the shot.
+     *
+     * <p>video-generation-service shortens dialogue at prepare time when the line cannot be said
+     * in the seconds the shot has. That has to land here, not stay in the generation request:
+     * the shot is where the creator reads and edits the line, so a shot still showing a line
+     * that was not the one performed is a shot nobody can reason about. Persisting first also
+     * makes the next prepare build from the same text rather than re-shortening the original
+     * and possibly landing somewhere else. */
+    @org.springframework.web.bind.annotation.PutMapping("/shots/{shotId}/voice-over")
+    public ResponseEntity<ShotView> saveShotVoiceOver(
+            @PathVariable UUID tenantId, @PathVariable UUID shotId,
+            @org.springframework.web.bind.annotation.RequestBody SaveShotVoiceOverRequest request) {
+        return ResponseEntity.ok(shotListGenerationService.updateShot(tenantId, shotId,
+                UpdateShotRequest.ofVoiceOver(request.voiceOver())));
     }
 
     @GetMapping("/shots/{shotId}/camera-plan")

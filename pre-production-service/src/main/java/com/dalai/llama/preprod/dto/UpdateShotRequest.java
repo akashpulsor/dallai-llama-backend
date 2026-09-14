@@ -36,4 +36,12 @@ public record UpdateShotRequest(
         String cameraMovement,
         String cameraNote
 ) {
+
+    /** Only the spoken line, every other field null so updateShot's PATCH semantics leave the
+     * rest of the shot untouched. Used when video-generation-service shortens a line that could
+     * not be said in the shot's duration and writes the result back. */
+    public static UpdateShotRequest ofVoiceOver(String voiceOver) {
+        return new UpdateShotRequest(null, null, null, voiceOver, null, null, null, null, null,
+                null, null, null, null, null, null);
+    }
 }

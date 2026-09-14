@@ -26,11 +26,25 @@ public record Technical(
         /** ProjectConfig.preferredTtsModel on pre-production-service's side -- a model_id pin
          * (llm-gateway model_master, type=tts) for {@code BeatDubbingService}'s TTS call. Null
          * uses this service's own configured default. */
-        String ttsModel
+        String ttsModel,
+        /** The shot's planned frame rate, as pre-production holds it. Carried because the
+         *  dialogue has to be written for a delivery this shot can actually contain: duration
+         *  says how long there is, fps says how that time is cut. Nullable -- an unset fps
+         *  means the plan has no opinion, not that it is zero. */
+        Integer fps
 ) {
+    /** Back-compat: pre-fps call sites keep working with fps=null. */
+    public Technical(Integer durationSeconds, AspectRatio aspectRatio, VideoResolution resolution,
+                     String targetProvider, String targetModel, String voiceCloneModel,
+                     String editingNotes, String ttsModel) {
+        this(durationSeconds, aspectRatio, resolution, targetProvider, targetModel, voiceCloneModel,
+                editingNotes, ttsModel, null);
+    }
+
     /** Back-compat: existing 6-arg call sites (pre-ttsModel) keep working with ttsModel=null. */
     public Technical(Integer durationSeconds, AspectRatio aspectRatio, VideoResolution resolution,
                      String targetProvider, String targetModel, String voiceCloneModel, String editingNotes) {
-        this(durationSeconds, aspectRatio, resolution, targetProvider, targetModel, voiceCloneModel, editingNotes, null);
+        this(durationSeconds, aspectRatio, resolution, targetProvider, targetModel, voiceCloneModel,
+                editingNotes, null, null);
     }
 }
