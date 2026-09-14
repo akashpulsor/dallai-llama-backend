@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -107,19 +108,28 @@ public class CreatorVideoSubscriptionService {
                         .amountDue(order.amount())
                         .build();
             } catch (RuntimeException ex) {
-                // Razorpay or billing is down. Fall back to the old shape so the creator is told
-                // they are short rather than shown a generic failure -- still actionable by
-                // recharging the wallet by hand.
+                // Say what actually went wrong. This used to answer INSUFFICIENT_BALANCE, which
+                // read as "your wallet is short" when the truth was "we could not create the
+                // order" -- and it pointed the browser at a manual wallet top-up that runs
+                // through the very same gateway, so the retry could only fail the same way. The
+                // balance figures still travel with it as context, but the status no longer
+                // blames the creator for an outage on our side.
                 log.warn("Could not create subscription payment order tenantId={} planCode={}: {}",
                         tenantId, plan.getCode(), ex.getMessage());
                 return CreatorVideoSubscriptionResponse.builder()
-                        .status("INSUFFICIENT_BALANCE")
+                        .status("PAYMENT_UNAVAILABLE")
                         .planCode(plan.getCode())
                         .planName(plan.getName())
                         .price(plan.getMonthlyPrice())
                         .currency(balance.currency())
                         .currentWalletBalance(balance.balance())
                         .shortFallAmount(shortfall)
+                        // Both facts, in the order they matter to the creator: what they are
+                        // short, then why they cannot pay it right now.
+                        .message("Your wallet is short %s %s for %s, and we could not start the "
+                                .formatted(balance.currency(), shortfall.setScale(2, RoundingMode.HALF_UP), plan.getName())
+                                + "payment for it just now. Nothing has been charged -- please try again "
+                                + "in a few minutes.")
                         .build();
             }
         }

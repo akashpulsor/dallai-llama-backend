@@ -79,16 +79,24 @@ public class CreatorVideoSubscriptionController {
     }
 
     @PostMapping("/subscriptions")
-    @Operation(summary = "Subscribe", description = "Charges the wallet immediately and activates the subscription, or returns INSUFFICIENT_BALANCE")
+    @Operation(summary = "Subscribe", description = "Charges the wallet immediately and activates the subscription; returns PAYMENT_REQUIRED with a Razorpay order when the wallet is short, or PAYMENT_UNAVAILABLE when that order could not be created")
     public ResponseEntity<CreatorVideoSubscriptionResponse> subscribe(@Valid @RequestBody CreatorVideoSubscribeRequest request) {
         CreatorVideoSubscriptionResponse response = subscriptionService.subscribe(request);
         // PAYMENT_REQUIRED comes back 200, not 402. It is not a failure -- it carries a live
         // Razorpay order the caller is meant to act on, and every HTTP client in this codebase
         // treats a non-2xx as a rejected promise whose body is awkward to reach. Returning it as
         // an error is what made the browser drop the checkout details on the floor.
-        HttpStatus status = "INSUFFICIENT_BALANCE".equals(response.status())
-                ? HttpStatus.PAYMENT_REQUIRED
-                : HttpStatus.CREATED;
+        // 503, not 402: the creator is not being asked for money, we failed to ask for it. A 402
+        // here told the browser "payment required" and sent it down a top-up path that uses the
+        // same gateway that just failed.
+        HttpStatus status;
+        if ("PAYMENT_UNAVAILABLE".equals(response.status())) {
+            status = HttpStatus.SERVICE_UNAVAILABLE;
+        } else if ("INSUFFICIENT_BALANCE".equals(response.status())) {
+            status = HttpStatus.PAYMENT_REQUIRED;
+        } else {
+            status = HttpStatus.CREATED;
+        }
         return ResponseEntity.status(status).body(response);
     }
 

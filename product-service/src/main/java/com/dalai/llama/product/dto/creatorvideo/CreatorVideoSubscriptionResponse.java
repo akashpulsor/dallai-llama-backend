@@ -9,7 +9,9 @@ import java.util.UUID;
 @Builder
 public record CreatorVideoSubscriptionResponse(
         UUID subscriptionId,
-        String status, // Subscription status, or "INSUFFICIENT_BALANCE" (mirrors the PBX subscribe response shape)
+        /** Subscription status, or one of: PAYMENT_REQUIRED (an order is waiting to be paid),
+         *  PAYMENT_UNAVAILABLE (the order could not be created -- see {@link #message}). */
+        String status,
         String planCode,
         String planName,
         String billingCycle,
@@ -27,6 +29,10 @@ public record CreatorVideoSubscriptionResponse(
         UUID paymentId,
         String gatewayOrderId,
         String razorpayKeyId,
-        BigDecimal amountDue
+        BigDecimal amountDue,
+        /** Why a subscribe could not proceed, in words the creator can act on. Set when the
+         *  status is not something the browser can simply carry out -- never a stack trace or
+         *  an upstream status code. */
+        String message
 ) {
 }
