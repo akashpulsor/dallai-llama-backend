@@ -331,6 +331,12 @@ public class ShotGenerationOrchestrator {
      * for that entire window, leaving the PROCESSING write uncommitted (invisible to any
      * concurrent GET) until the very end, and risking pool exhaustion under a few concurrent
      * approvals. Each state transition below commits on its own, immediately. */
+    /** Read-only view of a job, for a caller that stopped waiting on approve() and needs to know
+     * whether the render it started is still going, finished, or failed. */
+    public VideoGenJobView getJob(UUID tenantId, UUID jobId) {
+        return toJobView(requireJob(tenantId, jobId));
+    }
+
     public VideoGenJobView approve(TenantContext tenantContext, UUID jobId) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
         if (job.getStatus().isTerminal()) {
@@ -838,7 +844,8 @@ public class ShotGenerationOrchestrator {
                 job.getEstimatedCost(),
                 job.getActualCost(),
                 job.isMuteAudio(),
-                job.getDubSucceeded()
+                job.getDubSucceeded(),
+                job.getLastError()
         );
     }
 }

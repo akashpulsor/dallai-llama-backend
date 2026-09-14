@@ -79,6 +79,18 @@ public class VideoGenController {
     /** UI-facing: pulls the generated clip out of MinIO (via a short-lived signed URL) and hands
      * the browser straight to it -- 302 so a plain &lt;video src="..."&gt; tag just works, no
      * separate JSON-then-fetch round trip needed. */
+    /** What actually happened to a job, including {@code lastError} when it failed.
+     *
+     * <p>approve() blocks for the length of a render, so a caller can easily stop waiting before
+     * the provider answers -- a gateway timeout, a closed laptop. The render carries on either
+     * way, so "my request ended" must not be read as "the shot failed": re-approving on that
+     * assumption dispatches and bills the same shot a second time. This is the question to ask
+     * instead, and it reads the job rather than doing anything to it. */
+    @GetMapping("/v1/jobs/{jobId}")
+    public ResponseEntity<VideoGenJobView> getJob(@PathVariable UUID jobId) {
+        return ResponseEntity.ok(orchestrator.getJob(tenant().tenantId(), jobId));
+    }
+
     @GetMapping("/v1/jobs/{jobId}/video")
     public ResponseEntity<Void> getVideo(@PathVariable UUID jobId) {
         String signedUrl = orchestrator.getVideoUrl(tenant().tenantId(), jobId);
