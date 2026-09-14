@@ -377,7 +377,7 @@ public class ShotGenerationOrchestrator {
                 try {
                     BeatDubbingService.DubResult dub = beatDubbingService.dub(
                             job.getTenantId().toString(), job.getJobId(), job.getProjectId(), beats, outputUri,
-                            job.getVoiceCloneModel(), job.getTtsModel());
+                            job.getVoiceCloneModel(), job.getTtsModel(), job.getDurationSeconds());
                     outputUri = dub.finalVideoUrl();
                     actualCost = actualCost.add(dub.cost());
                     dubSucceeded = true;
