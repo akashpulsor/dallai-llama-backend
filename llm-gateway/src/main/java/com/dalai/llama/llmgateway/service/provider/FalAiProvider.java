@@ -323,10 +323,16 @@ public class FalAiProvider implements LlmProvider {
      * other type=video model (see {@code LlmGatewayService.computeCost}'s {@code
      * "video".equals(modelType)} per-second-billing branch, and {@code GET /v1/models?type=video}
      * -- a caller listing video models shouldn't have to know Wan is somehow different). */
-    /** Cost-policy default: 480p ($0.05/s) unless a caller explicitly asks for a higher
-     * resolution -- fal.ai's own default is 1080p ($0.20/s), which must never be reached by
+    /** Cost-policy default: 480p ($0.068/s) unless a caller explicitly asks for a higher
+     * resolution -- fal.ai's own default is 1080p ($0.28/s), which must never be reached by
      * omission. Generate cheap, upscale for delivery quality (see FalAiProvider.upscaleRequestBody
-     * and the fal-ai/topaz/upscale/video rate_card row) rather than paying 1080p generation cost. */
+     * and the fal-ai/topaz/upscale/video rate_card row) rather than paying 1080p generation cost.
+     *
+     * <p>Rates are Prime's, from fal.ai's alibaba/wan-3.0-prime/image-to-video page (checked
+     * 2026-09-14): $0.068 at 480p, $0.14 at 720p, $0.28 at 1080p. This javadoc previously quoted
+     * $0.05/$0.20, which is the STANDARD Wan 3.0 schedule -- Prime runs about 1.4x that -- and
+     * rate_card had been seeded from these figures, so every Wan render was billed roughly 26%
+     * under cost. Corrected in V90. */
     private static final String DEFAULT_WAN_RESOLUTION = "480p";
 
     private Map<String, Object> wanVideoRequestBody(CanonicalRequest request) {
