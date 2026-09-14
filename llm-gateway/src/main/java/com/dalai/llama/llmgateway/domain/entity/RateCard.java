@@ -53,4 +53,10 @@ public class RateCard {
      * keep the input/output-token path. See {@code LlmGatewayService.computeCost}. */
     @Column(name = "per_second_cost", precision = 18, scale = 10)
     private BigDecimal perSecondCost;
+
+    /** Render tier this rate applies to ("480p", "720p"). Null applies at any resolution -- the
+     * only sensible value for token-priced models, and the fallback for a duration-priced tier
+     * nobody has priced yet. */
+    @Column(name = "resolution", length = 16)
+    private String resolution;
 }

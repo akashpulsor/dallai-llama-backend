@@ -274,7 +274,11 @@ public class LlmGatewayService {
             // a Mono that somehow never signals doesn't hang the servlet thread forever.
             LlmResponse response = future.get(routed.model().getTimeoutMs() + 5000L, TimeUnit.MILLISECONDS);
             long latencyMs = System.currentTimeMillis() - startedAt;
-            BigDecimal cost = computeCost(routed.rateCard(), routed.model().getType(),
+            // Resolution-aware: routed.rateCard() is the model's default row, which for a
+            // duration-priced model is only one of its tiers. See ModelRouterService.rateCardFor.
+            BigDecimal cost = computeCost(
+                    modelRouterService.rateCardFor(routed.model().getModelId(), request.params()),
+                    routed.model().getType(),
                     response.inputTokens(), response.outputTokens(), request.params());
             jobPersistenceService.finish(job.getJobId(), JobStatus.COMPLETED, null,
                     response.inputTokens(), response.outputTokens(), cost, (int) latencyMs, response.content());
@@ -357,9 +361,10 @@ public class LlmGatewayService {
         // duration-priced and their rate cards carry input_token_cost = 0 -- which is exactly why
         // computeCost exists -- so estimating them by tokens returned $0 for every video model,
         // every time. The caller supplies duration_seconds in params the same way dispatch does.
-        BigDecimal estimatedCost = computeCost(routed.rateCard(), routed.model().getType(),
+        RateCard rateCard = modelRouterService.rateCardFor(routed.model().getModelId(), request.params());
+        BigDecimal estimatedCost = computeCost(rateCard, routed.model().getType(),
                 estimatedInputTokens, 0, request.params());
-        return new EstimateResponse(routed.model().getModelId(), estimatedInputTokens, estimatedCost, routed.rateCard().getRateCardId());
+        return new EstimateResponse(routed.model().getModelId(), estimatedInputTokens, estimatedCost, rateCard.getRateCardId());
     }
 
     public JobStatusResponse jobStatus(String tenantId, UUID jobId) {

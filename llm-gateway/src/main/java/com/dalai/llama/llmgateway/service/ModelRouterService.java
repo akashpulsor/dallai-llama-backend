@@ -9,9 +9,12 @@ import com.dalai.llama.llmgateway.repository.ProviderRepository;
 import com.dalai.llama.llmgateway.repository.RateCardRepository;
 import com.dalai.llama.llmgateway.repository.TenantModelOverrideRepository;
 import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -20,6 +23,7 @@ import java.util.Optional;
  * (tenant_model_override.allowed) is layered on top of the model defaults, default-allow when
  * no override row exists for a tenant+model pair.
  */
+@Slf4j
 @Service
 public class ModelRouterService {
 
@@ -60,6 +64,52 @@ public class ModelRouterService {
                 .orElseThrow(() -> GatewayException.notFound("No active rate_card for model_id=" + modelId));
 
         return new RoutedModel(model, rateCard);
+    }
+
+    /** The rate that applies to this request, which for a duration-priced model depends on the
+     * render tier: Wan is $0.05/s at 480p and $0.20/s at 1080p, so billing every tier from one
+     * row was wrong by up to 4x in whichever direction the stored rate happened to miss.
+     *
+     * <p>Resolution comes from the request params -- the same value sent to the provider, so the
+     * rate and the render can never disagree about which tier was asked for.
+     *
+     * <p>When the tier has no row, this does NOT fall back to the model's default row: that row
+     * holds some other tier's rate, and using it silently bills a 720p render at the 480p price.
+     * It falls back to the DEAREST known rate for the model and logs a warning, so an unpriced
+     * tier is loud and cannot lose money. Add the row to make it exact.
+     */
+    public RateCard rateCardFor(String modelId, Map<String, Object> params) {
+        OffsetDateTime now = OffsetDateTime.now();
+        String resolution = params == null || params.get("resolution") == null
+                ? null
+                : String.valueOf(params.get("resolution")).trim();
+
+        if (resolution != null && !resolution.isBlank()) {
+            Optional<RateCard> exact = rateCardRepository
+                    .findFirstByModelIdAndResolutionAndEffectiveFromLessThanEqualOrderByEffectiveFromDesc(
+                            modelId, resolution, now);
+            if (exact.isPresent()) {
+                return exact.get();
+            }
+        }
+
+        List<RateCard> all = rateCardRepository.findByModelIdAndEffectiveFromLessThanEqual(modelId, now);
+        List<RateCard> tiered = all.stream()
+                .filter(card -> card.getResolution() != null && card.getPerSecondCost() != null)
+                .toList();
+        if (resolution != null && !resolution.isBlank() && !tiered.isEmpty()) {
+            RateCard dearest = tiered.stream()
+                    .max(java.util.Comparator.comparing(RateCard::getPerSecondCost))
+                    .orElseThrow();
+            log.warn("No rate_card for modelId={} resolution={} -- billing at the dearest known tier {} ({}/s). "
+                            + "Add the row for an exact rate.",
+                    modelId, resolution, dearest.getResolution(), dearest.getPerSecondCost());
+            return dearest;
+        }
+
+        return rateCardRepository
+                .findFirstByModelIdAndEffectiveFromLessThanEqualOrderByEffectiveFromDesc(modelId, now)
+                .orElseThrow(() -> GatewayException.notFound("No active rate_card for model_id=" + modelId));
     }
 
     /** Per-tenant RPM override for this model, if the tenant has one configured. */
