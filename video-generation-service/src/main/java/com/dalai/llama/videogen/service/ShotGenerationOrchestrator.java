@@ -47,6 +47,12 @@ public class ShotGenerationOrchestrator {
     /** A breath after the last word, so rounding does not clip it. */
     private static final double DIALOGUE_TAIL_SECONDS = 0.4;
 
+    /** The longest single clip the video model will produce. A shot cannot be stretched past this
+     * to fit its dialogue, however long the line is -- asking for more comes back clamped, which
+     * would cut the line anyway while looking like it had been handled. */
+    @Value("${video-gen.max-shot-duration-seconds:10}")
+    private int maxShotSeconds;
+
     private final ModelRecommendationService modelRecommendationService;
     private final PromptBuilderService promptBuilderService;
     private final PromptCompressionService promptCompressionService;
@@ -771,6 +777,16 @@ public class ShotGenerationOrchestrator {
         int needed = (int) Math.ceil(longestAudio + DIALOGUE_TAIL_SECONDS);
         if (plannedSeconds != null && plannedSeconds >= needed) {
             return plannedSeconds;
+        }
+        if (needed > maxShotSeconds) {
+            // Past what the model will generate, so there is no duration that holds this line. Say
+            // so with the numbers rather than quietly asking for a length that comes back clamped:
+            // the line has to be shortened, or split across shots, and that is a shot-list decision.
+            log.warn("Dialogue is too long for any shot this model can generate jobId={} audio={}s"
+                            + " needs={}s max={}s -- generating at the cap, so the line will still be cut."
+                            + " Shorten it or split it across shots.",
+                    jobId, String.format(java.util.Locale.ROOT, "%.2f", longestAudio), needed, maxShotSeconds);
+            return maxShotSeconds;
         }
         log.info("Extending shot to fit its dialogue jobId={} planned={}s audio={}s generating={}s",
                 jobId, plannedSeconds, String.format(java.util.Locale.ROOT, "%.2f", longestAudio), needed);
