@@ -92,6 +92,7 @@ public class PrepareSceneController {
                 .stream()
                 .map(job -> new ShotVideoView(
                         job.jobId(),
+                        shotGenerationOrchestrator.shotIdForJob(job.jobId()),
                         job.shotRef(),
                         job.status(),
                         job.approvalStatus(),
@@ -226,6 +227,10 @@ public class PrepareSceneController {
       * persisted output. */
     public record ShotVideoView(
             UUID jobId,
+            /** The shot this clip belongs to. Carried so a caller can match a finished render
+             *  back to the shot on screen -- without it, a completed video is data the UI holds
+             *  but cannot place, which is how a generated shot ends up looking ungenerated. */
+            UUID shotId,
             String shotRef,
             String status,
             String approvalStatus,

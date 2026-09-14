@@ -453,6 +453,17 @@ public class ShotGenerationOrchestrator {
      * jobs to find prompts; a shot the creator has not generated yet has no job, so that path
      * returns nothing for a prompt that plainly exists. Prompts carry shot_id directly, so this
      * one asks the question the caller actually has an answer for. */
+    /** The shot a job was dispatched for. VideoGenJob records only shot_ref, but a caller
+     * holding shots holds their ids -- and the job's prompts carry shot_id, so the answer is
+     * one hop away. Null when the job has no prompt, which should not happen but is not worth
+     * failing a listing over. */
+    public UUID shotIdForJob(UUID jobId) {
+        return shotPromptRepository.findByJobIdOrderByCreatedAtDesc(jobId).stream()
+                .findFirst()
+                .map(prompt -> prompt.getShotId())
+                .orElse(null);
+    }
+
     public List<ShotPromptView> listPromptsForShotId(UUID tenantId, UUID shotId) {
         return shotPromptRepository.findByShotIdOrderByCreatedAtDesc(shotId).stream()
                 .filter(prompt -> tenantId.equals(prompt.getTenantId()))
