@@ -232,6 +232,36 @@ public class DialogueFitReportService {
             }
         }
 
+        // A shot dubbed as ONE take although its beats are broken out.
+        //
+        // The card's re-dub posts the shot's whole line with no beat id, and CloneVoiceService
+        // attaches the result to a beat only when some beat's text matches those words exactly. So
+        // the moment a line is rephrased -- which is the entire point of the rewrite flow -- the
+        // take that was just recorded lands shot-level, and every lookup here goes by beat because
+        // the shot has beats. The recording exists, it is the audio that will actually be muxed,
+        // and nothing in the report can see it.
+        //
+        // The cost of not looking was the whole feature failing shut: an 11.8s take in a 5s shot
+        // was reported as "not yet recorded", the length fell back to a text estimate, and the page
+        // hid extend, rephrase and go-with-the-original behind "dub it first" -- on a shot that had
+        // been dubbed.
+        if (!spans.isEmpty() && spans.stream().noneMatch(DialogueFitMath.BeatSpan::measured)) {
+            BigDecimal whole = measured.measuredForShot(shot.id(), spokenLine(shot));
+            if (whole == null && beatViews.size() == 1) {
+                whole = measured.measuredForShot(shot.id(), beatViews.get(0).text());
+            }
+            if (whole != null) {
+                // One recording of everything spoken, so one span, starting where the first beat
+                // does. The per-beat rows are left as the estimates they are: how a single take
+                // divides between beats is not something anyone measured, and splitting it by
+                // character count would be exactly the invented precision this class refuses
+                // elsewhere. The total is a fact; the division is not.
+                double start = spans.stream()
+                        .mapToDouble(DialogueFitMath.BeatSpan::startSeconds).min().orElse(0);
+                spans = List.of(new DialogueFitMath.BeatSpan(0, start, whole.doubleValue(), true));
+            }
+        }
+
         return new Built(DialogueFitMath.evaluate(
                 shot.durationSeconds(), shot.fps(), spans, tailSeconds, minShotSeconds, maxShotSeconds,
                 maxExtensionSeconds), beatViews);

@@ -81,9 +81,21 @@ public class CloneVoiceService {
                 .orElseThrow(() -> VideoGenException.badRequest("Shot " + shotId + " is not in project " + projectId));
 
         String clonedLine = text == null || text.isBlank() ? defaultLineFor(shotBundle.shot()) : text.trim();
-        List<PreProductionViews.ShotDialogueBeatView> matchingBeats = shotBundle.dialogueBeats() == null ? List.of()
-                : shotBundle.dialogueBeats().stream()
+        List<PreProductionViews.ShotDialogueBeatView> beats = shotBundle.dialogueBeats() == null
+                ? List.of() : shotBundle.dialogueBeats();
+        List<PreProductionViews.ShotDialogueBeatView> matchingBeats = beats.stream()
                 .filter(beat -> beat.text() != null && clonedLine.equals(beat.text().trim())).toList();
+        if (matchingBeats.isEmpty() && beats.size() == 1) {
+            // Nothing matched the words, and there is exactly one beat -- so there is no question
+            // which line this is a take of, whatever the beat's stored text still says. Leaving it
+            // shot-level orphans it: once a shot has beats every fit lookup goes by beat, and the
+            // recording would exist while nothing could find it. That is precisely what happens
+            // after a rephrase, when the new words deliberately no longer match the old ones.
+            //
+            // With several beats the take stays whole-shot. Guessing which of them was re-recorded
+            // would attach a measurement to the wrong line, which is worse than having none.
+            matchingBeats = beats;
+        }
         UUID firstBeatId = matchingBeats.isEmpty() ? null : matchingBeats.get(0).id();
         CloneVoiceResult result = cloneVoice(tenantId, projectId, shotBundle, text, bundle, firstBeatId);
         for (PreProductionViews.ShotDialogueBeatView beat : matchingBeats) {
