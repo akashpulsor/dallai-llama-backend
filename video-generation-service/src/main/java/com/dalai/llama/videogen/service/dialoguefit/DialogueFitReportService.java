@@ -256,6 +256,10 @@ public class DialogueFitReportService {
                 report.suggestedDurationSeconds(),
                 report.suggestedTargetAudioSeconds() == null ? null : round(report.suggestedTargetAudioSeconds()),
                 report.measured(),
+                // A line with no take recorded for it. The video model would invent the delivery,
+                // which is what put a voice nobody wrote onto a motion graphic and crammed
+                // shot-01-006's nine seconds into four.
+                spokenLine(shot) != null && !report.measured(),
                 spokenLine(shot),
                 beatViews,
                 report.overlaps().stream()

@@ -57,6 +57,14 @@ public record DialogueFitView(
         Integer suggestedDurationSeconds,
         Double suggestedTargetAudioSeconds,
         boolean measured,
+        /** True when this shot has a spoken line that has NOT been synthesized yet.
+         *
+         * <p>Distinct from {@code !measured}, which only says the figures are estimates. This says
+         * the shot is about to be generated with no recorded voice for it -- so the video model will
+         * invent the delivery, cramming a line it has no room for into whatever seconds remain. The
+         * audio has to exist BEFORE the picture is made, because the picture is generated around it.
+         */
+        boolean needsDubbing,
         /** The line as it stands, so the rewrite dialog has something to show without another call. */
         String dialogue,
         List<BeatFitView> beats,

@@ -230,7 +230,22 @@ public class ShotGenerationOrchestrator {
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId,
                 shotContext.technical() == null ? null : shotContext.technical().durationSeconds());
 
-        boolean muteAudio = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
+        // Two separate reasons to tell the model not to make audio, and they had been conflated.
+        //
+        // The first is that we are going to dub the shot ourselves, which is what this flag always
+        // meant. The second is that the shot has NOTHING TO SAY: no beats, no voice-over, no line.
+        // Left to itself the provider's default is to generate audio anyway, so a motion graphic
+        // with no dialogue planned came back with a voice inventing words over it -- speech nobody
+        // wrote, in a shot nobody intended to speak. Silence is the correct output there, and any
+        // sound that shot wants (a music bed, foley) is laid on afterwards from its own plan.
+        boolean willDub = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
+        boolean hasSomethingToSay = (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty())
+                || (shotContext.narrative() != null && shotContext.narrative().dialogue() != null
+                        && !shotContext.narrative().dialogue().isBlank());
+        boolean muteAudio = willDub || !hasSomethingToSay;
+        if (!willDub && !hasSomethingToSay) {
+            log.info("Shot has no dialogue planned -- generating it silent shotRef={}", shotContext.shotRef());
+        }
 
         VideoGenJob job = VideoGenJob.builder()
                 .jobId(UUID.randomUUID())
@@ -441,7 +456,7 @@ public class ShotGenerationOrchestrator {
 
             String outputUri = result.outputUri();
             BigDecimal actualCost = result.actualCost();
-            if (job.isMuteAudio()) {
+            if (job.isMuteAudio() && beatDubbingService.canAutoDub(plannedBeats)) {
                 // Auto-dub: mux a beat-matched cloned-voice track onto the silent video Seedance
                 // just returned -- see BeatDubbingService's class comment for why this is a
                 // best-effort bet, not a guarantee, and what the fallback is when it misses.
