@@ -91,7 +91,8 @@ public class ClipTailExtensionService {
      *                    that the shot list is wrong and a tail is papering over it.
      */
     public Extended extend(UUID tenantId, UUID projectId, UUID jobId, String clipUrl, String audioUrl,
-                           int tailSeconds, Mode mode, String continuationPrompt) {
+                           int tailSeconds, Mode mode, String continuationPrompt,
+                           String resolution, String aspectRatio) {
         if (clipUrl == null || clipUrl.isBlank()) {
             throw VideoGenException.badRequest("There is no clip to extend");
         }
@@ -116,7 +117,8 @@ public class ClipTailExtensionService {
             }
 
             Path tail = mode == Mode.GENERATE
-                    ? generateTail(tenantId, projectId, jobId, workDir, lastFrame, seconds, continuationPrompt)
+                    ? generateTail(tenantId, projectId, jobId, workDir, lastFrame, seconds,
+                            continuationPrompt, resolution, aspectRatio)
                     : holdTail(workDir, lastFrame, clip, seconds);
 
             // Concat, then lay the full dialogue over the joined picture. Re-encoded rather than
@@ -178,7 +180,8 @@ public class ClipTailExtensionService {
 
     /** A continuation animated from the last frame by the cheaper model. */
     private Path generateTail(UUID tenantId, UUID projectId, UUID jobId, Path workDir, Path lastFrame,
-                              int seconds, String continuationPrompt) throws Exception {
+                              int seconds, String continuationPrompt,
+                              String resolution, String aspectRatio) throws Exception {
         VideoAssetPersistenceService.PersistedAsset frameAsset = assetPersistenceService.uploadFile(
                 bucket, "tail-frames/%s-%s.png".formatted(jobId, UUID.randomUUID()), lastFrame);
         String frameUrl = assetPersistenceService.presignedUrl(frameAsset.bucket(), frameAsset.objectKey());
@@ -187,6 +190,17 @@ public class ClipTailExtensionService {
         params.put("duration_seconds", seconds);
         params.put("reference_image_urls", List.of(frameUrl));
         params.put("generate_audio", Boolean.FALSE);
+        // The shot's own resolution and aspect, so the tail is GENERATED at the size it has to join
+        // rather than produced at the model's default and resized afterwards. Scaling up from a
+        // smaller frame softens exactly the seconds the eye is still on, and the padding that would
+        // otherwise rescue a mismatched aspect would letterbox them. The scale/pad at the join stays
+        // as a safety net for a model that ignores what it was asked for.
+        if (resolution != null && !resolution.isBlank()) {
+            params.put("resolution", resolution);
+        }
+        if (aspectRatio != null && !aspectRatio.isBlank()) {
+            params.put("aspect_ratio", aspectRatio);
+        }
         String prompt = continuationPrompt == null || continuationPrompt.isBlank()
                 // Says "carry on", not "do something": a tail that introduces a new idea is worse
                 // than the silence it was meant to cover.

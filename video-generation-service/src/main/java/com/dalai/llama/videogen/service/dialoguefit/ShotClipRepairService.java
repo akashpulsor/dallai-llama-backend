@@ -97,7 +97,10 @@ public class ShotClipRepairService {
         }
 
         ClipTailExtensionService.Extended extended = tailExtensionService.extend(
-                tenantId, projectId, job.getJobId(), clipUrl, audioUrl, seconds, mode, continuationPrompt);
+                tenantId, projectId, job.getJobId(), clipUrl, audioUrl, seconds, mode, continuationPrompt,
+                // Taken from the job, which is what the shot was actually dispatched at -- not from
+                // the shot's current plan, which may have been edited since it was generated.
+                job.getResolution(), job.getAspectRatio());
 
         job.setOutputBucket(extended.bucket());
         job.setOutputObjectKey(extended.objectKey());
