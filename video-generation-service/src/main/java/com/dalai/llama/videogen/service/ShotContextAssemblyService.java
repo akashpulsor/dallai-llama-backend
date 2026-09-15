@@ -125,7 +125,7 @@ public class ShotContextAssemblyService {
                 buildAudioAmbience(shot, shotBundle.backgroundMusic()),
                 buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion(),
                         bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage(),
-                        measured),
+                        measured, shot),
                 buildReferenceFrames(shotImages),
                 // Null for every shot that is not a motion graphic, which is what keeps this branch
                 // from touching anything else.
@@ -478,22 +478,17 @@ public class ShotContextAssemblyService {
             PreProductionViews.ScriptView script,
             String emotion,
             String languageCode,
-            DialogueAudioIndex.Index measured) {
+            DialogueAudioIndex.Index measured,
+            PreProductionViews.ShotView shot) {
         if (beats == null || beats.isEmpty()) {
-            return List.of();
+            return implicitBeat(shot, castAssignments, profilesById, scriptCharacterIdByKey(script),
+                    emotion, languageCode, measured);
         }
         // Real per-beat cast resolution: beat.characterKey (String) -> ScriptCharacter.id (UUID)
         // -> CastAssignment.castProfileId -> CastProfile.voiceRef*. Falls back to the first
         // cast profile only when a beat's speaker can't be resolved (script missing, characterKey
         // unknown, cast unassigned) -- matches the pre-prod-side assembler's own fallback.
-        Map<String, UUID> scriptCharacterIdByKey = script == null || script.characters() == null
-                ? Map.of()
-                : script.characters().stream()
-                        .filter(c -> c.characterKey() != null && c.id() != null)
-                        .collect(Collectors.toMap(
-                                PreProductionViews.ScriptCharacterView::characterKey,
-                                PreProductionViews.ScriptCharacterView::id,
-                                (a, b) -> a));
+        Map<String, UUID> scriptCharacterIdByKey = scriptCharacterIdByKey(script);
         Map<UUID, UUID> castProfileByScriptCharacterId = castAssignments.stream()
                 .filter(a -> a.scriptCharacterId() != null && a.castProfileId() != null)
                 .collect(Collectors.toMap(
@@ -514,6 +509,74 @@ public class ShotContextAssemblyService {
                             measured == null ? null : measured.measuredForBeat(b.id()));
                 })
                 .toList();
+    }
+
+    private static Map<String, UUID> scriptCharacterIdByKey(PreProductionViews.ScriptView script) {
+        if (script == null || script.characters() == null) {
+            return Map.of();
+        }
+        return script.characters().stream()
+                .filter(c -> c.characterKey() != null && c.id() != null)
+                .collect(Collectors.toMap(
+                        PreProductionViews.ScriptCharacterView::characterKey,
+                        PreProductionViews.ScriptCharacterView::id,
+                        (a, b) -> a));
+    }
+
+    /**
+     * One beat standing in for a shot that has a spoken line but no beats broken out.
+     *
+     * <p>Without it such a shot cannot be dubbed at all. The dub path is driven entirely by beats --
+     * {@code canAutoDub} requires a non-empty list -- so a shot with a voice-over and no beats was
+     * generated with the video model's own audio, and any take the creator recorded for it sat in
+     * storage unused. shot-01-006 is the case: a 9.2-second line, a dub the creator made, and a
+     * four-second clip in which the model crammed a fragment of speech into the last half second.
+     *
+     * <p>Starts at zero and runs the shot's planned length, which is what a single uninterrupted
+     * line does. Only produced when a cast voice actually resolves: without one there is nothing to
+     * speak with, and inventing a beat would only move the failure later.
+     */
+    private List<DialogueBeat> implicitBeat(
+            PreProductionViews.ShotView shot,
+            List<PreProductionViews.CastAssignmentView> castAssignments,
+            Map<UUID, PreProductionViews.CastProfileView> profilesById,
+            Map<String, UUID> scriptCharacterIdByKey,
+            String emotion,
+            String languageCode,
+            DialogueAudioIndex.Index measured) {
+        if (shot == null) {
+            return List.of();
+        }
+        String line = shot.voiceOver();
+        if (!hasText(line) && "DIALOGUE".equals(shot.shotType())) {
+            line = shot.scriptLine();
+        }
+        if (!hasText(line)) {
+            return List.of();
+        }
+        Map<UUID, UUID> castProfileByScriptCharacterId = castAssignments.stream()
+                .filter(a -> a.scriptCharacterId() != null && a.castProfileId() != null)
+                .collect(Collectors.toMap(
+                        PreProductionViews.CastAssignmentView::scriptCharacterId,
+                        PreProductionViews.CastAssignmentView::castProfileId,
+                        (a, b) -> a));
+        PreProductionViews.CastProfileView profile = resolveVoiceProfile(
+                shot.primaryCharacterKey(), scriptCharacterIdByKey, castProfileByScriptCharacterId, profilesById);
+        if (profile == null && !castAssignments.isEmpty()) {
+            profile = profilesById.get(castAssignments.get(0).castProfileId());
+        }
+        if (voiceUrlFor(profile) == null && clonedVoiceIdFor(profile) == null && builtinVoiceIdFor(profile) == null) {
+            // No voice to speak it with -- leave the shot on native audio rather than producing a
+            // beat the dub would reject anyway.
+            return List.of();
+        }
+        java.math.BigDecimal planned = shot.durationSeconds() == null
+                ? java.math.BigDecimal.ZERO : java.math.BigDecimal.valueOf(shot.durationSeconds());
+        return List.of(new DialogueBeat(
+                java.math.BigDecimal.ZERO, planned, line.trim(), shot.primaryCharacterKey(),
+                voiceUrlFor(profile), clonedVoiceIdFor(profile), clonedVoiceProviderIdFor(profile),
+                builtinVoiceIdFor(profile), emotion, languageCode,
+                measured == null ? null : measured.measuredForShot(shot.id(), line.trim())));
     }
 
     private PreProductionViews.CastProfileView resolveVoiceProfile(

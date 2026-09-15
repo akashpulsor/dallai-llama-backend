@@ -48,6 +48,7 @@ public class BeatDubbingService {
     private final String ttsModel;
     private final String mergeModel;
     private final VideoAssetPersistenceService assetPersistenceService;
+    private final com.dalai.llama.videogen.service.dialoguefit.AudioDurationProbe durationProbe;
     /** Past this, speeding speech up to fit stops producing something worth listening to. */
     private final double maxSpeedUp;
     private final long ffmpegTimeoutSeconds;
@@ -60,6 +61,7 @@ public class BeatDubbingService {
             @Value("${video-gen.llm-gateway.default-tts-model}") String ttsModel,
             @Value("${video-gen.llm-gateway.default-audio-video-merge-model}") String mergeModel,
             VideoAssetPersistenceService assetPersistenceService,
+            com.dalai.llama.videogen.service.dialoguefit.AudioDurationProbe durationProbe,
             @Value("${video-gen.dubbing.max-speed-up:1.5}") double maxSpeedUp,
             @Value("${video-gen.dubbing.ffmpeg-timeout-seconds:300}") long ffmpegTimeoutSeconds,
             @Value("${video-gen.dubbing.fitted-audio-bucket:creator-assets}") String defaultDubBucket
@@ -70,6 +72,7 @@ public class BeatDubbingService {
         this.ttsModel = ttsModel;
         this.mergeModel = mergeModel;
         this.assetPersistenceService = assetPersistenceService;
+        this.durationProbe = durationProbe;
         this.maxSpeedUp = maxSpeedUp;
         this.ffmpegTimeoutSeconds = ffmpegTimeoutSeconds;
         this.defaultDubBucket = defaultDubBucket;
@@ -162,7 +165,25 @@ public class BeatDubbingService {
 
         // Fit before merging, not after: the merge pins the track to the video's length, so an
         // over-long take is silently severed there rather than reported.
-        String dialogueAudioUrl = fitAudioToShot(jobId, synthesis.response(), shotDurationSeconds, shotFps);
+        // Against what the provider ACTUALLY returned, not what we asked for. Wan quantises a
+        // request to a whole number of frames and hands back its own nearest length: shot-01-003
+        // was dispatched at 5s and came back 4.7666s (143 frames at 30fps). Fitting the track to
+        // the 5s we requested and then muxing it onto a 4.77s video means the merge severs the last
+        // quarter second -- and reports dub_succeeded=true, because the merge did what it was told.
+        // Probing costs nothing here: the file is about to be downloaded anyway.
+        double actualVideoSeconds = durationProbe.probeUrl(silentVideoUrl);
+        Integer fitTarget = shotDurationSeconds;
+        if (actualVideoSeconds > 0) {
+            // Floor, not round: the audio has to end INSIDE the picture. Half a frame over is still
+            // over, and the mux resolves "over" by cutting.
+            fitTarget = (int) Math.floor(actualVideoSeconds);
+            if (shotDurationSeconds != null && fitTarget != shotDurationSeconds.intValue()) {
+                log.info("Clip came back a different length than requested jobId={} requested={}s actual={}s"
+                                + " -- fitting the dialogue to what was generated",
+                        jobId, shotDurationSeconds, String.format(Locale.ROOT, "%.3f", actualVideoSeconds));
+            }
+        }
+        String dialogueAudioUrl = fitAudioToShot(jobId, synthesis.response(), fitTarget, shotFps, actualVideoSeconds);
 
         // Snapped to a frame boundary before it becomes a mux offset. An offset of 1.37s at 24fps
         // falls between frames 32 and 33, and the encoder resolves that however it likes -- so the
@@ -314,7 +335,8 @@ public class BeatDubbingService {
      * <p>Returns the original URL unchanged if it already fits, or if anything here fails -- the
      * dub is worth more than the trim.
      */
-    private String fitAudioToShot(UUID jobId, String audioUrl, Integer shotDurationSeconds, Integer shotFps) {
+    private String fitAudioToShot(UUID jobId, String audioUrl, Integer shotDurationSeconds, Integer shotFps,
+                                  double actualVideoSeconds) {
         if (audioUrl == null || shotDurationSeconds == null || shotDurationSeconds <= 0) {
             return audioUrl;
         }
@@ -328,12 +350,14 @@ public class BeatDubbingService {
             if (actualSeconds <= 0) {
                 return audioUrl;
             }
-            double shotSeconds = shotDurationSeconds;
+            // The real ceiling is the generated picture, to the frame. Falls back to the whole-second
+            // figure only when the probe could not read the clip.
+            double shotSeconds = actualVideoSeconds > 0 ? actualVideoSeconds : shotDurationSeconds;
             // One frame of slack, not a fixed quarter-second: a quarter of a second is six frames at
             // 24fps and twelve at 48, so a constant in seconds is a different amount of tolerance on
             // every project. A track within one frame of the shot cannot be trimmed to fit better.
             int frameRate = shotFps == null || shotFps <= 0 ? DialogueFitMath.ASSUMED_FPS : shotFps;
-            if (DialogueFitMath.framesCeil(actualSeconds, frameRate) <= shotDurationSeconds * frameRate) {
+            if (DialogueFitMath.framesCeil(actualSeconds, frameRate) <= DialogueFitMath.framesCeil(shotSeconds, frameRate)) {
                 return audioUrl;
             }
 
