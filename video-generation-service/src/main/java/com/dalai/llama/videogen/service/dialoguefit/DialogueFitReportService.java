@@ -131,7 +131,8 @@ public class DialogueFitReportService {
                 ? measured.measuredForBeat(beatId)
                 : measured.measuredForShot(shotId);
         double currentSeconds = current != null ? current.doubleValue() : rate.secondsFor(dialogue);
-        return dialogueRetimeService.retime(projectId, dialogue, targetSeconds, currentSeconds, rate, languageCode);
+        return dialogueRetimeService.retime(tenantId, projectId, dialogue, targetSeconds, currentSeconds,
+                rate, languageCode);
     }
 
     /**
@@ -160,7 +161,7 @@ public class DialogueFitReportService {
         // The ceiling the recommendation is clamped to is the hard one, not the cost allowance: the
         // whole point of asking is that this shot might be worth more seconds than a blanket rule
         // would give it. What it costs is in the prompt, so the judgement is made knowing the price.
-        return dialogueFitAdvisorService.advise(projectId, shot.shotRef(), shot.shotType(),
+        return dialogueFitAdvisorService.advise(tenantId, projectId, shot.shotRef(), shot.shotType(),
                 shot.action(), spokenLine(shot), fit, maxShotSeconds);
     }
 

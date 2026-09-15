@@ -68,6 +68,8 @@ public class DialogueFitAdvisorService {
     }
 
     /**
+     * @param tenantId  whose gateway route this goes through -- it is a path segment, not a header,
+     *                  so it cannot be omitted.
      * @param shotRef   what to call the shot in the reasoning shown to the creator.
      * @param shotType  B_ROLL / DIALOGUE / ACTION / MOTION_GRAPHIC -- the single strongest signal for
      *                  whether spare seconds will read as a held beat or as dead screen time.
@@ -76,7 +78,7 @@ public class DialogueFitAdvisorService {
      * @param maxDurationSeconds the longest this shot could be generated at. The recommendation is
      *                  clamped to it; a model cannot authorise spending past the ceiling.
      */
-    public Advice advise(UUID projectId, String shotRef, String shotType, String action,
+    public Advice advise(UUID tenantId, UUID projectId, String shotRef, String shotType, String action,
                          String dialogue, DialogueFitMath.Report fit, int maxDurationSeconds) {
         if (!enabled || fit == null || !fit.verdict().needsAttention() || dialogue == null || dialogue.isBlank()) {
             return null;
@@ -90,7 +92,11 @@ public class DialogueFitAdvisorService {
 
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
-                    null,
+                    // The tenant goes in the PATH of the gateway's internal chat route, so a null
+                    // here is a request to /tenants/null/chat and comes back 401. Nothing about the
+                    // failure says "you forgot the tenant", which is why this was only found by
+                    // calling it for real.
+                    tenantId == null ? null : tenantId.toString(),
                     "dialogue-fit-advice-" + UUID.randomUUID(),
                     new LlmGatewayChatRequest(
                             model,

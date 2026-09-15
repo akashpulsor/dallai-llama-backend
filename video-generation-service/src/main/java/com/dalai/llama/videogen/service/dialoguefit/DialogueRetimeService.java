@@ -66,6 +66,7 @@ public class DialogueRetimeService {
     }
 
     /**
+     * @param tenantId       whose gateway route this goes through -- a path segment, not a header.
      * @param projectId      whose wallet the rewrite is charged to.
      * @param dialogue       the line as written.
      * @param targetSeconds  how long the rewrite should take to say -- from the fit report, already
@@ -75,7 +76,7 @@ public class DialogueRetimeService {
      * @param rate           the speaking rate the budget and the prediction are computed from.
      * @param languageCode   BCP-47, or null to let the model work in the language it finds.
      */
-    public Retimed retime(UUID projectId, String dialogue, double targetSeconds,
+    public Retimed retime(UUID tenantId, UUID projectId, String dialogue, double targetSeconds,
                           double currentSeconds, SpeakingRate rate, String languageCode) {
         if (dialogue == null || dialogue.isBlank()) {
             throw VideoGenException.badRequest("There is no line to rewrite");
@@ -94,7 +95,8 @@ public class DialogueRetimeService {
 
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
-                    null,
+                    // Path segment, not a header -- null here is /tenants/null/chat and a 401.
+                    tenantId == null ? null : tenantId.toString(),
                     "dialogue-retime-" + UUID.randomUUID(),
                     new LlmGatewayChatRequest(
                             model,

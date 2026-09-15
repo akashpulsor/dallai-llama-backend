@@ -92,7 +92,7 @@ public class DialogueFitService {
             return shotContext;
         }
 
-        Fit fit = askGateway(projectId, dialogue, duration, shotContext.technical().fps());
+        Fit fit = askGateway(tenantId, projectId, dialogue, duration, shotContext.technical().fps());
         if (fit == null || fit.fits() || fit.fitted() == null || fit.fitted().isBlank()) {
             return shotContext;
         }
@@ -108,10 +108,13 @@ public class DialogueFitService {
                 narrative.scriptLine(), narrative.screenplaySlug(), narrative.arcPosition(), fit.fitted()));
     }
 
-    private Fit askGateway(UUID projectId, String dialogue, int durationSeconds, Integer fps) {
+    private Fit askGateway(UUID tenantId, UUID projectId, String dialogue, int durationSeconds, Integer fps) {
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
-                    null,
+                    // Was null, which is /tenants/null/chat and a 401 -- so this call could never
+                    // have succeeded. It went unnoticed because the failure is swallowed by design
+                    // (the line stands as written) and because auto-apply is off by default.
+                    tenantId == null ? null : tenantId.toString(),
                     "dialogue-fit-" + UUID.randomUUID(),
                     new LlmGatewayChatRequest(
                             model,
