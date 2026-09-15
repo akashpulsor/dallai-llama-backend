@@ -126,6 +126,18 @@ public class ClipTailExtensionService {
             workDir = Files.createTempDirectory("tail-" + jobId);
             Path clip = workDir.resolve("clip.mp4");
             download(clipUrl, clip);
+            // Checked here, where the answer is unambiguous, rather than being discovered three
+            // steps later as a frame that would not decode. A clip that arrived but is not readable
+            // video is a download problem, and saying so is the difference between a diagnosable
+            // failure and a guess.
+            double clipSeconds = durationProbe.probeFile(clip);
+            if (clipSeconds <= 0) {
+                throw VideoGenException.upstream(
+                        "The clip downloaded but could not be read as video -- it may be an expired link");
+            }
+            log.info("Repairing a clip jobId={} mode={} addSeconds={} clipLength={}s hasDub={}",
+                    jobId, mode, seconds, String.format(Locale.ROOT, "%.2f", clipSeconds),
+                    audioUrl != null && !audioUrl.isBlank());
 
             // The last frame is the only thing the tail has to match. Taken from the clip itself
             // rather than from the shot's storyboard: what the tail must continue is what was
@@ -194,8 +206,12 @@ public class ClipTailExtensionService {
                     jobId, mode, seconds, String.format(Locale.ROOT, "%.2f", finalSeconds));
             return new Extended(url, asset.bucket(), asset.objectKey(), finalSeconds, seconds, mode.name());
         } catch (VideoGenException ex) {
+            // Logged on the way past: a repair that fails in production used to leave nothing at
+            // all behind, so the only evidence was whatever the creator could read off a toast.
+            log.warn("Clip repair failed jobId={} mode={} reason={}", jobId, mode, ex.getMessage());
             throw ex;
         } catch (Exception ex) {
+            log.warn("Clip repair failed jobId={} mode={}", jobId, mode, ex);
             throw VideoGenException.upstream("Could not extend the clip: " + ex.getMessage(), ex);
         } finally {
             deleteQuietly(workDir);
@@ -350,13 +366,45 @@ public class ClipTailExtensionService {
         }
     }
 
+    /**
+     * Fetches a URL to a file, and says so when it did not really arrive.
+     *
+     * <p>It used to copy the stream and trust it. A presigned URL that has expired, or an object
+     * that is not there, can come back as a short XML error body with a 200 in front of it -- which
+     * lands on disk as a perfectly real file that is not a video. Every step after that then failed
+     * for a reason that had nothing to do with the real one: "Could not read the clip's last frame"
+     * is what an XML error document looks like to ffmpeg, and it sent the search for this bug in the
+     * wrong direction more than once.
+     */
     private void download(String url, Path target) throws Exception {
-        try (var in = java.net.URI.create(url).toURL().openStream()) {
-            Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        java.net.HttpURLConnection connection =
+                (java.net.HttpURLConnection) java.net.URI.create(url).toURL().openConnection();
+        connection.setConnectTimeout(30000);
+        connection.setReadTimeout(300000);
+        int status;
+        try {
+            status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new IllegalStateException("fetching " + target.getFileName()
+                        + " returned HTTP " + status);
+            }
+            try (var in = connection.getInputStream()) {
+                Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            connection.disconnect();
         }
+        long size = Files.size(target);
+        // A real clip or take is never this small. An error document is.
+        if (size < 1024) {
+            throw new IllegalStateException("fetching " + target.getFileName() + " gave only "
+                    + size + " bytes (HTTP " + status + ") -- the link may have expired");
+        }
+        log.debug("downloaded {} bytes to {}", size, target.getFileName());
     }
 
     private void runFfmpeg(List<String> command) throws Exception {
+        log.debug("ffmpeg {}", String.join(" ", command));
         Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
         String output;
         try (var in = process.getInputStream()) {
@@ -364,12 +412,42 @@ public class ClipTailExtensionService {
         }
         if (!process.waitFor(ffmpegTimeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
             process.destroyForcibly();
-            throw new IllegalStateException("ffmpeg timed out");
+            throw new IllegalStateException("ffmpeg timed out after " + ffmpegTimeoutSeconds + "s");
         }
         if (process.exitValue() != 0) {
-            throw new IllegalStateException("ffmpeg exited " + process.exitValue()
-                    + ": " + output.lines().reduce((a, b) -> b).orElse(""));
+            // The whole of ffmpeg's output, to the log, once. This used to raise the LAST LINE of it
+            // and log nothing at all -- and ffmpeg's last line is very often a stats line, so a
+            // failed repair produced a message that named no cause and left no trace behind to go
+            // back to. Several rounds of this were spent guessing at a failure that had already
+            // printed its reason and thrown it away.
+            log.warn("ffmpeg failed exit={} command={} output={}",
+                    process.exitValue(), String.join(" ", command), output);
+            throw new IllegalStateException("ffmpeg exited " + process.exitValue() + ": " + reason(output));
         }
+    }
+
+    /** The lines of ffmpeg output that say what went wrong, for a message a creator sees. ffmpeg
+     * reports errors partway through and then carries on printing progress, so neither the first
+     * line nor the last is reliably the cause -- the lines that name a failure are. */
+    private static String reason(String output) {
+        List<String> notable = output.lines()
+                .map(String::strip)
+                .filter(line -> !line.isBlank())
+                .filter(line -> {
+                    String lower = line.toLowerCase(Locale.ROOT);
+                    return lower.contains("error") || lower.contains("invalid")
+                            || lower.contains("no such") || lower.contains("unable")
+                            || lower.contains("could not") || lower.contains("does not contain")
+                            || lower.contains("not supported") || lower.contains("permission denied");
+                })
+                .distinct()
+                .limit(4)
+                .toList();
+        if (!notable.isEmpty()) {
+            return String.join("; ", notable);
+        }
+        return output.lines().map(String::strip).filter(line -> !line.isBlank())
+                .reduce((a, b) -> b).orElse("no output");
     }
 
     private void deleteQuietly(Path dir) {
