@@ -12,6 +12,7 @@ import com.dalai.llama.videogen.service.ScenePreparationService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
 import com.dalai.llama.videogen.service.ShotGenerationOrchestrator;
 import com.dalai.llama.videogen.service.VideoGenException;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueFitAdvisorService;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitReportService;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueRetimeService;
 import com.dalai.llama.videogen.web.TenantContext;
@@ -214,6 +215,28 @@ public class PrepareSceneController {
             @PathVariable UUID projectId, @PathVariable UUID shotId) {
         TenantContext ctx = TenantContextHolder.get();
         return ResponseEntity.ok(dialogueFitReportService.reportShot(ctx.tenantId(), projectId, shotId));
+    }
+
+    /**
+     * What this shot should do about its overrun -- judged, not calculated.
+     *
+     * <p>Called only for a shot the fit report flagged, which is what keeps a model out of the path
+     * of every shot that is simply fine. The arithmetic can say that a line needs 12.2s in a 5s clip
+     * and that closing that costs 2.6x; it cannot say whether eight more seconds of this particular
+     * cutaway would still look like the film, or whether this closing line can lose words without
+     * losing the brand. That is the judgement being asked for.
+     *
+     * <p>204 when there is nothing to advise on -- the shot fits, advice is switched off, or the
+     * gateway could not answer. The creator still has all three options, just without a suggested
+     * one, which is where they were before this existed.
+     */
+    @PostMapping("/projects/{projectId}/shots/{shotId}/dialogue-fit/advice")
+    public ResponseEntity<DialogueFitAdvisorService.Advice> adviseDialogueFit(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        DialogueFitAdvisorService.Advice advice =
+                dialogueFitReportService.advise(ctx.tenantId(), projectId, shotId);
+        return advice == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(advice);
     }
 
     /**

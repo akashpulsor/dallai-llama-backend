@@ -18,7 +18,10 @@ import java.util.UUID;
  * a creator ends up trusting a number that was never true.
  *
  * @param verdict                     NO_DIALOGUE / EXACT / FITS / AUDIO_SHORTER / AUDIO_LONGER /
- *                                    UNFITTABLE -- see {@code DialogueFitMath.Verdict}.
+ *                                    NEEDS_REWRITE / UNFITTABLE -- see {@code
+ *                                    DialogueFitMath.Verdict}. NEEDS_REWRITE means the line
+ *                                    overruns by more than the shot is allowed to grow, so
+ *                                    rewriting is the remedy rather than paying for the seconds.
  * @param slackFrames                 clip frames minus the frames the audio needs. Positive is dead
  *                                    air at the end of the shot, negative is a line that overruns.
  *                                    In frames because a frame is the smallest difference that can
@@ -47,6 +50,10 @@ public record DialogueFitView(
         double requiredSeconds,
         int slackFrames,
         double slackSeconds,
+        /** The longest this shot may be generated at -- its planned length plus the extension
+         * allowance, capped by what the model produces. Clips are billed by the second, so this is
+         * what keeps "make the line fit" from meaning "spend whatever it takes". */
+        Integer allowedDurationSeconds,
         Integer suggestedDurationSeconds,
         Double suggestedTargetAudioSeconds,
         boolean measured,

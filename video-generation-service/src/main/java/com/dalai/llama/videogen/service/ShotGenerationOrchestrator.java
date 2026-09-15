@@ -55,6 +55,13 @@ public class ShotGenerationOrchestrator {
     @Value("${video-gen.dialogue-fit.tail-seconds:0.4}")
     private double dialogueTailSeconds;
 
+    /** How many seconds a shot may gain to hold its own line. Clips are billed by the second, so
+     * this is the difference between a tweak and a bill nobody agreed to: a 5s shot given the 13s
+     * its narration needs costs 2.6x and lengthens a running time the client signed off. Past this,
+     * rewriting the line is the remedy and the creator is asked. */
+    @Value("${video-gen.dialogue-fit.max-extension-seconds:2}")
+    private double maxExtensionSeconds;
+
     /** The longest single clip the video model will produce. A shot cannot be stretched past this
      * to fit its dialogue, however long the line is -- asking for more comes back clamped, which
      * would cut the line anyway while looking like it had been handled. */
@@ -829,7 +836,8 @@ public class ShotGenerationOrchestrator {
         }
 
         DialogueFitMath.Report fit = DialogueFitMath.evaluate(
-                plannedSeconds, job.getFps(), spans, dialogueTailSeconds, minShotSeconds, maxShotSeconds);
+                plannedSeconds, job.getFps(), spans, dialogueTailSeconds, minShotSeconds, maxShotSeconds,
+                maxExtensionSeconds);
 
         if (fit.hasOverlaps()) {
             log.warn("Dialogue beats overlap jobId={} overlaps={} -- the later line starts before the"
@@ -840,6 +848,22 @@ public class ShotGenerationOrchestrator {
 
         boolean keepPlanned = fitChoice == DialogueFitChoice.KEEP_PLANNED;
         switch (fit.verdict()) {
+            case NEEDS_REWRITE -> {
+                // The line fits in a clip this model can make, but not in one this shot is allowed
+                // to grow into. Extending anyway would quietly bill for seconds nobody agreed to --
+                // which is the objection to "just make it longer" and the reason this stops here.
+                String detail = ("Shot %s needs %.1fs to say its line but may only grow to %ds"
+                        + " (planned %ds). Rewrite the line to about %.1fs, or generate it as planned.")
+                        .formatted(job.getShotRef(), fit.requiredSeconds(), fit.allowedDurationSeconds(),
+                                plannedSeconds,
+                                fit.suggestedTargetAudioSeconds() == null ? 0 : fit.suggestedTargetAudioSeconds());
+                if (!keepPlanned) {
+                    throw VideoGenException.conflict(detail
+                            + " Approve with dialogueFit=KEEP_PLANNED to generate it as planned anyway.");
+                }
+                log.info("Generating at the planned length by choice jobId={} {}", job.getJobId(), detail);
+                return plannedSeconds;
+            }
             case UNFITTABLE -> {
                 // Past what the model will generate, so no duration holds this line -- extending
                 // cannot deliver what it promises here. This used to generate at the cap anyway and
@@ -859,6 +883,8 @@ public class ShotGenerationOrchestrator {
                 return maxShotSeconds;
             }
             case AUDIO_LONGER -> {
+                // Within the allowance, so this is a couple of seconds to keep the whole line
+                // audible rather than a different shot. Cheap enough to be the default.
                 if (keepPlanned) {
                     // The creator chose the shot as planned over the whole line. Their call -- but
                     // said plainly in the log, because the result will have a hurried or clipped tail

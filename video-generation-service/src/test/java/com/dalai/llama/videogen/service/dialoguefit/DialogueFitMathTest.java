@@ -16,9 +16,12 @@ class DialogueFitMathTest {
     private static final double TAIL = 0.4;
     private static final int MIN_SHOT = 3;
     private static final int MAX_SHOT = 10;
+    /** Generous here on purpose: these tests are about the frame maths, so the cost allowance is set
+     * wide enough not to interfere. The allowance has its own tests. */
+    private static final double MAX_EXTENSION = 10;
 
     private static Report evaluate(Integer duration, Integer fps, BeatSpan... beats) {
-        return DialogueFitMath.evaluate(duration, fps, List.of(beats), TAIL, MIN_SHOT, MAX_SHOT);
+        return DialogueFitMath.evaluate(duration, fps, List.of(beats), TAIL, MIN_SHOT, MAX_SHOT, MAX_EXTENSION);
     }
 
     private static BeatSpan measured(int order, double start, double spoken) {
@@ -28,7 +31,7 @@ class DialogueFitMathTest {
     @Test
     @DisplayName("a shot with nothing spoken in it has nothing to fit")
     void noDialogue() {
-        Report report = DialogueFitMath.evaluate(8, 24, List.of(), TAIL, MIN_SHOT, MAX_SHOT);
+        Report report = DialogueFitMath.evaluate(8, 24, List.of(), TAIL, MIN_SHOT, MAX_SHOT, MAX_EXTENSION);
 
         assertThat(report.verdict()).isEqualTo(Verdict.NO_DIALOGUE);
         assertThat(report.suggestedDurationSeconds()).isNull();
@@ -216,5 +219,46 @@ class DialogueFitMathTest {
         // Already on a boundary: neither direction moves it.
         assertThat(DialogueFitMath.snapUpToFrame(1.5, 24)).isEqualTo(1.5);
         assertThat(DialogueFitMath.snapDownToFrame(1.5, 24)).isEqualTo(1.5);
+    }
+
+    @Test
+    @DisplayName("an overrun bigger than the shot may grow asks for a rewrite, not for seconds")
+    void beyondTheAllowanceNeedsARewrite() {
+        // A 5s shot carrying 12.2s of speech. Extending would work arithmetically -- 13s is under the
+        // 10s... no, past it -- but even under a generous ceiling the cost is the objection: clips are
+        // billed per second, so tripling a shot to fit its line is a different shot, not a fix.
+        Report report = DialogueFitMath.evaluate(5, 30,
+                List.of(measured(0, 0, 12.213696)), TAIL, MIN_SHOT, 20, 2);
+
+        assertThat(report.verdict()).isEqualTo(Verdict.NEEDS_REWRITE);
+        assertThat(report.verdict().needsAttention()).isTrue();
+        // It may still take the two seconds it is allowed, which makes the rewrite gentler: the line
+        // is retimed against 7s rather than against the 5s it was planned at.
+        assertThat(report.allowedDurationSeconds()).isEqualTo(7);
+        assertThat(report.suggestedDurationSeconds()).isEqualTo(7);
+        assertThat(report.suggestedTargetAudioSeconds()).isCloseTo(6.6, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
+    @Test
+    @DisplayName("an overrun inside the allowance is just a couple of seconds, so extending is offered")
+    void withinTheAllowanceExtends() {
+        // shot-01-003's real shape: 3s planned, 4.32s of audio, needs 5s -- exactly the +2s allowed.
+        Report report = DialogueFitMath.evaluate(3, 30,
+                List.of(measured(0, 0, 4.318912)), TAIL, MIN_SHOT, 15, 2);
+
+        assertThat(report.verdict()).isEqualTo(Verdict.AUDIO_LONGER);
+        assertThat(report.allowedDurationSeconds()).isEqualTo(5);
+        assertThat(report.suggestedDurationSeconds()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("the allowance never lets a shot past what the model will generate")
+    void allowanceIsCappedByTheModel() {
+        Report report = DialogueFitMath.evaluate(9, 24,
+                List.of(measured(0, 0, 20.0)), TAIL, MIN_SHOT, 10, 5);
+
+        // 9 + 5 would be 14, but the model stops at 10.
+        assertThat(report.allowedDurationSeconds()).isEqualTo(10);
+        assertThat(report.verdict()).isEqualTo(Verdict.UNFITTABLE);
     }
 }

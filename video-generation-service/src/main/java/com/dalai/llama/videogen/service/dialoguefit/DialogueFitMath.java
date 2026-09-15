@@ -66,8 +66,19 @@ public final class DialogueFitMath {
         FITS,
         /** A second or more of the clip runs on after the last word. */
         AUDIO_SHORTER,
-        /** The line runs past the end of the clip, and a longer clip would hold it. */
+        /** The line runs past the end of the clip, and a modest extension would hold it. */
         AUDIO_LONGER,
+        /**
+         * The line overruns by more than the shot is allowed to grow, so extending is not the
+         * remedy -- rewriting is.
+         *
+         * <p>This exists because clips are billed by the second. Giving a 5s shot the 13s its line
+         * needs is not a tweak, it is 2.6x the cost of that shot and eight seconds added to a
+         * running time the client agreed. Rewriting the line costs nothing and leaves the edit
+         * intact, so past a certain distance it is simply the better answer and the only one
+         * offered. The shot may still grow as far as its allowance, to make that rewrite gentler.
+         */
+        NEEDS_REWRITE,
         /** The line runs past the end of the longest clip this model will generate. */
         UNFITTABLE;
 
@@ -85,7 +96,7 @@ public final class DialogueFitMath {
          * length and severs the rest. Both bake it into a paid render.
          */
         public boolean needsAttention() {
-            return this == AUDIO_LONGER || this == UNFITTABLE;
+            return this == AUDIO_LONGER || this == NEEDS_REWRITE || this == UNFITTABLE;
         }
     }
 
@@ -138,6 +149,10 @@ public final class DialogueFitMath {
             double requiredSeconds,
             int slackFrames,
             double slackSeconds,
+            /** The longest this shot may be generated at: its planned length plus the extension
+             * allowance, never past what the model will produce. The ceiling every remedy is sized
+             * against, and what stops "make it fit" from meaning "spend whatever it takes". */
+            Integer allowedDurationSeconds,
             Integer suggestedDurationSeconds,
             Double suggestedTargetAudioSeconds,
             boolean measured,
@@ -200,7 +215,8 @@ public final class DialogueFitMath {
             List<BeatSpan> beats,
             double tailSeconds,
             int minShotSeconds,
-            int maxShotSeconds) {
+            int maxShotSeconds,
+            double maxExtensionSeconds) {
 
         boolean fpsAssumed = plannedFps == null || plannedFps <= 0;
         int fps = fpsAssumed ? ASSUMED_FPS : plannedFps;
@@ -211,7 +227,7 @@ public final class DialogueFitMath {
 
         if (sorted.isEmpty()) {
             return new Report(Verdict.NO_DIALOGUE, plannedDurationSeconds, fps, fpsAssumed,
-                    0, tailSeconds, 0, 0, 0, null, null, true, List.of(), List.of());
+                    0, tailSeconds, 0, 0, 0, plannedDurationSeconds, null, null, true, List.of(), List.of());
         }
 
         boolean measured = sorted.stream().allMatch(BeatSpan::measured);
@@ -223,7 +239,7 @@ public final class DialogueFitMath {
         // than inventing a planned duration to measure it against.
         if (plannedDurationSeconds == null || plannedDurationSeconds <= 0) {
             return new Report(Verdict.NO_DIALOGUE, plannedDurationSeconds, fps, fpsAssumed,
-                    audioSpan, tailSeconds, required, 0, 0,
+                    audioSpan, tailSeconds, required, 0, 0, null,
                     (int) Math.ceil(required - FRAME_EPSILON), null, measured, overlaps, sorted);
         }
 
@@ -231,30 +247,40 @@ public final class DialogueFitMath {
         int plannedFrames = plannedDurationSeconds * fps;
         int slackFrames = plannedFrames - requiredFrames;
         double slackSeconds = slackFrames / (double) fps;
-        // What a rewritten line would have to come in under to fit the clip as planned. Snapped
-        // DOWN: a target on the far side of a frame boundary is a target that does not fit.
-        double retimeTarget = snapDownToFrame(Math.max(0, plannedDurationSeconds - tailSeconds), fps);
+        // How long this shot is allowed to become. A clip is billed by the second, so "make it fit"
+        // cannot be allowed to mean "spend whatever it takes": a 5s shot given the 13s its line
+        // needs costs 2.6x and adds eight seconds to a running time the client agreed to. The
+        // allowance is what separates a tweak from a different shot.
+        int allowed = (int) Math.min(maxShotSeconds,
+                Math.floor(plannedDurationSeconds + maxExtensionSeconds + FRAME_EPSILON));
+        allowed = Math.max(allowed, plannedDurationSeconds);
 
         if (slackFrames == 0) {
             return new Report(Verdict.EXACT, plannedDurationSeconds, fps, fpsAssumed, audioSpan,
-                    tailSeconds, required, slackFrames, slackSeconds, null, null, measured, overlaps, sorted);
+                    tailSeconds, required, slackFrames, slackSeconds, allowed, null, null,
+                    measured, overlaps, sorted);
         }
 
         if (slackFrames < 0) {
             int needed = (int) Math.ceil(required - FRAME_EPSILON);
-            if (needed <= maxShotSeconds) {
-                // Either remedy works: a longer clip, or a shorter line.
+            if (needed <= allowed) {
+                // A small extension holds the whole line. Cheap enough to be the sensible default,
+                // and the rewrite target stays the shot as planned for anyone who would rather not
+                // pay the extra seconds at all.
                 return new Report(Verdict.AUDIO_LONGER, plannedDurationSeconds, fps, fpsAssumed,
-                        audioSpan, tailSeconds, required, slackFrames, slackSeconds, needed,
-                        retimeTarget, measured, overlaps, sorted);
+                        audioSpan, tailSeconds, required, slackFrames, slackSeconds, allowed, needed,
+                        snapDownToFrame(Math.max(0, plannedDurationSeconds - tailSeconds), fps),
+                        measured, overlaps, sorted);
             }
-            // Past the longest clip the model will make, so no duration holds this line -- only
-            // rewriting it, or splitting it across shots, can. The suggested duration is the cap,
-            // which is the most that can be generated, not a length that fits.
-            return new Report(Verdict.UNFITTABLE, plannedDurationSeconds, fps, fpsAssumed, audioSpan,
-                    tailSeconds, required, slackFrames, slackSeconds, maxShotSeconds,
-                    snapDownToFrame(Math.max(0, maxShotSeconds - tailSeconds), fps),
-                    measured, overlaps, sorted);
+            // Beyond the allowance. Rewriting is the remedy, and it is targeted at the EXTENDED
+            // length rather than the planned one -- taking the couple of seconds the shot may have
+            // makes the rewrite as gentle as it can be, instead of demanding the line lose more
+            // than it has to.
+            double rewriteTarget = snapDownToFrame(Math.max(0, allowed - tailSeconds), fps);
+            Verdict verdict = needed <= maxShotSeconds ? Verdict.NEEDS_REWRITE : Verdict.UNFITTABLE;
+            return new Report(verdict, plannedDurationSeconds, fps, fpsAssumed, audioSpan,
+                    tailSeconds, required, slackFrames, slackSeconds, allowed, allowed,
+                    rewriteTarget, measured, overlaps, sorted);
         }
 
         // Dead air. Trimming is only worth offering when it buys a whole second, because that is
@@ -262,13 +288,15 @@ public final class DialogueFitMath {
         int trimmedTo = Math.max(minShotSeconds, (int) Math.ceil(required - FRAME_EPSILON));
         if (trimmedTo < plannedDurationSeconds) {
             return new Report(Verdict.AUDIO_SHORTER, plannedDurationSeconds, fps, fpsAssumed,
-                    audioSpan, tailSeconds, required, slackFrames, slackSeconds, trimmedTo,
-                    retimeTarget, measured, overlaps, sorted);
+                    audioSpan, tailSeconds, required, slackFrames, slackSeconds, allowed, trimmedTo,
+                    snapDownToFrame(Math.max(0, plannedDurationSeconds - tailSeconds), fps),
+                    measured, overlaps, sorted);
         }
         // Under a second of tail, or already at the provider's floor -- there is no shorter clip to
         // ask for, so this counts as fitting however many frames are left over.
         return new Report(Verdict.FITS, plannedDurationSeconds, fps, fpsAssumed, audioSpan,
-                tailSeconds, required, slackFrames, slackSeconds, null, null, measured, overlaps, sorted);
+                tailSeconds, required, slackFrames, slackSeconds, allowed, null, null,
+                measured, overlaps, sorted);
     }
 
     /** Compared in frames, not seconds: two beats a thousandth of a second apart are touching, not

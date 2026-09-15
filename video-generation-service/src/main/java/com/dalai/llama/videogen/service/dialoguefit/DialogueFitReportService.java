@@ -48,27 +48,33 @@ public class DialogueFitReportService {
     private final PreProductionServiceClient preProductionClient;
     private final DialogueAudioIndex dialogueAudioIndex;
     private final DialogueRetimeService dialogueRetimeService;
+    private final DialogueFitAdvisorService dialogueFitAdvisorService;
     private final double tailSeconds;
     private final int minShotSeconds;
     private final int maxShotSeconds;
     private final double estimatedCharsPerSecond;
+    private final double maxExtensionSeconds;
 
     public DialogueFitReportService(
             PreProductionServiceClient preProductionClient,
             DialogueAudioIndex dialogueAudioIndex,
             DialogueRetimeService dialogueRetimeService,
+            DialogueFitAdvisorService dialogueFitAdvisorService,
             @Value("${video-gen.dialogue-fit.tail-seconds:0.4}") double tailSeconds,
             @Value("${video-gen.min-shot-duration-seconds:3}") int minShotSeconds,
             @Value("${video-gen.max-shot-duration-seconds:10}") int maxShotSeconds,
-            @Value("${video-gen.dialogue-fit.estimated-chars-per-second:14}") double estimatedCharsPerSecond
+            @Value("${video-gen.dialogue-fit.estimated-chars-per-second:14}") double estimatedCharsPerSecond,
+            @Value("${video-gen.dialogue-fit.max-extension-seconds:2}") double maxExtensionSeconds
     ) {
         this.preProductionClient = preProductionClient;
         this.dialogueAudioIndex = dialogueAudioIndex;
         this.dialogueRetimeService = dialogueRetimeService;
+        this.dialogueFitAdvisorService = dialogueFitAdvisorService;
         this.tailSeconds = tailSeconds;
         this.minShotSeconds = minShotSeconds;
         this.maxShotSeconds = maxShotSeconds;
         this.estimatedCharsPerSecond = estimatedCharsPerSecond;
+        this.maxExtensionSeconds = maxExtensionSeconds;
     }
 
     /** Every shot in the project with anything spoken in it. Shots with no dialogue are left out
@@ -128,7 +134,54 @@ public class DialogueFitReportService {
         return dialogueRetimeService.retime(projectId, dialogue, targetSeconds, currentSeconds, rate, languageCode);
     }
 
+    /**
+     * What this shot should do about its overrun, judged rather than calculated.
+     *
+     * <p>Separate from {@link #reportShot} and called only when that reported a problem, which is
+     * what keeps a model out of the path of every shot that is simply fine. The report is arithmetic
+     * against measured audio and costs nothing; this costs a prompt call, so it runs when there is
+     * actually a decision to make.
+     *
+     * <p>Null when there is nothing to advise on, when advice is switched off, or when the gateway
+     * could not answer -- in all three cases the creator still has the three options, just without a
+     * suggested one.
+     */
+    public DialogueFitAdvisorService.Advice advise(UUID tenantId, UUID projectId, UUID shotId) {
+        PreProductionViews.PrepareBundleView bundle = bundle(tenantId, projectId);
+        PreProductionViews.ShotBundleView shotBundle = safeShots(bundle).stream()
+                .filter(sb -> sb.shot() != null && shotId.equals(sb.shot().id()))
+                .findFirst()
+                .orElseThrow(() -> VideoGenException.notFound("No shot " + shotId + " in project " + projectId));
+        PreProductionViews.ShotView shot = shotBundle.shot();
+        DialogueFitMath.Report fit = evaluate(shotBundle, dialogueAudioIndex.forProject(tenantId, projectId));
+        if (fit == null || !fit.verdict().needsAttention()) {
+            return null;
+        }
+        // The ceiling the recommendation is clamped to is the hard one, not the cost allowance: the
+        // whole point of asking is that this shot might be worth more seconds than a blanket rule
+        // would give it. What it costs is in the prompt, so the judgement is made knowing the price.
+        return dialogueFitAdvisorService.advise(projectId, shot.shotRef(), shot.shotType(),
+                shot.action(), spokenLine(shot), fit, maxShotSeconds);
+    }
+
+    /** The spans a shot's dialogue occupies, and the verdict on them. Shared by the report the
+     * creator reads and by the advice call, so the two can never disagree about what is wrong. */
+    private DialogueFitMath.Report evaluate(PreProductionViews.ShotBundleView shotBundle,
+                                            DialogueAudioIndex.Index measured) {
+        return build(shotBundle, measured).report();
+    }
+
     private DialogueFitView report(PreProductionViews.ShotBundleView shotBundle, DialogueAudioIndex.Index measured) {
+        Built built = build(shotBundle, measured);
+        DialogueFitMath.Report report = built.report();
+        PreProductionViews.ShotView shot = shotBundle.shot();
+        List<DialogueFitView.BeatFitView> beatViews = built.beatViews();
+        return toView(shot, report, beatViews);
+    }
+
+    private record Built(DialogueFitMath.Report report, List<DialogueFitView.BeatFitView> beatViews) {}
+
+    private Built build(PreProductionViews.ShotBundleView shotBundle, DialogueAudioIndex.Index measured) {
         SpeakingRate rate = measured.speakingRate(estimatedCharsPerSecond);
         PreProductionViews.ShotView shot = shotBundle.shot();
         List<PreProductionViews.ShotDialogueBeatView> beats = shotBundle.dialogueBeats() == null
@@ -168,9 +221,13 @@ public class DialogueFitReportService {
             }
         }
 
-        DialogueFitMath.Report report = DialogueFitMath.evaluate(
-                shot.durationSeconds(), shot.fps(), spans, tailSeconds, minShotSeconds, maxShotSeconds);
+        return new Built(DialogueFitMath.evaluate(
+                shot.durationSeconds(), shot.fps(), spans, tailSeconds, minShotSeconds, maxShotSeconds,
+                maxExtensionSeconds), beatViews);
+    }
 
+    private DialogueFitView toView(PreProductionViews.ShotView shot, DialogueFitMath.Report report,
+                                   List<DialogueFitView.BeatFitView> beatViews) {
         return new DialogueFitView(
                 shot.id(),
                 shot.shotRef(),
@@ -184,6 +241,7 @@ public class DialogueFitReportService {
                 round(report.requiredSeconds()),
                 report.slackFrames(),
                 round(report.slackSeconds()),
+                report.allowedDurationSeconds(),
                 report.suggestedDurationSeconds(),
                 report.suggestedTargetAudioSeconds() == null ? null : round(report.suggestedTargetAudioSeconds()),
                 report.measured(),

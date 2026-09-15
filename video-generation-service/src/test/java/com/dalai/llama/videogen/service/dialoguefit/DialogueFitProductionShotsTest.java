@@ -36,13 +36,15 @@ class DialogueFitProductionShotsTest {
     private static final double TAIL = 0.4;
     private static final int MIN_SHOT = 3;
     private static final int MAX_SHOT = 10;
+    /** Wide here: these cases are about what the measured audio does, not about the cost allowance. */
+    private static final double MAX_EXTENSION = 10;
 
     /** Every shot in this project is planned at 30fps. */
     private static final int FPS = 30;
 
     private static Report evaluateSingleBeat(int plannedSeconds, double measuredAudioSeconds) {
         return DialogueFitMath.evaluate(plannedSeconds, FPS,
-                List.of(new BeatSpan(0, 0, measuredAudioSeconds, true)), TAIL, MIN_SHOT, MAX_SHOT);
+                List.of(new BeatSpan(0, 0, measuredAudioSeconds, true)), TAIL, MIN_SHOT, MAX_SHOT, MAX_EXTENSION);
     }
 
     @Test
@@ -112,9 +114,9 @@ class DialogueFitProductionShotsTest {
         // two shots could grow to hold their lines instead of being blocked.
         int deployedMax = 15;
         Report shot005 = DialogueFitMath.evaluate(5, FPS,
-                List.of(new BeatSpan(0, 0, 12.213696, true)), TAIL, MIN_SHOT, deployedMax);
+                List.of(new BeatSpan(0, 0, 12.213696, true)), TAIL, MIN_SHOT, deployedMax, MAX_EXTENSION);
         Report shot008 = DialogueFitMath.evaluate(5, FPS,
-                List.of(new BeatSpan(0, 0, 11.842177, true)), TAIL, MIN_SHOT, deployedMax);
+                List.of(new BeatSpan(0, 0, 11.842177, true)), TAIL, MIN_SHOT, deployedMax, MAX_EXTENSION);
 
         assertThat(shot005.verdict()).isEqualTo(Verdict.AUDIO_LONGER);
         assertThat(shot008.verdict()).isEqualTo(Verdict.AUDIO_LONGER);
@@ -125,7 +127,7 @@ class DialogueFitProductionShotsTest {
         // Raising the ceiling does not make everything fit -- it moves the line. A shot needing more
         // than 15s would still be refused, which is the point of having a ceiling at all.
         Report absurd = DialogueFitMath.evaluate(5, FPS,
-                List.of(new BeatSpan(0, 0, 30.0, true)), TAIL, MIN_SHOT, deployedMax);
+                List.of(new BeatSpan(0, 0, 30.0, true)), TAIL, MIN_SHOT, deployedMax, MAX_EXTENSION);
         assertThat(absurd.verdict()).isEqualTo(Verdict.UNFITTABLE);
     }
 
