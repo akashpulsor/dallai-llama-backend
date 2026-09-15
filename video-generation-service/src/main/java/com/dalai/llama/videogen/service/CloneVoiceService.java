@@ -181,31 +181,35 @@ public class CloneVoiceService {
     private CloneVoiceResult cloneVoice(UUID tenantId, UUID projectId, PreProductionViews.ShotBundleView shotBundle, String text, PreProductionViews.PrepareBundleView bundle, UUID beatId) {
         PreProductionViews.ShotView shot = shotBundle.shot();
         String characterKey = shot.primaryCharacterKey();
+        boolean named = characterKey != null && !characterKey.isBlank();
 
-        if (characterKey == null || characterKey.isBlank()) {
-            log.warn("clone-voice missing primary character projectId={} shotId={} shotRef={}", projectId, shot.id(), shot.shotRef());
-            throw VideoGenException.badRequest("Shot " + shot.shotRef() + " has no primary character to voice");
-        }
-
-        PreProductionViews.CastProfileView profile = resolveCastProfile(bundle, characterKey);
+        // A shot with no character at all used to be refused outright. But "who is in this shot" and
+        // "whose voice is heard over it" are different questions, and a narrator answers the second
+        // without appearing in the first: shot-01-010 has no primary character because nobody is in
+        // it, which is a description of the picture and says nothing about the voice. Refusing to
+        // dub it left a shot with a written line and no way to record it.
+        PreProductionViews.CastProfileView profile = named ? resolveCastProfile(bundle, characterKey) : null;
 
         if (profile == null) {
-            // Not every primary character is a person who speaks. A motion graphic's primary
+            // Not every primary character is a person who speaks either. A motion graphic's primary
             // character is the brand it is about -- shot-01-007's is astronext_ai -- and a brand has
-            // no cast assignment because nobody casts it. The narration over such a shot is spoken
-            // by whoever narrates the film, so fall back to the project's assigned voice rather than
-            // refusing to dub a shot whose voice was never in question.
+            // no cast assignment because nobody casts it. Both cases land here, and both have the
+            // same answer: the narration is spoken by whoever narrates the film.
             profile = fallbackNarratorProfile(bundle);
             if (profile != null) {
-                log.info("clone-voice using the project's assigned voice, character {} has no cast of its own"
-                                + " projectId={} shotId={}", characterKey, projectId, shot.id());
+                log.info("clone-voice using the project's assigned voice, shot has {} projectId={} shotId={}",
+                        named ? "character " + characterKey + " with no cast of its own" : "no character of its own",
+                        projectId, shot.id());
             }
         }
 
         if (profile == null) {
-            log.warn("clone-voice cast profile missing projectId={} shotId={} characterKey={}", projectId, shot.id(), characterKey);
-            throw VideoGenException.badRequest("No cast profile assigned to character " + characterKey
-                    + ", and this project has no cast assigned at all to fall back to");
+            log.warn("clone-voice no voice to speak with projectId={} shotId={} characterKey={}", projectId, shot.id(), characterKey);
+            throw VideoGenException.badRequest(named
+                    ? "No cast profile assigned to character " + characterKey
+                      + ", and this project has no cast assigned at all to fall back to"
+                    : "Shot " + shot.shotRef() + " has no character of its own, and this project has"
+                      + " no cast assigned to narrate it -- assign a voice in Cast first");
         }
 
         String line = text == null || text.isBlank() ? defaultLineFor(shot) : text.trim();
