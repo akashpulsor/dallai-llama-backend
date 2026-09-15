@@ -86,7 +86,9 @@ public class ShotClipRepairService {
         String clipUrl = job.getOutputBucket() == null ? job.getOutputUri()
                 : assetPersistenceService.presignedUrl(job.getOutputBucket(), job.getOutputObjectKey());
         String audioUrl = dubbedAudioUrl(tenantId, projectId, shotId);
-        if (audioUrl == null) {
+        // Silencing needs no dialogue -- it is precisely the repair for a shot that has none and was
+        // given a voice anyway.
+        if (audioUrl == null && mode != ClipTailExtensionService.Mode.SILENCE) {
             throw VideoGenException.badRequest(
                     "This shot has no dubbed dialogue to extend for -- dub it first");
         }
@@ -95,7 +97,8 @@ public class ShotClipRepairService {
         // require. It is the right repair precisely when the dub DOES fit and the clip simply has
         // the wrong sound on it.
         int seconds = 0;
-        if (mode != ClipTailExtensionService.Mode.REPLACE_AUDIO) {
+        if (mode != ClipTailExtensionService.Mode.REPLACE_AUDIO
+                && mode != ClipTailExtensionService.Mode.SILENCE) {
             seconds = tailSeconds != null ? tailSeconds : neededTailSeconds(clipUrl, audioUrl);
             if (seconds <= 0) {
                 throw VideoGenException.badRequest(

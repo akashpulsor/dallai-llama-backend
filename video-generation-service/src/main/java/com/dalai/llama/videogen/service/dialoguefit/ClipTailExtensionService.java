@@ -63,7 +63,18 @@ public class ClipTailExtensionService {
          * model was told to speak a line it had no room for, so what it produced is a fragment at
          * the end over ambience, and the dub is the take that was actually wanted.
          */
-        REPLACE_AUDIO
+        REPLACE_AUDIO,
+        /**
+         * Keep the picture and make it silent -- for a shot that was never meant to speak and came
+         * back with a voice the model invented.
+         *
+         * <p>A SILENT TRACK, not a missing one. The final render concatenates with
+         * {@code concat=n=N:v=1:a=1}, which requires every clip to have an audio stream: a clip with
+         * the track stripped out would not break here, it would break much later, when the film is
+         * assembled. So the audio is replaced with digital silence of the same length, which
+         * concatenates like any other clip and plays as nothing.
+         */
+        SILENCE
     }
 
     private final LlmGatewayClient llmGatewayClient;
@@ -106,7 +117,7 @@ public class ClipTailExtensionService {
         if (clipUrl == null || clipUrl.isBlank()) {
             throw VideoGenException.badRequest("There is no clip to extend");
         }
-        if (tailSeconds <= 0 && mode != Mode.REPLACE_AUDIO) {
+        if (tailSeconds <= 0 && mode != Mode.REPLACE_AUDIO && mode != Mode.SILENCE) {
             throw VideoGenException.badRequest("A tail needs a length in seconds");
         }
         int seconds = Math.min(tailSeconds, maxTailSeconds);
@@ -129,6 +140,9 @@ public class ClipTailExtensionService {
             // Nothing to join: the picture stands, only its audio changes.
             if (mode == Mode.REPLACE_AUDIO) {
                 return remuxAudioOnly(workDir, clip, audioUrl, jobId);
+            }
+            if (mode == Mode.SILENCE) {
+                return silenceAudio(workDir, clip, jobId);
             }
 
             Path tail = mode == Mode.GENERATE
@@ -205,6 +219,28 @@ public class ClipTailExtensionService {
         log.info("Replaced a clip's audio with its dubbed take jobId={} length={}s",
                 jobId, String.format(Locale.ROOT, "%.2f", finalSeconds));
         return new Extended(url, asset.bucket(), asset.objectKey(), finalSeconds, 0, Mode.REPLACE_AUDIO.name());
+    }
+
+    /**
+     * The clip untouched, carrying silence instead of whatever the model decided to say.
+     *
+     * <p>anullsrc rather than {@code -an}: the film is assembled with a concat filter that demands an
+     * audio stream on every input, so a clip with no track at all would pass here and fail at the
+     * final render, long after anyone connected the two. The video stream is copied, so the picture
+     * is bit-identical to what was generated.
+     */
+    private Extended silenceAudio(Path workDir, Path clip, UUID jobId) throws Exception {
+        Path finished = workDir.resolve("silenced.mp4");
+        runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(),
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                "-shortest", finished.toString()));
+        double finalSeconds = durationProbe.probeFile(finished);
+        VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
+                bucket, "silenced/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
+        String url = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());
+        log.info("Silenced a clip jobId={} length={}s", jobId, String.format(Locale.ROOT, "%.2f", finalSeconds));
+        return new Extended(url, asset.bucket(), asset.objectKey(), finalSeconds, 0, Mode.SILENCE.name());
     }
 
     /** A still held for the missing seconds, at the clip's own frame rate so the join is seamless. */
