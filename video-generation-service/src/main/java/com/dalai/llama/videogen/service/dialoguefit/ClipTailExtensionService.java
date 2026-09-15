@@ -174,8 +174,10 @@ public class ClipTailExtensionService {
                 finished = workDir.resolve("final.mp4");
                 // -shortest so a track marginally longer than the joined picture ends with it
                 // rather than stretching the file past its own video.
+                // Same reason as remuxAudioOnly: after a tail the picture is usually LONGER than the
+                // dialogue, and -shortest alone would trim the tail back off again.
                 runFfmpeg(List.of("ffmpeg", "-y", "-i", joined.toString(), "-i", audio.toString(),
-                        "-c:v", "copy", "-c:a", "aac", "-shortest", finished.toString()));
+                        "-c:v", "copy", "-c:a", "aac", "-af", "apad", "-shortest", finished.toString()));
             }
 
             double finalSeconds = durationProbe.probeFile(finished);
@@ -209,9 +211,14 @@ public class ClipTailExtensionService {
         Path audio = workDir.resolve("dialogue.mp3");
         download(audioUrl, audio);
         Path finished = workDir.resolve("remuxed.mp4");
+        // apad before shortest, and the order matters. -shortest alone ends the output at the
+        // SHORTER stream, so a 3.6s narration on a 4s clip would cut the picture to 3.6s -- losing
+        // video the creator kept the clip for. apad makes the audio run on as silence, and shortest
+        // then stops at the picture: the whole 4 seconds, with the line finishing 0.4s before the
+        // end, which is the breath the fit maths allowed for in the first place.
         runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
-                "-shortest", finished.toString()));
+                "-af", "apad", "-shortest", finished.toString()));
         double finalSeconds = durationProbe.probeFile(finished);
         VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
                 bucket, "audio-replaced/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
