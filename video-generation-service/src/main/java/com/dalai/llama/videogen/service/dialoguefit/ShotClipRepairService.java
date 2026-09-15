@@ -41,6 +41,9 @@ import java.util.UUID;
 @Service
 public class ShotClipRepairService {
 
+    /** The breath left after the last word, matching {@code video-gen.dialogue-fit.tail-seconds}. */
+    private static final double TAIL_SECONDS = 0.4;
+
     private final VideoGenJobRepository videoGenJobRepository;
     private final ShotPromptRepository shotPromptRepository;
     private final VideoAssetPersistenceService assetPersistenceService;
@@ -178,7 +181,10 @@ public class ShotClipRepairService {
         if (clip <= 0 || audio <= 0) {
             throw VideoGenException.upstream("Could not measure the clip or the dialogue to size a tail");
         }
-        return (int) Math.max(0, Math.ceil(audio - clip));
+        // Plus the breath after the last word -- the same tail the fit maths reserves everywhere
+        // else. Without it a 6s line on a 2s clip asks for 4 more seconds and ends exactly on the
+        // final frame, with the last word clipped by the cut.
+        return (int) Math.max(0, Math.ceil(audio + TAIL_SECONDS - clip));
     }
 
     private String dubbedAudioUrl(UUID tenantId, UUID projectId, UUID shotId) {

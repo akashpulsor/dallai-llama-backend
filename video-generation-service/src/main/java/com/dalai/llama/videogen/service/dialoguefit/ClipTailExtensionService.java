@@ -131,10 +131,16 @@ public class ClipTailExtensionService {
             // rather than from the shot's storyboard: what the tail must continue is what was
             // actually generated, which is not always what was planned.
             Path lastFrame = workDir.resolve("last.png");
-            runFfmpeg(List.of("ffmpeg", "-y", "-sseof", "-0.05", "-i", clip.toString(),
-                    "-vframes", "1", "-q:v", "2", lastFrame.toString()));
+            // -update 1 writes every decoded frame to the same file, so what survives is the last
+            // one. The obvious approach -- seeking to just before the end with -sseof -- is what
+            // failed: on a two-second clip that lands past the final keyframe and decodes nothing,
+            // which is exactly the shot most likely to need a tail. Decoding the whole clip costs
+            // nothing at these lengths and cannot miss.
+            runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(),
+                    "-update", "1", lastFrame.toString()));
             if (!Files.exists(lastFrame) || Files.size(lastFrame) == 0) {
-                throw VideoGenException.upstream("Could not read the clip's last frame");
+                throw VideoGenException.upstream(
+                        "Could not read the clip's last frame -- the file may not have downloaded");
             }
 
             // Nothing to join: the picture stands, only its audio changes.
