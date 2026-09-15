@@ -118,6 +118,16 @@ public class DialogueFitReportService {
     public DialogueRetimeService.Retimed retime(UUID tenantId, UUID projectId, UUID shotId, UUID beatId,
                                                 String dialogue, double targetSeconds, String languageCode) {
         DialogueAudioIndex.Index measured = dialogueAudioIndex.forProject(tenantId, projectId);
+        // The project already states the language its dialogue is written in, so resolve it here
+        // rather than making the model infer it from the characters. Romanised Hindi in particular
+        // reads as English to a model working from the text alone, and a "rewrite" that quietly
+        // switches language is the worst possible outcome for a line.
+        String language = languageCode;
+        if (language == null || language.isBlank()) {
+            language = preProductionClient.getPrepareBundle(tenantId, projectId)
+                    .map(b -> b.projectConfig() == null ? null : b.projectConfig().dialogueLanguage())
+                    .orElse(null);
+        }
         // Best available rate, in the order SpeakingRate documents: this exact line, then the
         // project's other takes, then the configured guess.
         SpeakingRate rate = beatId != null ? measured.rateForBeat(beatId) : null;
@@ -128,11 +138,11 @@ public class DialogueFitReportService {
             rate = measured.speakingRate(estimatedCharsPerSecond);
         }
         java.math.BigDecimal current = beatId != null
-                ? measured.measuredForBeat(beatId)
-                : measured.measuredForShot(shotId);
+                ? measured.measuredForBeat(beatId, dialogue)
+                : measured.measuredForShot(shotId, dialogue);
         double currentSeconds = current != null ? current.doubleValue() : rate.secondsFor(dialogue);
         return dialogueRetimeService.retime(tenantId, projectId, dialogue, targetSeconds, currentSeconds,
-                rate, languageCode);
+                rate, language);
     }
 
     /**
@@ -195,7 +205,7 @@ public class DialogueFitReportService {
             // at zero. Still worth checking -- this is the shape most short-form shots have.
             String line = spokenLine(shot);
             if (line != null) {
-                BigDecimal shotMeasured = measured.measuredForShot(shot.id());
+                BigDecimal shotMeasured = measured.measuredForShot(shot.id(), line);
                 double spoken = shotMeasured != null ? shotMeasured.doubleValue() : rate.secondsFor(line);
                 spans.add(new DialogueFitMath.BeatSpan(0, 0, spoken, shotMeasured != null));
                 beatViews.add(new DialogueFitView.BeatFitView(null, 0, shot.primaryCharacterKey(), line,
@@ -207,7 +217,7 @@ public class DialogueFitReportService {
                     .sorted(Comparator.comparing(b -> b.startSeconds() == null ? BigDecimal.ZERO : b.startSeconds()))
                     .toList()) {
                 double start = beat.startSeconds() == null ? 0 : beat.startSeconds().doubleValue();
-                BigDecimal beatMeasured = measured.measuredForBeat(beat.id());
+                BigDecimal beatMeasured = measured.measuredForBeat(beat.id(), beat.text());
                 boolean isMeasured = beatMeasured != null;
                 double spoken = isMeasured
                         ? beatMeasured.doubleValue()

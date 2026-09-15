@@ -53,6 +53,8 @@ public class DialogueAudioIndex {
         Map<UUID, BigDecimal> byShot = new HashMap<>();
         Map<UUID, Integer> charsByBeat = new HashMap<>();
         Map<UUID, Integer> charsByShot = new HashMap<>();
+        Map<UUID, String> textByBeat = new HashMap<>();
+        Map<UUID, String> textByShot = new HashMap<>();
         List<SpeakingRate.Take> rateTakes = new java.util.ArrayList<>();
         List<CloneAudioService.CloneAudioView> takes;
         try {
@@ -79,14 +81,17 @@ public class DialogueAudioIndex {
             if (take.beatId() != null) {
                 byBeat.put(take.beatId(), value);
                 charsByBeat.put(take.beatId(), characters);
+                textByBeat.put(take.beatId(), take.text() == null ? "" : take.text().trim());
             } else if (take.shotId() != null) {
                 // A shot-level take: the whole line synthesized as one, for a shot with no beats
                 // broken out. Kept separately so a beat lookup never silently resolves to it.
                 byShot.put(take.shotId(), value);
                 charsByShot.put(take.shotId(), characters);
+                textByShot.put(take.shotId(), take.text() == null ? "" : take.text().trim());
             }
         }
-        return new Index(byBeat, byShot, charsByBeat, charsByShot, List.copyOf(rateTakes));
+        return new Index(byBeat, byShot, charsByBeat, charsByShot, textByBeat, textByShot,
+                List.copyOf(rateTakes));
     }
 
     private double probeAndRemember(UUID tenantId, UUID projectId, CloneAudioService.CloneAudioView take) {
@@ -101,10 +106,31 @@ public class DialogueAudioIndex {
     /** A project's measured take lengths. Empty is a normal state -- nothing has been dubbed yet. */
     public record Index(Map<UUID, BigDecimal> byBeatId, Map<UUID, BigDecimal> byShotId,
                         Map<UUID, Integer> charsByBeatId, Map<UUID, Integer> charsByShotId,
+                        Map<UUID, String> textByBeatId, Map<UUID, String> textByShotId,
                         List<SpeakingRate.Take> takes) {
 
         public static Index empty() {
-            return new Index(Map.of(), Map.of(), Map.of(), Map.of(), List.of());
+            return new Index(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of());
+        }
+
+        /**
+         * True when the stored take was synthesized from exactly this text.
+         *
+         * <p>The check that makes a measurement honest. A take is stored per beat, so rewriting a
+         * line leaves the PREVIOUS take sitting under the same key -- right voice, right shot, wrong
+         * words. Reading its length as a measurement of the new line is worse than having no
+         * measurement at all: the report would state 4.32s with full confidence for a line nobody
+         * has ever spoken. Until the shot is dubbed again, a rewritten line is estimated, and says
+         * so. {@code CloneVoiceService.listSavedAudio} makes the same comparison for the same
+         * reason; this index reads the table directly, so it has to make it too.
+         */
+        private boolean takeMatches(String stored, String currentText) {
+            if (stored == null) {
+                return false;
+            }
+            // A caller that does not know the current text gets the take as-is -- it has nothing to
+            // compare against, and refusing every measurement would be worse.
+            return currentText == null || stored.equals(currentText.trim());
         }
 
         /** How fast this project's voice actually speaks, for estimating lines that have not been
@@ -131,14 +157,32 @@ public class DialogueAudioIndex {
             return SpeakingRate.fromLine(characters, seconds.doubleValue());
         }
 
-        /** Null when this beat has no measured take. Callers must not substitute the planned
-         * length here -- they need to know the difference to report it honestly. */
+        /** Null when this beat has no measured take, or when the take it has was synthesized from
+         * different words -- see {@link #takeMatches}. Callers must not substitute the planned
+         * length here; they need to know the difference to report it honestly. */
+        public BigDecimal measuredForBeat(UUID beatId, String currentText) {
+            if (beatId == null || !takeMatches(textByBeatId.get(beatId), currentText)) {
+                return null;
+            }
+            return byBeatId.get(beatId);
+        }
+
+        public BigDecimal measuredForShot(UUID shotId, String currentText) {
+            if (shotId == null || !takeMatches(textByShotId.get(shotId), currentText)) {
+                return null;
+            }
+            return byShotId.get(shotId);
+        }
+
+        /** Without the current text -- for callers that only need "was anything ever recorded here",
+         * such as the rate lookup, where a superseded take is still a valid sample of how fast this
+         * voice speaks even though its length no longer describes the line. */
         public BigDecimal measuredForBeat(UUID beatId) {
-            return beatId == null ? null : byBeatId.get(beatId);
+            return measuredForBeat(beatId, null);
         }
 
         public BigDecimal measuredForShot(UUID shotId) {
-            return shotId == null ? null : byShotId.get(shotId);
+            return measuredForShot(shotId, null);
         }
 
         public boolean isEmpty() {
