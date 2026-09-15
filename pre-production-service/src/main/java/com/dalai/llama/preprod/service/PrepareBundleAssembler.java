@@ -6,6 +6,7 @@ import com.dalai.llama.preprod.dto.CastAssignmentView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ContinuityBibleView;
 import com.dalai.llama.preprod.dto.LightingPlanView;
+import com.dalai.llama.preprod.dto.MotionGraphicPlanView;
 import com.dalai.llama.preprod.dto.PrepareBundleView;
 import com.dalai.llama.preprod.dto.ProjectConfigView;
 import com.dalai.llama.preprod.dto.ScriptView;
@@ -47,6 +48,7 @@ import java.util.UUID;
 public class PrepareBundleAssembler {
 
     private final ContinuityBibleService continuityBibleService;
+    private final MotionGraphicPlanService motionGraphicPlanService;
     private final ProjectConfigService projectConfigService;
     private final CastAssignmentService castAssignmentService;
     private final CastProfileService castProfileService;
