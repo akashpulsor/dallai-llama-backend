@@ -15,6 +15,8 @@ import com.dalai.llama.videogen.service.VideoGenException;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitAdvisorService;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitReportService;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueRetimeService;
+import com.dalai.llama.videogen.service.dialoguefit.ClipTailExtensionService;
+import com.dalai.llama.videogen.service.dialoguefit.ShotClipRepairService;
 import com.dalai.llama.videogen.web.TenantContext;
 import com.dalai.llama.videogen.web.TenantContextHolder;
 import jakarta.validation.Valid;
@@ -54,6 +56,7 @@ public class PrepareSceneController {
     private final PrepareBatchJobService prepareBatchJobService;
     private final DialogueFitReportService dialogueFitReportService;
     private final DialogueRetimeService dialogueRetimeService;
+    private final ShotClipRepairService shotClipRepairService;
 
     @PostMapping("/projects/{projectId}/prepare")
     public ResponseEntity<ProjectScenePreparationView> prepareProject(@PathVariable UUID projectId) {
@@ -260,6 +263,55 @@ public class PrepareSceneController {
                 request.languageCode()));
     }
 
+    /**
+     * The clip and the dialogue take for a finished shot, so it can be repaired by hand.
+     *
+     * <p>Both as plain URLs the browser downloads. When neither automatic repair produces something
+     * worth shipping, this is what stops the flow being a dead end: pull them down, fix it in the
+     * tool you already use, put the result back through the upload below.
+     */
+    @GetMapping("/projects/{projectId}/shots/{shotId}/clip-sources")
+    public ResponseEntity<ShotClipRepairService.RepairSources> clipSources(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotClipRepairService.sources(ctx.tenantId(), projectId, shotId));
+    }
+
+    /**
+     * Gives a finished clip the seconds its dialogue needs, without generating it again.
+     *
+     * <p>{@code mode=HOLD} freezes the last frame -- no model call, nothing billed, and for a motion
+     * graphic or a held B-roll usually what was wanted anyway. {@code mode=GENERATE} animates on from
+     * that frame with a cheaper model than the shot itself used, billing only the added seconds.
+     *
+     * <p>On a four-second clip carrying a 9.2-second line: regenerating bills ten seconds and
+     * returns a different-looking shot; this bills six, or nothing.
+     *
+     * <p>{@code tailSeconds} null asks for exactly what the measured audio needs.
+     */
+    @PostMapping("/projects/{projectId}/shots/{shotId}/extend-tail")
+    public ResponseEntity<ShotClipRepairService.RepairResult> extendTail(
+            @PathVariable UUID projectId, @PathVariable UUID shotId,
+            @RequestBody(required = false) ExtendTailRequest request) {
+        TenantContext ctx = TenantContextHolder.get();
+        ClipTailExtensionService.Mode mode = request == null || request.mode() == null
+                ? ClipTailExtensionService.Mode.HOLD
+                : ClipTailExtensionService.Mode.valueOf(request.mode().toUpperCase(java.util.Locale.ROOT));
+        return ResponseEntity.ok(shotClipRepairService.extendTail(ctx.tenantId(), projectId, shotId,
+                request == null ? null : request.tailSeconds(), mode,
+                request == null ? null : request.continuationPrompt()));
+    }
+
+    /** The creator's own finished clip, replacing what the model produced for this shot. */
+    @PostMapping("/projects/{projectId}/shots/{shotId}/upload-clip")
+    public ResponseEntity<ShotClipRepairService.RepairResult> uploadClip(
+            @PathVariable UUID projectId, @PathVariable UUID shotId,
+            @org.springframework.web.bind.annotation.RequestParam("file")
+            org.springframework.web.multipart.MultipartFile file) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotClipRepairService.uploadClip(ctx.tenantId(), projectId, shotId, file));
+    }
+
     @GetMapping("/projects/{projectId}/shot-prompts")
     public ResponseEntity<List<ShotPromptView>> listProjectShotPrompts(@PathVariable UUID projectId) {
         TenantContext ctx = TenantContextHolder.get();
@@ -300,6 +352,10 @@ public class PrepareSceneController {
     ) {}
 
     public record UpdateShotPromptRequest(@jakarta.validation.constraints.NotBlank String positive) {}
+
+    /** {@code tailSeconds} null asks for exactly what the measured dialogue needs beyond the clip.
+     * {@code mode} is HOLD (free) or GENERATE (bills the added seconds only). */
+    public record ExtendTailRequest(Integer tailSeconds, String mode, String continuationPrompt) {}
 
     /** {@code targetSeconds} is what the fit report suggested, not a number the UI invents: it is
      * already snapped to the shot's frame grid and already allows for the breath left after the last

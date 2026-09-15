@@ -104,8 +104,10 @@ class DialogueFitMathTest {
         // The cap is the most that can be generated, not a length that fits -- so the only real
         // remedy is a shorter line, and that is the target given.
         assertThat(report.suggestedDurationSeconds()).isEqualTo(MAX_SHOT);
+        // Against the shot as planned (8s less the tail), so accepting the rewrite alone makes it
+        // fit -- not against the 10s cap the shot would have to be extended to as well.
         assertThat(report.suggestedTargetAudioSeconds())
-                .isCloseTo(230 / 24.0, org.assertj.core.data.Offset.offset(1e-9));
+                .isCloseTo(182 / 24.0, org.assertj.core.data.Offset.offset(1e-9));
     }
 
     @Test
@@ -232,11 +234,14 @@ class DialogueFitMathTest {
 
         assertThat(report.verdict()).isEqualTo(Verdict.NEEDS_REWRITE);
         assertThat(report.verdict().needsAttention()).isTrue();
-        // It may still take the two seconds it is allowed, which makes the rewrite gentler: the line
-        // is retimed against 7s rather than against the 5s it was planned at.
+        // The shot may still grow to the two seconds it is allowed...
         assertThat(report.allowedDurationSeconds()).isEqualTo(7);
         assertThat(report.suggestedDurationSeconds()).isEqualTo(7);
-        assertThat(report.suggestedTargetAudioSeconds()).isCloseTo(6.6, org.assertj.core.data.Offset.offset(1e-9));
+        // ...but the REWRITE is targeted at the 5s the shot is planned at, not the 7s it could
+        // become. Targeting the extended length produced a rewrite that still did not fit, because
+        // nothing applied the extension: a 4-second shot was handed a 5.6-second line and the
+        // overrun survived the fix. Each remedy has to work on its own.
+        assertThat(report.suggestedTargetAudioSeconds()).isCloseTo(4.6, org.assertj.core.data.Offset.offset(1e-9));
     }
 
     @Test

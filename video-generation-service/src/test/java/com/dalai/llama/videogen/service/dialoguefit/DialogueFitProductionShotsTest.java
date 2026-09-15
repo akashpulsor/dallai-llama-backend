@@ -102,8 +102,10 @@ class DialogueFitProductionShotsTest {
         assertThat(shot005.verdict()).isEqualTo(Verdict.UNFITTABLE);
         assertThat(shot008.verdict()).isEqualTo(Verdict.UNFITTABLE);
         assertThat(shot005.suggestedDurationSeconds()).isEqualTo(MAX_SHOT);
-        // The only remedy that can work at this ceiling: a line that fits inside the longest clip.
-        assertThat(shot005.suggestedTargetAudioSeconds()).isCloseTo(9.6, Offset.offset(1e-9));
+        // The rewrite target is the shot as PLANNED (5s less the 0.4s tail), so accepting it alone
+        // makes the line fit. It used to be sized against the clip length the shot would reach if it
+        // were also extended, which meant a rephrase that still overran.
+        assertThat(shot005.suggestedTargetAudioSeconds()).isCloseTo(4.6, Offset.offset(1e-9));
     }
 
     @Test

@@ -272,11 +272,12 @@ public final class DialogueFitMath {
                         snapDownToFrame(Math.max(0, plannedDurationSeconds - tailSeconds), fps),
                         measured, overlaps, sorted);
             }
-            // Beyond the allowance. Rewriting is the remedy, and it is targeted at the EXTENDED
-            // length rather than the planned one -- taking the couple of seconds the shot may have
-            // makes the rewrite as gentle as it can be, instead of demanding the line lose more
-            // than it has to.
-            double rewriteTarget = snapDownToFrame(Math.max(0, allowed - tailSeconds), fps);
+            // Targeted at the shot AS PLANNED, not at the length it would reach if it were also
+            // extended. Each remedy has to work on its own: targeting the extended length produced
+            // a rewrite that still did not fit, because nothing applied the extension -- a 4-second
+            // shot was handed a 5.6-second line and the overrun simply survived the fix. A creator
+            // who wants a gentler rewrite extends the shot first, and the target recomputes.
+            double rewriteTarget = snapDownToFrame(Math.max(0, plannedDurationSeconds - tailSeconds), fps);
             Verdict verdict = needed <= maxShotSeconds ? Verdict.NEEDS_REWRITE : Verdict.UNFITTABLE;
             return new Report(verdict, plannedDurationSeconds, fps, fpsAssumed, audioSpan,
                     tailSeconds, required, slackFrames, slackSeconds, allowed, allowed,

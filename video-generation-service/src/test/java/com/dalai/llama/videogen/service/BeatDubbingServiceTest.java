@@ -32,7 +32,11 @@ class BeatDubbingServiceTest {
             "elevenlabs/instant-voice-clone", "elevenlabs-tts-v1", "fal-ai/merge-audio-video",
             // Fitting the track to the shot needs somewhere to put the re-encoded audio; these
             // tests only exercise the synthesis path, which never reaches it.
-            mock(VideoAssetPersistenceService.class), 1.5d, 300L, "creator-assets");
+            mock(VideoAssetPersistenceService.class),
+            // Probing the generated clip is what tells the fit how long the picture actually is;
+            // a mock returns 0, which these tests read as "unknown" and skip fitting entirely.
+            mock(com.dalai.llama.videogen.service.dialoguefit.AudioDurationProbe.class),
+            1.5d, 300L, "creator-assets");
 
     @Test
     void preparedCloneUsesDirectTtsWithoutCloningTheRawSampleAgain() {

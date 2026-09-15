@@ -60,6 +60,12 @@ public class VideoGenJob {
     @Column(name = "fps")
     private Integer fps;
 
+    /** Where the finished clip came from: GENERATED, TAIL_HOLD, TAIL_GENERATE or UPLOADED. A
+     * repaired clip is otherwise indistinguishable from a generated one, and a re-render would
+     * discard hand-finished work with nobody able to see what was lost. See V33. */
+    @Column(name = "output_origin", length = 16)
+    private String outputOrigin;
+
     @Column(name = "aspect_ratio", length = 16)
     private String aspectRatio;
 
