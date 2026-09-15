@@ -53,7 +53,17 @@ public class ClipTailExtensionService {
         /** Freeze the last frame for the missing seconds. Costs nothing. */
         HOLD,
         /** Animate on from the last frame with a cheaper model. Costs those seconds only. */
-        GENERATE
+        GENERATE,
+        /**
+         * Leave the picture exactly as it is and put the dubbed track on it, dropping whatever
+         * audio the video model produced.
+         *
+         * <p>The simplest repair and the cheapest -- no model, no re-encode of the picture, just a
+         * remux. For a shot generated on the native-audio path this is usually the whole fix: the
+         * model was told to speak a line it had no room for, so what it produced is a fragment at
+         * the end over ambience, and the dub is the take that was actually wanted.
+         */
+        REPLACE_AUDIO
     }
 
     private final LlmGatewayClient llmGatewayClient;
@@ -96,7 +106,7 @@ public class ClipTailExtensionService {
         if (clipUrl == null || clipUrl.isBlank()) {
             throw VideoGenException.badRequest("There is no clip to extend");
         }
-        if (tailSeconds <= 0) {
+        if (tailSeconds <= 0 && mode != Mode.REPLACE_AUDIO) {
             throw VideoGenException.badRequest("A tail needs a length in seconds");
         }
         int seconds = Math.min(tailSeconds, maxTailSeconds);
@@ -114,6 +124,11 @@ public class ClipTailExtensionService {
                     "-vframes", "1", "-q:v", "2", lastFrame.toString()));
             if (!Files.exists(lastFrame) || Files.size(lastFrame) == 0) {
                 throw VideoGenException.upstream("Could not read the clip's last frame");
+            }
+
+            // Nothing to join: the picture stands, only its audio changes.
+            if (mode == Mode.REPLACE_AUDIO) {
+                return remuxAudioOnly(workDir, clip, audioUrl, jobId);
             }
 
             Path tail = mode == Mode.GENERATE
@@ -163,6 +178,33 @@ public class ClipTailExtensionService {
         } finally {
             deleteQuietly(workDir);
         }
+    }
+
+    /**
+     * The clip untouched, carrying the dubbed track instead of the model's own audio.
+     *
+     * <p>{@code -map 0:v -map 1:a} takes the picture from the clip and the sound from the dub, which
+     * is what drops the native audio rather than mixing the two: a line the model half-spoke
+     * underneath the line it should have spoken is worse than either alone. The video stream is
+     * copied, not re-encoded, so the picture is bit-identical to what was generated and paid for.
+     */
+    private Extended remuxAudioOnly(Path workDir, Path clip, String audioUrl, UUID jobId) throws Exception {
+        if (audioUrl == null || audioUrl.isBlank()) {
+            throw VideoGenException.badRequest("There is no dubbed audio to put on this clip");
+        }
+        Path audio = workDir.resolve("dialogue.mp3");
+        download(audioUrl, audio);
+        Path finished = workDir.resolve("remuxed.mp4");
+        runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                "-shortest", finished.toString()));
+        double finalSeconds = durationProbe.probeFile(finished);
+        VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
+                bucket, "audio-replaced/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
+        String url = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());
+        log.info("Replaced a clip's audio with its dubbed take jobId={} length={}s",
+                jobId, String.format(Locale.ROOT, "%.2f", finalSeconds));
+        return new Extended(url, asset.bucket(), asset.objectKey(), finalSeconds, 0, Mode.REPLACE_AUDIO.name());
     }
 
     /** A still held for the missing seconds, at the clip's own frame rate so the join is seamless. */

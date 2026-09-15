@@ -91,9 +91,16 @@ public class ShotClipRepairService {
                     "This shot has no dubbed dialogue to extend for -- dub it first");
         }
 
-        int seconds = tailSeconds != null ? tailSeconds : neededTailSeconds(clipUrl, audioUrl);
-        if (seconds <= 0) {
-            throw VideoGenException.badRequest("The dialogue already fits this clip; nothing to extend");
+        // Replacing the audio adds no picture, so it has no tail to size and no shortfall to
+        // require. It is the right repair precisely when the dub DOES fit and the clip simply has
+        // the wrong sound on it.
+        int seconds = 0;
+        if (mode != ClipTailExtensionService.Mode.REPLACE_AUDIO) {
+            seconds = tailSeconds != null ? tailSeconds : neededTailSeconds(clipUrl, audioUrl);
+            if (seconds <= 0) {
+                throw VideoGenException.badRequest(
+                        "The dialogue already fits this clip -- use Replace audio instead of extending");
+            }
         }
 
         ClipTailExtensionService.Extended extended = tailExtensionService.extend(
