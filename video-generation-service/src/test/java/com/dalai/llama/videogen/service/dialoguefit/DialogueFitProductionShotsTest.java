@@ -90,18 +90,43 @@ class DialogueFitProductionShotsTest {
     }
 
     @Test
-    @DisplayName("shot-01-005 and shot-01-008: past the cap, so no clip length holds them")
-    void unfittableShots() {
+    @DisplayName("shot-01-005 and shot-01-008 are unfittable at a 10s ceiling")
+    void unfittableAtATenSecondCeiling() {
         Report shot005 = evaluateSingleBeat(5, 12.213696);
         Report shot008 = evaluateSingleBeat(5, 11.842177);
 
-        // 12.6s and 12.2s needed against a 10s ceiling: extending cannot deliver, so these are
-        // refused at approve unless the creator explicitly chooses to go with the original.
+        // 12.6s and 12.2s needed against a 10s ceiling: extending cannot deliver what it promises,
+        // so these are refused at approve unless the creator chooses to go with the original.
         assertThat(shot005.verdict()).isEqualTo(Verdict.UNFITTABLE);
         assertThat(shot008.verdict()).isEqualTo(Verdict.UNFITTABLE);
         assertThat(shot005.suggestedDurationSeconds()).isEqualTo(MAX_SHOT);
-        // The only remedy that can actually work: a line that fits inside the longest clip available.
+        // The only remedy that can work at this ceiling: a line that fits inside the longest clip.
         assertThat(shot005.suggestedTargetAudioSeconds()).isCloseTo(9.6, Offset.offset(1e-9));
+    }
+
+    @Test
+    @DisplayName("...and extendable at the 15s ceiling now deployed")
+    void extendableAtTheDeployedCeiling() {
+        // The ceiling is ours, not the provider's: fal.ai's alibaba/wan-3.0-prime documents duration
+        // as a free parameter defaulting to 5s and states no maximum. It was raised to 15 so these
+        // two shots could grow to hold their lines instead of being blocked.
+        int deployedMax = 15;
+        Report shot005 = DialogueFitMath.evaluate(5, FPS,
+                List.of(new BeatSpan(0, 0, 12.213696, true)), TAIL, MIN_SHOT, deployedMax);
+        Report shot008 = DialogueFitMath.evaluate(5, FPS,
+                List.of(new BeatSpan(0, 0, 11.842177, true)), TAIL, MIN_SHOT, deployedMax);
+
+        assertThat(shot005.verdict()).isEqualTo(Verdict.AUDIO_LONGER);
+        assertThat(shot008.verdict()).isEqualTo(Verdict.AUDIO_LONGER);
+        // 12.61s and 12.24s of required audio both round up to a 13-second clip.
+        assertThat(shot005.suggestedDurationSeconds()).isEqualTo(13);
+        assertThat(shot008.suggestedDurationSeconds()).isEqualTo(13);
+
+        // Raising the ceiling does not make everything fit -- it moves the line. A shot needing more
+        // than 15s would still be refused, which is the point of having a ceiling at all.
+        Report absurd = DialogueFitMath.evaluate(5, FPS,
+                List.of(new BeatSpan(0, 0, 30.0, true)), TAIL, MIN_SHOT, deployedMax);
+        assertThat(absurd.verdict()).isEqualTo(Verdict.UNFITTABLE);
     }
 
     @Test
