@@ -39,7 +39,7 @@ public class FinalRenderController {
     @PostMapping("")
     public ResponseEntity<FinalRenderJobView> create(@Valid @RequestBody CreateFinalRenderRequest request) {
         FinalRenderJob job = finalRenderService.assemble(TenantContextHolder.get(), request.projectId(),
-                request.resolveShotAudio());
+                request.resolveShotAudio(), Boolean.TRUE.equals(request.allowPartial()));
         return ResponseEntity.ok(toView(job));
     }
 
@@ -99,7 +99,10 @@ public class FinalRenderController {
      */
     public record CreateFinalRenderRequest(@NotNull UUID projectId,
                                            java.util.List<String> silentShotRefs,
-                                           java.util.Map<String, String> shotAudio) {
+                                           java.util.Map<String, String> shotAudio,
+                                           /** Assemble the shots that are ready and leave out the
+                                            * rest. Absent or false refuses instead, naming them. */
+                                           Boolean allowPartial) {
 
         java.util.Map<String, FinalRenderService.ShotAudio> resolveShotAudio() {
             java.util.Map<String, FinalRenderService.ShotAudio> resolved = new java.util.HashMap<>();

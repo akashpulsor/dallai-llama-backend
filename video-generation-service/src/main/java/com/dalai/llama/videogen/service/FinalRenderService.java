@@ -114,6 +114,23 @@ public class FinalRenderService {
      */
     public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId,
                                    java.util.Map<String, ShotAudio> shotAudio) {
+        return assemble(tenantContext, projectId, shotAudio, false);
+    }
+
+    /**
+     * @param allowPartial assemble the shots that ARE ready and leave out the ones that are not.
+     *
+     * <p>Off by default, and deliberately: a film missing three of its shots is not the film, and
+     * handing one over as though it were is the failure this check exists to prevent. But refusing
+     * outright made the only way to watch a cut in progress "finish every shot first", which is
+     * exactly backwards -- seeing the shots run together is how a creator finds out that a shot is
+     * wrong, and doing that is cheapest before the remaining ones are paid for.
+     *
+     * <p>So it stays a refusal the creator has to overrule, never a default, and what was left out
+     * is named in the log and in the count on the job.
+     */
+    public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId,
+                                   java.util.Map<String, ShotAudio> shotAudio, boolean allowPartial) {
         UUID tenantId = tenantContext.tenantId();
 
         // 1. Enumerate shots pre-prod knows about (canonical order + expected count).
@@ -143,7 +160,18 @@ public class FinalRenderService {
             String missingRefs = missing.stream()
                     .map(s -> s.shotRef() == null ? "(unnamed)" : s.shotRef())
                     .collect(Collectors.joining(", "));
-            throw VideoGenException.conflict("Cannot assemble -- these shots have no completed video yet: " + missingRefs);
+            if (!allowPartial) {
+                throw VideoGenException.conflict("Cannot assemble -- these shots have no completed video yet: " + missingRefs);
+            }
+            if (missing.size() == preProdShots.size()) {
+                // Overruling the check cannot conjure a film out of nothing. Said plainly, because
+                // "assemble anyway" on a project with no finished shot at all would otherwise fail
+                // somewhere inside ffmpeg with a message about an empty concat list.
+                throw VideoGenException.conflict(
+                        "Cannot assemble -- not one shot in this project has a finished video yet");
+            }
+            log.info("Assembling without these shots at the creator's request renderId=pending projectId={} missing={}",
+                    projectId, missingRefs);
         }
 
         // A job knows itself by shot_ref; the dubbed takes are stored against shot ids.
@@ -154,10 +182,14 @@ public class FinalRenderService {
             }
         });
 
-        // 4. Order jobs by pre-prod's shotNumber (canonical narrative order).
+        // 4. Order jobs by pre-prod's shotNumber (canonical narrative order). Nulls are dropped
+        //    rather than carried: with the completeness check overruled, an unfinished shot has no
+        //    job to stand in for it, and the shots that remain still run in the order they were
+        //    written -- a partial cut is the film with gaps, not the film re-sequenced.
         List<VideoGenJob> ordered = preProdShots.stream()
                 .sorted(Comparator.comparing(s -> Optional.ofNullable(s.shotNumber()).orElse(Integer.MAX_VALUE)))
                 .map(s -> latestByShotRef.get(s.shotRef()))
+                .filter(java.util.Objects::nonNull)
                 .toList();
 
         // 5. Create the FinalRenderJob row (PENDING_APPROVAL). Persist BEFORE the long work
