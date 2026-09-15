@@ -151,6 +151,21 @@ public class CloneVoiceService {
         return results;
     }
 
+    /** The project's own assigned voice -- the one the rest of the film is narrated in. Matches the
+     * fallback {@code ShotContextAssemblyService} already applies when it assembles a beat, so the
+     * dub and the generation agree about who is speaking. */
+    private PreProductionViews.CastProfileView fallbackNarratorProfile(PreProductionViews.PrepareBundleView bundle) {
+        if (bundle.castAssignments() == null || bundle.castAssignments().isEmpty()
+                || bundle.castProfiles() == null) {
+            return null;
+        }
+        UUID castProfileId = bundle.castAssignments().get(0).castProfileId();
+        return bundle.castProfiles().stream()
+                .filter(p -> p.id() != null && p.id().equals(castProfileId))
+                .findFirst()
+                .orElse(null);
+    }
+
     private CloneVoiceResult cloneVoice(UUID tenantId, UUID projectId, PreProductionViews.ShotBundleView shotBundle, String text, PreProductionViews.PrepareBundleView bundle, UUID beatId) {
         PreProductionViews.ShotView shot = shotBundle.shot();
         String characterKey = shot.primaryCharacterKey();
@@ -163,8 +178,22 @@ public class CloneVoiceService {
         PreProductionViews.CastProfileView profile = resolveCastProfile(bundle, characterKey);
 
         if (profile == null) {
+            // Not every primary character is a person who speaks. A motion graphic's primary
+            // character is the brand it is about -- shot-01-007's is astronext_ai -- and a brand has
+            // no cast assignment because nobody casts it. The narration over such a shot is spoken
+            // by whoever narrates the film, so fall back to the project's assigned voice rather than
+            // refusing to dub a shot whose voice was never in question.
+            profile = fallbackNarratorProfile(bundle);
+            if (profile != null) {
+                log.info("clone-voice using the project's assigned voice, character {} has no cast of its own"
+                                + " projectId={} shotId={}", characterKey, projectId, shot.id());
+            }
+        }
+
+        if (profile == null) {
             log.warn("clone-voice cast profile missing projectId={} shotId={} characterKey={}", projectId, shot.id(), characterKey);
-            throw VideoGenException.badRequest("No cast profile assigned to character " + characterKey);
+            throw VideoGenException.badRequest("No cast profile assigned to character " + characterKey
+                    + ", and this project has no cast assigned at all to fall back to");
         }
 
         String line = text == null || text.isBlank() ? defaultLineFor(shot) : text.trim();
