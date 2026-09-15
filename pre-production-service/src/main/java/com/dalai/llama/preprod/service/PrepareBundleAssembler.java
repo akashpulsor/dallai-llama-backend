@@ -97,7 +97,12 @@ public class PrepareBundleAssembler {
                     imagesByShot.getOrDefault(shotId, List.of()),
                     musicByShot.get(shotId),
                     productRefsByShot.get(shotId),
-                    foleyCuesByShot.getOrDefault(shotId, List.of())
+                    foleyCuesByShot.getOrDefault(shotId, List.of()),
+                    // Only motion graphics have one, and only they are asked for it -- fetched per
+                    // shot rather than batched because a project has one or two of them at most.
+                    "MOTION_GRAPHIC".equals(shot.shotType())
+                            ? softGet(() -> motionGraphicPlanService.get(tenantId, shotId), "motion-graphic-plan", shotId)
+                            : null
             ));
         }
 
@@ -118,7 +123,11 @@ public class PrepareBundleAssembler {
         ShotBackgroundMusicView backgroundMusic = softGet(() -> shotBackgroundMusicService.get(tenantId, shotId), "background-music", shotId);
         ShotProductReferenceView productReference = softGet(() -> shotProductReferenceService.get(tenantId, shotId), "product-reference", shotId);
         List<ShotFoleyCueView> foleyCues = softList(() -> shotFoleyCueService.get(shotId), "foley-cues", shotId);
-        return new ShotBundleView(shot, beats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference, foleyCues);
+        MotionGraphicPlanView motionGraphicPlan = "MOTION_GRAPHIC".equals(shot.shotType())
+                ? softGet(() -> motionGraphicPlanService.get(tenantId, shotId), "motion-graphic-plan", shotId)
+                : null;
+        return new ShotBundleView(shot, beats, cameraPlan, lightingPlan, shotImages, backgroundMusic,
+                productReference, foleyCues, motionGraphicPlan);
     }
 
 

@@ -16,6 +16,11 @@ public final class PreProductionViews {
 
     private PreProductionViews() {}
 
+    /** Mirrors pre-production's MotionGraphicPlanView. Only MOTION_GRAPHIC shots have one. */
+    public record MotionGraphicPlanView(
+            UUID id, UUID shotId, String concept, String onScreenText, String visualStyle,
+            String animationNotes, Integer durationSeconds) {}
+
     public record ContinuityBibleView(String negativePrompt, List<ContinuityLockView> locks) {
         public record ContinuityLockView(String category, String value) {}
     }
@@ -321,14 +326,26 @@ public final class PreProductionViews {
             ShotBackgroundMusicView backgroundMusic,
             ShotProductReferenceView productReference,
             /** Derived once by pre-production when the shot was planned. */
-            List<ShotFoleyCueView> foleyCues
+            List<ShotFoleyCueView> foleyCues,
+            /** Only MOTION_GRAPHIC shots have one; null for every other shot type. */
+            MotionGraphicPlanView motionGraphicPlan
     ) {
 
         /** Pre-foleyCues arity, for callers and tests that build a bundle by hand. */
         public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
                               LightingPlanView lightingPlan, List<ShotImageView> shotImages,
                               ShotBackgroundMusicView backgroundMusic, ShotProductReferenceView productReference) {
-            this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference, List.of());
+            this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference,
+                    List.of(), null);
+        }
+
+        /** Pre-motionGraphicPlan arity, same purpose. */
+        public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
+                              LightingPlanView lightingPlan, List<ShotImageView> shotImages,
+                              ShotBackgroundMusicView backgroundMusic, ShotProductReferenceView productReference,
+                              List<ShotFoleyCueView> foleyCues) {
+            this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference,
+                    foleyCues, null);
         }
     }
 }

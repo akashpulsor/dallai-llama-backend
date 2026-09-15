@@ -29,6 +29,7 @@ import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitMath;
+import com.dalai.llama.videogen.service.dialoguefit.MotionGraphicPromptService;
 import com.dalai.llama.videogen.web.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -90,6 +91,7 @@ public class ShotGenerationOrchestrator {
     private final VideoGenJobPersistenceService jobPersistenceService;
     private final BeatDubbingService beatDubbingService;
     private final BackgroundMusicMixService backgroundMusicMixService;
+    private final MotionGraphicPromptService motionGraphicPromptService;
     private final String defaultModel;
 
     public ShotGenerationOrchestrator(
@@ -110,6 +112,7 @@ public class ShotGenerationOrchestrator {
             VideoGenJobPersistenceService jobPersistenceService,
             BeatDubbingService beatDubbingService,
             BackgroundMusicMixService backgroundMusicMixService,
+            MotionGraphicPromptService motionGraphicPromptService,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
         this.modelRecommendationService = modelRecommendationService;
@@ -129,6 +132,7 @@ public class ShotGenerationOrchestrator {
         this.jobPersistenceService = jobPersistenceService;
         this.beatDubbingService = beatDubbingService;
         this.backgroundMusicMixService = backgroundMusicMixService;
+        this.motionGraphicPromptService = motionGraphicPromptService;
         this.defaultModel = defaultModel;
     }
 
@@ -208,6 +212,16 @@ public class ShotGenerationOrchestrator {
         shotContext = dialogueFitService.fitDialogue(
                 tenantId, projectId, sources == null ? null : sources.shotId(), shotContext);
         BuiltPrompt builtPrompt = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
+        // The only shot-type branch in this method, and it is one null check: a shot carrying a
+        // motion-graphic plan gets a prompt WRITTEN from that plan instead of the composed one,
+        // because composing describes a motion graphic with the vocabulary of live action -- camera
+        // angle, lens, lighting mood -- and says nothing about what moves. Every other shot type
+        // falls straight through, unchanged. The negative prompt is kept either way; it is about
+        // what the model must avoid, which does not differ by shot type.
+        String motionGraphicPrompt = motionGraphicPromptService.writePrompt(tenantId, projectId, shotContext);
+        if (motionGraphicPrompt != null) {
+            builtPrompt = new BuiltPrompt(motionGraphicPrompt, builtPrompt.negative());
+        }
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         CompressionResult compression = promptCompressionService.compressIfNeeded(

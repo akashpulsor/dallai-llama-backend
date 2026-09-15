@@ -26,14 +26,24 @@ public record ShotContext(
         /** The shot's own already-rendered frames (storyboard / production still / motion-graphic
          * preview). Additive and nullable per this record's contract above, so an older caller's
          * JSON body -- or the pre-hoc arity below -- still deserializes. */
-        List<@Valid ReferenceFrame> referenceFrames
+        List<@Valid ReferenceFrame> referenceFrames,
+        /** Set only on MOTION_GRAPHIC shots, and its presence is what identifies one. Null
+         * everywhere else, so every other shot type composes its prompt exactly as before. */
+        @Valid MotionGraphic motionGraphic
 ) {
+
+    /** True when this shot is a motion graphic with something planned to animate. The single test
+     * the prepare path branches on -- nothing else changes behaviour by shot type. */
+    public boolean isPlannedMotionGraphic() {
+        return motionGraphic != null && motionGraphic.hasPlan();
+    }
 
     /** The same shot with a different narrative -- used when the dialogue has to be shortened to
      * fit the shot's duration, which replaces one field and must leave the rest untouched. */
     public ShotContext withNarrative(Narrative replacement) {
         return new ShotContext(shotRef, replacement, characters, environment, lighting, camera,
-                productBrand, technical, continuityAnchors, audioAmbience, dialogueBeats, referenceFrames);
+                productBrand, technical, continuityAnchors, audioAmbience, dialogueBeats, referenceFrames,
+                motionGraphic);
     }
 
     /** Pre-referenceFrames arity, kept so existing callers and tests compile unchanged. */
@@ -51,6 +61,25 @@ public record ShotContext(
             List<DialogueBeat> dialogueBeats
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, null);
+                continuityAnchors, audioAmbience, dialogueBeats, null, null);
+    }
+
+    /** Pre-motionGraphic arity, kept so existing callers and tests compile unchanged. */
+    public ShotContext(
+            String shotRef,
+            Narrative narrative,
+            List<Character> characters,
+            Environment environment,
+            Lighting lighting,
+            Camera camera,
+            ProductBrand productBrand,
+            Technical technical,
+            List<ContinuityAnchor> continuityAnchors,
+            AudioAmbience audioAmbience,
+            List<DialogueBeat> dialogueBeats,
+            List<ReferenceFrame> referenceFrames
+    ) {
+        this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, null);
     }
 }

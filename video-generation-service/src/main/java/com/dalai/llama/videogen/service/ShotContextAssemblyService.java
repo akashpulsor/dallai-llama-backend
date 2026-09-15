@@ -15,6 +15,7 @@ import com.dalai.llama.videogen.dto.shotcontext.ContinuityAnchor;
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
 import com.dalai.llama.videogen.dto.shotcontext.Environment;
 import com.dalai.llama.videogen.dto.shotcontext.Lighting;
+import com.dalai.llama.videogen.dto.shotcontext.MotionGraphic;
 import com.dalai.llama.videogen.dto.shotcontext.Narrative;
 import com.dalai.llama.videogen.dto.shotcontext.ProductBrand;
 import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
@@ -125,7 +126,10 @@ public class ShotContextAssemblyService {
                 buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion(),
                         bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage(),
                         measured),
-                buildReferenceFrames(shotImages)
+                buildReferenceFrames(shotImages),
+                // Null for every shot that is not a motion graphic, which is what keeps this branch
+                // from touching anything else.
+                buildMotionGraphic(shotBundle.motionGraphicPlan())
         );
 
         FeatureFlags flagsOverride = overrides == null ? null : overrides.featureFlagOverrides();
@@ -415,6 +419,18 @@ public class ShotContextAssemblyService {
      * The category name is kept in the description because that's the only part the model
      * actually reads -- "WARDROBE_APPEARANCE: Maya: red kurta" tells it what kind of constraint
      * it is, where the bare value wouldn't. */
+    /** The plan as the prompt needs it, or null when there is nothing planned. Deliberately not
+     * defaulted from the shot's other columns: a motion graphic whose plan was never generated
+     * should fall back to the ordinary prompt rather than be described with invented animation. */
+    private MotionGraphic buildMotionGraphic(PreProductionViews.MotionGraphicPlanView plan) {
+        if (plan == null) {
+            return null;
+        }
+        MotionGraphic motionGraphic = new MotionGraphic(
+                plan.concept(), plan.onScreenText(), plan.visualStyle(), plan.animationNotes());
+        return motionGraphic.hasPlan() ? motionGraphic : null;
+    }
+
     private List<ContinuityAnchor> buildContinuityAnchors(PreProductionViews.ContinuityBibleView bible) {
         if (bible == null || bible.locks() == null) {
             return List.of();
@@ -548,9 +564,37 @@ public class ShotContextAssemblyService {
         return profile.builtinVoiceId();
     }
 
+    /**
+     * Whether a planned field actually says something.
+     *
+     * <p>Rejects the placeholders a model writes when it is asked to fill a field that does not
+     * apply. Shot-list generation asks for every column on every shot, so for a MOTION_GRAPHIC --
+     * which has no camera at all -- the model is asked for an angle, a movement and a lens it
+     * correctly has no answer for. Told to produce a string, it writes the word "null". The
+     * judgement was right; only the encoding was wrong, and it was stored verbatim.
+     *
+     * <p>The effect downstream was that the video model was told, in as many words, that the
+     * camera angle is "null" -- shot-01-007's prompt carried "Angle: null | Movement: null | Lens:
+     * null" and a run of bare "null" clauses, all of it real text competing with the description
+     * that mattered.
+     *
+     * <p>Filtered here, at the point the prompt is manufactured, rather than by rewriting what is
+     * stored. The rows are left exactly as they are: this only stops a placeholder being read as a
+     * value. Every labelled field, every joined note and every voice lookup already routes through
+     * this one predicate, so a field that says nothing now goes in as nothing.
+     */
     private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        return !PLACEHOLDERS.contains(value.trim().toLowerCase(java.util.Locale.ROOT));
     }
+
+    /** What "this field does not apply" looks like coming back from a model asked to fill it in
+     * anyway. Deliberately a small, literal list -- an over-eager filter would start discarding real
+     * planning, and "none" as an entire field value is never a direction anyone wrote on purpose. */
+    private static final java.util.Set<String> PLACEHOLDERS = java.util.Set.of(
+            "null", "none", "n/a", "na", "nil", "not applicable", "not specified", "unspecified", "-", "--");
 
     /** Joins the non-blank parts, or null when nothing survives -- so a field that every source
      * left empty stays absent rather than becoming a dangling separator in the prompt. */
