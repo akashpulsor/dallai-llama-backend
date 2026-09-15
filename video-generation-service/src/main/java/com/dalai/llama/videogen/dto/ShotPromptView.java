@@ -35,6 +35,15 @@ public record ShotPromptView(
          * that's only ever ephemeral narration from the recommendation call, never persisted. */
         String recommendedModelId,
         BigDecimal estimatedCost,
-        String costCurrency
+        String costCurrency,
+        /** The clip length this prompt will actually be dispatched at, taken from its job rather
+         * than from the shot plan.
+         *
+         * <p>They are not the same number once a shot's length is edited. The plan changes
+         * immediately; the prepared prompt keeps the length it was built with until the shot is
+         * prepared again, and it is the prompt that gets sent. A creator who lengthened a shot to
+         * 8s had no way to tell from this page whether the change had reached the thing that would
+         * be generated -- so the two are now shown side by side and the gap is named. */
+        Integer durationSeconds
 ) {
 }

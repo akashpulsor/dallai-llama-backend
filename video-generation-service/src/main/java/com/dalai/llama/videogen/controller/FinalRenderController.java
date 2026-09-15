@@ -39,7 +39,7 @@ public class FinalRenderController {
     @PostMapping("")
     public ResponseEntity<FinalRenderJobView> create(@Valid @RequestBody CreateFinalRenderRequest request) {
         FinalRenderJob job = finalRenderService.assemble(TenantContextHolder.get(), request.projectId(),
-                request.silentShotRefs() == null ? java.util.Set.of() : java.util.Set.copyOf(request.silentShotRefs()));
+                request.resolveShotAudio());
         return ResponseEntity.ok(toView(job));
     }
 
@@ -90,5 +90,38 @@ public class FinalRenderController {
     /** {@code silentShotRefs}: shots whose voice is left out of THIS cut. A render-time choice --
      * the clips themselves are untouched, and the next assembly can include every voice again. Omit
      * or send empty to keep all audio. */
-    public record CreateFinalRenderRequest(@NotNull UUID projectId, java.util.List<String> silentShotRefs) {}
+    /**
+     * @param shotAudio   per shot_ref, one of CLIP / DUBBED / SILENT. Anything unlisted keeps the
+     *                    clip's own audio.
+     * @param silentShotRefs the older, narrower way of saying the same thing -- still accepted so a
+     *                    caller that only ever dropped voices keeps working. Merged under
+     *                    {@code shotAudio}, which wins where both name a shot.
+     */
+    public record CreateFinalRenderRequest(@NotNull UUID projectId,
+                                           java.util.List<String> silentShotRefs,
+                                           java.util.Map<String, String> shotAudio) {
+
+        java.util.Map<String, FinalRenderService.ShotAudio> resolveShotAudio() {
+            java.util.Map<String, FinalRenderService.ShotAudio> resolved = new java.util.HashMap<>();
+            if (silentShotRefs != null) {
+                silentShotRefs.forEach(ref -> resolved.put(ref, FinalRenderService.ShotAudio.SILENT));
+            }
+            if (shotAudio != null) {
+                shotAudio.forEach((ref, choice) -> {
+                    if (ref == null || choice == null) {
+                        return;
+                    }
+                    try {
+                        resolved.put(ref, FinalRenderService.ShotAudio.valueOf(
+                                choice.trim().toUpperCase(java.util.Locale.ROOT)));
+                    } catch (IllegalArgumentException ex) {
+                        throw VideoGenException.badRequest(
+                                "Shot " + ref + " was given an audio choice of \"" + choice
+                                        + "\" -- it must be CLIP, DUBBED or SILENT");
+                    }
+                });
+            }
+            return resolved;
+        }
+    }
 }

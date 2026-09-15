@@ -603,7 +603,8 @@ public class ShotGenerationOrchestrator {
                 resolveReferences(prompt.getPromptId()),
                 prompt.getRecommendedModelId(),
                 job.map(VideoGenJob::getEstimatedCost).orElse(null),
-                job.map(VideoGenJob::getCostCurrency).orElse(null)
+                job.map(VideoGenJob::getCostCurrency).orElse(null),
+                job.map(VideoGenJob::getDurationSeconds).orElse(null)
         );
     }
 

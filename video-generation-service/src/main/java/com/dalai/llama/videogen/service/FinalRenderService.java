@@ -50,6 +50,7 @@ public class FinalRenderService {
     private final FinalRenderJobPersistenceService jobPersistenceService;
     private final VideoAssetPersistenceService assetPersistenceService;
     private final PreProductionServiceClient preProductionServiceClient;
+    private final CloneAudioService cloneAudioService;
     private final String bucket;
     private final String prefix;
 
@@ -59,6 +60,7 @@ public class FinalRenderService {
             FinalRenderJobPersistenceService jobPersistenceService,
             VideoAssetPersistenceService assetPersistenceService,
             PreProductionServiceClient preProductionServiceClient,
+            CloneAudioService cloneAudioService,
             @Value("${video-gen.minio.bucket}") String bucket,
             @Value("${video-gen.minio.export-prefix}") String exportPrefix
     ) {
@@ -67,28 +69,51 @@ public class FinalRenderService {
         this.jobPersistenceService = jobPersistenceService;
         this.assetPersistenceService = assetPersistenceService;
         this.preProductionServiceClient = preProductionServiceClient;
+        this.cloneAudioService = cloneAudioService;
         this.bucket = bucket;
         // Sibling prefix to per-shot clips, distinct so lifecycle policies can differ later.
         this.prefix = exportPrefix.replaceAll("-exports$", "") + "-finals";
     }
 
+    /** What a shot sounds like in this cut. */
+    public enum ShotAudio {
+        /** The clip as generated -- whatever sound the video model put on it. */
+        CLIP,
+        /** The dubbed take, with the clip's own audio dropped rather than mixed under it. The
+         * recording is the performance; an invented delivery underneath it is noise. */
+        DUBBED,
+        /** No voice at all. The shot plays under whatever the cut puts over it. */
+        SILENT
+    }
+
     public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId) {
-        return assemble(tenantContext, projectId, java.util.Set.of());
+        return assemble(tenantContext, projectId, java.util.Map.of());
+    }
+
+    /** Kept for callers that only ever needed to drop voices. */
+    public FinalRenderJob assembleSilencing(TenantContext tenantContext, UUID projectId,
+                                            java.util.Set<String> silentShotRefs) {
+        java.util.Map<String, ShotAudio> choices = new java.util.HashMap<>();
+        if (silentShotRefs != null) {
+            silentShotRefs.forEach(ref -> choices.put(ref, ShotAudio.SILENT));
+        }
+        return assemble(tenantContext, projectId, choices);
     }
 
     /**
-     * @param silentShotRefs shots whose voice is to be left out of this cut.
+     * @param shotAudio per shot_ref, which soundtrack this cut uses. Anything unlisted keeps the
+     *                  clip's own audio.
      *
      * <p>A render-time choice, not an edit: the clips are untouched and the next assembly can
      * include every voice again. It is the same decision an editor makes on a timeline -- this shot
      * speaks, that one plays under the music -- and it belongs here rather than being burned into a
      * clip, because the answer can differ between two cuts of the same film.
      *
-     * <p>Silenced by replacing the track, never by removing it: the concat below demands an audio
+     * <p>Both replacements swap the track rather than removing it: the concat below demands an audio
      * stream on every input, so a clip with none would fail the assembly rather than play quietly.
      */
     public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId,
-                                   java.util.Set<String> silentShotRefs) {
+                                   java.util.Map<String, ShotAudio> shotAudio) {
         UUID tenantId = tenantContext.tenantId();
 
         // 1. Enumerate shots pre-prod knows about (canonical order + expected count).
@@ -121,6 +146,14 @@ public class FinalRenderService {
             throw VideoGenException.conflict("Cannot assemble -- these shots have no completed video yet: " + missingRefs);
         }
 
+        // A job knows itself by shot_ref; the dubbed takes are stored against shot ids.
+        Map<String, UUID> shotIdByRef = new LinkedHashMap<>();
+        preProdShots.forEach(shot -> {
+            if (shot.shotRef() != null) {
+                shotIdByRef.put(shot.shotRef(), shot.id());
+            }
+        });
+
         // 4. Order jobs by pre-prod's shotNumber (canonical narrative order).
         List<VideoGenJob> ordered = preProdShots.stream()
                 .sorted(Comparator.comparing(s -> Optional.ofNullable(s.shotNumber()).orElse(Integer.MAX_VALUE)))
@@ -150,9 +183,23 @@ public class FinalRenderService {
                 VideoGenJob job = ordered.get(i);
                 Path clipPath = workDir.resolve("%03d-%s.mp4".formatted(i + 1, job.getJobId()));
                 assetPersistenceService.downloadTo(job.getOutputBucket(), job.getOutputObjectKey(), clipPath);
-                if (silentShotRefs != null && silentShotRefs.contains(job.getShotRef())) {
+                ShotAudio choice = shotAudio == null ? ShotAudio.CLIP
+                        : shotAudio.getOrDefault(job.getShotRef(), ShotAudio.CLIP);
+                if (choice == ShotAudio.SILENT) {
                     clipPath = silencedCopy(workDir, clipPath, i + 1);
                     log.info("Leaving this shot's voice out of the cut renderId={} shotRef={}",
+                            renderId, job.getShotRef());
+                } else if (choice == ShotAudio.DUBBED) {
+                    String audioUrl = dubbedTakeUrl(tenantId, projectId, shotIdByRef.get(job.getShotRef()));
+                    if (audioUrl == null) {
+                        // Named, rather than quietly falling back to the clip's own audio -- which is
+                        // the sound the creator just asked to be rid of. A cut that keeps it without
+                        // saying so is worse than one that refuses to be made.
+                        throw VideoGenException.badRequest("Shot " + job.getShotRef()
+                                + " is set to use its dubbed voice, but nothing has been dubbed for it");
+                    }
+                    clipPath = dubbedCopy(workDir, clipPath, audioUrl, i + 1);
+                    log.info("Using the dubbed voice for this shot renderId={} shotRef={}",
                             renderId, job.getShotRef());
                 }
                 clipPaths.add(clipPath);
@@ -226,6 +273,39 @@ public class FinalRenderService {
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
                 "-shortest", silenced.toString()));
         return Files.exists(silenced) && Files.size(silenced) > 0 ? silenced : clip;
+    }
+
+    /**
+     * The clip with the dubbed take in place of its own audio.
+     *
+     * <p>{@code -map 0:v:0 -map 1:a:0} takes the picture from one input and the sound from the
+     * other, so an invented delivery is dropped rather than mixed under the real one. apad before
+     * shortest: a take shorter than the picture would otherwise end the clip early and cut the shot,
+     * so the audio runs on as silence to the last frame instead.
+     */
+    private Path dubbedCopy(Path workDir, Path clip, String audioUrl, int index) throws Exception {
+        Path audio = workDir.resolve("%03d-dialogue.audio".formatted(index));
+        try (java.io.InputStream in = java.net.URI.create(audioUrl).toURL().openStream()) {
+            Files.copy(in, audio, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        Path dubbed = workDir.resolve("%03d-dubbed.mp4".formatted(index));
+        runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                "-af", "apad", "-shortest", dubbed.toString()));
+        return Files.exists(dubbed) && Files.size(dubbed) > 0 ? dubbed : clip;
+    }
+
+    /** The longest take recorded for this shot -- the one that decides whether the picture is long
+     * enough to carry it, which is the same rule the per-shot repair uses. */
+    private String dubbedTakeUrl(UUID tenantId, UUID projectId, UUID shotId) {
+        if (shotId == null) {
+            return null;
+        }
+        return cloneAudioService.list(tenantId, projectId).stream()
+                .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
+                .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
+                .map(CloneAudioService.CloneAudioView::audioUrl)
+                .orElse(null);
     }
 
     /** Fast path: {@code -c copy} concat. Requires every input to share codec/framerate/
