@@ -123,10 +123,18 @@ public class ClipTailExtensionService {
             // stream-copied: the tail comes from a different encoder than the shot, and -c copy
             // across mismatched streams is what produces a file that plays for two seconds and
             // stops.
+            // The tail is scaled to the clip's exact dimensions before joining. concat refuses
+            // mismatched sizes outright, and a model asked for "a few seconds" returns whatever
+            // resolution its own defaults give -- which is not necessarily the 480p or 720p the shot
+            // was generated at. setsar keeps the pixel aspect the same so the join does not stretch.
+            String size = probeDimensions(clip);
             Path joined = workDir.resolve("joined.mp4");
             runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", tail.toString(),
-                    "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", joined.toString()));
+                    "-filter_complex",
+                    "[1:v]scale=" + size + ":force_original_aspect_ratio=decrease,"
+                            + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1[t];"
+                            + "[0:v]setsar=1[c];[c][t]concat=n=2:v=1:a=0[v]",
+                    "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", joined.toString()));
 
             Path finished = joined;
             if (audioUrl != null && !audioUrl.isBlank()) {
@@ -161,6 +169,9 @@ public class ClipTailExtensionService {
         String fps = probeFrameRate(clip);
         runFfmpeg(List.of("ffmpeg", "-y", "-loop", "1", "-i", lastFrame.toString(),
                 "-t", String.valueOf(seconds), "-r", fps,
+                // Same frame the clip ends on, so this is already the right size -- stated anyway so
+                // an odd-dimensioned source cannot produce a tail libx264 refuses to encode.
+                "-vf", "scale=" + probeDimensions(clip) + ",setsar=1",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", tail.toString()));
         return tail;
     }
@@ -193,6 +204,27 @@ public class ClipTailExtensionService {
         Path tail = workDir.resolve("tail.mp4");
         download(response.response(), tail);
         return tail;
+    }
+
+    /** The clip's own width:height, so the tail can be made to match it exactly. */
+    private String probeDimensions(Path clip) {
+        try {
+            Process process = new ProcessBuilder(List.of("ffprobe", "-v", "error",
+                    "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                    "-of", "csv=p=0:s=x", clip.toString()))
+                    .redirectErrorStream(true).start();
+            String out;
+            try (var in = process.getInputStream()) {
+                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            String dims = out.lines().findFirst().orElse("").trim();
+            // A shape like 832x480. Anything else and we would be handing ffmpeg a broken filter,
+            // so fall back to a common portrait size rather than fail the repair.
+            return dims.matches("[0-9]+x[0-9]+") ? dims.replace("x", ":") : "720:1280";
+        } catch (Exception ex) {
+            return "720:1280";
+        }
     }
 
     private String probeFrameRate(Path clip) {
