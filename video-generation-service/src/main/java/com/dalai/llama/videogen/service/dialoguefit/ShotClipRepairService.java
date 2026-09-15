@@ -118,7 +118,7 @@ public class ShotClipRepairService {
         job.setOutputBucket(extended.bucket());
         job.setOutputObjectKey(extended.objectKey());
         job.setOutputUri(extended.url());
-        job.setOutputOrigin("TAIL_" + extended.mode());
+        job.setOutputOrigin(originFor(extended.mode()));
         job.setDurationSeconds((int) Math.ceil(extended.finalSeconds()));
         videoGenJobRepository.save(job);
         log.info("Repaired a clip by extending its tail jobId={} shotId={} mode={} added={}s",
@@ -171,6 +171,19 @@ public class ShotClipRepairService {
                 }
             }
         }
+    }
+
+    /** What produced this clip, said plainly. "TAIL_" was prefixed onto every mode, which made
+     * TAIL_REPLACE_AUDIO -- eighteen characters into a sixteen-character column -- and described
+     * neither of the two repairs that add no tail at all. */
+    private static String originFor(String mode) {
+        return switch (mode) {
+            case "HOLD" -> "TAIL_FROZEN";
+            case "GENERATE" -> "TAIL_GENERATED";
+            case "REPLACE_AUDIO" -> "DUBBED";
+            case "SILENCE" -> "SILENCED";
+            default -> "REPAIRED";
+        };
     }
 
     /** Rounded up to a whole second, with the breath after the last word already inside the measured
