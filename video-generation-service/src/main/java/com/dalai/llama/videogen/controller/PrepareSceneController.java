@@ -1,6 +1,7 @@
 package com.dalai.llama.videogen.controller;
 
 import com.dalai.llama.videogen.domain.entity.ProjectScenePreparation;
+import com.dalai.llama.videogen.dto.DialogueFitView;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.GenerateShotRequest;
 import com.dalai.llama.videogen.dto.ShotPromptView;
@@ -11,6 +12,8 @@ import com.dalai.llama.videogen.service.ScenePreparationService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
 import com.dalai.llama.videogen.service.ShotGenerationOrchestrator;
 import com.dalai.llama.videogen.service.VideoGenException;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueFitReportService;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueRetimeService;
 import com.dalai.llama.videogen.web.TenantContext;
 import com.dalai.llama.videogen.web.TenantContextHolder;
 import jakarta.validation.Valid;
@@ -48,6 +51,8 @@ public class PrepareSceneController {
     private final ShotGenerationOrchestrator shotGenerationOrchestrator;
     private final PrepareOrchestrationService prepareOrchestrationService;
     private final PrepareBatchJobService prepareBatchJobService;
+    private final DialogueFitReportService dialogueFitReportService;
+    private final DialogueRetimeService dialogueRetimeService;
 
     @PostMapping("/projects/{projectId}/prepare")
     public ResponseEntity<ProjectScenePreparationView> prepareProject(@PathVariable UUID projectId) {
@@ -182,6 +187,56 @@ public class PrepareSceneController {
                         "Project " + projectId + " has no prepare batch yet"));
     }
 
+    /**
+     * Whether each shot's spoken audio fits the clip it is planned for -- read before generating,
+     * which is the only point at which it is still free to fix.
+     *
+     * <p>Answers both mismatches. A line too long for its shot comes back cut off mid-word, which is
+     * obvious once you watch it and expensive to discover that way. A line too SHORT for its shot --
+     * a ten-second clip carrying two seconds of dialogue -- is the quiet one: nothing in the pipeline
+     * can tell that apart from a shot that fits, because from its point of view it does fit. It is
+     * only wrong to watch, and by then it has been paid for.
+     *
+     * <p>Reports; never repairs. Whether eight seconds of silence is a mistake or a held beat the
+     * action needs is not something a duration comparison can know, so the remedies -- resize the
+     * shot, rewrite the line -- are offered rather than applied. Cheap enough to call after each one
+     * to see what it did: one query and one bundle fetch, no LLM, nothing written.
+     */
+    @GetMapping("/projects/{projectId}/dialogue-fit")
+    public ResponseEntity<List<DialogueFitView>> dialogueFit(@PathVariable UUID projectId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(dialogueFitReportService.reportProject(ctx.tenantId(), projectId));
+    }
+
+    /** The same check for one shot -- what the page calls after a remedy to confirm it landed. */
+    @GetMapping("/projects/{projectId}/shots/{shotId}/dialogue-fit")
+    public ResponseEntity<DialogueFitView> dialogueFitForShot(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(dialogueFitReportService.reportShot(ctx.tenantId(), projectId, shotId));
+    }
+
+    /**
+     * Rewrites a line to take a given number of seconds to say, keeping its meaning.
+     *
+     * <p>Works in both directions: shorter when the line overruns its shot, longer when the shot
+     * runs on in silence after it. Returns the rewrite and saves nothing -- the line is the
+     * creator's writing, so it is shown against the original and replaces it only when they choose
+     * to, through the shot/beat edit they already have. A rewrite that applied itself would be this
+     * service editing the script on its own authority.
+     */
+    @PostMapping("/projects/{projectId}/dialogue-retime")
+    public ResponseEntity<DialogueRetimeService.Retimed> retimeDialogue(
+            @PathVariable UUID projectId, @Valid @RequestBody DialogueRetimeRequest request) {
+        TenantContext ctx = TenantContextHolder.get();
+        // The measured length of this exact line, and the rate it was spoken at, are resolved here
+        // rather than trusted from the request: they are the facts the whole rewrite is sized from,
+        // and a caller that got them wrong would get a confidently wrong rewrite back.
+        return ResponseEntity.ok(dialogueFitReportService.retime(ctx.tenantId(), projectId,
+                request.shotId(), request.beatId(), request.dialogue(), request.targetSeconds(),
+                request.languageCode()));
+    }
+
     @GetMapping("/projects/{projectId}/shot-prompts")
     public ResponseEntity<List<ShotPromptView>> listProjectShotPrompts(@PathVariable UUID projectId) {
         TenantContext ctx = TenantContextHolder.get();
@@ -222,6 +277,22 @@ public class PrepareSceneController {
     ) {}
 
     public record UpdateShotPromptRequest(@jakarta.validation.constraints.NotBlank String positive) {}
+
+    /** {@code targetSeconds} is what the fit report suggested, not a number the UI invents: it is
+     * already snapped to the shot's frame grid and already allows for the breath left after the last
+     * word.
+     *
+     * <p>{@code shotId} and {@code beatId} say which line this is, so the server can look up how long
+     * it actually takes to say and at what rate. Without them the rewrite falls back to the project's
+     * average rate, which is worse but still measured. {@code beatId} is null for a shot whose line
+     * is not broken into beats. */
+    public record DialogueRetimeRequest(
+            @jakarta.validation.constraints.NotBlank String dialogue,
+            @jakarta.validation.constraints.Positive double targetSeconds,
+            UUID shotId,
+            UUID beatId,
+            String languageCode
+    ) {}
 
     /** One generated shot clip. {@code videoUrl} is presigned and null until the job has a
       * persisted output. */

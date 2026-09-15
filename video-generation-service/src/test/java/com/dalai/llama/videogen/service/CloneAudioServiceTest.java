@@ -4,6 +4,7 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import com.dalai.llama.videogen.service.dialoguefit.AudioDurationProbe;
 import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
@@ -14,7 +15,8 @@ class CloneAudioServiceTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final MinioClient minio = mock(MinioClient.class);
     private final VideoAssetPersistenceService assets = mock(VideoAssetPersistenceService.class);
-    private final CloneAudioService service = new CloneAudioService(jdbc, minio, assets, "media");
+    private final AudioDurationProbe durationProbe = mock(AudioDurationProbe.class);
+    private final CloneAudioService service = new CloneAudioService(jdbc, minio, assets, durationProbe, "media");
 
     @Test
     void recloneUsesSameDatabaseResourceAndFreshAudioObject() throws Exception {
@@ -28,7 +30,7 @@ class CloneAudioServiceTest {
         assertThat(upload.getValue().contentType()).isEqualTo("audio/mpeg");
         assertThat(upload.getAllValues().get(0).object()).isNotEqualTo(upload.getValue().object());
         verify(jdbc, times(2)).update(contains("ON CONFLICT"), eq(tenant), eq(project), eq(beat), eq(shot), eq(beat),
-                eq("Hi"), eq("cloned"), anyString(), eq("media"), anyString());
+                eq("Hi"), eq("cloned"), anyString(), eq("media"), anyString(), any());
     }
 
     @Test

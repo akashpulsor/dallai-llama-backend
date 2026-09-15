@@ -25,9 +25,9 @@ class CloneVoiceSavedAudioTest {
         ShotBundleView shotBundle = new ShotBundleView(shot, List.of(beat), null, null, List.of(), null, null);
         when(preprod.getPrepareBundle(tenant, project)).thenReturn(Optional.of(
                 new PrepareBundleView(null, null, null, List.of(), List.of(), List.of(shotBundle))));
-        var current = new CloneAudioService.CloneAudioView(shotId, beatId, "Hi", "cloned", "voice", "https://media/new");
-        var changed = new CloneAudioService.CloneAudioView(shotId, beatId, "Old text", "cloned", "voice", "https://media/old");
-        var deleted = new CloneAudioService.CloneAudioView(shotId, UUID.randomUUID(), "Hi", "cloned", "voice", "https://media/deleted");
+        var current = new CloneAudioService.CloneAudioView(shotId, beatId, "Hi", "cloned", "voice", "https://media/new", 1200);
+        var changed = new CloneAudioService.CloneAudioView(shotId, beatId, "Old text", "cloned", "voice", "https://media/old", 1200);
+        var deleted = new CloneAudioService.CloneAudioView(shotId, UUID.randomUUID(), "Hi", "cloned", "voice", "https://media/deleted", 1200);
         when(audio.list(tenant, project)).thenReturn(List.of(current, changed, deleted));
         assertThat(service.listSavedAudio(tenant, project)).containsExactly(current);
         verifyNoInteractions(gateway);

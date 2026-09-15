@@ -34,6 +34,19 @@ import java.util.UUID;
  * rewriting a creator's words to save two seconds is the worse trade. Beyond that the line is
  * shortened with its meaning intact, and the creator is told. It is meant to be rare.
  *
+ * <p><b>Off by default now.</b> This used to rewrite the line and save it back to the shot on its
+ * own, during a prepare the creator had asked for for other reasons -- so the words that came out of
+ * a render could differ from the words they wrote, without their having agreed to it. The line is
+ * the product, and the fit problem is now surfaced before generation instead:
+ * {@code DialogueFitReportService} reports it with the numbers, and the creator either resizes the
+ * shot or asks {@code DialogueRetimeService} for a rewrite and reads it before accepting. Set
+ * {@code video-gen.dialogue-fit.auto-apply=true} to restore the old behaviour for a project that
+ * would rather never be interrupted.
+ *
+ * <p>Note also that shortening was only ever half the problem, and the rarer half. A line too SHORT
+ * for its shot leaves the character standing in silence for the rest of the clip, and nothing here
+ * or downstream could see it -- see {@code DialogueFitReportService}.
+ *
  * <p>Best-effort throughout: the gateway being unreachable, or answering with something
  * unparseable, leaves the line exactly as written. Generating a shot with dialogue that may run
  * long is better than not generating it.
@@ -55,7 +68,7 @@ public class DialogueFitService {
             PreProductionServiceClient preProductionServiceClient,
             ObjectMapper objectMapper,
             @Value("${video-gen.dialogue-fit.model:gemini-2.5-flash}") String model,
-            @Value("${video-gen.dialogue-fit.enabled:true}") boolean enabled
+            @Value("${video-gen.dialogue-fit.auto-apply:false}") boolean enabled
     ) {
         this.llmGatewayClient = llmGatewayClient;
         this.preProductionServiceClient = preProductionServiceClient;

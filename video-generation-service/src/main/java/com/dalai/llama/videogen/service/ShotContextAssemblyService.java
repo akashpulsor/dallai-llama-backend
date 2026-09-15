@@ -20,6 +20,7 @@ import com.dalai.llama.videogen.dto.shotcontext.ProductBrand;
 import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.dto.shotcontext.Technical;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueAudioIndex;
 import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionViews;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +55,7 @@ import java.util.stream.Collectors;
 public class ShotContextAssemblyService {
 
     private final PreProductionServiceClient preProductionClient;
+    private final DialogueAudioIndex dialogueAudioIndex;
 
     /** Convenience: single-shot prepare. Fetches the fat bundle once from pre-prod, then
      * delegates to {@link #assembleFromBundle} so the same code path serves both the per-shot
@@ -62,12 +64,25 @@ public class ShotContextAssemblyService {
     public AssembledShot assemble(UUID tenantId, UUID projectId, UUID shotId, PrepareShotOverrides overrides) {
         PreProductionViews.PrepareBundleView bundle = preProductionClient.getPrepareBundle(tenantId, projectId)
                 .orElseThrow(() -> VideoGenException.upstream("pre-production-service returned no prepare bundle for project " + projectId));
-        return assembleFromBundle(tenantId, projectId, shotId, overrides, bundle);
+        return assembleFromBundle(tenantId, projectId, shotId, overrides, bundle, null);
     }
 
     public AssembledShot assembleFromBundle(
             UUID tenantId, UUID projectId, UUID shotId, PrepareShotOverrides overrides,
             PreProductionViews.PrepareBundleView bundle) {
+        return assembleFromBundle(tenantId, projectId, shotId, overrides, bundle, null);
+    }
+
+    /** {@code audioIndex} carries the measured length of every already-synthesized line in the
+     * project, so each assembled beat knows how long it actually takes to say rather than only how
+     * long the plan guessed. Null builds one here -- correct but a query per shot, so the batch
+     * loop builds it once and passes it in, same convention as {@code videoModelCatalog} on
+     * {@code prepareShot}. */
+    public AssembledShot assembleFromBundle(
+            UUID tenantId, UUID projectId, UUID shotId, PrepareShotOverrides overrides,
+            PreProductionViews.PrepareBundleView bundle, DialogueAudioIndex.Index audioIndex) {
+        DialogueAudioIndex.Index measured = audioIndex != null
+                ? audioIndex : dialogueAudioIndex.forProject(tenantId, projectId);
         // No ProjectScenePreparation gate here any more. It used to 409 unless Stage 1 (POST
         // /projects/{id}/prepare) had run, but the only thing this method took from that row was
         // the continuity template -- and it never actually read it, since buildContinuityAnchors
@@ -108,7 +123,8 @@ public class ShotContextAssemblyService {
                 buildContinuityAnchors(bundle.continuityBible()),
                 buildAudioAmbience(shot, shotBundle.backgroundMusic()),
                 buildDialogueBeats(beats, castAssignments, profilesById, bundle.script(), shot.emotion(),
-                        bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage()),
+                        bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage(),
+                        measured),
                 buildReferenceFrames(shotImages)
         );
 
@@ -445,7 +461,8 @@ public class ShotContextAssemblyService {
             Map<UUID, PreProductionViews.CastProfileView> profilesById,
             PreProductionViews.ScriptView script,
             String emotion,
-            String languageCode) {
+            String languageCode,
+            DialogueAudioIndex.Index measured) {
         if (beats == null || beats.isEmpty()) {
             return List.of();
         }
@@ -477,7 +494,8 @@ public class ShotContextAssemblyService {
                     PreProductionViews.CastProfileView profile = resolved != null ? resolved : fallbackProfile;
                     return new DialogueBeat(b.startSeconds(), b.durationSeconds(), b.text(), b.characterKey(),
                             voiceUrlFor(profile), clonedVoiceIdFor(profile), clonedVoiceProviderIdFor(profile),
-                            builtinVoiceIdFor(profile), emotion, languageCode);
+                            builtinVoiceIdFor(profile), emotion, languageCode,
+                            measured == null ? null : measured.measuredForBeat(b.id()));
                 })
                 .toList();
     }

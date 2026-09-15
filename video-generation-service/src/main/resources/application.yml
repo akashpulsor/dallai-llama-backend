@@ -122,6 +122,25 @@ video-gen:
   pre-production:
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
     timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
+  # The clip lengths the video models will actually produce. Both are bounds on what can be ASKED
+  # for: a request outside them comes back clamped, which would silently be a different duration
+  # than the one the fit maths reasoned about.
+  min-shot-duration-seconds: ${VIDEO_GEN_MIN_SHOT_DURATION_SECONDS:3}
+  max-shot-duration-seconds: ${VIDEO_GEN_MAX_SHOT_DURATION_SECONDS:10}
+  # Whether a shot's spoken line fits the clip it is planned for. Reported before generation, where
+  # it is still free to fix -- see DialogueFitReportService.
+  dialogue-fit:
+    model: ${VIDEO_GEN_DIALOGUE_FIT_MODEL:gemini-2.5-flash}
+    # Rewriting a creator's line and saving it over theirs, unprompted, during a prepare they asked
+    # for for other reasons. Off: the mismatch is now shown to them with both remedies instead.
+    auto-apply: ${VIDEO_GEN_DIALOGUE_FIT_AUTO_APPLY:false}
+    # Breath left after the last word so a clip does not end on a consonant.
+    tail-seconds: ${VIDEO_GEN_DIALOGUE_FIT_TAIL_SECONDS:0.4}
+    # Only for a line nobody has synthesized yet, and never reported as a measurement: speaking rate
+    # varies by language, by voice and by line, so this is wrong by design. It exists so an undubbed
+    # project shows "roughly 12s in an 8s shot, worth checking" rather than a blank.
+    estimated-chars-per-second: ${VIDEO_GEN_DIALOGUE_FIT_ESTIMATED_CHARS_PER_SECOND:14}
+    probe-timeout-seconds: ${VIDEO_GEN_DIALOGUE_FIT_PROBE_TIMEOUT_SECONDS:60}
   # Prepare-scene max prompt length -- the fallback for models the strategy resolver has no
   # dedicated ProviderPromptStrategy for. Per-model strategies override this.
   provider:

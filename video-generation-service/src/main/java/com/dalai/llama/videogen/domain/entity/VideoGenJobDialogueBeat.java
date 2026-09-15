@@ -71,6 +71,13 @@ public class VideoGenJobDialogueBeat {
     @Column(name = "language_code", length = 16)
     private String languageCode;
 
+    /** Measured spoken length of this beat's line, snapshotted at prepare time. Null when the line
+     * had not been synthesized yet. See V31 for why the dub must not fall back to
+     * {@link #durationSeconds} silently -- that is the planned guess, and using it to place the
+     * pause markers is what made every beat after an over-running one drift late. */
+    @Column(name = "measured_seconds")
+    private BigDecimal measuredSeconds;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

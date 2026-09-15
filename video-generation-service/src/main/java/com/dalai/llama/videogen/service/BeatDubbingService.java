@@ -1,6 +1,7 @@
 package com.dalai.llama.videogen.service;
 
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueFitMath;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayLanguageSelection;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
@@ -52,10 +53,6 @@ public class BeatDubbingService {
     private final long ffmpegTimeoutSeconds;
     private final String defaultDubBucket;
 
-    /** Slack before bothering to re-encode: a track a few frames over the shot is not what
-     * anyone means by cut-off dialogue. */
-    private static final double FIT_TOLERANCE_SECONDS = 0.25;
-
     public BeatDubbingService(
             LlmGatewayClient llmGatewayClient,
             SceneEnergyStrategyResolver sceneEnergyStrategyResolver,
@@ -98,7 +95,15 @@ public class BeatDubbingService {
     }
 
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl) {
-        return dub(tenantId, jobId, projectId, beats, silentVideoUrl, null, null, null);
+        return dub(tenantId, jobId, projectId, beats, silentVideoUrl, null, null, null, null);
+    }
+
+    /** Pre-fps arity, kept so existing callers compile. Falls back to the assumed frame rate for
+     * the gap and offset snapping, same as a shot whose plan states none. */
+    public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl,
+                         String voiceCloneModelOverride, String ttsModelOverride, Integer shotDurationSeconds) {
+        return dub(tenantId, jobId, projectId, beats, silentVideoUrl, voiceCloneModelOverride, ttsModelOverride,
+                shotDurationSeconds, null);
     }
 
     /** {@code voiceCloneModelOverride}: a project's picked model (from llm-gateway's real
@@ -114,7 +119,8 @@ public class BeatDubbingService {
      * built-in-voice direct call), and via {@link SceneEnergyStrategyResolver} which mechanism
      * conveys this shot's emotion to it. */
     public DubResult dub(String tenantId, UUID jobId, UUID projectId, List<DialogueBeat> beats, String silentVideoUrl,
-                          String voiceCloneModelOverride, String ttsModelOverride, Integer shotDurationSeconds) {
+                          String voiceCloneModelOverride, String ttsModelOverride, Integer shotDurationSeconds,
+                          Integer shotFps) {
         List<DialogueBeat> sorted = beats.stream()
                 .sorted(Comparator.comparing(DialogueBeat::startSeconds))
                 .toList();
@@ -132,7 +138,7 @@ public class BeatDubbingService {
         String resolvedTtsModel = ttsModelOverride == null || ttsModelOverride.isBlank() ? ttsModel : ttsModelOverride;
         boolean fused = !useDirectVoice && model.toLowerCase(Locale.ROOT).contains("minimax");
         String rawText = fused
-                ? buildPausedText(sorted)
+                ? buildPausedText(sorted, shotFps)
                 : sorted.stream().map(DialogueBeat::text).collect(java.util.stream.Collectors.joining(" "));
         // MiniMax's fused clone+synthesize is a different provider/request shape entirely (no
         // voice_settings concept) -- scene energy only applies to the ElevenLabs TTS paths.
@@ -156,9 +162,17 @@ public class BeatDubbingService {
 
         // Fit before merging, not after: the merge pins the track to the video's length, so an
         // over-long take is silently severed there rather than reported.
-        String dialogueAudioUrl = fitAudioToShot(jobId, synthesis.response(), shotDurationSeconds);
+        String dialogueAudioUrl = fitAudioToShot(jobId, synthesis.response(), shotDurationSeconds, shotFps);
 
+        // Snapped to a frame boundary before it becomes a mux offset. An offset of 1.37s at 24fps
+        // falls between frames 32 and 33, and the encoder resolves that however it likes -- so the
+        // alignment becomes a number nobody chose, differing between shots of the same project.
         BigDecimal startOffset = sorted.get(0).startSeconds();
+        if (startOffset != null && startOffset.compareTo(BigDecimal.ZERO) > 0) {
+            int frameRate = shotFps == null || shotFps <= 0 ? DialogueFitMath.ASSUMED_FPS : shotFps;
+            startOffset = BigDecimal.valueOf(DialogueFitMath.snapUpToFrame(startOffset.doubleValue(), frameRate))
+                    .setScale(3, java.math.RoundingMode.HALF_UP);
+        }
         Map<String, Object> mergeParams = new LinkedHashMap<>();
         mergeParams.put("video_url", silentVideoUrl);
         mergeParams.put("audio_url", dialogueAudioUrl);
@@ -230,22 +244,47 @@ public class BeatDubbingService {
                 new LlmGatewayChatResponse.LlmGatewayUsage(0, 0, cloneCost.add(ttsCost)), tts.latencyMs());
     }
 
-    /** MiniMax's documented pause-marker syntax is {@code <#x#>}, x in [0.01, 9] seconds -- a gap
-     * longer than 9s is expressed as consecutive markers (9s chunks) since one marker can't encode
-     * it directly. */
-    private String buildPausedText(List<DialogueBeat> sorted) {
+    /**
+     * The beats as one string, with MiniMax's pause markers encoding the gaps between them.
+     *
+     * <p>Documented syntax is {@code <#x#>}, x in [0.01, 9] seconds -- a gap longer than 9s is
+     * expressed as consecutive markers (9s chunks) since one marker cannot encode it directly.
+     *
+     * <p>The cursor advances by how long each line actually takes to say, not by the duration the
+     * shot list planned for it. That distinction was the bug: the planned duration is a guess
+     * written before anyone heard the line, so the moment one beat ran longer than planned, the gap
+     * computed for the next beat was too long by the difference. Every later beat inherited it and
+     * the error accumulated, so a shot's last line landed seconds behind the picture -- or past the
+     * end of the clip, where the mux cuts it off. The gaps are also snapped to the frame grid and
+     * never allowed to go negative: a negative gap emitted no marker at all, which silently pulled
+     * the rest of the timeline forward instead of reporting that the beats overlap.
+     *
+     * @param fps the shot's frame rate, for snapping gaps to frame boundaries. Null falls back to
+     *            {@link DialogueFitMath#ASSUMED_FPS}, since a gap still has to land somewhere.
+     */
+    private String buildPausedText(List<DialogueBeat> sorted, Integer fps) {
+        int frameRate = fps == null || fps <= 0 ? DialogueFitMath.ASSUMED_FPS : fps;
         StringBuilder sb = new StringBuilder();
-        BigDecimal cursor = BigDecimal.ZERO;
+        double cursor = 0;
         for (DialogueBeat beat : sorted) {
-            appendPause(sb, beat.startSeconds().subtract(cursor));
+            double start = beat.startSeconds() == null ? cursor : beat.startSeconds().doubleValue();
+            double gap = DialogueFitMath.gapBefore(cursor, start, frameRate);
+            if (gap <= 0 && start + 1e-6 < cursor) {
+                log.warn("Dialogue beat starts before the previous line has finished speaking"
+                                + " (start={}s, speech already at {}s) -- the gap is dropped rather than"
+                                + " pulling the rest of the shot forward.",
+                        String.format(Locale.ROOT, "%.2f", start), String.format(Locale.ROOT, "%.2f", cursor));
+            }
+            appendPause(sb, gap);
             sb.append(beat.text());
-            cursor = beat.startSeconds().add(beat.durationSeconds());
+            BigDecimal spoken = beat.effectiveSeconds();
+            cursor = Math.max(cursor, start) + (spoken == null ? 0 : spoken.doubleValue());
         }
         return sb.toString();
     }
 
-    private void appendPause(StringBuilder sb, BigDecimal gapSeconds) {
-        double remaining = gapSeconds.doubleValue();
+    private void appendPause(StringBuilder sb, double gapSeconds) {
+        double remaining = gapSeconds;
         while (remaining > 0.01) {
             double chunk = Math.min(remaining, 9.0);
             sb.append("<#").append(String.format(Locale.ROOT, "%.2f", chunk)).append("#>");
@@ -275,7 +314,7 @@ public class BeatDubbingService {
      * <p>Returns the original URL unchanged if it already fits, or if anything here fails -- the
      * dub is worth more than the trim.
      */
-    private String fitAudioToShot(UUID jobId, String audioUrl, Integer shotDurationSeconds) {
+    private String fitAudioToShot(UUID jobId, String audioUrl, Integer shotDurationSeconds, Integer shotFps) {
         if (audioUrl == null || shotDurationSeconds == null || shotDurationSeconds <= 0) {
             return audioUrl;
         }
@@ -290,7 +329,11 @@ public class BeatDubbingService {
                 return audioUrl;
             }
             double shotSeconds = shotDurationSeconds;
-            if (actualSeconds <= shotSeconds + FIT_TOLERANCE_SECONDS) {
+            // One frame of slack, not a fixed quarter-second: a quarter of a second is six frames at
+            // 24fps and twelve at 48, so a constant in seconds is a different amount of tolerance on
+            // every project. A track within one frame of the shot cannot be trimmed to fit better.
+            int frameRate = shotFps == null || shotFps <= 0 ? DialogueFitMath.ASSUMED_FPS : shotFps;
+            if (DialogueFitMath.framesCeil(actualSeconds, frameRate) <= shotDurationSeconds * frameRate) {
                 return audioUrl;
             }
 

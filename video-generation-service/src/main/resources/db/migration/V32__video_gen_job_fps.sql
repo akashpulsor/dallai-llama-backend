@@ -1,0 +1,15 @@
+-- The frame rate this shot was planned at, snapshotted onto the job.
+--
+-- Needed at approve time, not just at prepare time: whether a line fits the clip it is going to be
+-- generated into is settled in FRAMES -- a clip is an integer number of them, so a frame is the
+-- smallest difference between audio and picture that can be acted on at all. Comparing in seconds
+-- against a fixed slack means something different on every project, since a quarter of a second is
+-- six frames at 24fps and twelve at 48.
+--
+-- Snapshotted rather than re-read from pre-production for the same reason duration_seconds and
+-- cloned_voice_id already are: a job can be approved long after the shot behind it was edited, and
+-- the guard has to judge the shot the creator actually reviewed.
+--
+-- Nullable -- an unset frame rate means the plan has no opinion, not that it is zero, and the maths
+-- says so by reporting the rate it assumed instead of presenting it as fact.
+ALTER TABLE video_gen_job ADD COLUMN fps INTEGER;

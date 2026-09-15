@@ -1,0 +1,13 @@
+-- How long a synthesized take actually runs, measured once when it is saved.
+--
+-- The fit between a shot's dialogue and its clip length can only be settled against the real
+-- audio: characters per second is not a constant across languages, voices, or two lines of the
+-- same length with different syllable counts, so any text-derived budget is wrong for some
+-- project. Measuring is therefore the only honest answer -- but probing every beat on every
+-- prepare would put an ffprobe per beat on the request path, for audio whose length has not
+-- changed since it was synthesized.
+--
+-- So it is measured at the one moment the bytes are already in hand, and prepare-time fit becomes
+-- a plain SELECT. Nullable because rows written before this column existed have no measurement;
+-- those fall back to probing on read, which also backfills them.
+ALTER TABLE cloned_voice_audio ADD COLUMN duration_ms INTEGER;

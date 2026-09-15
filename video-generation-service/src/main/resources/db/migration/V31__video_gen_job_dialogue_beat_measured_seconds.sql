@@ -1,0 +1,15 @@
+-- How long this beat's line actually takes to speak, snapshotted onto the job.
+--
+-- duration_seconds next to it is the PLANNED length from the shot list -- a number written before
+-- anyone heard the line. BeatDubbingService builds MiniMax's pause markers by advancing a cursor
+-- through the beats, and it advanced that cursor by the planned length: so as soon as one beat ran
+-- longer than planned, every beat after it was placed too early in the fused text and drifted
+-- later and later against the picture, with the last one cut off at the end of the clip.
+--
+-- The measurement has to live on the job rather than be re-read at dub time, for the same reason
+-- cloned_voice_id is snapshotted here (V26): a job can be approved long after the pre-production
+-- material behind it changed, and the dub has to use the take the creator actually reviewed.
+--
+-- Nullable: a shot whose dialogue was never synthesized ahead of generation has nothing measured,
+-- and the pause-marker code falls back to the planned length for exactly those beats.
+ALTER TABLE video_gen_job_dialogue_beat ADD COLUMN measured_seconds NUMERIC(8,3);

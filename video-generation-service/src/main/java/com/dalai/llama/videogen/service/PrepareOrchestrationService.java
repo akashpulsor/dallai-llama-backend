@@ -43,6 +43,7 @@ public class PrepareOrchestrationService {
     private final PromptBuilderService promptBuilderService;
     private final ShotPromptRepository shotPromptRepository;
     private final PreProductionServiceClient preProductionClient;
+    private final com.dalai.llama.videogen.service.dialoguefit.DialogueAudioIndex dialogueAudioIndex;
 
     /**
      * Prepares the given shots, or -- when {@code shotIds} is null/empty -- every shot the project
@@ -92,6 +93,10 @@ public class PrepareOrchestrationService {
         }
 
         Map<String, Integer> maxPromptLengthCache = new HashMap<>();
+        // The measured length of every already-synthesized line in the project, read once for the
+        // whole batch rather than per shot -- see DialogueAudioIndex's class comment.
+        com.dalai.llama.videogen.service.dialoguefit.DialogueAudioIndex.Index audioIndex =
+                dialogueAudioIndex.forProject(ctx.tenantId(), projectId);
         // An explicit modelPin in the request beats the project's stored preference -- it's what
         // the creator has selected in the dropdown right now, which may not have been PUT to
         // project-config yet. Same precedence buildTechnical() applies per shot.
@@ -126,7 +131,7 @@ public class PrepareOrchestrationService {
                 long shotStartMs = System.currentTimeMillis();
                 try {
                     ShotContextAssemblyService.AssembledShot assembled = shotContextAssemblyService
-                            .assembleFromBundle(ctx.tenantId(), projectId, shotId, effectiveOverrides, bundle);
+                            .assembleFromBundle(ctx.tenantId(), projectId, shotId, effectiveOverrides, bundle, audioIndex);
                     GenerateShotRequest generateRequest = new GenerateShotRequest(
                             projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
                     ShotGenerationOrchestrator.PreparedShot preparedShot =

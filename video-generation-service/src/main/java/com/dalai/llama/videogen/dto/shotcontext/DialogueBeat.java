@@ -26,6 +26,32 @@ public record DialogueBeat(
          * DialogueBeat.languageCode javadoc). Forwarded by {@code BeatDubbingService} into the
          * TTS call as an explicit hint so eleven_multilingual_v2 doesn't misidentify the target
          * language from romanized text alone. Nullable. */
-        String languageCode
+        String languageCode,
+        /** How long this line actually takes to speak, measured from the take synthesized ahead of
+         * generation ("Prepare all dialogues"), in seconds.
+         *
+         * <p>Distinct from {@link #durationSeconds}, which is the shot list's PLANNED length --
+         * written before anyone heard the line, and so routinely wrong by a second or more. The
+         * planned number is still what the creator edits and what the timeline is drawn from; this
+         * one is what the audio does.
+         *
+         * <p>Null when the line has not been synthesized yet, which is the honest state before a
+         * dub: callers fall back to the planned length and say the figure is an estimate rather
+         * than presenting a guess as a measurement. */
+        java.math.BigDecimal measuredSeconds
 ) {
+
+    /** Pre-measurement arity, kept so existing callers and tests compile unchanged. */
+    public DialogueBeat(BigDecimal startSeconds, BigDecimal durationSeconds, String text, String characterKey,
+                        String voiceReferenceUrl, String clonedVoiceId, String clonedVoiceProviderId,
+                        String builtinVoiceId, String emotion, String languageCode) {
+        this(startSeconds, durationSeconds, text, characterKey, voiceReferenceUrl, clonedVoiceId,
+                clonedVoiceProviderId, builtinVoiceId, emotion, languageCode, null);
+    }
+
+    /** The length to time this beat against: what was measured if anything was, else the plan's
+     * guess. One place, because every caller that needs a length needs the same precedence. */
+    public BigDecimal effectiveSeconds() {
+        return measuredSeconds != null && measuredSeconds.signum() > 0 ? measuredSeconds : durationSeconds;
+    }
 }

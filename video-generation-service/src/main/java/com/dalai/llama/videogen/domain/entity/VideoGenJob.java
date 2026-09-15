@@ -54,6 +54,12 @@ public class VideoGenJob {
     @Column(name = "duration_seconds")
     private Integer durationSeconds;
 
+    /** The shot's planned frame rate. Carried so the dialogue-fit guard at approve time can compare
+     * audio against picture in frames -- see V32 for why that unit and not seconds. Nullable: unset
+     * means the plan stated no frame rate. */
+    @Column(name = "fps")
+    private Integer fps;
+
     @Column(name = "aspect_ratio", length = 16)
     private String aspectRatio;
 

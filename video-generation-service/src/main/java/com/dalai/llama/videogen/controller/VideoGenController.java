@@ -97,9 +97,20 @@ public class VideoGenController {
         return ResponseEntity.status(302).location(java.net.URI.create(signedUrl)).build();
     }
 
+    /** {@code dialogueFit}: what to do when the shot's line does not fit the clip it was planned
+     * for. EXTEND (the default) gives the shot the seconds the line needs, so nothing is cut.
+     * KEEP_PLANNED generates it as planned and accepts a hurried or clipped tail -- "go with the
+     * original". Rewriting the line is the third option and never arrives here: it changes the shot's
+     * text, so by approval time the line simply fits.
+     *
+     * <p>A line too long for ANY clip this model makes is refused unless KEEP_PLANNED says otherwise,
+     * because the alternative is a render that is paid for and then unusable. */
     @PostMapping("/v1/jobs/{jobId}/approve")
-    public ResponseEntity<VideoGenJobView> approve(@PathVariable UUID jobId) {
-        return ResponseEntity.ok(orchestrator.approve(tenant(), jobId));
+    public ResponseEntity<VideoGenJobView> approve(
+            @PathVariable UUID jobId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String dialogueFit) {
+        return ResponseEntity.ok(orchestrator.approve(tenant(), jobId,
+                com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice.parse(dialogueFit)));
     }
 
     @PostMapping("/v1/jobs/{jobId}/reject")
