@@ -38,7 +38,8 @@ public class FinalRenderController {
 
     @PostMapping("")
     public ResponseEntity<FinalRenderJobView> create(@Valid @RequestBody CreateFinalRenderRequest request) {
-        FinalRenderJob job = finalRenderService.assemble(TenantContextHolder.get(), request.projectId());
+        FinalRenderJob job = finalRenderService.assemble(TenantContextHolder.get(), request.projectId(),
+                request.silentShotRefs() == null ? java.util.Set.of() : java.util.Set.copyOf(request.silentShotRefs()));
         return ResponseEntity.ok(toView(job));
     }
 
@@ -86,5 +87,8 @@ public class FinalRenderController {
         );
     }
 
-    public record CreateFinalRenderRequest(@NotNull UUID projectId) {}
+    /** {@code silentShotRefs}: shots whose voice is left out of THIS cut. A render-time choice --
+     * the clips themselves are untouched, and the next assembly can include every voice again. Omit
+     * or send empty to keep all audio. */
+    public record CreateFinalRenderRequest(@NotNull UUID projectId, java.util.List<String> silentShotRefs) {}
 }

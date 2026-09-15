@@ -73,6 +73,22 @@ public class FinalRenderService {
     }
 
     public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId) {
+        return assemble(tenantContext, projectId, java.util.Set.of());
+    }
+
+    /**
+     * @param silentShotRefs shots whose voice is to be left out of this cut.
+     *
+     * <p>A render-time choice, not an edit: the clips are untouched and the next assembly can
+     * include every voice again. It is the same decision an editor makes on a timeline -- this shot
+     * speaks, that one plays under the music -- and it belongs here rather than being burned into a
+     * clip, because the answer can differ between two cuts of the same film.
+     *
+     * <p>Silenced by replacing the track, never by removing it: the concat below demands an audio
+     * stream on every input, so a clip with none would fail the assembly rather than play quietly.
+     */
+    public FinalRenderJob assemble(TenantContext tenantContext, UUID projectId,
+                                   java.util.Set<String> silentShotRefs) {
         UUID tenantId = tenantContext.tenantId();
 
         // 1. Enumerate shots pre-prod knows about (canonical order + expected count).
@@ -134,6 +150,11 @@ public class FinalRenderService {
                 VideoGenJob job = ordered.get(i);
                 Path clipPath = workDir.resolve("%03d-%s.mp4".formatted(i + 1, job.getJobId()));
                 assetPersistenceService.downloadTo(job.getOutputBucket(), job.getOutputObjectKey(), clipPath);
+                if (silentShotRefs != null && silentShotRefs.contains(job.getShotRef())) {
+                    clipPath = silencedCopy(workDir, clipPath, i + 1);
+                    log.info("Leaving this shot's voice out of the cut renderId={} shotRef={}",
+                            renderId, job.getShotRef());
+                }
                 clipPaths.add(clipPath);
             }
 
@@ -188,6 +209,23 @@ public class FinalRenderService {
                     .formatted(renderId, job.getStatus()));
         }
         return assetPersistenceService.presignedUrl(job.getOutputBucket(), job.getOutputObjectKey());
+    }
+
+    /**
+     * The same clip with a silent track in place of its audio.
+     *
+     * <p>anullsrc rather than {@code -an}: the concat filter used below is {@code a=1}, so every
+     * input must carry an audio stream. Removing one would not silence the shot, it would fail the
+     * whole assembly. The video is stream-copied, so nothing about the picture changes and the
+     * original file is left where it was.
+     */
+    private Path silencedCopy(Path workDir, Path clip, int index) throws Exception {
+        Path silenced = workDir.resolve("%03d-silent.mp4".formatted(index));
+        runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(),
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+                "-shortest", silenced.toString()));
+        return Files.exists(silenced) && Files.size(silenced) > 0 ? silenced : clip;
     }
 
     /** Fast path: {@code -c copy} concat. Requires every input to share codec/framerate/
