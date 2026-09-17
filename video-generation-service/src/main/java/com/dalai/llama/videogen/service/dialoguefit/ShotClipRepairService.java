@@ -87,11 +87,24 @@ public class ShotClipRepairService {
         VideoGenJob job = latestCompletedJob(tenantId, shotId);
         String clipUrl = job.getOutputBucket() == null ? job.getOutputUri()
                 : assetPersistenceService.presignedUrl(job.getOutputBucket(), job.getOutputObjectKey());
-        String audioUrl = dubbedAudioUrl(tenantId, projectId, shotId);
+        CloneAudioService.CloneAudioView take = dubbedTake(tenantId, projectId, shotId);
+        String audioUrl = take == null ? null : take.audioUrl();
+        // The clip is still probed: its exact length is what a tail gets sized against, and the
+        // job's stored duration is a whole number rounded up from it.
         double clipSeconds = durationProbe.probeUrl(clipUrl);
-        double audioSeconds = durationProbe.probeUrl(audioUrl);
+        // The take's length is NOT probed. It was measured when the take was saved and stored to
+        // the millisecond, so fetching the file again over the network to re-measure it is a second
+        // or so of waiting for a number already in hand -- once per card, every time the panel
+        // renders. Probing stays as the fallback for takes saved before lengths were recorded.
+        Double audioSeconds = null;
+        if (take != null && take.durationMs() != null && take.durationMs() > 0) {
+            audioSeconds = take.durationMs() / 1000.0;
+        } else if (audioUrl != null) {
+            double probed = durationProbe.probeUrl(audioUrl);
+            audioSeconds = probed > 0 ? probed : null;
+        }
         return new RepairSources(job.getJobId(), clipUrl, audioUrl,
-                clipSeconds > 0 ? clipSeconds : null, audioSeconds > 0 ? audioSeconds : null,
+                clipSeconds > 0 ? clipSeconds : null, audioSeconds,
                 job.getOutputOrigin());
     }
 
@@ -346,13 +359,18 @@ public class ShotClipRepairService {
     }
 
     private String dubbedAudioUrl(UUID tenantId, UUID projectId, UUID shotId) {
-        List<CloneAudioService.CloneAudioView> takes = cloneAudioService.list(tenantId, projectId);
-        return takes.stream()
+        CloneAudioService.CloneAudioView take = dubbedTake(tenantId, projectId, shotId);
+        return take == null ? null : take.audioUrl();
+    }
+
+    /** The take itself rather than just its URL, so callers can read the length that was measured
+     * when it was saved instead of fetching the audio again to re-measure it. */
+    private CloneAudioService.CloneAudioView dubbedTake(UUID tenantId, UUID projectId, UUID shotId) {
+        return cloneAudioService.list(tenantId, projectId).stream()
                 .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
                 // Longest take wins when a shot has several: it is the one that decides whether the
                 // clip is long enough, so sizing a tail from a shorter one would still cut.
                 .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
-                .map(CloneAudioService.CloneAudioView::audioUrl)
                 .orElse(null);
     }
 
