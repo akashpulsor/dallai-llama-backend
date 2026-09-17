@@ -2,7 +2,6 @@ package com.dalai.llama.postprod.service.videogen;
 
 import com.dalai.llama.postprod.service.PostProductionException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -66,30 +65,32 @@ public class HttpVideoGenerationClient implements VideoGenerationClient {
 
     @Override
     public String getShotVideoUrl(UUID tenantId, UUID videoGenJobId) {
-        // video-generation-service's GET /v1/jobs/{id}/video is a 302 redirect to a signed MinIO
-        // URL -- resolved without following it, since we want the URL itself (to re-download and
-        // persist our own copy), not to fetch the video through this client.
+        // On the internal route, which answers the signed MinIO URL as a value. The creator-facing
+        // /v1/jobs/{id}/video returns that same URL as a 302, and a browser is right to use it --
+        // but it sits behind JWT auth, and this call is made from a background thread with no user
+        // token, so it answered 401. Same mistake as listJobsForProject above, one layer further
+        // in: /v1/jobs IS in video-generation-service's Istio apiPaths, so it cleared RBAC and was
+        // refused by Spring Security instead.
         try {
-            return webClient.get()
-                    .uri("/v1/jobs/{jobId}/video", videoGenJobId)
-                    .header("X-Tenant-ID", tenantId.toString())
-                    .exchangeToMono(response -> {
-                        HttpStatusCode status = response.statusCode();
-                        if (status.is3xxRedirection()) {
-                            String location = response.headers().header("Location").stream().findFirst().orElse(null);
-                            if (location == null || location.isBlank()) {
-                                return reactor.core.publisher.Mono.error(PostProductionException.upstream(
-                                        "video-generation-service /v1/jobs/%s/video redirected with no Location header".formatted(videoGenJobId)));
-                            }
-                            return reactor.core.publisher.Mono.just(location);
-                        }
-                        return response.createException().flatMap(reactor.core.publisher.Mono::error);
-                    })
+            VideoUrl videoUrl = webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/jobs/{jobId}/video-url",
+                            tenantId, videoGenJobId)
+                    .retrieve()
+                    .bodyToMono(VideoUrl.class)
                     .block(Duration.ofMillis(timeoutMs));
+            if (videoUrl == null || videoUrl.url() == null || videoUrl.url().isBlank()) {
+                throw PostProductionException.upstream(
+                        "video-generation-service returned no video URL for job %s".formatted(videoGenJobId));
+            }
+            return videoUrl.url();
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "video-generation-service /v1/jobs/%s/video failed status=%s body=%s"
+                    "video-generation-service video-url for job %s failed status=%s body=%s"
                             .formatted(videoGenJobId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
+    }
+
+    /** The one field the internal video-url route returns. */
+    private record VideoUrl(String url) {
     }
 }

@@ -12,8 +12,10 @@ public interface VideoGenerationClient {
      * knowing the shot_ref list. */
     List<VideoGenShotJob> listJobsForProject(UUID tenantId, UUID projectId);
 
-    /** A short-lived signed URL for the generated clip, resolved from video-generation-service's
-     * own {@code GET /v1/jobs/{jobId}/video} redirect. */
+    /** A short-lived signed URL for the generated clip, from video-generation-service's internal
+     * {@code GET /api/v1/internal/tenants/{tenantId}/jobs/{jobId}/video-url}. Not the creator-facing
+     * {@code /v1/jobs/{jobId}/video} redirect, which serves the same URL to a browser but requires a
+     * JWT this call has no way to supply. */
     String getShotVideoUrl(UUID tenantId, UUID videoGenJobId);
 
     /** The shot's current clip and the recorded take that belongs on it -- what post-production
