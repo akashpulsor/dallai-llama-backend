@@ -343,7 +343,11 @@ public class BeatDubbingService {
         Path workDir = null;
         try {
             workDir = Files.createTempDirectory("dub-fit-" + jobId);
-            Path source = workDir.resolve("dialogue-in");
+            // Named after what it actually is. ffprobe falls back to the file extension when the
+            // stream itself is ambiguous, and a file called "dialogue-in" tells it nothing -- an
+            // unreadable probe returns here as "already fits" and skips the trim silently, which is
+            // the same quiet failure as the data: URI above and just as hard to see.
+            Path source = workDir.resolve("dialogue-in" + audioSuffix(audioUrl));
             download(audioUrl, source);
 
             double actualSeconds = probeDurationSeconds(source);
@@ -429,7 +433,52 @@ public class BeatDubbingService {
         }
     }
 
+    /** The extension ffprobe should see, taken from the data URI's declared type or the link's own
+     * ending. Defaults to mp3, which is what this pipeline's TTS returns. */
+    private static String audioSuffix(String url) {
+        String lower = url == null ? "" : url.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("data:")) {
+            int separator = lower.indexOf(',');
+            String header = separator < 0 ? lower : lower.substring(0, separator);
+            if (header.contains("wav")) return ".wav";
+            if (header.contains("ogg") || header.contains("opus")) return ".ogg";
+            if (header.contains("flac")) return ".flac";
+            if (header.contains("aac") || header.contains("mp4") || header.contains("m4a")) return ".m4a";
+            return ".mp3";
+        }
+        for (String suffix : List.of(".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")) {
+            if (lower.contains(suffix)) return suffix;
+        }
+        return ".mp3";
+    }
+
+    /**
+     * Writes the audio at {@code url} to a file, whether it is a link or the bytes themselves.
+     *
+     * <p>The TTS call returns its audio inline as a {@code data:audio/...;base64,...} URI, not as a
+     * link -- and this opened everything as a URL, so the moment a line needed fitting the fetch
+     * threw {@code unknown protocol: data}. Fitting is wrapped in a best-effort catch that keeps the
+     * original track, so nothing failed loudly: the trim was simply skipped every single time and
+     * the untrimmed line went on to be cut by the mux instead. Exactly the failure the fitting
+     * exists to prevent, on the shots that need it most.
+     */
     private void download(String url, Path target) throws Exception {
+        if (url != null && url.startsWith("data:")) {
+            int separator = url.indexOf(',');
+            if (separator < 0) {
+                throw new IllegalArgumentException("Audio data URI has no comma separating its payload");
+            }
+            String header = url.substring(0, separator);
+            if (!header.endsWith(";base64")) {
+                throw new IllegalArgumentException("Audio data URI is not base64: " + header);
+            }
+            byte[] bytes = java.util.Base64.getDecoder().decode(url.substring(separator + 1));
+            if (bytes.length == 0) {
+                throw new IllegalArgumentException("Audio data URI decoded to nothing");
+            }
+            Files.write(target, bytes);
+            return;
+        }
         try (var in = java.net.URI.create(url).toURL().openStream()) {
             Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
