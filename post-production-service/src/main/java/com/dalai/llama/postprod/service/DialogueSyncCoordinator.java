@@ -80,7 +80,7 @@ public class DialogueSyncCoordinator {
                                 String voiceCloneModel, String ttsModel, String lipSyncModel,
                                 boolean alreadyAutoDubbed) {
         // 1. Dialogue + cast details from pre-production, by project_id + shot.
-        PreProductionShotDetails shotDetails = preProductionClient.getShotDialogue(tenantId, projectId, null, shotRef);
+        PreProductionShotDetails shotDetails = preProductionClient.getShotDialogue(tenantId, projectId, shotRef);
 
         // 2. The already-generated shot from video-generation-service.
         String sourceVideoUrl = videoGenerationClient.getShotVideoUrl(tenantId, videoGenJobId);

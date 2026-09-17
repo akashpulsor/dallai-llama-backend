@@ -9,12 +9,14 @@ import com.dalai.llama.preprod.dto.LightingPlanView;
 import com.dalai.llama.preprod.dto.PrepareBundleView;
 import com.dalai.llama.preprod.dto.ProjectConfigView;
 import com.dalai.llama.preprod.dto.ScriptView;
+import com.dalai.llama.preprod.dto.ShotDialogueView;
 import com.dalai.llama.preprod.dto.ShotBackgroundMusicView;
 import com.dalai.llama.preprod.dto.ShotDialogueBeatView;
 import com.dalai.llama.preprod.dto.ShotImageView;
 import com.dalai.llama.preprod.dto.ShotProductReferenceView;
 import com.dalai.llama.preprod.dto.ShotView;
 import com.dalai.llama.preprod.dto.UpdateShotRequest;
+import com.dalai.llama.preprod.service.DialogueDetailsService;
 import com.dalai.llama.preprod.service.CameraPlanService;
 import com.dalai.llama.preprod.service.CastAssignmentService;
 import com.dalai.llama.preprod.service.CastProfileService;
@@ -66,6 +68,7 @@ public class InternalShotAssemblyController {
     private final ShotBackgroundMusicService shotBackgroundMusicService;
     private final ShotProductReferenceService shotProductReferenceService;
     private final PrepareBundleAssembler prepareBundleAssembler;
+    private final DialogueDetailsService dialogueDetailsService;
 
     public InternalShotAssemblyController(
             ContinuityBibleService continuityBibleService,
@@ -80,7 +83,8 @@ public class InternalShotAssemblyController {
             ShotImageService shotImageService,
             ShotBackgroundMusicService shotBackgroundMusicService,
             ShotProductReferenceService shotProductReferenceService,
-            PrepareBundleAssembler prepareBundleAssembler
+            PrepareBundleAssembler prepareBundleAssembler,
+            DialogueDetailsService dialogueDetailsService
     ) {
         this.continuityBibleService = continuityBibleService;
         this.projectConfigService = projectConfigService;
@@ -95,6 +99,7 @@ public class InternalShotAssemblyController {
         this.shotBackgroundMusicService = shotBackgroundMusicService;
         this.shotProductReferenceService = shotProductReferenceService;
         this.prepareBundleAssembler = prepareBundleAssembler;
+        this.dialogueDetailsService = dialogueDetailsService;
     }
 
     /** Fat aggregate: everything video-gen needs for a project prepare in one call -- see
@@ -128,6 +133,25 @@ public class InternalShotAssemblyController {
     @GetMapping("/projects/{projectId}/cast-profiles")
     public ResponseEntity<List<CastProfileView>> castProfiles(@PathVariable UUID tenantId, @PathVariable UUID projectId) {
         return ResponseEntity.ok(castProfileService.list(tenantId, projectId, null));
+    }
+
+    /**
+     * One shot's dialogue and cast details, for post-production's dub pipeline.
+     *
+     * <p>The creator-facing {@code GET /v1/projects/{id}/shots/{ref}/dialogue} serves the same thing
+     * and has no browser caller at all -- its own javadoc names DialogueSyncCoordinator as who it is
+     * for. Being on {@code /v1/**} it requires a JWT, and that pipeline runs on a background thread
+     * with no user token to send, so it answered 401 and the dub failed on its very first call.
+     *
+     * <p>No {@code scriptId} parameter. The creator-facing route accepts one and discards it -- the
+     * service method has no such argument -- and the only caller passes null. Carrying a parameter
+     * that has never done anything is worse than not having it.
+     */
+    @GetMapping("/projects/{projectId}/shots/{shotRef}/dialogue")
+    public ResponseEntity<ShotDialogueView> shotDialogue(@PathVariable UUID tenantId,
+                                                         @PathVariable UUID projectId,
+                                                         @PathVariable String shotRef) {
+        return ResponseEntity.ok(dialogueDetailsService.getShotDialogue(tenantId, projectId, shotRef));
     }
 
     @GetMapping("/projects/{projectId}/shots")

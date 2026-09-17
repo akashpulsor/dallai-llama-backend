@@ -26,5 +26,5 @@ public interface PreProductionClient {
      * The shape every shot is padded to when they are joined. */
     String getAspectRatio(UUID tenantId, UUID projectId);
 
-    PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, UUID scriptId, String shotRef);
+    PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, String shotRef);
 }

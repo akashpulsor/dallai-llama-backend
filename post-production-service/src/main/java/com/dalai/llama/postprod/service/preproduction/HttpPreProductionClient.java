@@ -14,10 +14,9 @@ import java.util.UUID;
  * pre-production-service is a separate, dedicated service with its own DB, per explicit direction
  * (this is NOT creator-service and creator-service is not to be touched for this).
  *
- * <p>Contract: GET /v1/projects/{projectId}/shots/{shotRef}/dialogue, with scriptId as an optional
- * query param for services that key by it instead of/in addition to project_id, and X-Tenant-ID
- * required -- pre-production-service's BaseController.tenant() 401s without it, same convention
- * every other pre-production-service controller already uses.
+ * <p>Every call here is on {@code /api/v1/internal/**}, and none carries an X-Tenant-ID header.
+ * Tenant comes from the path instead, because the internal chain is permitAll and there is no JWT
+ * to derive it from -- which is the whole reason it is reachable from a background thread at all.
  */
 @Component
 public class HttpPreProductionClient implements PreProductionClient {
@@ -92,21 +91,26 @@ public class HttpPreProductionClient implements PreProductionClient {
     }
 
     @Override
-    public PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, UUID scriptId, String shotRef) {
+    public PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, String shotRef) {
         try {
+            // On /api/v1/internal/**. The creator-facing /v1/... route serves the same thing and
+            // has no browser caller at all -- its own javadoc names this pipeline as who it is for --
+            // but /v1/** requires a JWT, and this runs on a background thread with no user token, so
+            // it answered 401 and the dub failed on its first call. Third of the same mistake; see
+            // listJobsForProject in HttpVideoGenerationClient for the two before it.
+            //
+            // scriptId is no longer sent. The old route accepted it and threw it away: the service
+            // method takes no such argument, and the only caller passes null.
             return webClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path("/v1/projects/{projectId}/shots/{shotRef}/dialogue")
-                            .queryParamIfPresent("scriptId", java.util.Optional.ofNullable(scriptId))
-                            .build(projectId, shotRef))
-                    .header("X-Tenant-ID", tenantId.toString())
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotRef}/dialogue",
+                            tenantId, projectId, shotRef)
                     .retrieve()
                     .bodyToMono(PreProductionShotDetails.class)
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "pre-production-service /v1/projects/%s/shots/%s/dialogue failed status=%s body=%s"
-                            .formatted(projectId, shotRef, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+                    "pre-production-service dialogue for shot %s failed status=%s body=%s"
+                            .formatted(shotRef, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         } catch (RuntimeException ex) {
             throw PostProductionException.upstream(
                     "pre-production-service unreachable for project_id=%s shot_ref=%s: %s"
