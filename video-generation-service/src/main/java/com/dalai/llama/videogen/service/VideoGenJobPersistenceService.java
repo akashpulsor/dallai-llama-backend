@@ -33,6 +33,17 @@ public class VideoGenJobPersistenceService {
         this.videoGenJobRepository = videoGenJobRepository;
     }
 
+    /** Approved and waiting its turn. processingStartedAt is deliberately NOT set: it is what
+     * {@code StaleJobReconciliationTask} measures staleness from, and a shot has not started
+     * rendering just because it is in line behind another tenant's project. */
+    @Transactional
+    public VideoGenJob markQueued(UUID jobId) {
+        VideoGenJob job = requireJob(jobId);
+        job.setApprovalStatus(ApprovalStatus.APPROVED);
+        job.setStatus(JobStatus.QUEUED);
+        return videoGenJobRepository.save(job);
+    }
+
     /** Commits immediately -- a concurrent GET (e.g. a refreshed page re-polling) sees PROCESSING
      * for real from this point, not just after the whole dispatch chain finishes.
      * processingStartedAt is what {@code StaleJobReconciliationTask} measures staleness from. */

@@ -4,6 +4,8 @@ import com.dalai.llama.videogen.domain.ApprovalStatus;
 import com.dalai.llama.videogen.domain.FlagState;
 import com.dalai.llama.videogen.domain.FoleyCueType;
 import com.dalai.llama.videogen.domain.JobStatus;
+import com.dalai.llama.videogen.kafka.VideoGenerationRequestedEvent;
+import com.dalai.llama.videogen.kafka.VideoGenerationRequestedPublisher;
 import com.dalai.llama.videogen.domain.ReferenceKind;
 import com.dalai.llama.videogen.domain.entity.FoleyCue;
 import com.dalai.llama.videogen.domain.entity.ShotPrompt;
@@ -92,6 +94,7 @@ public class ShotGenerationOrchestrator {
     private final BeatDubbingService beatDubbingService;
     private final BackgroundMusicMixService backgroundMusicMixService;
     private final MotionGraphicPromptService motionGraphicPromptService;
+    private final VideoGenerationRequestedPublisher generationRequestedPublisher;
     private final String defaultModel;
 
     public ShotGenerationOrchestrator(
@@ -113,6 +116,7 @@ public class ShotGenerationOrchestrator {
             BeatDubbingService beatDubbingService,
             BackgroundMusicMixService backgroundMusicMixService,
             MotionGraphicPromptService motionGraphicPromptService,
+            VideoGenerationRequestedPublisher generationRequestedPublisher,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
         this.modelRecommendationService = modelRecommendationService;
@@ -133,6 +137,7 @@ public class ShotGenerationOrchestrator {
         this.beatDubbingService = beatDubbingService;
         this.backgroundMusicMixService = backgroundMusicMixService;
         this.motionGraphicPromptService = motionGraphicPromptService;
+        this.generationRequestedPublisher = generationRequestedPublisher;
         this.defaultModel = defaultModel;
     }
 
@@ -415,11 +420,61 @@ public class ShotGenerationOrchestrator {
     /** {@code fitChoice}: what to do if the shot's line does not fit the clip it was planned for --
      * give it the seconds it needs, or generate as planned and accept the line being hurried or cut.
      * See {@link DialogueFitChoice} and {@link #durationCoveringDialogue}. */
+    /**
+     * Accepts the cost and queues the render. Returns as soon as it is queued, not when it is done.
+     *
+     * <p>This used to render inline, holding the HTTP connection for minutes. Every recurring
+     * failure on this page came from that: the gateway answered 504 while the render carried on,
+     * its retries re-dispatched a non-idempotent call and billed it a second time, a closed tab
+     * lost the result of work already paid for, and the button stayed live long enough to be
+     * pressed twice. None of it is fixable while the render IS the response.
+     *
+     * <p>What stays synchronous is the money. The estimate was settled when the shot was prepared
+     * and is returned here, so a creator still sees what they are agreeing to at the moment they
+     * agree to it -- queuing a job whose cost is unknown until it runs would be the wrong trade.
+     *
+     * <p>The job is marked PROCESSING before the event goes out, so a page polling the job id sees
+     * it working immediately rather than reading PENDING_APPROVAL and concluding nothing happened.
+     * A publish that fails takes the job to FAILED with it: a PROCESSING row with no event behind
+     * it is a shot that will never render and never fail, which is the worst of both.
+     */
     public VideoGenJobView approve(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
         if (job.getStatus().isTerminal()) {
             throw VideoGenException.conflict("Cannot approve job_id=%s, already %s".formatted(jobId, job.getStatus()));
         }
+        if (job.getStatus().isInFlight()) {
+            // Already queued or already rendering. Said plainly rather than queued twice -- the
+            // second render would bill the provider again for the same shot.
+            throw VideoGenException.conflict(
+                    "This shot is already being generated -- it will appear when it finishes");
+        }
+        job = jobPersistenceService.markQueued(jobId);
+        try {
+            generationRequestedPublisher.publish(new VideoGenerationRequestedEvent(
+                    jobId, tenantContext.tenantId().toString(), job.getProjectId(),
+                    tenantContext.userId(), fitChoice));
+        } catch (RuntimeException ex) {
+            job = jobPersistenceService.finishFailure(jobId, "Could not queue for generation: " + ex.getMessage());
+            throw ex;
+        }
+        log.info("Queued a shot for generation jobId={} shotRef={} fitChoice={} estimatedCost={}",
+                jobId, job.getShotRef(), fitChoice, job.getEstimatedCost());
+        return toJobView(job);
+    }
+
+    /**
+     * Renders an approved shot. Called from the Kafka consumer, never from a request thread.
+     *
+     * <p>Deliberately NOT @Transactional -- see {@link VideoGenJobPersistenceService}. dispatch()
+     * and the MinIO persist are blocking external I/O that runs for minutes; one transaction around
+     * all of it would hold a pooled connection for that whole window and leave every intermediate
+     * state invisible to the page polling for it. Each transition commits on its own.
+     */
+    public VideoGenJobView runGeneration(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
+        VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
+        // QUEUED becomes PROCESSING here, where the render genuinely begins -- which is also what
+        // starts the clock the stale-job reaper measures against.
         job = jobPersistenceService.markProcessing(jobId);
 
         ShotPrompt prompt = shotPromptRepository.findByJobIdOrderByCreatedAtDesc(jobId).stream()

@@ -18,4 +18,14 @@ public class KafkaTopicConfig {
     public NewTopic prepareRequestedTopic(@Value("${video-gen.prepare.requested-topic}") String topic) {
         return new NewTopic(topic, 3, (short) 1);
     }
+
+    /** Generation events are keyed by TENANT, so partitions are how two tenants render at the same
+     * time while one tenant's shots queue behind each other in submission order. That ordering is
+     * the point: a generation call is the expensive, provider-rate-limited thing here, and a
+     * project of forty shots must not occupy every consumer and starve another tenant's single
+     * shot. */
+    @Bean
+    public NewTopic generationRequestedTopic(@Value("${video-gen.generation.requested-topic}") String topic) {
+        return new NewTopic(topic, 3, (short) 1);
+    }
 }
