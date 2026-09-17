@@ -31,17 +31,20 @@ public class ShotListController extends BaseController {
     private final ShotListGenerationJobService shotListGenerationJobService;
     private final ShotContextAssemblyService shotContextAssemblyService;
     private final GenerationThoughtService generationThoughtService;
+    private final com.dalai.llama.preprod.service.ShotReorderService shotReorderService;
 
     public ShotListController(
             ShotListGenerationService shotListGenerationService,
             ShotListGenerationJobService shotListGenerationJobService,
             ShotContextAssemblyService shotContextAssemblyService,
-            GenerationThoughtService generationThoughtService
+            GenerationThoughtService generationThoughtService,
+            com.dalai.llama.preprod.service.ShotReorderService shotReorderService
     ) {
         this.shotListGenerationService = shotListGenerationService;
         this.shotListGenerationJobService = shotListGenerationJobService;
         this.shotContextAssemblyService = shotContextAssemblyService;
         this.generationThoughtService = generationThoughtService;
+        this.shotReorderService = shotReorderService;
     }
 
     /**
@@ -83,6 +86,39 @@ public class ShotListController extends BaseController {
     public ResponseEntity<ShotView> updateShot(@PathVariable UUID shotId, @Valid @RequestBody UpdateShotRequest request) {
         return ResponseEntity.ok(shotListGenerationService.updateShot(tenant().tenantId(), shotId, request));
     }
+
+    /**
+     * What moving this shot would do -- asked before anything moves.
+     *
+     * <p>A read, with no side effects: the shot stays exactly where it is. Answers separately for
+     * the story, the shots either side, and anything already generated, because those cost
+     * different amounts to put right.
+     */
+    @GetMapping("/v1/projects/{projectId}/shots/{shotId}/reorder-impact")
+    public ResponseEntity<com.dalai.llama.preprod.service.ShotReorderService.ReorderImpact> reorderImpact(
+            @PathVariable UUID projectId, @PathVariable UUID shotId,
+            @org.springframework.web.bind.annotation.RequestParam int position) {
+        return ResponseEntity.ok(
+                shotReorderService.assessImpact(tenant().tenantId(), projectId, shotId, position));
+    }
+
+    /**
+     * Moves the shot and renumbers the rest. Changes nothing else.
+     *
+     * <p>Not the script, not the descriptions, not a single generated clip -- a creator reordering
+     * their edit is not asking for their plan to be rewritten. Generated video follows on its own,
+     * because clips are keyed to a shot and everything downstream orders by shot_number.
+     */
+    @PostMapping("/v1/projects/{projectId}/shots/{shotId}/reorder")
+    public ResponseEntity<List<ShotView>> reorder(
+            @PathVariable UUID projectId, @PathVariable UUID shotId,
+            @Valid @RequestBody ReorderShotRequest request) {
+        shotReorderService.reorder(tenant().tenantId(), projectId, shotId, request.position());
+        return ResponseEntity.ok(shotListGenerationService.list(tenant().tenantId(), projectId));
+    }
+
+    /** @param position where the shot should end up, 1-based. */
+    public record ReorderShotRequest(@jakarta.validation.constraints.NotNull Integer position) {}
 
     @PostMapping("/v1/shots/{shotId}/generate")
     public ResponseEntity<ShotDispatchResponse> dispatch(@PathVariable UUID shotId, @RequestBody(required = false) DispatchShotRequest request) {
