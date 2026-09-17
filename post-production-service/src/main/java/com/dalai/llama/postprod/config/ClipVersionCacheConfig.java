@@ -44,6 +44,37 @@ public class ClipVersionCacheConfig {
     /** The current cut of every shot in a project, keyed by project id. */
     public static final String PROJECT_ACTIVE_CLIPS = "projectActiveClips";
 
+    /**
+     * The mapper the cache serializes with.
+     *
+     * <p>Static and public so a test can exercise the real thing. A test that builds its own copy of
+     * these settings proves only that the copy works, which is worth nothing the moment the two
+     * drift -- and drifting is how the bug below reached production in the first place.
+     */
+    public static ObjectMapper cacheObjectMapper() {
+        //
+        // EVERYTHING, not NON_FINAL. Every cached method here returns the result of .toList(), which
+        // is a java.util.ImmutableCollections list -- and NON_FINAL does not consider those eligible
+        // for a type id, so the list was written as a BARE array:
+        //
+        //     [{"@class":"...ShotClipVersion",...},{...}]
+        //
+        // The elements carry their class, the list does not. Reading that back as Object then takes
+        // the first element for the type id and throws "expected VALUE_STRING ... that contains type
+        // id", which reached the page as a 500 on every cache HIT -- so a shot's cuts loaded once,
+        // then failed for the next five minutes until the TTL dropped the entry. EVERYTHING tags the
+        // list itself, and it does so whatever list shape a method happens to return, which matters
+        // more than the one-line diff suggests: the alternative fix is to make every cached method
+        // return a mutable ArrayList and hope nobody ever writes .toList() again.
+        return new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY)
+                .activateDefaultTyping(
+                        com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator.instance,
+                        ObjectMapper.DefaultTyping.EVERYTHING,
+                        com.fasterxml.jackson.annotation.JsonTypeInfo.As.PROPERTY);
+    }
+
     @Bean
     public RedisCacheManager clipVersionCacheManager(
             RedisConnectionFactory connectionFactory,
@@ -53,13 +84,8 @@ public class ClipVersionCacheConfig {
         // information is deliberately absent; a cache has to round-trip back into the same class,
         // so it needs typing switched on -- and changing the shared one to get that would alter
         // every API response this service sends.
-        ObjectMapper cacheMapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule())
-                .setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY)
-                .activateDefaultTyping(
-                        com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator.instance,
-                        ObjectMapper.DefaultTyping.NON_FINAL,
-                        com.fasterxml.jackson.annotation.JsonTypeInfo.As.PROPERTY);
+        ObjectMapper cacheMapper = cacheObjectMapper();
+
 
         RedisCacheConfiguration configuration = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofSeconds(ttlSeconds))
