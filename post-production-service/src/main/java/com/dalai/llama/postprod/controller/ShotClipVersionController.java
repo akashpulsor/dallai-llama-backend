@@ -45,6 +45,21 @@ public class ShotClipVersionController {
         return ResponseEntity.ok(toViews(clipVersionService.list(ctx.tenantId(), shotId)));
     }
 
+    /**
+     * Makes sure this shot has version 1 -- its generated clip -- and returns it.
+     *
+     * <p>Versions are created lazily, the first time a shot is cut, so a shot a creator is happy
+     * with has no rows at all and nothing to download, publish or point at. This is what the page
+     * calls the first time any of those is wanted.
+     */
+    @PostMapping("/baseline")
+    public ResponseEntity<ShotClipVersionView> baseline(@PathVariable UUID projectId,
+                                                        @PathVariable UUID shotId,
+                                                        @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(toView(
+                clipVersionService.importGeneratedBaseline(context(projectId, shotId, shotRef))));
+    }
+
     /** The picture with the recorded take in place of whatever audio it came with. */
     @PostMapping("/dubbed")
     public ResponseEntity<ShotClipVersionView> dubbed(@PathVariable UUID projectId,

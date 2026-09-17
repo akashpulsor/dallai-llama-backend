@@ -10,6 +10,8 @@ import com.dalai.llama.postprod.repository.FilmRenderRepository;
 import com.dalai.llama.postprod.repository.ShotClipVersionRepository;
 import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import com.dalai.llama.postprod.service.preproduction.PreProductionShotSummary;
+import com.dalai.llama.postprod.service.videogen.VideoGenShotJob;
+import com.dalai.llama.postprod.service.videogen.VideoGenerationClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -61,6 +63,8 @@ public class FilmAssemblyService {
     private final FilmAssemblyRequestedPublisher assemblyRequestedPublisher;
     private final ShotClipVersionRepository clipVersionRepository;
     private final PreProductionClient preProductionClient;
+    private final VideoGenerationClient videoGenerationClient;
+    private final ShotClipVersionService clipVersionService;
     private final FfmpegClipProcessor ffmpeg;
     private final ClipObjectStore objectStore;
 
@@ -70,11 +74,36 @@ public class FilmAssemblyService {
     public Readiness readiness(UUID tenantId, UUID projectId) {
         List<PreProductionShotSummary> shots = preProductionClient.listShots(tenantId, projectId);
         Map<UUID, ShotClipVersion> cuts = activeCutsByShot(projectId);
+
+        // A shot is ready if it has a chosen cut OR a finished render waiting to be imported.
+        //
+        // Versions are created lazily, the first time a shot is cut, which is right for cutting and
+        // wrong here: a project with thirteen finished shots and no cuts has no version rows at all,
+        // so this reported every single shot missing while every single one was generated. The
+        // generated clip is the shot's video until someone makes a different one.
+        java.util.Set<String> generated = generatedShotRefs(tenantId, projectId);
         List<String> missing = shots.stream()
                 .filter(shot -> !cuts.containsKey(shot.id()))
+                .filter(shot -> shot.shotRef() == null || !generated.contains(shot.shotRef()))
                 .map(shot -> shot.shotRef() == null ? "(unnamed)" : shot.shotRef())
                 .toList();
         return new Readiness(shots.size(), shots.size() - missing.size(), missing);
+    }
+
+    /** Shot refs whose render finished in video-generation-service. Empty rather than fatal when
+     * that service cannot be reached -- readiness then falls back to what has actually been cut,
+     * which understates rather than lies. */
+    private java.util.Set<String> generatedShotRefs(UUID tenantId, UUID projectId) {
+        try {
+            return videoGenerationClient.listJobsForProject(tenantId, projectId).stream()
+                    .filter(VideoGenShotJob::isCompleted)
+                    .map(VideoGenShotJob::shotRef)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(Collectors.toSet());
+        } catch (RuntimeException ex) {
+            log.warn("Could not read generated shots for project {}: {}", projectId, ex.getMessage());
+            return java.util.Set.of();
+        }
     }
 
     /** Records the request and returns immediately. The join itself runs off the request thread. */
@@ -128,28 +157,37 @@ public class FilmAssemblyService {
         try {
             List<PreProductionShotSummary> shots = preProductionClient.listShots(
                     render.getTenantId(), render.getProjectId());
-            Map<UUID, ShotClipVersion> cuts = activeCutsByShot(render.getProjectId());
 
-            List<ShotClipVersion> ordered = shots.stream()
+            // Any shot that has never been cut is imported at its generated clip first, so the film
+            // contains every shot whether or not the creator chose to change its sound. Done here
+            // rather than demanded up front: making a film is exactly when a shot that was only ever
+            // generated needs to become a version, and asking a creator to "cut" thirteen shots they
+            // are happy with before joining them would be busywork.
+            List<PreProductionShotSummary> ordered = shots.stream()
                     .sorted(Comparator.comparing(shot ->
                             Optional.ofNullable(shot.shotNumber()).orElse(Integer.MAX_VALUE)))
-                    .map(shot -> cuts.get(shot.id()))
-                    .filter(java.util.Objects::nonNull)
                     .toList();
-            if (ordered.size() != shots.size()) {
-                throw new ClipProcessingException(
-                        "Some shots lost their video while the film was being put together");
+            Map<UUID, ShotClipVersion> cuts = activeCutsByShot(render.getProjectId());
+            List<ShotClipVersion> cutsInOrder = new java.util.ArrayList<>(ordered.size());
+            for (PreProductionShotSummary shot : ordered) {
+                ShotClipVersion cut = cuts.get(shot.id());
+                if (cut == null) {
+                    cut = clipVersionService.importGeneratedBaseline(new ShotClipVersionService.Context(
+                            render.getTenantId(), render.getProjectId(), shot.id(), shot.shotRef(),
+                            render.getCreatedBy()));
+                }
+                cutsInOrder.add(cut);
             }
 
-            List<Path> clips = new java.util.ArrayList<>(ordered.size());
-            for (int i = 0; i < ordered.size(); i++) {
-                ShotClipVersion cut = ordered.get(i);
+            List<Path> clips = new java.util.ArrayList<>(cutsInOrder.size());
+            for (int i = 0; i < cutsInOrder.size(); i++) {
+                ShotClipVersion cut = cutsInOrder.get(i);
                 Path clip = workDir.resolve("%03d.mp4".formatted(i + 1));
                 objectStore.download(cut.getBucket(), cut.getObjectKey(), clip);
                 clips.add(clip);
             }
 
-            int[] size = targetSize(render.getTenantId(), render.getProjectId(), ordered);
+            int[] size = targetSize(render.getTenantId(), render.getProjectId(), cutsInOrder);
             Path output = workDir.resolve("film.mp4");
             ffmpeg.concat(clips, size[0], size[1], output);
 
@@ -159,9 +197,9 @@ public class FilmAssemblyService {
             }
             String objectKey = "films/%s/%s.mp4".formatted(render.getProjectId(), renderId);
             objectStore.upload(objectKey, output);
-            finishSuccess(renderId, objectKey, probe, size, ordered);
+            finishSuccess(renderId, objectKey, probe, size, cutsInOrder);
             log.info("Joined a film renderId={} projectId={} shots={} seconds={}",
-                    renderId, render.getProjectId(), ordered.size(), probe.durationSeconds());
+                    renderId, render.getProjectId(), cutsInOrder.size(), probe.durationSeconds());
         } catch (RuntimeException ex) {
             log.warn("Film assembly failed renderId={}: {}", renderId, ex.getMessage());
             finishFailure(renderId, ex.getMessage());

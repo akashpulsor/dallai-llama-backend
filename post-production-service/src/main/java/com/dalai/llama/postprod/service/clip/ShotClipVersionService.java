@@ -66,6 +66,27 @@ public class ShotClipVersionService {
         return repository.findByShotIdAndStatus(shotId, ClipVersionStatus.ACTIVE);
     }
 
+    /**
+     * Makes sure this shot has version 1 -- the clip as generated -- importing it if it does not.
+     *
+     * <p>Versions are created lazily, the first time a shot is cut. That is right for cutting and
+     * wrong for everything that asks "does this shot have a video": a project with thirteen finished
+     * shots and no cuts has no version rows at all, so assembling reported every shot missing when
+     * every shot was generated. Anything that needs the shot's current video calls this first.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
+    })
+    @Transactional
+    public ShotClipVersion importGeneratedBaseline(Context context) {
+        repository.lockByShotId(context.shotId());
+        ensureBaseline(context, clipSource(context));
+        return repository.findByShotIdAndStatus(context.shotId(), ClipVersionStatus.ACTIVE)
+                .orElseThrow(() -> new ClipProcessingException(
+                        "This shot has no video yet, so there is nothing to put in the film"));
+    }
+
     /** A new cut carrying the recorded take in place of whatever the clip came with. */
     @Caching(evict = {
             @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
