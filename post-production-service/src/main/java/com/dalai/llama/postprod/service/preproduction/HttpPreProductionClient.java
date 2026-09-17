@@ -35,6 +35,47 @@ public class HttpPreProductionClient implements PreProductionClient {
     }
 
     @Override
+    public java.util.List<PreProductionShotSummary> listShots(UUID tenantId, UUID projectId) {
+        try {
+            return webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots", tenantId, projectId)
+                    .retrieve()
+                    .bodyToFlux(PreProductionShotSummary.class)
+                    .collectList()
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw PostProductionException.upstream(
+                    "pre-production-service shots for project %s failed status=%s body=%s"
+                            .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    @Override
+    public String getAspectRatio(UUID tenantId, UUID projectId) {
+        try {
+            ProjectConfigAspect config = webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/config", tenantId, projectId)
+                    .retrieve()
+                    .bodyToMono(ProjectConfigAspect.class)
+                    .block(Duration.ofMillis(timeoutMs));
+            return config == null ? null : config.aspectRatio();
+        } catch (WebClientResponseException ex) {
+            // A project with no config yet is a normal state, not a failure -- the caller falls back
+            // to the shots' own dimensions, which is better than refusing to assemble.
+            if (ex.getStatusCode().value() == 404) {
+                return null;
+            }
+            throw PostProductionException.upstream(
+                    "pre-production-service config for project %s failed status=%s body=%s"
+                            .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    /** Only the one field of the project config this service reads. */
+    private record ProjectConfigAspect(String aspectRatio) {
+    }
+
+    @Override
     public PreProductionShotDetails getShotDialogue(UUID tenantId, UUID projectId, UUID scriptId, String shotRef) {
         try {
             return webClient.get()

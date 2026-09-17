@@ -61,6 +61,29 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: post-production-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        # Joining a film holds one record for as long as ffmpeg takes over every shot in the
+        # project. The 5-minute default would declare the consumer dead mid-join, rebalance, and
+        # hand the same film to another consumer -- doing the whole thing twice.
+        max.poll.interval.ms: ${POST_PROD_KAFKA_MAX_POLL_INTERVAL_MS:1800000}
+        # One job at a time per consumer: these are ffmpeg runs, not messages.
+        max.poll.records: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -102,6 +125,12 @@ management:
       application: ${spring.application.name}
 
 post-production:
+  # Joining the film and re-dubbing both run on this service's own Kafka worker side rather than
+  # the request thread. The consumer group IS the concurrency control -- tune parallelism by
+  # partition count, not by a thread pool nobody can see or change without a redeploy.
+  film:
+    requested-topic: ${POST_PROD_FILM_REQUESTED_TOPIC:postprod.film.requested}
+    requested-consumer-group: ${POST_PROD_FILM_REQUESTED_GROUP:post-production-service-film}
   # A separate, dedicated service with its own DB (not creator-service, per explicit direction).
   pre-production-service:
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}

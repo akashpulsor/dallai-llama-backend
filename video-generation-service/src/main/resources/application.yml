@@ -151,6 +151,11 @@ video-gen:
   prepare:
     requested-topic: ${VIDEO_GEN_PREPARE_REQUESTED_TOPIC:videogen.prepare.requested}
     requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
+  dub:
+    # Its own topic. Synthesis is a provider call with per-tenant limits, and separating it means
+    # its consumer count can be tuned against those limits without changing how fast video renders.
+    requested-topic: ${VIDEO_GEN_DUB_REQUESTED_TOPIC:videogen.dub.requested}
+    requested-consumer-group: ${VIDEO_GEN_DUB_REQUESTED_GROUP:video-generation-service-dub}
   generation:
     # Its own topic, not shared with prepare. Generation is the expensive, provider-rate-limited
     # call, and keeping it separate means its consumer count can be tuned against the model's

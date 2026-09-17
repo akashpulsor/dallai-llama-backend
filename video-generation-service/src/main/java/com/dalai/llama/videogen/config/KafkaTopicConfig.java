@@ -24,6 +24,14 @@ public class KafkaTopicConfig {
      * the point: a generation call is the expensive, provider-rate-limited thing here, and a
      * project of forty shots must not occupy every consumer and starve another tenant's single
      * shot. */
+    /** Dub events are keyed by tenant for the same reason generation events are: synthesis is a
+     * provider call with per-tenant limits, and one tenant's forty lines must not occupy every
+     * consumer. */
+    @Bean
+    public NewTopic dubRequestedTopic(@Value("${video-gen.dub.requested-topic}") String topic) {
+        return new NewTopic(topic, 3, (short) 1);
+    }
+
     @Bean
     public NewTopic generationRequestedTopic(@Value("${video-gen.generation.requested-topic}") String topic) {
         return new NewTopic(topic, 3, (short) 1);
