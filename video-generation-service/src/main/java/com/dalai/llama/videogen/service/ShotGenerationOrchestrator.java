@@ -625,13 +625,37 @@ public class ShotGenerationOrchestrator {
      * post-production") needs to discover every shot in a project without the caller having to
      * already know the full shot_ref list -- this returns the latest job per shot_ref, letting
      * the caller see at a glance which shots are COMPLETED (ready) vs. still pending/failed. */
+    /**
+     * The video each shot currently HAS -- not the newest thing anyone started for it.
+     *
+     * <p>This used to keep the newest row per shot_ref, full stop. Preparing a shot writes a new row
+     * at PENDING_APPROVAL with no output, so re-preparing a finished shot made its existing clip
+     * invisible: the card went blank, the film reported the shot missing, and the video sat
+     * untouched in storage the whole time. Two shots in the live project were in exactly that state
+     * -- a COMPLETED row with its object, buried under a PENDING_APPROVAL row created when their
+     * audio was re-cut.
+     *
+     * <p>So a finished clip wins over an unapproved one. A shot with work in progress keeps showing
+     * what it already has until the new render is approved and finishes, which is the only reading
+     * under which "prepare" is the free, reversible step it is meant to be. The pending row is still
+     * reachable -- the page reads it from the shot's prompts, which is where the approve button
+     * comes from -- so nothing is hidden, it is just no longer mistaken for the shot's video.
+     */
     public List<VideoGenJobView> listJobsForProject(UUID tenantId, UUID projectId) {
         List<VideoGenJob> jobs = videoGenJobRepository.findByTenantIdAndProjectIdOrderByCreatedAtDesc(tenantId, projectId);
-        java.util.LinkedHashMap<String, VideoGenJob> latestByShotRef = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashMap<String, VideoGenJob> chosen = new java.util.LinkedHashMap<>();
+        // Newest first, so the first COMPLETED one seen is the most recent finished render.
         for (VideoGenJob job : jobs) {
-            latestByShotRef.putIfAbsent(job.getShotRef(), job);
+            VideoGenJob held = chosen.get(job.getShotRef());
+            boolean finished = job.getStatus() == JobStatus.COMPLETED && job.getOutputObjectKey() != null;
+            if (held == null) {
+                chosen.put(job.getShotRef(), job);
+            } else if (finished && !(held.getStatus() == JobStatus.COMPLETED && held.getOutputObjectKey() != null)) {
+                // Replaces a newer row that has no video with the finished one underneath it.
+                chosen.put(job.getShotRef(), job);
+            }
         }
-        return latestByShotRef.values().stream().map(this::toJobView).toList();
+        return chosen.values().stream().map(this::toJobView).toList();
     }
 
     private ShotPromptView toPromptView(ShotPrompt prompt) {
