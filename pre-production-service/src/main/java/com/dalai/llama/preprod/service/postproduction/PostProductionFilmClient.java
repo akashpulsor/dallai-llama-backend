@@ -55,6 +55,31 @@ public class PostProductionFilmClient {
         }
     }
 
+    /** The shots a creator has chosen to show on their own, ahead of any film. Empty rather than
+     * fatal when post-production cannot be reached -- the review page renders the film it already
+     * has instead of failing outright. */
+    public java.util.List<PublishedShot> getPublishedShots(UUID tenantId, UUID projectId) {
+        try {
+            java.util.List<PublishedShot> shots = webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/clips/published",
+                            tenantId, projectId)
+                    .retrieve()
+                    .bodyToFlux(PublishedShot.class)
+                    .collectList()
+                    .block(Duration.ofMillis(timeoutMs));
+            return shots == null ? java.util.List.of() : shots;
+        } catch (RuntimeException ex) {
+            log.warn("Could not read published shots for project {}: {}", projectId, ex.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /** One shot the client may watch. Mirrors post-production's ShotClipVersionView, narrowed. */
+    public record PublishedShot(UUID versionId, String shotRef, int versionNumber,
+                                String videoUrl, BigDecimal durationSeconds,
+                                Integer width, Integer height) {
+    }
+
     /** Wire-mirror of post-production-service's {@code InternalFilmController.PublishedFilmView}. */
     public record PublishedFilm(boolean available,
                                 UUID renderId,

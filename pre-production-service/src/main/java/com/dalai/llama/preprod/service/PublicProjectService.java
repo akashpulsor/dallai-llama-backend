@@ -255,6 +255,18 @@ public class PublicProjectService {
                 view.videoUrl() != null, view.status(), url, published, view.completedAt(), aspectRatio);
     }
 
+    /** The shots the creator has chosen to show this client on their own, ahead of any film.
+     *
+     * <p>Post-production enforces the published gate, so everything returned here is something the
+     * creator agreed a client may watch. Empty is the normal state and the page renders nothing for
+     * it rather than an empty panel. */
+    @Transactional(readOnly = true)
+    public java.util.List<com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient.PublishedShot>
+            publishedShots(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return postProductionFilmClient.getPublishedShots(identity.tenantId(), identity.projectId());
+    }
+
     /** Null rather than a guessed default when the project has no config yet -- the player can
      * fall back to the video's own dimensions, which is better than forcing the wrong shape. */
     private String aspectRatioName(ProjectService.ProjectIdentity identity) {

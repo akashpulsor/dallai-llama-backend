@@ -134,6 +134,13 @@ public class PublicProjectController {
     /** The client's view of the project's assembled final video. Server enforces the
      * creator's manual download gate ({@link com.dalai.llama.preprod.domain.entity.Project#isFinalVideoDownloadUnlocked})
      * -- {@code videoUrl} is null when locked, so the URL never even reaches the client. */
+    /** Individual shots the creator published for this client, ahead of any finished film. */
+    @GetMapping("/v1/public/projects/{token}/published-shots")
+    public ResponseEntity<java.util.List<com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient.PublishedShot>>
+            publishedShots(@PathVariable String token) {
+        return ResponseEntity.ok(publicProjectService.publishedShots(token));
+    }
+
     @GetMapping("/v1/public/projects/{token}/final-video")
     public ResponseEntity<com.dalai.llama.preprod.service.PublicProjectService.PublicFinalVideoView> finalVideo(@PathVariable String token) {
         return ResponseEntity.ok(publicProjectService.finalVideo(token));

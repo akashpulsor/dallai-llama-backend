@@ -26,12 +26,23 @@ import java.util.UUID;
  */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/film")
+@RequestMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}")
 public class InternalFilmController {
 
     private final FilmAssemblyService filmAssemblyService;
+    private final com.dalai.llama.postprod.service.clip.ShotClipVersionService clipVersionService;
 
-    @GetMapping("/published")
+    /** The shots a creator has chosen to show on their own, ahead of any film. Same gate as the
+     * film: only published rows leave this method. */
+    @GetMapping("/clips/published")
+    public ResponseEntity<java.util.List<com.dalai.llama.postprod.dto.ShotClipVersionView>> publishedShots(
+            @PathVariable UUID tenantId, @PathVariable UUID projectId) {
+        return ResponseEntity.ok(clipVersionService.publishedForProject(tenantId, projectId).stream()
+                .map(v -> com.dalai.llama.postprod.dto.ShotClipVersionView.of(v, clipVersionService.playableUrl(v)))
+                .toList());
+    }
+
+    @GetMapping("/film/published")
     public ResponseEntity<PublishedFilmView> published(@PathVariable UUID tenantId,
                                                         @PathVariable UUID projectId) {
         return filmAssemblyService.latestPublished(projectId)
