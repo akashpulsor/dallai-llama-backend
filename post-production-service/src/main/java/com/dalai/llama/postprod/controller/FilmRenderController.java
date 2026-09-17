@@ -57,6 +57,17 @@ public class FilmRenderController {
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
+    /** The creator's own edit of the film. Recorded as a new render, so the joined version and the
+     * hand-edited one both survive and publishing can move between them. */
+    @PostMapping("/uploaded")
+    public ResponseEntity<FilmRenderView> uploaded(@PathVariable UUID projectId,
+                                                   @org.springframework.web.bind.annotation.RequestParam("file")
+                                                   org.springframework.web.multipart.MultipartFile file) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toView(
+                filmAssemblyService.uploadEdited(ctx.tenantId(), projectId, ctx.userId(), file)));
+    }
+
     /** Show this film on the client's review page, or take it back down. */
     @PostMapping("/{renderId}/publish")
     public ResponseEntity<FilmRenderView> publish(@PathVariable UUID projectId,

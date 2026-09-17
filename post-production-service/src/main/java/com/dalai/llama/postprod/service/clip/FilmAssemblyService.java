@@ -258,6 +258,57 @@ public class FilmAssemblyService {
         return saved;
     }
 
+    /**
+     * The creator's own edit of the film, brought back after cutting it elsewhere.
+     *
+     * <p>Recorded as a NEW film render rather than overwriting the last one, so the joined version
+     * and the hand-edited version both survive and publishing can move between them. Published
+     * state deliberately does not carry over: a client watching the previous cut keeps watching it
+     * until the creator says otherwise.
+     */
+    public FilmRender uploadEdited(UUID tenantId, UUID projectId, UUID userId,
+                                    org.springframework.web.multipart.MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ClipProcessingException("No file was uploaded");
+        }
+        Path workDir = ffmpeg.createWorkDir("film-upload-" + projectId);
+        try {
+            Path uploaded = workDir.resolve("film.mp4");
+            try {
+                file.transferTo(uploaded);
+            } catch (Exception ex) {
+                throw new ClipProcessingException("Could not read the uploaded file: " + ex.getMessage(), ex);
+            }
+            ClipProbe probe = ffmpeg.probe(uploaded);
+            if (!probe.isPlayable()) {
+                throw new ClipProcessingException(
+                        "That file has no usable video in it -- the film is unchanged");
+            }
+            UUID renderId = UUID.randomUUID();
+            String objectKey = "films/%s/%s.mp4".formatted(projectId, renderId);
+            objectStore.upload(objectKey, uploaded);
+            FilmRender render = filmRenderRepository.save(FilmRender.builder()
+                    .renderId(renderId)
+                    .tenantId(tenantId)
+                    .projectId(projectId)
+                    .status(FilmRenderStatus.COMPLETED)
+                    .bucket(objectStore.bucket())
+                    .objectKey(objectKey)
+                    .durationSeconds(probe.durationSeconds())
+                    .width(probe.width())
+                    .height(probe.height())
+                    .createdBy(userId)
+                    .createdAt(OffsetDateTime.now())
+                    .completedAt(OffsetDateTime.now())
+                    .build());
+            log.info("Creator supplied their own film projectId={} renderId={} seconds={}",
+                    projectId, renderId, probe.durationSeconds());
+            return render;
+        } finally {
+            ffmpeg.deleteQuietly(workDir);
+        }
+    }
+
     public String playableUrl(FilmRender render) {
         return render.isPlayable() ? objectStore.presignedUrl(render.getBucket(), render.getObjectKey()) : null;
     }
