@@ -302,8 +302,27 @@ public class PrepareSceneController {
                 request == null ? null : request.continuationPrompt()));
     }
 
+    /** Every clip this shot has had, newest first. Each carries a playable URL, so a version can be
+     * watched before it is chosen rather than restored to find out what it was. */
+    @GetMapping("/projects/{projectId}/shots/{shotId}/clip-versions")
+    public ResponseEntity<List<ShotClipRepairService.ClipVersion>> clipVersions(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotClipRepairService.listVersions(ctx.tenantId(), shotId));
+    }
+
+    /** Puts the shot back on one of its earlier clips. The clip being replaced is kept as a version
+     * first, so this goes both ways and changing your mind again costs nothing. */
+    @PostMapping("/projects/{projectId}/shots/{shotId}/clip-versions/{versionId}/restore")
+    public ResponseEntity<ShotClipRepairService.RepairResult> restoreClipVersion(
+            @PathVariable UUID projectId, @PathVariable UUID shotId, @PathVariable UUID versionId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotClipRepairService.restoreVersion(ctx.tenantId(), shotId, versionId));
+    }
+
     /** Puts the shot back on the clip that was generated for it, after a repair that made things
-     * worse. The generated object is still in storage under a key derived from the job id. */
+     * worse. Uses the recorded version where there is one; falls back to the derived key for shots
+     * repaired before versions were written down. */
     @PostMapping("/projects/{projectId}/shots/{shotId}/restore-clip")
     public ResponseEntity<ShotClipRepairService.RepairResult> restoreClip(
             @PathVariable UUID projectId, @PathVariable UUID shotId) {

@@ -2,7 +2,9 @@ package com.dalai.llama.videogen.service.dialoguefit;
 
 import com.dalai.llama.videogen.domain.JobStatus;
 import com.dalai.llama.videogen.domain.entity.VideoGenJob;
+import com.dalai.llama.videogen.domain.entity.VideoGenJobOutputVersion;
 import com.dalai.llama.videogen.repository.ShotPromptRepository;
+import com.dalai.llama.videogen.repository.VideoGenJobOutputVersionRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
 import com.dalai.llama.videogen.service.CloneAudioService;
 import com.dalai.llama.videogen.service.VideoAssetPersistenceService;
@@ -50,8 +52,10 @@ public class ShotClipRepairService {
     private final CloneAudioService cloneAudioService;
     private final ClipTailExtensionService tailExtensionService;
     private final AudioDurationProbe durationProbe;
+    private final VideoGenJobOutputVersionRepository outputVersionRepository;
     /** Where MinioVideoAssetPersistenceService puts a generated clip. Derived the same way it
-     * derives it, so the two cannot drift into disagreeing about where the clip lives. */
+     * derives it -- the fallback for shots repaired before versions were recorded, and nothing
+     * else. A derived key is a guess about a naming scheme; a recorded one is a fact. */
     private final String clipBucket;
     private final String clipPrefix;
 
@@ -61,6 +65,7 @@ public class ShotClipRepairService {
                                  CloneAudioService cloneAudioService,
                                  ClipTailExtensionService tailExtensionService,
                                  AudioDurationProbe durationProbe,
+                                 VideoGenJobOutputVersionRepository outputVersionRepository,
                                  @org.springframework.beans.factory.annotation.Value("${video-gen.minio.bucket}")
                                  String clipBucket,
                                  @org.springframework.beans.factory.annotation.Value("${video-gen.minio.export-prefix}")
@@ -71,6 +76,7 @@ public class ShotClipRepairService {
         this.cloneAudioService = cloneAudioService;
         this.tailExtensionService = tailExtensionService;
         this.durationProbe = durationProbe;
+        this.outputVersionRepository = outputVersionRepository;
         this.clipBucket = clipBucket;
         this.clipPrefix = exportPrefix.replaceAll("-exports$", "") + "-clips";
     }
@@ -125,6 +131,8 @@ public class ShotClipRepairService {
                 // the shot's current plan, which may have been edited since it was generated.
                 job.getResolution(), job.getAspectRatio());
 
+        // Before the pointer moves, never after.
+        snapshotCurrent(job);
         job.setOutputBucket(extended.bucket());
         job.setOutputObjectKey(extended.objectKey());
         job.setOutputUri(extended.url());
@@ -151,6 +159,18 @@ public class ShotClipRepairService {
      */
     public RepairResult restoreGenerated(UUID tenantId, UUID projectId, UUID shotId) {
         VideoGenJob job = latestCompletedJob(tenantId, shotId);
+        // Prefer a recorded version over a derived key whenever there is one. The derivation below
+        // only exists for shots repaired before versions were written down -- it depends on the
+        // naming scheme staying what it is today, which is a guess, and a guess is the wrong thing
+        // to rely on once a fact is available.
+        List<VideoGenJobOutputVersion> recorded =
+                outputVersionRepository.findByJobIdOrderBySupersededAtDesc(job.getJobId());
+        java.util.Optional<VideoGenJobOutputVersion> generated = recorded.stream()
+                .filter(v -> tenantId.equals(v.getTenantId()) && "GENERATED".equals(v.getOrigin()))
+                .findFirst();
+        if (generated.isPresent()) {
+            return restoreVersion(tenantId, shotId, generated.get().getVersionId());
+        }
         String objectKey = "%s/%s.mp4".formatted(clipPrefix, job.getJobId());
         String url = assetPersistenceService.presignedUrl(clipBucket, objectKey);
         double seconds = durationProbe.probeUrl(url);
@@ -159,6 +179,7 @@ public class ShotClipRepairService {
                     "The originally generated clip for this shot is no longer in storage, so there is"
                     + " nothing to restore -- generate the shot again");
         }
+        snapshotCurrent(job);
         job.setOutputBucket(clipBucket);
         job.setOutputObjectKey(objectKey);
         job.setOutputUri(url);
@@ -194,6 +215,7 @@ public class ShotClipRepairService {
             VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
                     job.getOutputBucket() == null ? "creator-assets" : job.getOutputBucket(),
                     "uploaded-clips/%s-%s.mp4".formatted(job.getJobId(), UUID.randomUUID()), temp);
+            snapshotCurrent(job);
             job.setOutputBucket(asset.bucket());
             job.setOutputObjectKey(asset.objectKey());
             job.setOutputUri(assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey()));
@@ -215,6 +237,85 @@ public class ShotClipRepairService {
                 }
             }
         }
+    }
+
+    /**
+     * Writes down where the shot's current clip is, before anything moves the pointer.
+     *
+     * <p>Called by every path that replaces a clip, and always before the replacement is saved. The
+     * order is the whole point: a version recorded after the pointer moved is a version that was
+     * already lost, which is exactly what happened when a repair produced something unplayable and
+     * took the shot's only video with it.
+     *
+     * <p>Does nothing for a job with no stored output yet -- there is no clip to remember.
+     */
+    private void snapshotCurrent(VideoGenJob job) {
+        if (job.getOutputBucket() == null || job.getOutputObjectKey() == null) {
+            return;
+        }
+        outputVersionRepository.save(VideoGenJobOutputVersion.builder()
+                .versionId(UUID.randomUUID())
+                .jobId(job.getJobId())
+                .tenantId(job.getTenantId())
+                .bucket(job.getOutputBucket())
+                .objectKey(job.getOutputObjectKey())
+                .durationSeconds(job.getDurationSeconds())
+                .origin(job.getOutputOrigin() == null ? "GENERATED" : job.getOutputOrigin())
+                .supersededAt(java.time.OffsetDateTime.now())
+                .createdBy(job.getCreatedBy())
+                .build());
+        log.info("Kept the previous clip as a version jobId={} origin={} key={}",
+                job.getJobId(), job.getOutputOrigin(), job.getOutputObjectKey());
+    }
+
+    /** Every clip this shot has had, newest first, each with a URL that can be played to see what
+     * it is before choosing it. */
+    public List<ClipVersion> listVersions(UUID tenantId, UUID shotId) {
+        VideoGenJob job = latestCompletedJob(tenantId, shotId);
+        return outputVersionRepository.findByJobIdOrderBySupersededAtDesc(job.getJobId()).stream()
+                .filter(v -> tenantId.equals(v.getTenantId()))
+                .map(v -> new ClipVersion(
+                        v.getVersionId(),
+                        v.getOrigin(),
+                        v.getDurationSeconds(),
+                        v.getSupersededAt(),
+                        assetPersistenceService.presignedUrl(v.getBucket(), v.getObjectKey())))
+                .toList();
+    }
+
+    /**
+     * Puts the shot back on one of its earlier clips.
+     *
+     * <p>The clip being replaced is itself kept as a version first, so this goes both ways: choosing
+     * the silent cut does not throw away the dubbed one, and changing your mind again costs nothing.
+     *
+     * <p>Refuses rather than guesses. An object that will not probe as video leaves the job exactly
+     * as it was -- pointing a shot at something that is not there is worse than leaving it wrong.
+     */
+    public RepairResult restoreVersion(UUID tenantId, UUID shotId, UUID versionId) {
+        VideoGenJob job = latestCompletedJob(tenantId, shotId);
+        VideoGenJobOutputVersion version = outputVersionRepository.findById(versionId)
+                .filter(v -> tenantId.equals(v.getTenantId()) && job.getJobId().equals(v.getJobId()))
+                .orElseThrow(() -> VideoGenException.notFound(
+                        "No such earlier version of this shot's clip"));
+        String url = assetPersistenceService.presignedUrl(version.getBucket(), version.getObjectKey());
+        double seconds = durationProbe.probeUrl(url);
+        if (seconds <= 0) {
+            throw VideoGenException.notFound(
+                    "That version is no longer in storage, so it cannot be brought back");
+        }
+        snapshotCurrent(job);
+        job.setOutputBucket(version.getBucket());
+        job.setOutputObjectKey(version.getObjectKey());
+        job.setOutputUri(url);
+        job.setOutputOrigin(version.getOrigin());
+        job.setDurationSeconds((int) Math.ceil(seconds));
+        videoGenJobRepository.save(job);
+        // The row is kept, not deleted: it is now the clip in use, and deleting it would mean the
+        // version you just came from is the only one you cannot go back to.
+        log.info("Restored an earlier clip jobId={} shotId={} versionId={} origin={}",
+                job.getJobId(), shotId, versionId, version.getOrigin());
+        return new RepairResult(job.getJobId(), url, seconds, job.getOutputOrigin());
     }
 
     /** What produced this clip, said plainly. "TAIL_" was prefixed onto every mode, which made
@@ -275,4 +376,8 @@ public class ShotClipRepairService {
                                 Double clipSeconds, Double audioSeconds, String outputOrigin) {}
 
     public record RepairResult(UUID jobId, String videoUrl, double seconds, String outputOrigin) {}
+
+    /** @param supersededAt when this stopped being the shot's clip. */
+    public record ClipVersion(UUID versionId, String origin, Integer durationSeconds,
+                              java.time.OffsetDateTime supersededAt, String videoUrl) {}
 }
