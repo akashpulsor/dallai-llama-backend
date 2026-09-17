@@ -90,6 +90,31 @@ public class ShotClipVersion {
     private OffsetDateTime createdAt;
 
     /** When this cut became the one the film uses. Null while it is a preview. */
+    /** When this cut became the one the film uses. Null while it is a preview. */
     @Column(name = "accepted_at")
     private OffsetDateTime acceptedAt;
+
+    /** When someone took this cut away to edit it. Null means it is not out.
+     *
+     * <p>Only the coming-back half used to leave a trace, so "what am I still waiting on" had no
+     * answer and a shot taken away on Friday looked identical to one nobody had touched. */
+    @Column(name = "downloaded_for_edit_at")
+    private OffsetDateTime downloadedForEditAt;
+
+    @Column(name = "downloaded_for_edit_by")
+    private UUID downloadedForEditBy;
+
+    /** The cut this one was edited from, so a version that went out and came back is a chain rather
+     * than two unrelated rows. Null for anything that was not an upload. */
+    @Column(name = "edited_from_version_id")
+    private UUID editedFromVersionId;
+
+    /** Whether the client may watch this shot on its own, ahead of any film. Off means invisible to
+     * them, not merely undownloadable -- the same rule the film uses. */
+    @Column(name = "published", nullable = false)
+    @Builder.Default
+    private boolean published = false;
+
+    @Column(name = "published_at")
+    private OffsetDateTime publishedAt;
 }

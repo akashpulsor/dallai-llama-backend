@@ -44,5 +44,8 @@ public interface ShotClipVersionRepository extends JpaRepository<ShotClipVersion
     @Query("select coalesce(max(v.versionNumber), 0) from ShotClipVersion v where v.shotId = :shotId")
     int highestVersionNumber(@Param("shotId") UUID shotId);
 
+    /** The shots of this project a creator has chosen to show a client. */
+    List<ShotClipVersion> findByProjectIdAndPublishedIsTrue(UUID projectId);
+
     long countByProjectIdAndStatus(UUID projectId, ClipVersionStatus status);
 }

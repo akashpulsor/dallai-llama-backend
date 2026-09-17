@@ -96,24 +96,37 @@ public class ShotClipVersionService {
         return cut(context, source, ClipOrigin.SILENT, (work, clip, output) -> ffmpeg.stripAudio(clip, output));
     }
 
-    /** The creator's own cut, brought back after editing it elsewhere. */
+    /** The creator's own cut, brought back after editing it elsewhere. {@code editedFromVersionId}
+     * links it to the cut it was made from, so a version that went out and came back reads as a
+     * chain rather than two unrelated rows. */
     @Caching(evict = {
             @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
             @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
     })
     @Transactional
-    public ShotClipVersion createUploadedPreview(Context context, MultipartFile file) {
+    public ShotClipVersion createUploadedPreview(Context context, MultipartFile file, UUID editedFromVersionId) {
         if (file == null || file.isEmpty()) {
             throw new ClipProcessingException("No file was uploaded");
         }
         ShotClipSource source = clipSource(context);
-        return cut(context, source, ClipOrigin.UPLOADED, (work, clip, output) -> {
+        ShotClipVersion made = cut(context, source, ClipOrigin.UPLOADED, (work, clip, output) -> {
             try {
                 file.transferTo(output);
             } catch (Exception ex) {
                 throw new ClipProcessingException("Could not read the uploaded file: " + ex.getMessage(), ex);
             }
         });
+        if (editedFromVersionId != null) {
+            made.setEditedFromVersionId(editedFromVersionId);
+            // The cut it was made from is back: it is no longer out being edited.
+            repository.findById(editedFromVersionId).ifPresent(source1 -> {
+                source1.setDownloadedForEditAt(null);
+                source1.setDownloadedForEditBy(null);
+                repository.save(source1);
+            });
+            return repository.save(made);
+        }
+        return made;
     }
 
     /**
@@ -149,6 +162,70 @@ public class ShotClipVersionService {
         log.info("Accepted a cut shotId={} version={} origin={}",
                 shotId, chosen.getVersionNumber(), chosen.getOrigin());
         return repository.save(chosen);
+    }
+
+    /**
+     * Records that a cut has been taken away to be edited, and hands back the URL to fetch it from.
+     *
+     * <p>The marking is the point. Downloading used to leave no trace at all, so the only shots a
+     * creator could account for were the ones already back -- and one taken away days ago looked
+     * exactly like one nobody had touched.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#shotId"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, allEntries = true)
+    })
+    @Transactional
+    public ShotClipVersion markDownloadedForEdit(UUID tenantId, UUID shotId, UUID versionId, UUID userId) {
+        ShotClipVersion version = repository.findById(versionId)
+                .filter(candidate -> tenantId.equals(candidate.getTenantId())
+                        && shotId.equals(candidate.getShotId()))
+                .orElseThrow(() -> new ClipProcessingException("No such cut of this shot"));
+        version.setDownloadedForEditAt(OffsetDateTime.now());
+        version.setDownloadedForEditBy(userId);
+        log.info("Cut taken away to edit shotId={} version={}", shotId, version.getVersionNumber());
+        return repository.save(version);
+    }
+
+    /**
+     * Shows this cut to the client on its own, or takes it back down.
+     *
+     * <p>Separate from the film because the question is different: a creator often wants one shot in
+     * front of a client -- the one they are unsure about -- long before a film exists, and waiting
+     * for every shot to be generated to ask one question is the wrong shape.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#shotId"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, allEntries = true)
+    })
+    @Transactional
+    public ShotClipVersion setPublished(UUID tenantId, UUID shotId, UUID versionId, boolean published) {
+        ShotClipVersion version = repository.findById(versionId)
+                .filter(candidate -> tenantId.equals(candidate.getTenantId())
+                        && shotId.equals(candidate.getShotId()))
+                .orElseThrow(() -> new ClipProcessingException("No such cut of this shot"));
+        version.setPublished(published);
+        version.setPublishedAt(published ? OffsetDateTime.now() : null);
+        log.info("{} a shot shotId={} version={}",
+                published ? "Published" : "Unpublished", shotId, version.getVersionNumber());
+        return repository.save(version);
+    }
+
+    /** Every shot in this project the creator has chosen to show a client, newest cut per shot. */
+    @Transactional(readOnly = true)
+    public List<ShotClipVersion> publishedForProject(UUID tenantId, UUID projectId) {
+        return repository.findByProjectIdAndPublishedIsTrue(projectId).stream()
+                .filter(version -> tenantId.equals(version.getTenantId()))
+                .toList();
+    }
+
+    /** The current cut of every shot in this project, in one query -- what the editor lists. */
+    @Cacheable(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#projectId")
+    @Transactional(readOnly = true)
+    public List<ShotClipVersion> activeForProject(UUID tenantId, UUID projectId) {
+        return repository.findByProjectIdAndStatus(projectId, ClipVersionStatus.ACTIVE).stream()
+                .filter(version -> tenantId.equals(version.getTenantId()))
+                .toList();
     }
 
     public String playableUrl(ShotClipVersion version) {

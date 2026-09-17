@@ -66,9 +66,38 @@ public class ShotClipVersionController {
     public ResponseEntity<ShotClipVersionView> uploaded(@PathVariable UUID projectId,
                                                         @PathVariable UUID shotId,
                                                         @RequestParam(required = false) String shotRef,
+                                                        @RequestParam(required = false) UUID editedFromVersionId,
                                                         @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(toView(clipVersionService.createUploadedPreview(
+                context(projectId, shotId, shotRef), file, editedFromVersionId)));
+    }
+
+    /**
+     * Records that this cut has been taken away to be edited.
+     *
+     * <p>Called by the download button. Downloading used to leave no trace, so the only shots a
+     * creator could account for were the ones already back -- one taken away days ago looked exactly
+     * like one nobody had touched.
+     */
+    @PostMapping("/{versionId}/checkout")
+    public ResponseEntity<ShotClipVersionView> checkout(@PathVariable UUID projectId,
+                                                        @PathVariable UUID shotId,
+                                                        @PathVariable UUID versionId) {
+        TenantContext ctx = TenantContextHolder.get();
         return ResponseEntity.ok(toView(
-                clipVersionService.createUploadedPreview(context(projectId, shotId, shotRef), file)));
+                clipVersionService.markDownloadedForEdit(ctx.tenantId(), shotId, versionId, ctx.userId())));
+    }
+
+    /** Show this shot to the client on its own, or take it back down. Separate from publishing the
+     * film: a creator often wants one shot in front of a client long before a film exists. */
+    @PostMapping("/{versionId}/publish")
+    public ResponseEntity<ShotClipVersionView> publish(@PathVariable UUID projectId,
+                                                       @PathVariable UUID shotId,
+                                                       @PathVariable UUID versionId,
+                                                       @RequestParam(defaultValue = "true") boolean published) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toView(
+                clipVersionService.setPublished(ctx.tenantId(), shotId, versionId, published)));
     }
 
     /** Make this cut the one the film uses. The cut it replaces is kept, so this goes both ways. */

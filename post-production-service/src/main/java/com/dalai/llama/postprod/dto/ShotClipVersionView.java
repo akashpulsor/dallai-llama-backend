@@ -29,7 +29,14 @@ public record ShotClipVersionView(
         Integer height,
         Boolean hasAudio,
         OffsetDateTime createdAt,
-        OffsetDateTime acceptedAt
+        OffsetDateTime acceptedAt,
+        /** Set while this cut is out being edited, so the page can say what it is waiting on. */
+        OffsetDateTime downloadedForEditAt,
+        /** The cut this one was edited from, for an upload that came back. */
+        UUID editedFromVersionId,
+        /** Whether the client may watch this shot on its own. */
+        boolean published,
+        OffsetDateTime publishedAt
 ) {
 
     public static ShotClipVersionView of(ShotClipVersion version, String videoUrl) {
@@ -46,6 +53,10 @@ public record ShotClipVersionView(
                 version.getHeight(),
                 version.getHasAudio(),
                 version.getCreatedAt(),
-                version.getAcceptedAt());
+                version.getAcceptedAt(),
+                version.getDownloadedForEditAt(),
+                version.getEditedFromVersionId(),
+                version.isPublished(),
+                version.getPublishedAt());
     }
 }
