@@ -44,6 +44,12 @@ public record ShotPromptView(
          * prepared again, and it is the prompt that gets sent. A creator who lengthened a shot to
          * 8s had no way to tell from this page whether the change had reached the thing that would
          * be generated -- so the two are now shown side by side and the gap is named. */
-        Integer durationSeconds
+        Integer durationSeconds,
+        /** True when the compressed text is the one that will be dispatched.
+         *
+         * <p>Both prompts are on this view and only one of them gets sent, so without this a caller
+         * editing "the prompt" has to guess which. Swapping a rephrased line into the wrong one
+         * edits text nobody uses and looks exactly like success. */
+        boolean compressionApplied
 ) {
 }

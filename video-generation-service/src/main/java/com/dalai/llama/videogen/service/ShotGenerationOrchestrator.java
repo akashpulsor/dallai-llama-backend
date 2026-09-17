@@ -604,7 +604,8 @@ public class ShotGenerationOrchestrator {
                 prompt.getRecommendedModelId(),
                 job.map(VideoGenJob::getEstimatedCost).orElse(null),
                 job.map(VideoGenJob::getCostCurrency).orElse(null),
-                job.map(VideoGenJob::getDurationSeconds).orElse(null)
+                job.map(VideoGenJob::getDurationSeconds).orElse(null),
+                Boolean.TRUE.equals(prompt.getCompressionApplied())
         );
     }
 
