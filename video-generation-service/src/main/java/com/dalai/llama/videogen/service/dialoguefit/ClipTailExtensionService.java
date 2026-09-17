@@ -198,7 +198,7 @@ public class ClipTailExtensionService {
                         "-c:v", "copy", "-c:a", "aac", "-af", "apad", "-shortest", finished.toString()));
             }
 
-            double finalSeconds = durationProbe.probeFile(finished);
+            double finalSeconds = verifyPlayable(finished, "Extending the clip");
             VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
                     bucket, "tail-extended/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
             String url = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());
@@ -241,7 +241,7 @@ public class ClipTailExtensionService {
         runFfmpeg(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
                 "-af", "apad", "-shortest", finished.toString()));
-        double finalSeconds = durationProbe.probeFile(finished);
+        double finalSeconds = verifyPlayable(finished, "Replacing the audio");
         VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
                 bucket, "audio-replaced/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
         String url = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());
@@ -264,7 +264,7 @@ public class ClipTailExtensionService {
                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
                 "-shortest", finished.toString()));
-        double finalSeconds = durationProbe.probeFile(finished);
+        double finalSeconds = verifyPlayable(finished, "Silencing the clip");
         VideoAssetPersistenceService.PersistedAsset asset = assetPersistenceService.uploadFile(
                 bucket, "silenced/%s-%s.mp4".formatted(jobId, UUID.randomUUID()), finished);
         String url = assetPersistenceService.presignedUrl(asset.bucket(), asset.objectKey());
@@ -325,6 +325,52 @@ public class ClipTailExtensionService {
         Path tail = workDir.resolve("tail.mp4");
         download(response.response(), tail);
         return tail;
+    }
+
+    /**
+     * Refuses to hand back a repair that is not a playable video.
+     *
+     * <p>Every repair replaces the shot's only pointer to a clip that was generated and paid for.
+     * Nothing checked what it was replacing it with: the duration was measured and then ignored, so
+     * a file with no picture in it, or none at all, was uploaded and became the shot. That is how a
+     * finished shot came back with no video -- the repair reported success and the clip it replaced
+     * was no longer reachable from anywhere.
+     *
+     * <p>The original object is still in MinIO under a key derived from the job id, which is what
+     * makes {@code ShotClipRepairService.restoreGenerated} possible. This stops it being needed.
+     */
+    private double verifyPlayable(Path finished, String what) throws Exception {
+        if (!Files.exists(finished) || Files.size(finished) < 1024) {
+            throw VideoGenException.upstream(
+                    what + " produced no usable file -- the clip has been left as it was");
+        }
+        if (!hasVideoStream(finished)) {
+            throw VideoGenException.upstream(
+                    what + " produced a file with no picture in it -- the clip has been left as it was");
+        }
+        double seconds = durationProbe.probeFile(finished);
+        if (seconds <= 0) {
+            throw VideoGenException.upstream(
+                    what + " produced a file of no length -- the clip has been left as it was");
+        }
+        return seconds;
+    }
+
+    private boolean hasVideoStream(Path file) {
+        try {
+            Process process = new ProcessBuilder(List.of("ffprobe", "-v", "error",
+                    "-select_streams", "v:0", "-show_entries", "stream=codec_type",
+                    "-of", "default=noprint_wrappers=1:nokey=1", file.toString()))
+                    .redirectErrorStream(true).start();
+            String out;
+            try (var in = process.getInputStream()) {
+                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            return out.contains("video");
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     /** The clip's own width:height, so the tail can be made to match it exactly. */

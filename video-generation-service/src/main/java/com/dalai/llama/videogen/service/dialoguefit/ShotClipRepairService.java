@@ -50,19 +50,29 @@ public class ShotClipRepairService {
     private final CloneAudioService cloneAudioService;
     private final ClipTailExtensionService tailExtensionService;
     private final AudioDurationProbe durationProbe;
+    /** Where MinioVideoAssetPersistenceService puts a generated clip. Derived the same way it
+     * derives it, so the two cannot drift into disagreeing about where the clip lives. */
+    private final String clipBucket;
+    private final String clipPrefix;
 
     public ShotClipRepairService(VideoGenJobRepository videoGenJobRepository,
                                  ShotPromptRepository shotPromptRepository,
                                  VideoAssetPersistenceService assetPersistenceService,
                                  CloneAudioService cloneAudioService,
                                  ClipTailExtensionService tailExtensionService,
-                                 AudioDurationProbe durationProbe) {
+                                 AudioDurationProbe durationProbe,
+                                 @org.springframework.beans.factory.annotation.Value("${video-gen.minio.bucket}")
+                                 String clipBucket,
+                                 @org.springframework.beans.factory.annotation.Value("${video-gen.minio.export-prefix}")
+                                 String exportPrefix) {
         this.videoGenJobRepository = videoGenJobRepository;
         this.shotPromptRepository = shotPromptRepository;
         this.assetPersistenceService = assetPersistenceService;
         this.cloneAudioService = cloneAudioService;
         this.tailExtensionService = tailExtensionService;
         this.durationProbe = durationProbe;
+        this.clipBucket = clipBucket;
+        this.clipPrefix = exportPrefix.replaceAll("-exports$", "") + "-clips";
     }
 
     /** What the creator needs to repair a shot by hand: the clip as generated and the dialogue take
@@ -124,6 +134,40 @@ public class ShotClipRepairService {
         log.info("Repaired a clip by extending its tail jobId={} shotId={} mode={} added={}s",
                 job.getJobId(), shotId, extended.mode(), extended.addedSeconds());
         return new RepairResult(job.getJobId(), extended.url(), extended.finalSeconds(), job.getOutputOrigin());
+    }
+
+    /**
+     * Points the shot back at the clip that was generated for it.
+     *
+     * <p>A repair replaces the job's only pointer to its clip. When a repair goes wrong -- and one
+     * did, leaving a finished shot with no video at all -- the generated clip is not gone: it is
+     * still in MinIO, because every repair writes a NEW object rather than overwriting, and the
+     * generated one is stored under a key derived from the job id. That determinism is what makes
+     * this recoverable without having recorded anything in advance.
+     *
+     * <p>Refuses rather than guesses. If the object is not there or will not probe as video, the
+     * job is left exactly as it is: a shot showing a broken repair is worse than a shot showing
+     * nothing, but a shot pointed at an object that does not exist is worse than both.
+     */
+    public RepairResult restoreGenerated(UUID tenantId, UUID projectId, UUID shotId) {
+        VideoGenJob job = latestCompletedJob(tenantId, shotId);
+        String objectKey = "%s/%s.mp4".formatted(clipPrefix, job.getJobId());
+        String url = assetPersistenceService.presignedUrl(clipBucket, objectKey);
+        double seconds = durationProbe.probeUrl(url);
+        if (seconds <= 0) {
+            throw VideoGenException.notFound(
+                    "The originally generated clip for this shot is no longer in storage, so there is"
+                    + " nothing to restore -- generate the shot again");
+        }
+        job.setOutputBucket(clipBucket);
+        job.setOutputObjectKey(objectKey);
+        job.setOutputUri(url);
+        job.setOutputOrigin("GENERATED");
+        job.setDurationSeconds((int) Math.ceil(seconds));
+        videoGenJobRepository.save(job);
+        log.info("Restored a shot to its generated clip jobId={} shotId={} length={}s",
+                job.getJobId(), shotId, seconds);
+        return new RepairResult(job.getJobId(), url, seconds, job.getOutputOrigin());
     }
 
     /** The creator's own finished clip, replacing whatever the model produced. */

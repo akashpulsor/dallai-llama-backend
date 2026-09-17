@@ -302,6 +302,15 @@ public class PrepareSceneController {
                 request == null ? null : request.continuationPrompt()));
     }
 
+    /** Puts the shot back on the clip that was generated for it, after a repair that made things
+     * worse. The generated object is still in storage under a key derived from the job id. */
+    @PostMapping("/projects/{projectId}/shots/{shotId}/restore-clip")
+    public ResponseEntity<ShotClipRepairService.RepairResult> restoreClip(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(shotClipRepairService.restoreGenerated(ctx.tenantId(), projectId, shotId));
+    }
+
     /** The creator's own finished clip, replacing what the model produced for this shot. */
     @PostMapping("/projects/{projectId}/shots/{shotId}/upload-clip")
     public ResponseEntity<ShotClipRepairService.RepairResult> uploadClip(
