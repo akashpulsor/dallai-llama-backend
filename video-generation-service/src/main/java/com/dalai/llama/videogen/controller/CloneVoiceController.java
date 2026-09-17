@@ -24,11 +24,14 @@ public class CloneVoiceController {
 
     private final CloneVoiceService cloneVoiceService;
     private final com.dalai.llama.videogen.service.DubJobService dubJobService;
+    private final com.dalai.llama.videogen.service.CloneAudioService cloneAudioService;
 
     public CloneVoiceController(CloneVoiceService cloneVoiceService,
-                                com.dalai.llama.videogen.service.DubJobService dubJobService) {
+                                com.dalai.llama.videogen.service.DubJobService dubJobService,
+                                com.dalai.llama.videogen.service.CloneAudioService cloneAudioService) {
         this.cloneVoiceService = cloneVoiceService;
         this.dubJobService = dubJobService;
+        this.cloneAudioService = cloneAudioService;
     }
 
     /**
@@ -43,6 +46,22 @@ public class CloneVoiceController {
         com.dalai.llama.videogen.domain.entity.DubJob job = dubJobService.request(
                 TenantContextHolder.get(), request.projectId(), request.shotId(), request.text());
         return ResponseEntity.ok(DubJobView.of(job));
+    }
+
+    /**
+     * Turns down the most recent take for a shot, or takes the rejection back.
+     *
+     * <p>Every flow that puts "the dubbed voice" on a clip reaches for the newest take. Without a
+     * way to say "not that one", a recording that came out wrong sits as the newest thing there is
+     * and every cut made afterwards picks it up. The row is kept, so restoring costs nothing.
+     */
+    @PostMapping("/v1/clone/shots/{shotId}/reject")
+    public ResponseEntity<Void> rejectDub(@org.springframework.web.bind.annotation.PathVariable UUID shotId,
+                                          @org.springframework.web.bind.annotation.RequestParam UUID projectId,
+                                          @org.springframework.web.bind.annotation.RequestParam(defaultValue = "true")
+                                          boolean rejected) {
+        cloneAudioService.setRejected(TenantContextHolder.get().tenantId(), projectId, shotId, rejected);
+        return ResponseEntity.noContent().build();
     }
 
     /** Where a queued dub has got to. */

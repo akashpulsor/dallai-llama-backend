@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Comparator;
 import java.util.UUID;
 
 /**
@@ -36,12 +35,12 @@ public class InternalShotClipSourceController {
                                                          @PathVariable UUID projectId,
                                                          @PathVariable UUID shotId) {
         ShotClipRepairService.RepairSources sources = shotClipRepairService.sources(tenantId, projectId, shotId);
-        // The longest take wins when a shot has several: it is the one that decides whether the
-        // picture is long enough to carry it, so choosing a shorter one would still cut.
-        CloneAudioService.CloneAudioView take = cloneAudioService.list(tenantId, projectId).stream()
-                .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
-                .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
-                .orElse(null);
+        // The most RECENT take, not the longest. A shot accumulates takes -- one against a beat,
+        // another against the shot after a re-dub -- and the longest is very often the oldest, so
+        // this used to hand back the words a creator had already replaced.
+        CloneAudioService.CloneAudioView take =
+                CloneAudioService.latestFor(cloneAudioService.list(tenantId, projectId), shotId)
+                        .orElse(null);
         return ResponseEntity.ok(new ShotClipSourceView(
                 sources.jobId(),
                 sources.clipUrl(),

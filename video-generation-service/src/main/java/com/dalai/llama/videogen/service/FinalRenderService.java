@@ -327,15 +327,13 @@ public class FinalRenderService {
         return Files.exists(dubbed) && Files.size(dubbed) > 0 ? dubbed : clip;
     }
 
-    /** The longest take recorded for this shot -- the one that decides whether the picture is long
-     * enough to carry it, which is the same rule the per-shot repair uses. */
+    /** The most recently recorded take for this shot -- the same rule every other flow uses, for
+     * the same reason: re-dubbing is how a creator replaces a take, so recency is what they meant. */
     private String dubbedTakeUrl(UUID tenantId, UUID projectId, UUID shotId) {
         if (shotId == null) {
             return null;
         }
-        return cloneAudioService.list(tenantId, projectId).stream()
-                .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
-                .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
+        return CloneAudioService.latestFor(cloneAudioService.list(tenantId, projectId), shotId)
                 .map(CloneAudioService.CloneAudioView::audioUrl)
                 .orElse(null);
     }

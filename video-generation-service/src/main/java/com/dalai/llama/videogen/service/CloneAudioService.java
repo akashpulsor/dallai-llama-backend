@@ -90,13 +90,15 @@ public class CloneAudioService {
     public List<CloneAudioView> list(UUID tenantId, UUID projectId) {
         return jdbc.query("""
                 SELECT shot_id, beat_id, dialogue_text, mode, provider_voice_id, bucket, object_key,
-                       duration_ms
+                       duration_ms, updated_at, rejected
                 FROM cloned_voice_audio WHERE tenant_id = ? AND project_id = ?
                 ORDER BY updated_at, resource_id
                 """, (rs, row) -> new CloneAudioView(rs.getObject("shot_id", UUID.class),
                 rs.getObject("beat_id", UUID.class), rs.getString("dialogue_text"), rs.getString("mode"),
                 rs.getString("provider_voice_id"), assets.presignedUrl(rs.getString("bucket"), rs.getString("object_key")),
-                (Integer) rs.getObject("duration_ms")),
+                (Integer) rs.getObject("duration_ms"),
+                rs.getObject("updated_at", java.time.OffsetDateTime.class),
+                rs.getBoolean("rejected")),
                 tenantId, projectId);
     }
 
@@ -118,9 +120,56 @@ public class CloneAudioService {
                 """, (int) Math.round(seconds * 1000), tenantId, projectId, resourceId);
     }
 
+    /**
+     * Turns a take down, or takes the rejection back.
+     *
+     * <p>The row is kept rather than deleted: a creator who changes their mind should not pay for
+     * the synthesis again, and the stored text is evidence of what was tried.
+     */
+    public void setRejected(UUID tenantId, UUID projectId, UUID shotId, boolean rejected) {
+        int updated = jdbc.update("""
+                UPDATE cloned_voice_audio
+                SET rejected = ?, rejected_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END
+                WHERE tenant_id = ? AND project_id = ? AND shot_id = ?
+                  AND updated_at = (SELECT max(updated_at) FROM cloned_voice_audio
+                                    WHERE tenant_id = ? AND project_id = ? AND shot_id = ?
+                                      AND rejected = ?)
+                """, rejected, rejected, tenantId, projectId, shotId,
+                tenantId, projectId, shotId, !rejected);
+        if (updated == 0) {
+            throw VideoGenException.notFound("There is no take to " + (rejected ? "reject" : "restore"));
+        }
+    }
+
     /** {@code durationMs} is null for a take saved before it was measured -- see
      * {@link #backfillDuration}. Never zero: an unmeasurable take reports nothing rather than a
      * length of nothing. */
+    /** @param updatedAt when this take was recorded. The field that decides which take is THE take
+     * for a shot -- see {@code latestFor}. */
     public record CloneAudioView(UUID shotId, UUID beatId, String text, String mode,
-                                 String providerVoiceId, String audioUrl, Integer durationMs) {}
+                                 String providerVoiceId, String audioUrl, Integer durationMs,
+                                 java.time.OffsetDateTime updatedAt, boolean rejected) {}
+
+    /**
+     * The take a shot should actually use: the one recorded most recently.
+     *
+     * <p>Callers used to pick the LONGEST take, on the reasoning that it is the one deciding whether
+     * the clip is long enough. That is true of sizing a tail and wrong for everything else, because
+     * a shot accumulates takes -- one against a dialogue beat, another against the shot itself after
+     * a re-dub -- and the longest is very often the oldest. A shot in the live project had a 11.8s
+     * take from the 15th and a 4.6s re-dub from the 17th, and every flow that put "the dubbed voice"
+     * onto a clip reached for the 15th: the words the creator had already replaced.
+     *
+     * <p>Recency is the right rule because re-dubbing is how a creator says "this one, not that one".
+     */
+    public static java.util.Optional<CloneAudioView> latestFor(java.util.List<CloneAudioView> takes, UUID shotId) {
+        return takes.stream()
+                .filter(take -> shotId.equals(take.shotId()) && take.audioUrl() != null)
+                // A take the creator listened to and turned down is skipped, however recent it is.
+                // Without this, a bad recording sits as the newest thing there is and every cut
+                // made afterwards picks it up.
+                .filter(take -> !take.rejected())
+                .max(java.util.Comparator.comparing(
+                        take -> take.updatedAt() == null ? java.time.OffsetDateTime.MIN : take.updatedAt()));
+    }
 }

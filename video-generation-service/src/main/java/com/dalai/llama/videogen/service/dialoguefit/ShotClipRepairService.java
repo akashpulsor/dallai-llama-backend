@@ -366,11 +366,10 @@ public class ShotClipRepairService {
     /** The take itself rather than just its URL, so callers can read the length that was measured
      * when it was saved instead of fetching the audio again to re-measure it. */
     private CloneAudioService.CloneAudioView dubbedTake(UUID tenantId, UUID projectId, UUID shotId) {
-        return cloneAudioService.list(tenantId, projectId).stream()
-                .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
-                // Longest take wins when a shot has several: it is the one that decides whether the
-                // clip is long enough, so sizing a tail from a shorter one would still cut.
-                .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
+        // The most recently recorded take -- re-dubbing is how a creator says "this one, not that
+        // one", so recency is the rule. Picking the longest instead reached for takes that had
+        // already been replaced.
+        return CloneAudioService.latestFor(cloneAudioService.list(tenantId, projectId), shotId)
                 .orElse(null);
     }
 
