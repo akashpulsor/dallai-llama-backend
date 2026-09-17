@@ -31,6 +31,22 @@ public class InternalProjectController {
         this.projectService = projectService;
     }
 
+    /**
+     * Moves a project to READY_FOR_REVIEW when post-production publishes its film.
+     *
+     * <p>Internal rather than the creator-facing PATCH /v1/projects/{id}/status, because the caller
+     * is another service acting on the creator's press, not a browser. Publishing and "the client
+     * can see it" have to be the same event -- a film on the review page with the project still
+     * reading VIDEO_GENERATION_COMPLETE would make every list lie about where the work has got to.
+     */
+    @PostMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/ready-for-review")
+    public ResponseEntity<Void> markReadyForReview(@PathVariable UUID tenantId,
+                                                   @PathVariable UUID projectId) {
+        projectService.advanceStatus(tenantId, projectId,
+                com.dalai.llama.preprod.domain.ProjectStatus.READY_FOR_REVIEW);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/api/v1/internal/tenants/{tenantId}/projects/from-locked-idea")
     public ResponseEntity<ProjectView> createFromLockedIdea(
             @PathVariable UUID tenantId, @Valid @RequestBody CreateProjectRequest request) {

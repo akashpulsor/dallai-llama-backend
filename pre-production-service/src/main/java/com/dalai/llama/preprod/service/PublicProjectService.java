@@ -52,6 +52,7 @@ public class PublicProjectService {
     private final ProjectConfigService projectConfigService;
     private final ReviewCommentService reviewCommentService;
     private final VideoGenClient videoGenClient;
+    private final com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient;
 
     public PublicProjectService(
             ProjectService projectService,
@@ -69,6 +70,7 @@ public class PublicProjectService {
             ClientReviewSessionService reviewSessionService,
             ReviewCommentService reviewCommentService,
             VideoGenClient videoGenClient,
+            com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient,
             ProjectConfigService projectConfigService
     ) {
         this.reviewSessionService = reviewSessionService;
@@ -84,6 +86,7 @@ public class PublicProjectService {
         this.chatServiceClient = chatServiceClient;
         this.minioClient = minioClient;
         this.videoGenClient = videoGenClient;
+        this.postProductionFilmClient = postProductionFilmClient;
         this.publicMinioClient = publicMinioClient;
         this.billingClient = billingClient;
         this.projectConfigService = projectConfigService;
@@ -227,6 +230,20 @@ public class PublicProjectService {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         ProjectView project = projectService.getByClientReviewToken(token);
         String aspectRatio = aspectRatioName(identity);
+
+        // Post-production first, because that is where films are put together now. It returns only
+        // a film the creator has published, so the gate is enforced on its side -- there is no way
+        // for a mistake here to show a cut nobody chose to show.
+        var film = postProductionFilmClient.getPublishedFilm(identity.tenantId(), identity.projectId());
+        if (film.isPresent()) {
+            return new PublicFinalVideoView(true, "COMPLETED", film.get().videoUrl(), true,
+                    film.get().completedAt(), aspectRatio);
+        }
+
+        // Projects assembled before assembling moved. Their film still lives in
+        // video-generation-service and is gated by the creator's own flag on the project row, so
+        // that path is kept exactly as it was rather than breaking films already in front of
+        // clients.
         var maybe = videoGenClient.getLatestFinalVideo(identity.tenantId(), identity.projectId());
         boolean published = project.finalVideoDownloadUnlocked();
         if (maybe.isEmpty()) {

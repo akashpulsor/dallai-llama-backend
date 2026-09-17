@@ -51,6 +51,22 @@ public class HttpPreProductionClient implements PreProductionClient {
     }
 
     @Override
+    public void markReadyForReview(UUID tenantId, UUID projectId) {
+        try {
+            webClient.post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/ready-for-review",
+                            tenantId, projectId)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw PostProductionException.upstream(
+                    "pre-production-service ready-for-review for project %s failed status=%s body=%s"
+                            .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    @Override
     public String getAspectRatio(UUID tenantId, UUID projectId) {
         try {
             ProjectConfigAspect config = webClient.get()

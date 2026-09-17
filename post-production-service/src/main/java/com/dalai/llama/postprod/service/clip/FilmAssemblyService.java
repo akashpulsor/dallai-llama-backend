@@ -200,9 +200,24 @@ public class FilmAssemblyService {
         }
         render.setPublished(published);
         render.setPublishedAt(published ? OffsetDateTime.now() : null);
+        FilmRender saved = filmRenderRepository.save(render);
+
+        // The project moves to READY_FOR_REVIEW with it, so a list of projects says where the work
+        // actually is. Best-effort on purpose: the film IS published the moment the row says so, and
+        // failing the creator's press because a status call did not land would be the wrong trade.
+        // Only on the way up -- unpublishing does not walk a project backwards, since a client who
+        // has already seen it has still seen it.
+        if (published) {
+            try {
+                preProductionClient.markReadyForReview(tenantId, saved.getProjectId());
+            } catch (RuntimeException ex) {
+                log.warn("Published the film but could not mark project {} ready for review: {}",
+                        saved.getProjectId(), ex.getMessage());
+            }
+        }
         log.info("{} a film renderId={} projectId={}",
-                published ? "Published" : "Unpublished", renderId, render.getProjectId());
-        return filmRenderRepository.save(render);
+                published ? "Published" : "Unpublished", renderId, saved.getProjectId());
+        return saved;
     }
 
     public String playableUrl(FilmRender render) {

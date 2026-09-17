@@ -15,6 +15,13 @@ public interface PreProductionClient {
      * order cuts happened to be made in, say -- is not the film. */
     java.util.List<PreProductionShotSummary> listShots(UUID tenantId, UUID projectId);
 
+    /** Moves the project to READY_FOR_REVIEW, called when its film is published.
+     *
+     * <p>Publishing and "the client can see it" have to be the same event: a film on the review page
+     * with the project still reading VIDEO_GENERATION_COMPLETE makes every list lie about where the
+     * work has got to. */
+    void markReadyForReview(UUID tenantId, UUID projectId);
+
     /** The project's aspect ratio (RATIO_16_9, RATIO_9_16, ...), or null when it has no config yet.
      * The shape every shot is padded to when they are joined. */
     String getAspectRatio(UUID tenantId, UUID projectId);
