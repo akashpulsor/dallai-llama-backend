@@ -44,6 +44,23 @@ public class HttpVideoGenerationClient implements VideoGenerationClient {
     }
 
     @Override
+    public com.dalai.llama.postprod.service.clip.ShotClipSource getClipSource(
+            UUID tenantId, UUID projectId, UUID shotId) {
+        try {
+            return webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotId}/clip-source",
+                            tenantId, projectId, shotId)
+                    .retrieve()
+                    .bodyToMono(com.dalai.llama.postprod.service.clip.ShotClipSource.class)
+                    .block(Duration.ofMillis(timeoutMs));
+        } catch (WebClientResponseException ex) {
+            throw PostProductionException.upstream(
+                    "video-generation-service clip-source for shot %s failed status=%s body=%s"
+                            .formatted(shotId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    @Override
     public String getShotVideoUrl(UUID tenantId, UUID videoGenJobId) {
         // video-generation-service's GET /v1/jobs/{id}/video is a 302 redirect to a signed MinIO
         // URL -- resolved without following it, since we want the URL itself (to re-download and

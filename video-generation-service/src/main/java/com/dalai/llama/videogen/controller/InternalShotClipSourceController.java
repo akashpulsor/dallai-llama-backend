@@ -1,0 +1,69 @@
+package com.dalai.llama.videogen.controller;
+
+import com.dalai.llama.videogen.service.CloneAudioService;
+import com.dalai.llama.videogen.service.dialoguefit.ShotClipRepairService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Comparator;
+import java.util.UUID;
+
+/**
+ * What post-production needs to make a new cut of a shot: the clip as it stands, and the recorded
+ * take that should go on it.
+ *
+ * <p>Post-production owns cutting -- replacing the invented audio with the real performance,
+ * stripping it, joining the shots -- but it does not own generation, so it cannot read these from
+ * its own database and must not read video-generation-service's. This is the seam between the two:
+ * one read, no side effects, no knowledge of what the caller intends to do with it.
+ *
+ * <p>Both URLs are presigned and short-lived, so a caller fetches promptly rather than storing them.
+ */
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotId}")
+public class InternalShotClipSourceController {
+
+    private final ShotClipRepairService shotClipRepairService;
+    private final CloneAudioService cloneAudioService;
+
+    @GetMapping("/clip-source")
+    public ResponseEntity<ShotClipSourceView> clipSource(@PathVariable UUID tenantId,
+                                                         @PathVariable UUID projectId,
+                                                         @PathVariable UUID shotId) {
+        ShotClipRepairService.RepairSources sources = shotClipRepairService.sources(tenantId, projectId, shotId);
+        // The longest take wins when a shot has several: it is the one that decides whether the
+        // picture is long enough to carry it, so choosing a shorter one would still cut.
+        CloneAudioService.CloneAudioView take = cloneAudioService.list(tenantId, projectId).stream()
+                .filter(t -> shotId.equals(t.shotId()) && t.audioUrl() != null)
+                .max(Comparator.comparing(t -> t.durationMs() == null ? 0 : t.durationMs()))
+                .orElse(null);
+        return ResponseEntity.ok(new ShotClipSourceView(
+                sources.jobId(),
+                sources.clipUrl(),
+                sources.clipSeconds(),
+                take == null ? null : take.audioUrl(),
+                take == null || take.durationMs() == null ? null : take.durationMs() / 1000.0,
+                take == null ? null : take.text(),
+                sources.outputOrigin()));
+    }
+
+    /**
+     * @param clipUrl        the shot's current clip, presigned.
+     * @param dubbedAudioUrl the recorded take, presigned. Null when nothing has been dubbed, which
+     *                       the caller has to handle rather than treat as an error -- a shot with no
+     *                       line is a perfectly ordinary thing to want silenced.
+     */
+    public record ShotClipSourceView(UUID jobId,
+                                     String clipUrl,
+                                     Double clipSeconds,
+                                     String dubbedAudioUrl,
+                                     Double dubbedAudioSeconds,
+                                     String dubbedText,
+                                     String outputOrigin) {
+    }
+}

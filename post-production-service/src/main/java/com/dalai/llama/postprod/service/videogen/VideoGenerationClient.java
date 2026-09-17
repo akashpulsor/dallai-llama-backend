@@ -15,4 +15,8 @@ public interface VideoGenerationClient {
     /** A short-lived signed URL for the generated clip, resolved from video-generation-service's
      * own {@code GET /v1/jobs/{jobId}/video} redirect. */
     String getShotVideoUrl(UUID tenantId, UUID videoGenJobId);
+
+    /** The shot's current clip and the recorded take that belongs on it -- what post-production
+     * needs to make a new cut without reading the other service's database. */
+    com.dalai.llama.postprod.service.clip.ShotClipSource getClipSource(UUID tenantId, UUID projectId, UUID shotId);
 }

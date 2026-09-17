@@ -1,0 +1,95 @@
+package com.dalai.llama.postprod.controller;
+
+import com.dalai.llama.postprod.domain.entity.ShotClipVersion;
+import com.dalai.llama.postprod.dto.ShotClipVersionView;
+import com.dalai.llama.postprod.service.clip.ShotClipVersionService;
+import com.dalai.llama.postprod.web.TenantContext;
+import com.dalai.llama.postprod.web.TenantContextHolder;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Cutting a shot: make a version, watch it, then decide whether the film uses it.
+ *
+ * <p>On {@code /v1/post-production/**}, the prefix this service already owns at the gateway. Not
+ * {@code /v1/shots} or {@code /v1/projects} -- both are claimed by pre-production-service, and two
+ * services on one prefix is an Istio route collision with an undefined winner, which this platform
+ * has already been bitten by more than once.
+ *
+ * <p>Every make-a-cut call returns a PREVIEW. Nothing here changes what the film uses except
+ * {@code accept}, which is the point: a cut used to replace the clip the moment it was produced, so
+ * the only way to find out whether it was any good was to lose the alternative.
+ */
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/v1/post-production/projects/{projectId}/shots/{shotId}/clip-versions")
+public class ShotClipVersionController {
+
+    private final ShotClipVersionService clipVersionService;
+
+    /** Every cut of this shot, newest first. */
+    @GetMapping
+    public ResponseEntity<List<ShotClipVersionView>> list(@PathVariable UUID projectId,
+                                                          @PathVariable UUID shotId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toViews(clipVersionService.list(ctx.tenantId(), shotId)));
+    }
+
+    /** The picture with the recorded take in place of whatever audio it came with. */
+    @PostMapping("/dubbed")
+    public ResponseEntity<ShotClipVersionView> dubbed(@PathVariable UUID projectId,
+                                                      @PathVariable UUID shotId,
+                                                      @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(toView(clipVersionService.createDubbedPreview(context(projectId, shotId, shotRef))));
+    }
+
+    /** The picture with no voice at all. */
+    @PostMapping("/silent")
+    public ResponseEntity<ShotClipVersionView> silent(@PathVariable UUID projectId,
+                                                      @PathVariable UUID shotId,
+                                                      @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(toView(clipVersionService.createSilentPreview(context(projectId, shotId, shotRef))));
+    }
+
+    /** A cut the creator made themselves and brought back. */
+    @PostMapping("/uploaded")
+    public ResponseEntity<ShotClipVersionView> uploaded(@PathVariable UUID projectId,
+                                                        @PathVariable UUID shotId,
+                                                        @RequestParam(required = false) String shotRef,
+                                                        @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(toView(
+                clipVersionService.createUploadedPreview(context(projectId, shotId, shotRef), file)));
+    }
+
+    /** Make this cut the one the film uses. The cut it replaces is kept, so this goes both ways. */
+    @PostMapping("/{versionId}/accept")
+    public ResponseEntity<ShotClipVersionView> accept(@PathVariable UUID projectId,
+                                                      @PathVariable UUID shotId,
+                                                      @PathVariable UUID versionId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toView(clipVersionService.accept(ctx.tenantId(), shotId, versionId)));
+    }
+
+    private ShotClipVersionService.Context context(UUID projectId, UUID shotId, String shotRef) {
+        TenantContext ctx = TenantContextHolder.get();
+        return new ShotClipVersionService.Context(ctx.tenantId(), projectId, shotId, shotRef, ctx.userId());
+    }
+
+    private ShotClipVersionView toView(ShotClipVersion version) {
+        return ShotClipVersionView.of(version, clipVersionService.playableUrl(version));
+    }
+
+    private List<ShotClipVersionView> toViews(List<ShotClipVersion> versions) {
+        return versions.stream().map(this::toView).toList();
+    }
+}
