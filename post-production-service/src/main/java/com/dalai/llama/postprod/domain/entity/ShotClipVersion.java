@@ -117,4 +117,20 @@ public class ShotClipVersion {
 
     @Column(name = "published_at")
     private OffsetDateTime publishedAt;
+
+    /**
+     * Whether this cut has been turned down.
+     *
+     * <p>A flag rather than a {@link com.dalai.llama.postprod.domain.ClipVersionStatus} value on
+     * purpose: status says where a cut stands relative to the film, and rejecting says nothing about
+     * that. The ACTIVE cut is untouched by a rejection, and nothing here is deleted -- the row stays
+     * watchable so the rejection can be taken back and so a creator can still see what they
+     * declined.
+     */
+    @Column(name = "rejected", nullable = false)
+    @Builder.Default
+    private boolean rejected = false;
+
+    @Column(name = "rejected_at")
+    private OffsetDateTime rejectedAt;
 }

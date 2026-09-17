@@ -232,6 +232,40 @@ public class ShotClipVersionService {
         return repository.save(version);
     }
 
+    /**
+     * Turns a cut down, or takes the rejection back.
+     *
+     * <p>Exists for the dubbed cut above all: muting a shot'''s native audio and muxing the cloned
+     * take on in its place produces a PREVIEW that becomes the newest thing in the shot'''s list, and
+     * a creator who does not like it could previously only accept it or make another -- neither of
+     * which says "not that one".
+     *
+     * <p>Deliberately harmless. Nothing is deleted, the cut stays watchable, and the rejection is
+     * reversible. The film is not touched either: rejecting the ACTIVE cut is refused rather than
+     * quietly demoting it, because accept is the only thing in this service that changes which cut
+     * the film uses, and a reject that silently left a shot with no video would be the worse bug.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#shotId"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, allEntries = true)
+    })
+    @Transactional
+    public ShotClipVersion setRejected(UUID tenantId, UUID shotId, UUID versionId, boolean rejected) {
+        ShotClipVersion version = repository.findById(versionId)
+                .filter(candidate -> tenantId.equals(candidate.getTenantId())
+                        && shotId.equals(candidate.getShotId()))
+                .orElseThrow(() -> new ClipProcessingException("No such cut of this shot"));
+        if (rejected && version.getStatus() == ClipVersionStatus.ACTIVE) {
+            throw new ClipProcessingException(
+                    "This is the cut the film is using. Accept a different one first, then reject it.");
+        }
+        version.setRejected(rejected);
+        version.setRejectedAt(rejected ? OffsetDateTime.now() : null);
+        log.info("{} a cut shotId={} version={} origin={}",
+                rejected ? "Rejected" : "Restored", shotId, version.getVersionNumber(), version.getOrigin());
+        return repository.save(version);
+    }
+
     /** Every shot in this project the creator has chosen to show a client, newest cut per shot. */
     @Transactional(readOnly = true)
     public List<ShotClipVersion> publishedForProject(UUID tenantId, UUID projectId) {

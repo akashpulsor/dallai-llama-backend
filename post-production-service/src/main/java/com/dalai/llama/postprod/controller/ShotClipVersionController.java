@@ -129,6 +129,23 @@ public class ShotClipVersionController {
         return new ShotClipVersionService.Context(ctx.tenantId(), projectId, shotId, shotRef, ctx.userId());
     }
 
+    /**
+     * Turn this cut down, or take the rejection back.
+     *
+     * <p>For the dubbed cut most of all -- native audio muted, the cloned take in its place -- which
+     * lands as a preview and becomes the newest thing in the shot'''s list. Rejecting removes
+     * nothing: the cut stays watchable and the film keeps the cut it was already using.
+     */
+    @PostMapping("/{versionId}/reject")
+    public ResponseEntity<ShotClipVersionView> reject(@PathVariable UUID projectId,
+                                                      @PathVariable UUID shotId,
+                                                      @PathVariable UUID versionId,
+                                                      @RequestParam(defaultValue = "true") boolean rejected) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toView(
+                clipVersionService.setRejected(ctx.tenantId(), shotId, versionId, rejected)));
+    }
+
     private ShotClipVersionView toView(ShotClipVersion version) {
         return ShotClipVersionView.of(version, clipVersionService.playableUrl(version));
     }

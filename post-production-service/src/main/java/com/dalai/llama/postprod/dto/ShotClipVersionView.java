@@ -36,7 +36,11 @@ public record ShotClipVersionView(
         UUID editedFromVersionId,
         /** Whether the client may watch this shot on its own. */
         boolean published,
-        OffsetDateTime publishedAt
+        OffsetDateTime publishedAt,
+        /** Whether this cut has been turned down. Independent of {@code status}: a rejected cut is
+         * still watchable, still listed, and the film is unaffected. */
+        boolean rejected,
+        OffsetDateTime rejectedAt
 ) {
 
     public static ShotClipVersionView of(ShotClipVersion version, String videoUrl) {
@@ -57,6 +61,8 @@ public record ShotClipVersionView(
                 version.getDownloadedForEditAt(),
                 version.getEditedFromVersionId(),
                 version.isPublished(),
-                version.getPublishedAt());
+                version.getPublishedAt(),
+                version.isRejected(),
+                version.getRejectedAt());
     }
 }
