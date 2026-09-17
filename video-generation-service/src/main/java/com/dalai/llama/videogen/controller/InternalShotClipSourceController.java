@@ -24,13 +24,30 @@ import java.util.UUID;
  */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotId}")
+@RequestMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}")
 public class InternalShotClipSourceController {
 
     private final ShotClipRepairService shotClipRepairService;
     private final CloneAudioService cloneAudioService;
+    private final com.dalai.llama.videogen.service.ShotGenerationOrchestrator shotGenerationOrchestrator;
 
-    @GetMapping("/clip-source")
+    /**
+     * Every shot's latest job in this project -- what another service needs to know which shots
+     * have a finished video.
+     *
+     * <p>Exists because the equivalent creator-facing route is on {@code /v1/**}, which Istio's RBAC
+     * refuses for service-to-service calls: post-production asking it got "403 RBAC: access denied"
+     * and read the answer as "no shots are generated", so a project with thirteen finished shots
+     * reported all thirteen missing from the film. Cross-service reads belong on
+     * {@code /api/v1/internal/**}, which is the boundary that is actually open to them.
+     */
+    @GetMapping("/shot-jobs")
+    public ResponseEntity<java.util.List<com.dalai.llama.videogen.dto.VideoGenJobView>> shotJobs(
+            @PathVariable UUID tenantId, @PathVariable UUID projectId) {
+        return ResponseEntity.ok(shotGenerationOrchestrator.listJobsForProject(tenantId, projectId));
+    }
+
+    @GetMapping("/shots/{shotId}/clip-source")
     public ResponseEntity<ShotClipSourceView> clipSource(@PathVariable UUID tenantId,
                                                          @PathVariable UUID projectId,
                                                          @PathVariable UUID shotId) {

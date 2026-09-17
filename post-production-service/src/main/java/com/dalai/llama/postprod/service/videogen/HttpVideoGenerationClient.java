@@ -29,16 +29,20 @@ public class HttpVideoGenerationClient implements VideoGenerationClient {
     @Override
     public List<VideoGenShotJob> listJobsForProject(UUID tenantId, UUID projectId) {
         try {
+            // On /api/v1/internal/**, not the creator-facing /v1/** route. Istio's RBAC refuses
+            // service-to-service calls to /v1/**: this returned "403 RBAC: access denied", which the
+            // caller read as "no shots are generated" -- so a project with thirteen finished shots
+            // reported all thirteen missing from the film.
             return webClient.get()
-                    .uri("/v1/projects/{projectId}/jobs", projectId)
-                    .header("X-Tenant-ID", tenantId.toString())
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shot-jobs",
+                            tenantId, projectId)
                     .retrieve()
                     .bodyToFlux(VideoGenShotJob.class)
                     .collectList()
                     .block(Duration.ofMillis(timeoutMs));
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
-                    "video-generation-service /v1/projects/%s/jobs failed status=%s body=%s"
+                    "video-generation-service shot-jobs for project %s failed status=%s body=%s"
                             .formatted(projectId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
         }
     }
