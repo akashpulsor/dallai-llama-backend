@@ -150,13 +150,13 @@ video-gen:
   # a thread pool nobody can see or change without a redeploy.
   prepare:
     requested-topic: ${VIDEO_GEN_PREPARE_REQUESTED_TOPIC:videogen.prepare.requested}
+    requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
   generation:
     # Its own topic, not shared with prepare. Generation is the expensive, provider-rate-limited
     # call, and keeping it separate means its consumer count can be tuned against the model's
     # limits without also changing how fast prompts are prepared.
     requested-topic: ${VIDEO_GEN_GENERATION_REQUESTED_TOPIC:videogen.generation.requested}
     requested-consumer-group: ${VIDEO_GEN_GENERATION_REQUESTED_GROUP:video-generation-service-generation}
-    requested-consumer-group: ${VIDEO_GEN_PREPARE_REQUESTED_CONSUMER_GROUP:video-generation-service-prepare-batch}
   # The shot's music bed, laid under its finished audio by the container's own ffmpeg. fal's
   # hosted ffmpeg apps take multiple tracks but expose no volume, so a bed mixed there would sit
   # at unity against the dialogue.
