@@ -38,9 +38,16 @@ import java.util.concurrent.TimeUnit;
 public class FfmpegClipProcessor {
 
     private final int timeoutSeconds;
+    private final int joinFrameRate;
 
-    public FfmpegClipProcessor(@Value("${post-production.ffmpeg.timeout-seconds:600}") int timeoutSeconds) {
+    public FfmpegClipProcessor(
+            @Value("${post-production.ffmpeg.timeout-seconds:600}") int timeoutSeconds,
+            @Value("${post-production.ffmpeg.join-frame-rate:30}") int joinFrameRate) {
         this.timeoutSeconds = timeoutSeconds;
+        // The frame rate every shot is brought to before a film is joined. 30 rather than 24 so that
+        // a 30fps source is not thinned: duplicating frames to raise a 24fps clip costs nothing you
+        // can see, dropping one in five to lower a 30fps clip does.
+        this.joinFrameRate = joinFrameRate;
     }
 
     /**
@@ -150,9 +157,10 @@ public class FfmpegClipProcessor {
      * on codec, pixel format, frame rate, geometry and audio -- which is a question about the models
      * that produced them, and therefore a question to measure rather than to answer in advance.
      *
-     * <p>When it is not available, every input is scaled and PADDED to the target. Padded rather
-     * than cropped, because losing the edge of a frame to make a join work is not a trade anyone
-     * asked for.
+     * <p>When it is not available, each shot is normalised ON ITS OWN and the results are copied
+     * together -- never one filter_complex over every input at once, whose memory grows with the
+     * length of the film. Scaled and PADDED to the target, padded rather than cropped, because
+     * losing the edge of a frame to make a join work is not a trade anyone asked for.
      */
     public void concat(List<String> clips, int width, int height, Path output) {
         if (clips.isEmpty()) {
@@ -172,8 +180,89 @@ public class FfmpegClipProcessor {
             copyJoin(clips, output);
             return;
         }
-        log.info("Joining {} shots by re-encode -- inputs differ: {}", clips.size(), describeDifference(inputs));
-        encodeJoin(clips, width, height, output);
+        log.info("Joining {} shots the long way -- inputs differ: {}", clips.size(), describeDifference(inputs));
+        normaliseThenCopyJoin(clips, inputs, width, height, output);
+    }
+
+    /**
+     * The path for shots that do not already match: make them match, one at a time, then copy.
+     *
+     * <p>Deliberately NOT one filter_complex across every input. That form opens a decoder and frame
+     * buffers for all thirteen shots at once, so its memory grows with the length of the film -- a
+     * thirty-shot project needs roughly twice a thirteen-shot one, in a container sized for neither.
+     * Here each shot is normalised on its own and released before the next is opened, so the cost is
+     * one decode plus one encode no matter how long the film is.
+     *
+     * <p>It is not slower for being sequential. Every frame is encoded exactly once either way; the
+     * only thing traded for the bounded memory is temp disk, which is cheap and written in order.
+     *
+     * <p>Not pairwise either -- joining two at a time and carrying the result forward would re-encode
+     * the accumulator once per shot, so the first shot would be encoded twelve times and wear twelve
+     * generations of loss.
+     *
+     * <p>A plain loop on the consumer thread, no executor: one film is joined at a time by design
+     * (see the listener concurrency note in application.yml), so there is nothing to schedule.
+     */
+    private void normaliseThenCopyJoin(List<String> clips, List<ConcatInput> inputs,
+                                       int width, int height, Path output) {
+        Path workDir = output.getParent();
+        List<String> normalised = new ArrayList<>(clips.size());
+        for (int i = 0; i < clips.size(); i++) {
+            Path target = workDir.resolve("norm-%03d.mp4".formatted(i + 1));
+            normaliseOne(clips.get(i), inputs.get(i), width, height, target);
+            normalised.add(target.toString());
+            log.debug("Normalised shot {}/{}", i + 1, clips.size());
+        }
+        copyJoin(normalised, output);
+    }
+
+    /**
+     * One shot, brought to the profile every other shot is being brought to.
+     *
+     * <p>Frame rate is forced, not merely carried through: two clips can agree on codec, geometry and
+     * pixel format and still refuse to copy-join because one is 24fps and the other 30. Audio is
+     * forced to exist for the same reason -- a silent shot among thirteen with sound breaks the join
+     * outright, so silence is added as a real track rather than left absent.
+     */
+    private void normaliseOne(String clip, ConcatInput input, int width, int height, Path output) {
+        run(buildNormaliseCommand(clip, input, width, height, output));
+    }
+
+    /** Split out so the command can be asserted without running ffmpeg. */
+    List<String> buildNormaliseCommand(String clip, ConcatInput input, int width, int height, Path output) {
+        List<String> command = new ArrayList<>(List.of("ffmpeg", "-y"));
+        command.addAll(reconnectOptionsFor(clip));
+        command.addAll(List.of("-i", clip));
+        boolean hasAudio = input.audioCodec() != null;
+        if (!hasAudio) {
+            command.addAll(List.of("-f", "lavfi", "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=48000"));
+        }
+        String size = width + ":" + height;
+        command.addAll(List.of(
+                "-vf", "scale=" + size + ":force_original_aspect_ratio=decrease,"
+                        + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-map", "0:v:0",
+                "-map", hasAudio ? "0:a:0" : "1:a:0",
+                "-r", String.valueOf(joinFrameRate),
+                "-fps_mode", "cfr",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2"));
+        if (!hasAudio) {
+            // anullsrc never ends on its own.
+            command.add("-shortest");
+        }
+        command.add(output.toString());
+        return command;
+    }
+
+    /** http options, which ffmpeg rejects outright on a local path. */
+    private static List<String> reconnectOptionsFor(String input) {
+        if (!input.startsWith("http://") && !input.startsWith("https://")) {
+            return List.of();
+        }
+        return List.of("-reconnect", "1", "-reconnect_streamed", "1",
+                "-reconnect_on_network_error", "1", "-reconnect_delay_max", "10");
     }
 
     /** Why the fast path was not available, for the operator wondering where the minutes went. */
@@ -208,51 +297,6 @@ public class FfmpegClipProcessor {
                 "-safe", "0",
                 "-f", "concat", "-i", listFile.toString(),
                 "-c", "copy", "-movflags", "+faststart", output.toString()));
-    }
-
-    /** The slow path: normalise every shot to one geometry and encode the result once. */
-    private void encodeJoin(List<String> clips, int width, int height, Path output) {
-        List<String> command = new ArrayList<>(List.of("ffmpeg", "-y"));
-        for (String clip : clips) {
-            // Inputs are signed object-store URLs, read straight from MinIO. Pulling all thirteen
-            // to disk first only to hand them back to ffmpeg was a serial download of the entire
-            // film before a single frame could be encoded, plus the disk to hold it.
-            //
-            // The reconnect options are what make that safe to rely on: without them a dropped
-            // connection part-way through kills a join that may already be minutes in. They are
-            // http-protocol options, so they go on http inputs only -- ffmpeg rejects them outright
-            // on a local path.
-            if (clip.startsWith("http://") || clip.startsWith("https://")) {
-                command.addAll(List.of(
-                        "-reconnect", "1",
-                        "-reconnect_streamed", "1",
-                        "-reconnect_on_network_error", "1",
-                        "-reconnect_delay_max", "10"));
-            }
-            command.add("-i");
-            command.add(clip);
-        }
-        String size = width + ":" + height;
-        StringBuilder filter = new StringBuilder();
-        for (int i = 0; i < clips.size(); i++) {
-            filter.append("[").append(i).append(":v]scale=").append(size)
-                    .append(":force_original_aspect_ratio=decrease,")
-                    .append("pad=").append(size).append(":(ow-iw)/2:(oh-ih)/2,setsar=1[v")
-                    .append(i).append("];");
-            // Resampled with a common time base: shots recorded at different sample rates otherwise
-            // drift against the picture a little further with every join.
-            filter.append("[").append(i).append(":a]aresample=async=1:first_pts=0[a")
-                    .append(i).append("];");
-        }
-        for (int i = 0; i < clips.size(); i++) {
-            filter.append("[v").append(i).append("][a").append(i).append("]");
-        }
-        filter.append("concat=n=").append(clips.size()).append(":v=1:a=1[v][a]");
-        command.addAll(List.of("-filter_complex", filter.toString(),
-                "-map", "[v]", "-map", "[a]",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
-                "-movflags", "+faststart", output.toString()));
-        run(command);
     }
 
     /**

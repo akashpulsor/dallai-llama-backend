@@ -28,10 +28,20 @@ public record FilmRenderView(
         OffsetDateTime publishedAt,
         String lastError,
         OffsetDateTime createdAt,
-        OffsetDateTime completedAt
+        OffsetDateTime completedAt,
+        /** Films queued in front of this one, across every tenant -- that is the queue actually
+         * being waited in, since joins run one at a time. Zero once this film is being worked on. */
+        int filmsAhead,
+        /** A rough total wait in seconds, or null when no join has finished yet and there is
+         * nothing honest to estimate from. */
+        Long estimatedWaitSeconds
 ) {
 
     public static FilmRenderView of(FilmRender render, String videoUrl) {
+        return of(render, videoUrl, 0, null);
+    }
+
+    public static FilmRenderView of(FilmRender render, String videoUrl, int filmsAhead, Long estimatedWaitSeconds) {
         return new FilmRenderView(
                 render.getRenderId(),
                 render.getProjectId(),
@@ -45,6 +55,8 @@ public record FilmRenderView(
                 render.getPublishedAt(),
                 render.getLastError(),
                 render.getCreatedAt(),
-                render.getCompletedAt());
+                render.getCompletedAt(),
+                filmsAhead,
+                estimatedWaitSeconds);
     }
 }

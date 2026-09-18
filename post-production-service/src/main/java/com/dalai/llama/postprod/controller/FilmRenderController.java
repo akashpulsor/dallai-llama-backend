@@ -49,11 +49,22 @@ public class FilmRenderController {
         return ResponseEntity.ok(toView(render));
     }
 
-    /** The newest film for this project, whatever state it is in. What the page polls. */
+    /**
+     * The newest film for this project, whatever state it is in. What the page polls.
+     *
+     * <p>Carries the queue position with it, because films are joined one at a time across every
+     * tenant: a creator whose film is third in line is looking at the same spinner as one whose film
+     * is being worked on right now, and only this endpoint knows the difference.
+     */
     @GetMapping("/latest")
     public ResponseEntity<FilmRenderView> latest(@PathVariable UUID projectId) {
         return filmAssemblyService.latest(projectId)
-                .map(render -> ResponseEntity.ok(toView(render)))
+                .map(render -> {
+                    FilmAssemblyService.QueueWait wait = filmAssemblyService.queueWait(render);
+                    return ResponseEntity.ok(FilmRenderView.of(render,
+                            filmAssemblyService.playableUrl(render),
+                            wait.filmsAhead(), wait.estimatedWaitSeconds()));
+                })
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 

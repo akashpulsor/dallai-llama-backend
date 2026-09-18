@@ -236,6 +236,56 @@ public class FilmAssemblyService {
         }
     }
 
+    /**
+     * Where this film sits in the queue, and roughly how long that means waiting.
+     *
+     * <p>Films are joined one at a time -- every tenant's request goes onto one topic and is
+     * consumed serially -- so a creator can be waiting behind work that is not theirs and has no way
+     * to tell. An unexplained spinner reads as broken long before it reads as third in line.
+     *
+     * <p>The count is across ALL tenants on purpose: that is the queue actually being waited in, and
+     * counting only a creator's own films would tell someone who is sixth that they are next. It
+     * discloses a number and nothing else.
+     *
+     * <p>The estimate is built from how long recent joins TOOK, measured start to finish, never from
+     * created-to-finished -- that would fold other people's queue time into the encode and make every
+     * estimate longer the busier things got. Null rather than a guess when nothing has finished yet;
+     * a made-up number is worse than an honest "not known".
+     */
+    @Transactional(readOnly = true)
+    public QueueWait queueWait(FilmRender render) {
+        if (render.getStatus() != FilmRenderStatus.QUEUED) {
+            return new QueueWait(0, null);
+        }
+        long ahead = filmRenderRepository.countByStatusAndCreatedAtLessThan(
+                FilmRenderStatus.QUEUED, render.getCreatedAt());
+        Long typical = typicalJoinSeconds();
+        // +1 for this film's own join. The film currently being worked on is counted as a whole one
+        // rather than tracking how far through it is: overstating a wait slightly is the kinder error.
+        Long estimate = typical == null ? null : (ahead + 2) * typical;
+        return new QueueWait((int) ahead, estimate);
+    }
+
+    /** The middle of the last ten joins, not the mean -- one pathological film should not move it. */
+    private Long typicalJoinSeconds() {
+        List<FilmRender> finished = filmRenderRepository.recentFinished(
+                FilmRenderStatus.COMPLETED, org.springframework.data.domain.PageRequest.of(0, 10));
+        List<Long> durations = finished.stream()
+                .map(render -> java.time.Duration.between(render.getStartedAt(), render.getCompletedAt()).toSeconds())
+                .filter(seconds -> seconds > 0)
+                .sorted()
+                .toList();
+        return durations.isEmpty() ? null : durations.get(durations.size() / 2);
+    }
+
+    /**
+     * @param filmsAhead           how many films are queued in front of this one, across every tenant
+     * @param estimatedWaitSeconds a rough total wait including this film's own join, or null when no
+     *                             join has ever finished and there is nothing to estimate from
+     */
+    public record QueueWait(int filmsAhead, Long estimatedWaitSeconds) {
+    }
+
     /** The newest assembly of this project, whatever state it is in. */
     @Transactional(readOnly = true)
     public Optional<FilmRender> latest(UUID projectId) {
@@ -366,6 +416,7 @@ public class FilmAssemblyService {
         FilmRender render = filmRenderRepository.findById(renderId)
                 .orElseThrow(() -> new ClipProcessingException("No such film render"));
         render.setStatus(FilmRenderStatus.PROCESSING);
+        render.setStartedAt(OffsetDateTime.now());
         return filmRenderRepository.save(render);
     }
 

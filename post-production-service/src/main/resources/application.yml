@@ -84,6 +84,20 @@ spring:
         max.poll.interval.ms: ${POST_PROD_KAFKA_MAX_POLL_INTERVAL_MS:1800000}
         # One job at a time per consumer: these are ffmpeg runs, not messages.
         max.poll.records: 1
+    listener:
+      # ONE ffmpeg in this container at a time, whatever the partition count -- pinned rather than
+      # left to the default, because the whole memory budget below depends on it.
+      #
+      # Every tenant's film request goes onto the same topic and is joined one after another. The
+      # 2Gi limit is sized for ONE join: a single filter_complex holds a decoder and frame buffers
+      # open for every shot at once, and ffmpeg is a separate process counted against this same
+      # container limit. Raise this to 2 and two joins share one 2Gi budget, the OOM killer takes
+      # the pod, and every in-flight film dies together rather than one running slowly.
+      #
+      # To join more films at once, add REPLICAS, not threads: each pod is its own container with
+      # its own limit. Watch the CPU ceiling if you do -- 4000m per pod on an 8-core node means
+      # three of them already contend.
+      concurrency: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}

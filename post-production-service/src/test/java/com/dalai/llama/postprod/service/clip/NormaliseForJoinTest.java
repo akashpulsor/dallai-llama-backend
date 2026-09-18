@@ -1,0 +1,107 @@
+package com.dalai.llama.postprod.service.clip;
+
+import com.dalai.llama.postprod.service.clip.FfmpegClipProcessor.ConcatInput;
+import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Bringing one shot to the profile every other shot is brought to.
+ *
+ * <p>This runs once per shot, sequentially, instead of opening every input at once in a single
+ * filter_complex. The point is memory: one decoder and one encoder live at a time, so a thirty-shot
+ * film costs the same as a thirteen-shot one. Total encoding work is unchanged -- each frame is
+ * still encoded exactly once -- so the bounded memory is paid for in temp disk, not in time.
+ *
+ * <p>What is asserted is the part that makes the second stage a COPY. If normalising leaves any
+ * property un-forced, the copy join that follows either refuses or produces a file that plays for
+ * two seconds and stops.
+ */
+class NormaliseForJoinTest {
+
+    private static final int W = 1080;
+    private static final int H = 1920;
+    private final FfmpegClipProcessor ffmpeg = new FfmpegClipProcessor(600, 30);
+
+    private static ConcatInput withAudio() {
+        return new ConcatInput("h264", "yuv420p", "24/1", W, H, "aac", "44100", "2");
+    }
+
+    private static ConcatInput silent() {
+        return new ConcatInput("h264", "yuv420p", "24/1", W, H, null, null, null);
+    }
+
+    private static String flagValue(List<String> command, String flag) {
+        int at = command.indexOf(flag);
+        return at < 0 || at + 1 >= command.size() ? null : command.get(at + 1);
+    }
+
+    @Test
+    void forcesTheFrameRateSoTheCopyJoinIsPossible() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+
+        // A 24fps and a 30fps clip cannot be copy-joined however well they match otherwise.
+        assertEquals("30", flagValue(command, "-r"));
+        assertEquals("cfr", flagValue(command, "-fps_mode"), "variable frame rate breaks a copy join");
+        assertEquals("libx264", flagValue(command, "-c:v"));
+        assertEquals("yuv420p", flagValue(command, "-pix_fmt"));
+        assertEquals("aac", flagValue(command, "-c:a"));
+        assertEquals("48000", flagValue(command, "-ar"));
+        assertEquals("2", flagValue(command, "-ac"));
+    }
+
+    @Test
+    void givesASilentShotARealAudioTrack() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/silent.mp4", silent(), W, H, Path.of("out.mp4"));
+
+        // Silence has to be a track, not an absent one: one silent shot among thirteen with sound
+        // breaks the join outright.
+        assertTrue(command.contains("anullsrc=channel_layout=stereo:sample_rate=48000"),
+                "a silent shot must be given generated silence");
+        // Two -map flags: picture from the shot, sound from the generated silence.
+        assertEquals("0:v:0", flagValue(command, "-map"), "picture still comes from the shot");
+        assertTrue(command.contains("1:a:0"), "audio must come from the generated silence");
+        assertFalse(command.contains("0:a:0"), "there is no audio on this shot to take");
+        assertTrue(command.contains("-shortest"), "anullsrc never ends on its own");
+    }
+
+    @Test
+    void takesAudioFromTheShotWhenItHasSome() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+
+        assertTrue(command.contains("0:a:0"), "audio must come from the shot itself");
+        assertFalse(command.contains("-shortest"), "nothing here runs on for ever");
+        assertFalse(command.stream().anyMatch(arg -> arg.startsWith("anullsrc")));
+    }
+
+    @Test
+    void padsRatherThanCropsToReachTheTargetSize() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+
+        String filter = flagValue(command, "-vf");
+        assertTrue(filter.contains("force_original_aspect_ratio=decrease"), filter);
+        assertTrue(filter.contains("pad=" + W + ":" + H), filter);
+        assertTrue(filter.contains("setsar=1"), "an unset SAR is another way a copy join fails");
+    }
+
+    /** ffmpeg rejects http options outright on a local path, and stage two reads local files. */
+    @Test
+    void reconnectOptionsOnlyOnHttpInputs() {
+        List<String> remote = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+        List<String> local = ffmpeg.buildNormaliseCommand(
+                "/tmp/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+
+        assertTrue(remote.contains("-reconnect"));
+        assertFalse(local.contains("-reconnect"));
+    }
+}

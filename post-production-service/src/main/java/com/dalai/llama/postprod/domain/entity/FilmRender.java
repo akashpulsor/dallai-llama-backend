@@ -84,6 +84,12 @@ public class FilmRender {
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
+    /** When ffmpeg actually started, as opposed to when the film was asked for. The gap between
+     * this and {@code createdAt} is time spent queued behind other films, and keeping the two apart
+     * is what stops a wait estimate being built from other people's waiting. */
+    @Column(name = "started_at")
+    private OffsetDateTime startedAt;
+
     public boolean isPlayable() {
         return status == FilmRenderStatus.COMPLETED && bucket != null && objectKey != null;
     }
