@@ -66,22 +66,171 @@ public class FfmpegClipProcessor {
     }
 
     /**
+     * What a concat needs to know about one input, and nothing else.
+     *
+     * <p>Equality across every input is exactly the condition for joining by stream copy. Geometry
+     * is only one of five: two clips at the same resolution still cannot be copied together if they
+     * differ in codec, pixel format, frame rate, or audio -- and a silent shot among thirteen with
+     * sound breaks a copy join outright, which is why {@code audio} being absent is recorded rather
+     * than ignored.
+     */
+    record ConcatInput(String videoCodec, String pixelFormat, String frameRate, int width, int height,
+                       String audioCodec, String sampleRate, String channels) {
+    }
+
+    /** Reads the handful of stream properties a copy-join depends on. Over http this pulls headers,
+     * not the clip. */
+    ConcatInput probeConcatInput(String input) {
+        String out = capture(List.of("ffprobe", "-v", "error",
+                "-show_entries", "stream=codec_type,codec_name,width,height,pix_fmt,r_frame_rate,sample_rate,channels",
+                "-of", "default=noprint_wrappers=1", input));
+        String videoCodec = null, pixelFormat = null, frameRate = null, audioCodec = null,
+                sampleRate = null, channels = null;
+        int width = 0, height = 0;
+        String type = null;
+        for (String line : out.split("\\R")) {
+            int eq = line.indexOf('=');
+            if (eq < 0) {
+                continue;
+            }
+            String key = line.substring(0, eq).trim();
+            String value = line.substring(eq + 1).trim();
+            switch (key) {
+                case "codec_type" -> type = value;
+                case "codec_name" -> {
+                    if ("video".equals(type)) {
+                        videoCodec = value;
+                    } else if ("audio".equals(type)) {
+                        audioCodec = value;
+                    }
+                }
+                case "pix_fmt" -> pixelFormat = value;
+                case "r_frame_rate" -> frameRate = value;
+                case "sample_rate" -> sampleRate = value;
+                case "channels" -> channels = value;
+                case "width" -> width = parseIntOrZero(value);
+                case "height" -> height = parseIntOrZero(value);
+                default -> { }
+            }
+        }
+        return new ConcatInput(videoCodec, pixelFormat, frameRate, width, height,
+                audioCodec, sampleRate, channels);
+    }
+
+    private static int parseIntOrZero(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
+    /**
+     * Whether these inputs can simply be stapled together.
+     *
+     * <p>Every property has to match, and the result has to already be the size the film wants --
+     * a copy join cannot resize, so uniform inputs at the wrong geometry still have to be encoded.
+     */
+    static boolean canCopyJoin(List<ConcatInput> inputs, int width, int height) {
+        if (inputs.isEmpty()) {
+            return false;
+        }
+        ConcatInput first = inputs.get(0);
+        if (first.videoCodec() == null || first.width() != width || first.height() != height) {
+            return false;
+        }
+        return inputs.stream().allMatch(first::equals);
+    }
+
+    /**
      * Joins clips in order into one film, at one size.
      *
-     * <p>Re-encoded rather than stream-copied, and every input scaled and padded to the target: shots
-     * come from different renders, concat refuses mismatched sizes outright, and {@code -c copy}
-     * across mismatched streams produces a file that plays for two seconds and stops. Padded rather
+     * <p>Copied when it can be and encoded when it must be, decided per join by probing the inputs.
+     * A copy join cannot resize or convert, so it is available only when every shot already agrees
+     * on codec, pixel format, frame rate, geometry and audio -- which is a question about the models
+     * that produced them, and therefore a question to measure rather than to answer in advance.
+     *
+     * <p>When it is not available, every input is scaled and PADDED to the target. Padded rather
      * than cropped, because losing the edge of a frame to make a join work is not a trade anyone
      * asked for.
      */
-    public void concat(List<Path> clips, int width, int height, Path output) {
+    public void concat(List<String> clips, int width, int height, Path output) {
         if (clips.isEmpty()) {
             throw new ClipProcessingException("There are no shots to join");
         }
+        // Encoding is a consequence of having to change the pixels, not a decision taken on its own.
+        // When every shot already agrees on codec, pixel format, frame rate, geometry and audio,
+        // nothing needs changing and the shots can simply be stapled together: seconds instead of
+        // minutes, no quality lost to a second generation, and -- because nothing is decoded -- none
+        // of the memory that holding thirteen decoders open costs.
+        //
+        // Measured rather than assumed, per join. Clips come from different models, and which model
+        // produced a shot is not something this service knows or should have to track.
+        List<ConcatInput> inputs = clips.stream().map(this::probeConcatInput).toList();
+        if (canCopyJoin(inputs, width, height)) {
+            log.info("Joining {} shots by stream copy -- every input already matches", clips.size());
+            copyJoin(clips, output);
+            return;
+        }
+        log.info("Joining {} shots by re-encode -- inputs differ: {}", clips.size(), describeDifference(inputs));
+        encodeJoin(clips, width, height, output);
+    }
+
+    /** Why the fast path was not available, for the operator wondering where the minutes went. */
+    private static String describeDifference(List<ConcatInput> inputs) {
+        ConcatInput first = inputs.get(0);
+        return inputs.stream().filter(input -> !first.equals(input)).findFirst()
+                .map(other -> "%s vs %s".formatted(first, other))
+                .orElse("geometry is not the film's target size");
+    }
+
+    /**
+     * The fast path: no decode, no encode, just one container from many.
+     *
+     * <p>The concat DEMUXER, not the filter. It reads a list of inputs and copies their packets
+     * through, which is only valid because every input was just checked to be identical.
+     */
+    private void copyJoin(List<String> clips, Path output) {
+        Path listFile = output.getParent().resolve("inputs.txt");
+        StringBuilder list = new StringBuilder();
+        for (String clip : clips) {
+            list.append("file '").append(clip).append("'").append(System.lineSeparator());
+        }
+        try {
+            Files.writeString(listFile, list.toString(), StandardCharsets.UTF_8);
+        } catch (Exception ex) {
+            throw new ClipProcessingException("Could not write the join list", ex);
+        }
+        run(List.of("ffmpeg", "-y",
+                // The list holds signed https URLs, so the demuxer has to be allowed to open them;
+                // -safe 0 because those paths are not the "safe" relative filenames it wants.
+                "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+                "-safe", "0",
+                "-f", "concat", "-i", listFile.toString(),
+                "-c", "copy", "-movflags", "+faststart", output.toString()));
+    }
+
+    /** The slow path: normalise every shot to one geometry and encode the result once. */
+    private void encodeJoin(List<String> clips, int width, int height, Path output) {
         List<String> command = new ArrayList<>(List.of("ffmpeg", "-y"));
-        for (Path clip : clips) {
+        for (String clip : clips) {
+            // Inputs are signed object-store URLs, read straight from MinIO. Pulling all thirteen
+            // to disk first only to hand them back to ffmpeg was a serial download of the entire
+            // film before a single frame could be encoded, plus the disk to hold it.
+            //
+            // The reconnect options are what make that safe to rely on: without them a dropped
+            // connection part-way through kills a join that may already be minutes in. They are
+            // http-protocol options, so they go on http inputs only -- ffmpeg rejects them outright
+            // on a local path.
+            if (clip.startsWith("http://") || clip.startsWith("https://")) {
+                command.addAll(List.of(
+                        "-reconnect", "1",
+                        "-reconnect_streamed", "1",
+                        "-reconnect_on_network_error", "1",
+                        "-reconnect_delay_max", "10"));
+            }
             command.add("-i");
-            command.add(clip.toString());
+            command.add(clip);
         }
         String size = width + ":" + height;
         StringBuilder filter = new StringBuilder();

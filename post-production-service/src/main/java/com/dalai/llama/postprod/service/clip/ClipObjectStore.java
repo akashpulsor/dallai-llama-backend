@@ -91,6 +91,30 @@ public class ClipObjectStore {
         }
     }
 
+    /**
+     * A signed URL for something inside the cluster to read -- ffmpeg, not a browser.
+     *
+     * <p>Signed with the INTERNAL client on purpose. {@link #presignedUrl} signs with the public
+     * endpoint because its URLs go to browsers and to fal.ai; handing one of those to ffmpeg running
+     * in this pod would send every byte of every clip out through the gateway and back in again to
+     * reach a service two namespaces away.
+     *
+     * <p>The TTL has to outlive the whole join, not just the fetch: ffmpeg opens these inputs once
+     * and reads from them for as long as the encode runs.
+     */
+    public String internalPresignedUrl(String objectBucket, String objectKey) {
+        try {
+            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                    .method(Method.GET)
+                    .bucket(objectBucket)
+                    .object(objectKey)
+                    .expiry(signedUrlTtlSeconds, TimeUnit.SECONDS)
+                    .build());
+        } catch (Exception ex) {
+            throw new ClipProcessingException("Could not sign an internal URL for " + objectKey, ex);
+        }
+    }
+
     public String presignedUrl(String objectBucket, String objectKey) {
         try {
             return publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()

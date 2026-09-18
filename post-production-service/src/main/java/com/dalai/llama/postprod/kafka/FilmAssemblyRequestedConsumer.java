@@ -32,6 +32,32 @@ public class FilmAssemblyRequestedConsumer {
     private final FilmRenderRepository filmRenderRepository;
     private final FilmAssemblyService filmAssemblyService;
 
+    /** How many times a renderId is looked up before the event is written off. */
+    static final int LOOKUP_ATTEMPTS = 3;
+
+    /** Gap between those attempts -- long enough to outlast a commit landing late, short enough
+     * that a genuinely unknown renderId does not hold the partition. */
+    private static final long LOOKUP_RETRY_MILLIS = 500;
+
+    private Optional<FilmRender> findWithRetry(UUID renderId) {
+        for (int attempt = 1; attempt <= LOOKUP_ATTEMPTS; attempt++) {
+            Optional<FilmRender> found = filmRenderRepository.findById(renderId);
+            if (found.isPresent()) {
+                return found;
+            }
+            if (attempt < LOOKUP_ATTEMPTS) {
+                log.info("No row yet for renderId={}, re-reading ({}/{})", renderId, attempt, LOOKUP_ATTEMPTS);
+                try {
+                    Thread.sleep(LOOKUP_RETRY_MILLIS);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return Optional.empty();
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
     @KafkaListener(
             topics = "${post-production.film.requested-topic}",
             groupId = "${post-production.film.requested-consumer-group:post-production-service-film}"
@@ -45,9 +71,15 @@ public class FilmAssemblyRequestedConsumer {
             return;
         }
 
-        Optional<FilmRender> maybe = filmRenderRepository.findById(event.renderId());
+        // Re-read before giving up. The publisher now sends only after its transaction commits, so
+        // the row should always be here -- but "not found" used to be treated as final, and that is
+        // what turned a 300ms timing window into a film lost for ever: the listener returned
+        // normally, Kafka committed the offset, and the event was gone. Returning without doing the
+        // work is the one outcome this must never reach cheaply.
+        Optional<FilmRender> maybe = findWithRetry(event.renderId());
         if (maybe.isEmpty()) {
-            log.warn("Dropping film-assembly event for unknown renderId={}", event.renderId());
+            log.warn("Dropping film-assembly event for unknown renderId={} after {} attempts",
+                    event.renderId(), LOOKUP_ATTEMPTS);
             return;
         }
         if (maybe.get().getStatus() != null && maybe.get().getStatus().isTerminal()) {

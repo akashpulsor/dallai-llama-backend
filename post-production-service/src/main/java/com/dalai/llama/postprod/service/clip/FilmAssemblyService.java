@@ -17,6 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
@@ -126,21 +128,45 @@ public class FilmAssemblyService {
                 .createdBy(userId)
                 .createdAt(OffsetDateTime.now())
                 .build());
-        try {
-            assemblyRequestedPublisher.publish(
-                    new FilmAssemblyRequestedEvent(render.getRenderId(), tenantId.toString(), projectId, userId));
-        } catch (RuntimeException ex) {
-            // A QUEUED row with no event behind it would sit there for ever, so the failure is
-            // recorded where the page is already looking rather than left to a timeout.
+        // Published AFTER this transaction commits, never inside it.
+        //
+        // The row above is invisible to every other database connection until commit, and Kafka is
+        // not in the transaction -- so publishing here sent the event while the row still did not
+        // exist for anyone else. The consumer, on its own thread and its own connection, looked the
+        // renderId up 300ms before the commit landed, found nothing, and dropped the event. The
+        // film then sat QUEUED for ever and read as "joining is taking a long time". Every film
+        // ever requested was lost this way: one queued, one dropped, none joined.
+        UUID renderId = render.getRenderId();
+        int shotCount = readiness.total();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    assemblyRequestedPublisher.publish(
+                            new FilmAssemblyRequestedEvent(renderId, tenantId.toString(), projectId, userId));
+                    log.info("Queued a film renderId={} projectId={} shots={}", renderId, projectId, shotCount);
+                } catch (RuntimeException ex) {
+                    // Past the commit the caller already has its 202, so throwing here would reach
+                    // nobody. A QUEUED row with no event behind it would sit for ever, so the
+                    // failure is recorded where the page is already looking.
+                    log.warn("Could not queue the film renderId={}: {}", renderId, ex.getMessage());
+                    markQueueFailed(renderId, ex.getMessage());
+                }
+            }
+        });
+        return render;
+    }
+
+    /** Records that the film could never be queued, in its own transaction -- the request's has
+     * already committed by the time this runs. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markQueueFailed(UUID renderId, String reason) {
+        filmRenderRepository.findById(renderId).ifPresent(render -> {
             render.setStatus(FilmRenderStatus.FAILED);
-            render.setLastError("Could not queue the film for joining: " + ex.getMessage());
+            render.setLastError("Could not queue the film for joining: " + reason);
             render.setCompletedAt(OffsetDateTime.now());
             filmRenderRepository.save(render);
-            throw ex;
-        }
-        log.info("Queued a film renderId={} projectId={} shots={}",
-                render.getRenderId(), projectId, readiness.total());
-        return render;
+        });
     }
 
     /**
@@ -179,12 +205,13 @@ public class FilmAssemblyService {
                 cutsInOrder.add(cut);
             }
 
-            List<Path> clips = new java.util.ArrayList<>(cutsInOrder.size());
-            for (int i = 0; i < cutsInOrder.size(); i++) {
-                ShotClipVersion cut = cutsInOrder.get(i);
-                Path clip = workDir.resolve("%03d.mp4".formatted(i + 1));
-                objectStore.download(cut.getBucket(), cut.getObjectKey(), clip);
-                clips.add(clip);
+            // Signed URLs, not downloads. ffmpeg reads each shot from MinIO as it needs it, so the
+            // join starts on the first frame instead of after every clip has landed on disk --
+            // thirteen serial downloads that bought nothing, since ffmpeg has to read the bytes
+            // either way. Signed internally: these are for a process in this pod, not a browser.
+            List<String> clips = new java.util.ArrayList<>(cutsInOrder.size());
+            for (ShotClipVersion cut : cutsInOrder) {
+                clips.add(objectStore.internalPresignedUrl(cut.getBucket(), cut.getObjectKey()));
             }
 
             int[] size = targetSize(render.getTenantId(), render.getProjectId(), cutsInOrder);
