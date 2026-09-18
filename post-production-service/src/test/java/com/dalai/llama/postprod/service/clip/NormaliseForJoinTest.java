@@ -1,6 +1,7 @@
 package com.dalai.llama.postprod.service.clip;
 
 import com.dalai.llama.postprod.service.clip.FfmpegClipProcessor.ConcatInput;
+import com.dalai.llama.postprod.service.clip.FfmpegClipProcessor.ShotDurations;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -33,6 +34,11 @@ class NormaliseForJoinTest {
         return new ConcatInput("h264", "yuv420p", "24/1", W, H, "aac", "44100", "2");
     }
 
+    /** A shot whose line fits its picture exactly -- nothing to hold, nothing to pad. */
+    private static ShotDurations even() {
+        return new ShotDurations(4.0, 4.0);
+    }
+
     private static ConcatInput silent() {
         return new ConcatInput("h264", "yuv420p", "24/1", W, H, null, null, null);
     }
@@ -45,7 +51,7 @@ class NormaliseForJoinTest {
     @Test
     void forcesTheFrameRateSoTheCopyJoinIsPossible() {
         List<String> command = ffmpeg.buildNormaliseCommand(
-                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "https://minio/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
 
         // A 24fps and a 30fps clip cannot be copy-joined however well they match otherwise.
         assertEquals("30", flagValue(command, "-r"));
@@ -60,7 +66,7 @@ class NormaliseForJoinTest {
     @Test
     void givesASilentShotARealAudioTrack() {
         List<String> command = ffmpeg.buildNormaliseCommand(
-                "https://minio/silent.mp4", silent(), W, H, Path.of("out.mp4"));
+                "https://minio/silent.mp4", silent(), even(), W, H, Path.of("out.mp4"));
 
         // Silence has to be a track, not an absent one: one silent shot among thirteen with sound
         // breaks the join outright.
@@ -78,7 +84,7 @@ class NormaliseForJoinTest {
     @Test
     void takesAudioFromTheShotWhenItHasSome() {
         List<String> command = ffmpeg.buildNormaliseCommand(
-                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "https://minio/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
 
         assertTrue(command.contains("0:a:0"), "audio must come from the shot itself");
         assertFalse(command.stream().anyMatch(arg -> arg.startsWith("anullsrc")));
@@ -96,7 +102,7 @@ class NormaliseForJoinTest {
     @Test
     void equalisesAudioAndVideoLengthSoTheFilmDoesNotDrift() {
         List<String> command = ffmpeg.buildNormaliseCommand(
-                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "https://minio/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
 
         String audioFilter = flagValue(command, "-af");
         assertTrue(audioFilter != null && audioFilter.contains("apad"),
@@ -110,7 +116,7 @@ class NormaliseForJoinTest {
     @Test
     void padsRatherThanCropsToReachTheTargetSize() {
         List<String> command = ffmpeg.buildNormaliseCommand(
-                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "https://minio/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
 
         String filter = flagValue(command, "-vf");
         assertTrue(filter.contains("force_original_aspect_ratio=decrease"), filter);
@@ -118,13 +124,52 @@ class NormaliseForJoinTest {
         assertTrue(filter.contains("setsar=1"), "an unset SAR is another way a copy join fails");
     }
 
+    /**
+     * A line that runs past its picture must not be cut short.
+     *
+     * <p>Equalising the streams by padding audio and cutting at the picture deletes the end of every
+     * sentence. video-generation-service already refuses that trade by default -- its dialogueFit
+     * EXTEND "gives the shot the seconds the line needs, so nothing is cut" -- and holding the last
+     * frame gives the same answer here, with both streams still ending together.
+     */
+    @Test
+    void holdsThePictureWhenTheLineRunsLong() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), new ShotDurations(4.0, 4.365), W, H, Path.of("out.mp4"));
+
+        String filter = flagValue(command, "-vf");
+        assertTrue(filter.contains("tpad=stop_mode=clone:stop_duration=0.365"),
+                "the shot should hold its last frame for the overhang, was: " + filter);
+    }
+
+    /** The other direction: picture longer than the line, so the track is padded and cut at it. */
+    @Test
+    void padsTheLineWhenThePictureRunsLong() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), new ShotDurations(4.5, 3.0), W, H, Path.of("out.mp4"));
+
+        assertFalse(flagValue(command, "-vf").contains("tpad"),
+                "there is no overhang to hold here");
+        assertTrue(flagValue(command, "-af").contains("apad"));
+        assertTrue(command.contains("-shortest"));
+    }
+
+    /** Milliseconds are not worth a filter. */
+    @Test
+    void ignoresATrivialOverhang() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), new ShotDurations(4.000, 4.010), W, H, Path.of("out.mp4"));
+
+        assertFalse(flagValue(command, "-vf").contains("tpad"));
+    }
+
     /** ffmpeg rejects http options outright on a local path, and stage two reads local files. */
     @Test
     void reconnectOptionsOnlyOnHttpInputs() {
         List<String> remote = ffmpeg.buildNormaliseCommand(
-                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "https://minio/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
         List<String> local = ffmpeg.buildNormaliseCommand(
-                "/tmp/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+                "/tmp/a.mp4", withAudio(), even(), W, H, Path.of("out.mp4"));
 
         assertTrue(remote.contains("-reconnect"));
         assertFalse(local.contains("-reconnect"));

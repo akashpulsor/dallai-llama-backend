@@ -125,6 +125,42 @@ public class FfmpegClipProcessor {
                 streamValue(audio, "channels"));
     }
 
+    /**
+     * How long each stream of a shot actually runs.
+     *
+     * <p>Kept apart from {@link ConcatInput} on purpose: that record's equality IS the copy-join
+     * test, and durations differ between shots by nature, so folding them in would mean no two shots
+     * ever matched.
+     *
+     * @param videoSeconds the picture, or 0 when it could not be read
+     * @param audioSeconds the track, or 0 when there is none
+     */
+    record ShotDurations(double videoSeconds, double audioSeconds) {
+
+        /** How much longer the line runs than the picture it was planned for. */
+        double audioOverhangSeconds() {
+            return audioSeconds > videoSeconds ? audioSeconds - videoSeconds : 0;
+        }
+    }
+
+    ShotDurations probeDurations(String input) {
+        return new ShotDurations(streamSeconds(input, "v:0"), streamSeconds(input, "a:0"));
+    }
+
+    private double streamSeconds(String input, String stream) {
+        String out = capture(List.of("ffprobe", "-v", "error", "-select_streams", stream,
+                "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1", input));
+        String value = streamValue(out, "duration");
+        if (value == null) {
+            return 0;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
     /** One {@code key=value} out of an ffprobe block, or null when the stream did not exist. */
     static String streamValue(String probeOutput, String key) {
         if (probeOutput == null) {
@@ -236,7 +272,7 @@ public class FfmpegClipProcessor {
         List<String> normalised = new ArrayList<>(clips.size());
         for (int i = 0; i < clips.size(); i++) {
             Path target = workDir.resolve("norm-%03d.mp4".formatted(i + 1));
-            normaliseOne(clips.get(i), inputs.get(i), width, height, target);
+            normaliseOne(clips.get(i), inputs.get(i), probeDurations(clips.get(i)), width, height, target);
             normalised.add(target.toString());
             log.debug("Normalised shot {}/{}", i + 1, clips.size());
         }
@@ -251,12 +287,14 @@ public class FfmpegClipProcessor {
      * forced to exist for the same reason -- a silent shot among thirteen with sound breaks the join
      * outright, so silence is added as a real track rather than left absent.
      */
-    private void normaliseOne(String clip, ConcatInput input, int width, int height, Path output) {
-        run(buildNormaliseCommand(clip, input, width, height, output));
+    private void normaliseOne(String clip, ConcatInput input, ShotDurations durations,
+                              int width, int height, Path output) {
+        run(buildNormaliseCommand(clip, input, durations, width, height, output));
     }
 
     /** Split out so the command can be asserted without running ffmpeg. */
-    List<String> buildNormaliseCommand(String clip, ConcatInput input, int width, int height, Path output) {
+    List<String> buildNormaliseCommand(String clip, ConcatInput input, ShotDurations durations,
+                                       int width, int height, Path output) {
         List<String> command = new ArrayList<>(List.of("ffmpeg", "-y"));
         command.addAll(reconnectOptionsFor(clip));
         command.addAll(List.of("-i", clip));
@@ -266,9 +304,25 @@ public class FfmpegClipProcessor {
                     "anullsrc=channel_layout=stereo:sample_rate=48000"));
         }
         String size = width + ":" + height;
-        command.addAll(List.of(
-                "-vf", "scale=" + size + ":force_original_aspect_ratio=decrease,"
-                        + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1"));
+        String videoFilter = "scale=" + size + ":force_original_aspect_ratio=decrease,"
+                + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1";
+        // When the line runs past the picture, HOLD THE PICTURE -- never cut the line.
+        //
+        // These streams are routinely uneven: a dubbed take is as long as the words take to say,
+        // not as long as the shot was planned for. Making them equal by padding audio and cutting
+        // at the picture does equalise them, and it does it by deleting the end of every sentence.
+        // That is the trade video-generation-service already refuses by default -- its dialogueFit
+        // EXTEND "gives the shot the seconds the line needs, so nothing is cut" -- and the same
+        // answer belongs here.
+        //
+        // tpad clones the last frame for the overhang, so the shot holds on its final image while
+        // the line finishes. Nothing spoken is lost and the two streams still end together, which
+        // is what stops the join drifting.
+        double overhang = durations.audioOverhangSeconds();
+        if (overhang > 0.02) {
+            videoFilter += ",tpad=stop_mode=clone:stop_duration=" + String.format(Locale.ROOT, "%.3f", overhang);
+        }
+        command.addAll(List.of("-vf", videoFilter));
         if (hasAudio) {
             // aresample puts the track on a common time base, and apad runs it on as silence so
             // -shortest below can cut it at the picture. Both are in this class's own rules and
