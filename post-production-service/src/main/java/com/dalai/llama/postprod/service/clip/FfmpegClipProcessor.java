@@ -146,6 +146,14 @@ public class FfmpegClipProcessor {
         if (first.videoCodec() == null || first.width() != width || first.height() != height) {
             return false;
         }
+        // A project where NO shot has sound is internally consistent, so it would otherwise copy
+        // cleanly -- straight into a film with no audio stream at all. Silence is a track, not an
+        // absent one: a film with no track is what the clip pipeline already refuses to let a cut
+        // become, and it fails far from its cause. Shots without audio are normal here, so this is
+        // a real case and not a hypothetical. The long path gives it real silence.
+        if (first.audioCodec() == null) {
+            return false;
+        }
         return inputs.stream().allMatch(first::equals);
     }
 

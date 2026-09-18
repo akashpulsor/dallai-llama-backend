@@ -59,6 +59,18 @@ class ConcatCopyDecisionTest {
         assertFalse(FfmpegClipProcessor.canCopyJoin(List.of(uniform(), silent), W, H));
     }
 
+    /**
+     * Every shot silent. Consistent, so it would copy -- into a film carrying no audio stream at
+     * all. Shots without audio are a normal case here, not a hypothetical, and a film with no track
+     * is exactly what the clip pipeline refuses to let a cut become. The long path adds real silence.
+     */
+    @Test
+    void refusesWhenNoShotHasAudioAtAll() {
+        ConcatInput silent = new ConcatInput("h264", "yuv420p", "24/1", W, H, null, null, null);
+        assertFalse(FfmpegClipProcessor.canCopyJoin(List.of(silent, silent, silent), W, H),
+                "a copy join here yields a film with no audio stream");
+    }
+
     @Test
     void refusesOnDifferentAudioSampleRate() {
         ConcatInput at44k = new ConcatInput("h264", "yuv420p", "24/1", W, H, "aac", "44100", "2");
