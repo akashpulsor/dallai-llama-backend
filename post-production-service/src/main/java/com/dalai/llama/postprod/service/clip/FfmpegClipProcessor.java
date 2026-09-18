@@ -268,17 +268,26 @@ public class FfmpegClipProcessor {
         String size = width + ":" + height;
         command.addAll(List.of(
                 "-vf", "scale=" + size + ":force_original_aspect_ratio=decrease,"
-                        + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1",
+                        + "pad=" + size + ":(ow-iw)/2:(oh-ih)/2,setsar=1"));
+        if (hasAudio) {
+            // aresample puts the track on a common time base, and apad runs it on as silence so
+            // -shortest below can cut it at the picture. Both are in this class's own rules and
+            // dropping them cost a film its sync: a shot whose audio is 365ms longer than its
+            // picture makes the concat offset the NEXT shot by the audio, so sound runs further
+            // ahead of picture with every join -- measured at 25.825s of video against 26.211s of
+            // audio over six shots, and worse over thirteen.
+            command.addAll(List.of("-af", "aresample=async=1:first_pts=0,apad"));
+        }
+        command.addAll(List.of(
                 "-map", "0:v:0",
                 "-map", hasAudio ? "0:a:0" : "1:a:0",
                 "-r", String.valueOf(joinFrameRate),
                 "-fps_mode", "cfr",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-ar", "48000", "-ac", "2"));
-        if (!hasAudio) {
-            // anullsrc never ends on its own.
-            command.add("-shortest");
-        }
+                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                // Always. Padded audio and anullsrc both run for ever otherwise, and a shot whose
+                // streams are not the same length is what accumulates into the drift above.
+                "-shortest"));
         command.add(output.toString());
         return command;
     }

@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -70,6 +71,8 @@ class NormaliseForJoinTest {
         assertTrue(command.contains("1:a:0"), "audio must come from the generated silence");
         assertFalse(command.contains("0:a:0"), "there is no audio on this shot to take");
         assertTrue(command.contains("-shortest"), "anullsrc never ends on its own");
+        assertNull(flagValue(command, "-af"),
+                "there is no real track here to put on a common time base");
     }
 
     @Test
@@ -78,8 +81,30 @@ class NormaliseForJoinTest {
                 "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
 
         assertTrue(command.contains("0:a:0"), "audio must come from the shot itself");
-        assertFalse(command.contains("-shortest"), "nothing here runs on for ever");
         assertFalse(command.stream().anyMatch(arg -> arg.startsWith("anullsrc")));
+    }
+
+    /**
+     * The shot's streams must come out the SAME LENGTH, or the film drifts.
+     *
+     * <p>A copy-concat offsets each shot by the longest stream in the one before it. A clip whose
+     * audio runs 365ms past its picture therefore pushes sound ahead of picture, and it compounds:
+     * measured at 25.825s of video against 26.211s of audio across six shots. apad runs the track on
+     * as silence, -shortest cuts it at the picture, and aresample puts it on a common time base --
+     * all three are rules this class already documents.
+     */
+    @Test
+    void equalisesAudioAndVideoLengthSoTheFilmDoesNotDrift() {
+        List<String> command = ffmpeg.buildNormaliseCommand(
+                "https://minio/a.mp4", withAudio(), W, H, Path.of("out.mp4"));
+
+        String audioFilter = flagValue(command, "-af");
+        assertTrue(audioFilter != null && audioFilter.contains("apad"),
+                "audio must be padded to reach the picture, was: " + audioFilter);
+        assertTrue(audioFilter.contains("aresample=async=1:first_pts=0"),
+                "without a common time base a shot drifts a little further with every join");
+        assertTrue(command.contains("-shortest"),
+                "padded audio runs for ever unless it is cut at the picture");
     }
 
     @Test
