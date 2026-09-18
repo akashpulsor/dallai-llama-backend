@@ -85,46 +85,65 @@ public class FfmpegClipProcessor {
                        String audioCodec, String sampleRate, String channels) {
     }
 
-    /** Reads the handful of stream properties a copy-join depends on. Over http this pulls headers,
-     * not the clip. */
+    /**
+     * Reads the handful of stream properties a copy-join depends on. Over http this pulls headers,
+     * not the clip.
+     *
+     * <p>Two targeted probes rather than one combined one, because ffprobe emits {@code codec_name}
+     * BEFORE {@code codec_type}:
+     *
+     * <pre>
+     *   codec_name=h264
+     *   codec_type=video
+     *   ...
+     *   codec_name=aac
+     *   codec_type=audio
+     * </pre>
+     *
+     * <p>Reading that as one stream means every {@code codec_name} is attributed to the type of the
+     * PREVIOUS stream -- the video codec comes out "aac", the audio codec comes out null, and the
+     * audio stream's {@code r_frame_rate=0/0} overwrites the video's real frame rate. It cost a film
+     * its sound: a null audio codec makes every shot look silent, so each one was normalised against
+     * generated silence and its real dialogue dropped. {@code -select_streams} removes the ambiguity
+     * rather than depending on field order.
+     */
     ConcatInput probeConcatInput(String input) {
-        String out = capture(List.of("ffprobe", "-v", "error",
-                "-show_entries", "stream=codec_type,codec_name,width,height,pix_fmt,r_frame_rate,sample_rate,channels",
+        String video = capture(List.of("ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height,pix_fmt,r_frame_rate",
                 "-of", "default=noprint_wrappers=1", input));
-        String videoCodec = null, pixelFormat = null, frameRate = null, audioCodec = null,
-                sampleRate = null, channels = null;
-        int width = 0, height = 0;
-        String type = null;
-        for (String line : out.split("\\R")) {
+        String audio = capture(List.of("ffprobe", "-v", "error", "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name,sample_rate,channels",
+                "-of", "default=noprint_wrappers=1", input));
+        return new ConcatInput(
+                streamValue(video, "codec_name"),
+                streamValue(video, "pix_fmt"),
+                streamValue(video, "r_frame_rate"),
+                parseIntOrZero(streamValue(video, "width")),
+                parseIntOrZero(streamValue(video, "height")),
+                streamValue(audio, "codec_name"),
+                streamValue(audio, "sample_rate"),
+                streamValue(audio, "channels"));
+    }
+
+    /** One {@code key=value} out of an ffprobe block, or null when the stream did not exist. */
+    static String streamValue(String probeOutput, String key) {
+        if (probeOutput == null) {
+            return null;
+        }
+        for (String line : probeOutput.split("\\R")) {
             int eq = line.indexOf('=');
-            if (eq < 0) {
-                continue;
-            }
-            String key = line.substring(0, eq).trim();
-            String value = line.substring(eq + 1).trim();
-            switch (key) {
-                case "codec_type" -> type = value;
-                case "codec_name" -> {
-                    if ("video".equals(type)) {
-                        videoCodec = value;
-                    } else if ("audio".equals(type)) {
-                        audioCodec = value;
-                    }
-                }
-                case "pix_fmt" -> pixelFormat = value;
-                case "r_frame_rate" -> frameRate = value;
-                case "sample_rate" -> sampleRate = value;
-                case "channels" -> channels = value;
-                case "width" -> width = parseIntOrZero(value);
-                case "height" -> height = parseIntOrZero(value);
-                default -> { }
+            if (eq > 0 && line.substring(0, eq).trim().equals(key)) {
+                String value = line.substring(eq + 1).trim();
+                return value.isEmpty() || "N/A".equals(value) ? null : value;
             }
         }
-        return new ConcatInput(videoCodec, pixelFormat, frameRate, width, height,
-                audioCodec, sampleRate, channels);
+        return null;
     }
 
     private static int parseIntOrZero(String value) {
+        if (value == null) {
+            return 0;
+        }
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException ex) {
