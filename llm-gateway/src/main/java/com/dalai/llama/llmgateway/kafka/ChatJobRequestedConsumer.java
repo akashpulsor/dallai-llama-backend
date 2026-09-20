@@ -41,6 +41,37 @@ public class ChatJobRequestedConsumer {
         this.completedPublisher = completedPublisher;
     }
 
+    /**
+     * One retry, on this path only, when the provider itself fell over.
+     *
+     * <p>Nobody is waiting here. A synchronous caller holds a connection and has its own deadline,
+     * so retrying underneath it only burns provider time it will never collect -- but a job that
+     * arrives over Kafka has no such caller, and failing it hands a creator a 503 for something
+     * that would very likely have worked on a second attempt. A shot-list generation was lost
+     * exactly that way: one attempt, cut off, gone, with the creator told only that the service was
+     * unavailable.
+     *
+     * <p>Retries only 5xx. A 400-class failure -- unknown model, no entitlement, insufficient
+     * balance -- is a decision, not an accident, and repeating it wastes a minute to reach the same
+     * answer.
+     *
+     * <p>Safe to call twice with the same idempotency key: a terminal row is re-dispatched on the
+     * SAME job_id with an incremented attempt_count, so this leaves one job in the ledger with an
+     * honest attempt count rather than two rows racing.
+     */
+    private ChatResponse chatWithOneRetryOnProviderFailure(ChatJobRequestedEvent event) {
+        try {
+            return llmGatewayService.chat(event.tenantId(), event.idempotencyKey(), event.request());
+        } catch (GatewayException ex) {
+            if (!ex.getStatus().is5xxServerError()) {
+                throw ex;
+            }
+            log.warn("Provider failure on chat job tenantId={} idempotencyKey={} status={} -- retrying once: {}",
+                    event.tenantId(), event.idempotencyKey(), ex.getStatus(), ex.getMessage());
+            return llmGatewayService.chat(event.tenantId(), event.idempotencyKey(), event.request());
+        }
+    }
+
     @KafkaListener(
             topics = "${llm-gateway.job-requested-kafka-topic:llm.job.requested}",
             groupId = "${llm-gateway.job-requested-consumer-group:llm-gateway-job-worker}"
@@ -61,8 +92,7 @@ public class ChatJobRequestedConsumer {
                 event.tenantId(), event.idempotencyKey());
 
         try {
-            ChatResponse response = llmGatewayService.chat(
-                    event.tenantId(), event.idempotencyKey(), event.request());
+            ChatResponse response = chatWithOneRetryOnProviderFailure(event);
             completedPublisher.publish(ChatJobCompletedEvent.succeeded(
                     response.jobId(), event.tenantId(), event.idempotencyKey(), response));
         } catch (GatewayException ex) {

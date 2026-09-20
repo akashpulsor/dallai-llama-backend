@@ -81,18 +81,87 @@ public class GoogleGeminiProvider implements LlmProvider {
         // every caller into llm-gateway already budgets 120s for the whole round trip, so there
         // was no reason this inner leg was the tightest link in the chain.
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : defaultTimeoutMs;
+        // Whether the caller asked for JSON decides what a truncated answer means below.
+        boolean jsonRequested = body.get("generationConfig") instanceof Map<?, ?> config
+                && "application/json".equals(config.get("responseMimeType"));
+        return callGemini(path, body, timeoutMs)
+                .flatMap(response -> jsonRequested && "MAX_TOKENS".equals(response.finishReason())
+                        ? regenerateCompact(request, path, timeoutMs)
+                        : Mono.just(response))
+                .onErrorMap(WebClientResponseException.class, ex -> new LlmProviderException(
+                        "Gemini call failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()),
+                        ex.getStatusCode().is5xxServerError(), ex))
+                .onErrorMap(ex -> !(ex instanceof LlmProviderException), ex ->
+                        new LlmProviderException("Gemini call failed: " + ex.getMessage(), true, ex));
+    }
+
+    /** The POST itself, shared by the first attempt and the compact retry. */
+    private Mono<LlmResponse> callGemini(String path, Map<String, Object> body, int timeoutMs) {
         return webClient.post()
                 .uri(path)
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(Map.class)
                 .timeout(Duration.ofMillis(timeoutMs))
-                .map(this::toLlmResponse)
-                .onErrorMap(WebClientResponseException.class, ex -> new LlmProviderException(
-                        "Gemini call failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()),
-                        ex.getStatusCode().is5xxServerError(), ex))
-                .onErrorMap(ex -> !(ex instanceof LlmProviderException), ex ->
-                        new LlmProviderException("Gemini call failed: " + ex.getMessage(), true, ex));
+                .map(this::toLlmResponse);
+    }
+
+    /**
+     * Asks again for the same answer, written tighter, when the first one ran out of output budget.
+     *
+     * <p>{@code finishReason=MAX_TOKENS} on a JSON request leaves half a document, which no caller
+     * can parse. Returning it as a success turns a provider limit into a baffling parse error
+     * somewhere downstream -- or a shot list quietly missing its last shots, which is worse because
+     * it looks fine. Failing outright is honest but throws away a generation that was nearly there.
+     *
+     * <p>So: ask for it again, instructing the model to spend its budget on content rather than
+     * prose. Every field, every item, same schema -- shorter wording. That is the only kind of
+     * compaction that is safe to automate, and it is the reason this is a FRESH generation rather
+     * than a continuation: the truncated text cannot be resumed as valid JSON.
+     *
+     * <p>Once, not in a loop. If a compact regeneration still overruns, the request is genuinely
+     * too big for one call and the caller is told so plainly rather than being billed for attempts
+     * that cannot succeed.
+     */
+    private Mono<LlmResponse> regenerateCompact(CanonicalRequest request, String path, int timeoutMs) {
+        log.info("Gemini hit its output limit on a JSON request modelId={} -- asking again, more compactly",
+                request.modelId());
+        Map<String, Object> compactBody = toGeminiRequestBody(withCompactionInstruction(request));
+        return callGemini(path, compactBody, timeoutMs)
+                .map(retried -> {
+                    if ("MAX_TOKENS".equals(retried.finishReason())) {
+                        throw new LlmProviderException(
+                                "Gemini ran out of output budget even after being asked for a more compact answer "
+                                        + "(finishReason=MAX_TOKENS, " + retried.outputTokens() + " output tokens). "
+                                        + "This request needs to be split into smaller calls, or given a larger "
+                                        + "max_tokens.",
+                                false);
+                    }
+                    log.info("Compact regeneration fit modelId={} outputTokens={}",
+                            request.modelId(), retried.outputTokens());
+                    return retried;
+                });
+    }
+
+    /**
+     * The same request, with one instruction added.
+     *
+     * <p>Appended as a final user turn rather than edited into the existing prompt: the caller's
+     * prompt is theirs, and a provider adapter quietly rewriting it is how a service ends up
+     * debugging words it never wrote. Worded to constrain STYLE, never content -- "drop nothing" is
+     * the whole point, since an answer that fits because it left half the shots out is the failure
+     * this is avoiding, not a fix for it.
+     */
+    private CanonicalRequest withCompactionInstruction(CanonicalRequest request) {
+        List<ChatMessage> messages = new java.util.ArrayList<>(request.messages());
+        messages.add(new ChatMessage("user",
+                "Your previous answer was cut off because it exceeded the output limit. "
+                        + "Produce the COMPLETE response again, to exactly the same schema, with every "
+                        + "item and every field present. Drop no information. Make it fit by writing "
+                        + "every text value as tersely as possible: no filler, no restating the prompt, "
+                        + "no repeated context between items, no commentary outside the JSON."));
+        return new CanonicalRequest(request.modelId(), request.modelType(), messages, request.params(),
+                request.timeoutMs(), request.tools(), request.languageDirective(), request.requestContext());
     }
 
     /**
