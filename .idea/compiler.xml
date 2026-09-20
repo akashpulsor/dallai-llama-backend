@@ -109,6 +109,15 @@
         <module name="video-generation-service" />
         <module name="billing-service" />
       </profile>
+      <profile name="Annotation profile for observability-common" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.34/lombok-1.18.34.jar" />
+        </processorPath>
+        <module name="observability-common" />
+      </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
       <module name="agent-service" target="17" />
@@ -139,6 +148,7 @@
       <module name="job-lifecycle-common" options="-parameters" />
       <module name="llm-gateway" options="-parameters" />
       <module name="media-server" options="-parameters" />
+      <module name="observability-common" options="-parameters" />
       <module name="onboarding-service" options="-parameters" />
       <module name="pbx-core" options="-parameters" />
       <module name="post-production-service" options="-parameters" />
