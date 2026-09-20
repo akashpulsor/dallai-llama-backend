@@ -7,6 +7,10 @@ COPY pom.xml /app/
 RUN mvn -N install -q
 
 # Copy only creative-planning-service
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+WORKDIR /app
 COPY creative-planning-service /app/creative-planning-service
 
 # Build from creative-planning-service directory directly

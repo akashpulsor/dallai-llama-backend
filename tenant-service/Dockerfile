@@ -7,6 +7,10 @@ COPY pom.xml /app/
 RUN mvn -N install -q
 
 # Copy only tenant-service
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+WORKDIR /app
 COPY tenant-service /app/tenant-service
 
 # Build from tenant-service directory directly

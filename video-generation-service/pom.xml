@@ -18,6 +18,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.dalai.llama</groupId>
+            <artifactId>observability-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>

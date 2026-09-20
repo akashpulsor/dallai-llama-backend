@@ -7,6 +7,10 @@ COPY pom.xml /app/
 RUN mvn -N install -q
 
 # Copy only video-generation-service
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+WORKDIR /app
 COPY video-generation-service /app/video-generation-service
 
 # Build from video-generation-service directory directly

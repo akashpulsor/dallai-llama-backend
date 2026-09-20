@@ -7,6 +7,10 @@ COPY pom.xml /app/
 RUN mvn -N install -q
 
 # Copy only post-production-service
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+WORKDIR /app
 COPY post-production-service /app/post-production-service
 
 # Build from post-production-service directory directly

@@ -7,6 +7,10 @@ COPY pom.xml /app/
 RUN mvn -N install -q
 
 # Copy only trend-intelligence-service
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+WORKDIR /app
 COPY trend-intelligence-service /app/trend-intelligence-service
 
 # Build from trend-intelligence-service directory directly

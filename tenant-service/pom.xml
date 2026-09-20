@@ -23,6 +23,11 @@
     <!-- Dependencies -->
     <!-- ====================== -->
     <dependencies>
+        <dependency>
+            <groupId>com.dalai.llama</groupId>
+            <artifactId>observability-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
 
         <dependency>
