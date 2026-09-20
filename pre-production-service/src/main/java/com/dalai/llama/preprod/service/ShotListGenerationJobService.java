@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -72,6 +73,16 @@ public class ShotListGenerationJobService {
                 .orElseThrow(() -> PreProductionException.notFound(
                         "No shot-list job " + jobId + " for project " + projectId));
         return ShotListJobView.from(job);
+    }
+
+    /** Latest shot-list job for this project, or empty if none was ever submitted. Used by the UI
+     * on mount to rehydrate a prior FAILED (or still-PENDING) run: without it, the section shows
+     * the same empty-shot-list panel a fresh project shows, hiding both the reason for the empty
+     * state and the fact that a generation was already attempted. Enforces the tenant scope. */
+    @Transactional(readOnly = true)
+    public Optional<ShotListJobView> latest(UUID tenantId, UUID projectId) {
+        return shotListJobRepository.findTopByProjectIdAndTenantIdOrderByCreatedAtDesc(projectId, tenantId)
+                .map(ShotListJobView::from);
     }
 
     private ShotListJob createPending(UUID tenantId, UUID projectId, String idempotencyKey) {

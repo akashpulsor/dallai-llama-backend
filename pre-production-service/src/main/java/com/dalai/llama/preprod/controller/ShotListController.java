@@ -67,6 +67,18 @@ public class ShotListController extends BaseController {
         return ResponseEntity.ok(shotListGenerationJobService.get(tenant().tenantId(), projectId, jobId));
     }
 
+    /** Latest shot-list generation attempt for this project, or 204 if none was ever submitted.
+     * The UI fetches this on mount so a page reload after a FAILED (or still-PENDING) run
+     * rehydrates the failure banner + retry affordance, instead of falling back to the "fresh
+     * project, no shots yet" empty state which hides that a generation was already attempted and
+     * why it failed. */
+    @GetMapping("/v1/projects/{projectId}/shots/latest-list-job")
+    public ResponseEntity<ShotListJobView> latestGenerateListJob(@PathVariable UUID projectId) {
+        return shotListGenerationJobService.latest(tenant().tenantId(), projectId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @GetMapping("/v1/projects/{projectId}/shots")
     public ResponseEntity<List<ShotView>> list(@PathVariable UUID projectId) {
         return ResponseEntity.ok(shotListGenerationService.list(tenant().tenantId(), projectId));
