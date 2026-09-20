@@ -33,6 +33,7 @@
       <module>video-generation-service</module>
       <module>post-production-service</module>
       <module>job-lifecycle-common</module>
+      <module>observability-common</module>
       <module>pre-production-service</module>
       <module>critic-service</module>
       <module>creative-planning-service</module>

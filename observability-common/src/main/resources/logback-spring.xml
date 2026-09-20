@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shared logback config: opt in by adding observability-common to the service's pom.
+
+  JSON output goes to stdout so Alloy/Loki can scrape without touching disk. Every MDC key set by
+  TenantMdcFilter (tenant_id, project_id, shot_id, job_id, user_id, request_id) becomes a top-
+  level JSON field via LogstashEncoder.includeMdcKeyName -- no custom pattern, no regex parsing
+  on the Loki side. Keep the encoder's default field names (timestamp, level, thread_name,
+  logger_name, message, stack_trace); Grafana's Loki plugin recognises them out of the box.
+
+  Dev override: set LOG_JSON=false to switch to human-readable pattern layout, useful when
+  tailing kubectl logs by hand.
+-->
+<configuration>
+    <springProperty scope="context" name="LOG_JSON" source="dalai.observability.log-json" defaultValue="true"/>
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="unknown-app"/>
+
+    <if condition='property("LOG_JSON").equals("true")'>
+        <then>
+            <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                    <!-- Include every MDC key TenantMdcFilter sets, no allowlist maintenance:
+                         if a service adds a new MDC key later it lands in Loki automatically. -->
+                    <includeMdc>true</includeMdc>
+                    <customFields>{"app":"${APP_NAME}"}</customFields>
+                </encoder>
+            </appender>
+        </then>
+        <else>
+            <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder>
+                    <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{tenant_id:-}/%X{project_id:-}] %logger{36} - %msg%n</pattern>
+                </encoder>
+            </appender>
+        </else>
+    </if>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

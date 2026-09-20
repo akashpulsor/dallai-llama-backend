@@ -6,7 +6,15 @@ WORKDIR /app
 COPY pom.xml /app/
 RUN mvn -N install -q
 
+# observability-common is a sibling module dependency (not on Maven Central) -- install it into
+# the local repo before building llm-gateway against it. Same pattern pre-production-service's
+# Dockerfile uses for job-lifecycle-common.
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+
 # Copy only llm-gateway
+WORKDIR /app
 COPY llm-gateway /app/llm-gateway
 
 # Build from llm-gateway directory directly

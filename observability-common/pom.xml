@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.dalai.llama</groupId>
+        <artifactId>dalai-llama-backend</artifactId>
+        <version>0.1.0</version>
+    </parent>
+    <artifactId>observability-common</artifactId>
+    <name>observability-common</name>
+    <packaging>jar</packaging>
+
+    <!-- Cross-cutting log + trace context for every backend service. One class (TenantMdcFilter)
+         populates SLF4J MDC with tenant_id / project_id / job_id from the JWT and path variables
+         on every HTTP request; one logback-spring.xml on the classpath turns every log line into a
+         JSON document with those fields at the top level, so Loki queries filter on those fields
+         without regex-parsing the message. Services opt in by adding this one dep; autoconfiguration
+         wires the filter, classpath scanning wires the logback config. No behavior change beyond
+         log format. -->
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <logstash-encoder.version>7.4</logstash-encoder.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!-- Optional at runtime: only wired if the service already has security on the classpath.
+             The filter reads Authentication.getPrincipal() reflectively so this module does not
+             force a security stack on services that do not need one. Kept optional. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- JSON log encoder for Loki. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash-encoder.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

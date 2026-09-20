@@ -15,7 +15,14 @@ COPY job-lifecycle-common /app/job-lifecycle-common
 WORKDIR /app/job-lifecycle-common
 RUN mvn -q -DskipTests install
 
+# observability-common (SLF4J MDC + JSON logback) is likewise a sibling module.
+WORKDIR /app
+COPY observability-common /app/observability-common
+WORKDIR /app/observability-common
+RUN mvn -q -DskipTests install
+
 # Copy only pre-production-service
+WORKDIR /app
 COPY pre-production-service /app/pre-production-service
 
 # Build from pre-production-service directory directly
