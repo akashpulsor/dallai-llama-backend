@@ -123,12 +123,16 @@ llm-gateway:
     # Gemini. Every caller into llm-gateway already budgets 120s for the whole round trip (see
     # e.g. pre-production-service's llm-gateway.timeout-ms), so this had room to grow without
     # becoming the new tightest link.
-    # 180s, raised from 90s. The 90 was chosen against the SYNCHRONOUS path, where a caller holds
-    # a connection open for 120s -- but shot-list generation arrives over Kafka
-    # (ChatJobRequestedConsumer), where nobody is waiting and that budget does not apply. A real
-    # shot-list job was cut off at exactly 90s mid-generation and lost entirely: no shots, no
-    # partial result, nothing billed on our side, though Google very likely finished the work we
-    # then threw away. Synchronous callers are unaffected -- their own 120s still expires first.
+    # A FALLBACK ONLY -- this is almost certainly not the knob you want.
+    #
+    # LlmGatewayService passes routed.model().getTimeoutMs() to the provider, so the deadline that
+    # actually governs a call lives in the model_master row for that model. This value applies only
+    # to a model whose row carries no timeout of its own.
+    #
+    # Learned the hard way: a shot-list generation was being cut off at 90s, this default was raised
+    # to fix it, and the very next attempt failed at 90000ms again -- because gemini-2.5-flash's row
+    # said 90000 and the row wins. See V103__gemini_chat_timeout.sql for the real change and the
+    # measurements behind it.
     timeout-ms: ${LLM_GATEWAY_GOOGLE_TIMEOUT_MS:180000}
   fal:
     api-key: ${FAL_API_KEY:}
