@@ -508,7 +508,7 @@ public class ShotListGenerationService {
                 .sketchPrompt(item.sketchPrompt())
                 .coverageType(item.coverageType())
                 .screenDirection(item.screenDirection())
-                .peopleInFrame(item.peopleInFrame())
+                .peopleInFrame(parsePeopleInFrame(item.peopleInFrame()))
                 .culturalReferences(item.culturalReferences())
                 .productShotType(item.productShotType())
                 .shootDay(item.shootDay())
@@ -570,5 +570,36 @@ public class ShotListGenerationService {
                 .filter(c -> c.characterType() == CharacterType.NARRATOR)
                 .findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * Coerce the LLM's peopleInFrame reply into the Integer column {@code shots.people_in_frame}.
+     *
+     * <p>Gemini is happy to emit either a plain integer ({@code 3}, {@code 12}) or a qualitative
+     * word ({@code "many"}, {@code "crowd"}, {@code "3-5"}, {@code "several"}). Strict Jackson
+     * binding to Integer used to fail the ENTIRE shot list persistence for one word out of
+     * hundreds of fields -- Pragya's "A Healthier Mumbai Day" lost the whole 100 KB response
+     * to a single {@code "many"}. We now accept both shapes: plain integer parses as such, a
+     * string starting with digits parses those digits (so {@code "3-5"} → 3), anything else
+     * (qualitative words, empty, null) becomes null. Null is a valid value on this column.
+     */
+    static Integer parsePeopleInFrame(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String trimmed = raw.trim();
+        try {
+            return Integer.parseInt(trimmed);
+        } catch (NumberFormatException ignored) {
+            // Fall through to leading-digits path -- covers "3-5", "10+", "12 people".
+        }
+        int end = 0;
+        while (end < trimmed.length() && Character.isDigit(trimmed.charAt(end))) {
+            end++;
+        }
+        if (end == 0) return null;
+        try {
+            return Integer.parseInt(trimmed.substring(0, end));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 }

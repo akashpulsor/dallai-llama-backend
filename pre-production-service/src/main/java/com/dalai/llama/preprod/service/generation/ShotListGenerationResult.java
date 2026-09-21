@@ -50,7 +50,13 @@ public record ShotListGenerationResult(
             String sketchPrompt,
             String coverageType,
             String screenDirection,
-            Integer peopleInFrame,
+            // String, not Integer -- Gemini regularly emits qualitative words here ("many",
+            // "crowd", "3-5") alongside plain integers. Coercing this to Integer in the DTO
+            // fails the ENTIRE shot list persistence for the whole project (observed live on
+            // Pragya's "A Healthier Mumbai Day" -- one "many" bombed 100 KB of otherwise-valid
+            // output). Downstream persistence in ShotListGenerationService parses this into
+            // the Integer column with a leading-digits fallback and null for qualitative words.
+            String peopleInFrame,
             String culturalReferences,
             String productShotType,
             String shootDay,
