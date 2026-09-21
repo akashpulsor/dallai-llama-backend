@@ -149,7 +149,7 @@ public class Shot {
     @Column(name = "creator_direction", columnDefinition = "text")
     private String creatorDirection;
 
-    @Column(name = "subtitle_position", length = 80)
+    @Column(name = "subtitle_position")
     private String subtitlePosition;
 
     @Column(name = "mobile_focus_area", length = 120)
@@ -205,13 +205,13 @@ public class Shot {
     @Column(name = "cine_position_orientation", length = 160)
     private String cinePositionOrientation;
 
-    @Column(name = "cine_lens_focal_length", length = 80)
+    @Column(name = "cine_lens_focal_length")
     private String cineLensFocalLength;
 
-    @Column(name = "cine_lens_type", length = 80)
+    @Column(name = "cine_lens_type")
     private String cineLensType;
 
-    @Column(name = "cine_lens_optical_format", length = 80)
+    @Column(name = "cine_lens_optical_format")
     private String cineLensOpticalFormat;
 
     @Column(name = "cine_lens_distortion", length = 160)
@@ -229,10 +229,10 @@ public class Shot {
     @Column(name = "cine_subject_placement", length = 160)
     private String cineSubjectPlacement;
 
-    @Column(name = "cine_headroom", length = 80)
+    @Column(name = "cine_headroom")
     private String cineHeadroom;
 
-    @Column(name = "cine_lead_room", length = 80)
+    @Column(name = "cine_lead_room")
     private String cineLeadRoom;
 
     @Column(name = "cine_visual_balance", columnDefinition = "text")
@@ -241,10 +241,10 @@ public class Shot {
     @Column(name = "cine_focus_target", length = 160)
     private String cineFocusTarget;
 
-    @Column(name = "cine_focus_distance", length = 80)
+    @Column(name = "cine_focus_distance")
     private String cineFocusDistance;
 
-    @Column(name = "cine_depth_of_field", length = 80)
+    @Column(name = "cine_depth_of_field")
     private String cineDepthOfField;
 
     @Column(name = "cine_rack_focus", columnDefinition = "text")
@@ -259,10 +259,10 @@ public class Shot {
     @Column(name = "cine_movement_trajectory", columnDefinition = "text")
     private String cineMovementTrajectory;
 
-    @Column(name = "cine_movement_speed", length = 80)
+    @Column(name = "cine_movement_speed")
     private String cineMovementSpeed;
 
-    @Column(name = "cine_movement_acceleration", length = 80)
+    @Column(name = "cine_movement_acceleration")
     private String cineMovementAcceleration;
 
     @Column(name = "cine_movement_rotation", length = 160)
@@ -274,22 +274,22 @@ public class Shot {
     @Column(name = "cine_support", length = 160)
     private String cineSupport;
 
-    @Column(name = "cine_aperture", length = 80)
+    @Column(name = "cine_aperture")
     private String cineAperture;
 
-    @Column(name = "cine_iso", length = 80)
+    @Column(name = "cine_iso")
     private String cineIso;
 
-    @Column(name = "cine_shutter", length = 80)
+    @Column(name = "cine_shutter")
     private String cineShutter;
 
-    @Column(name = "cine_nd_filter", length = 80)
+    @Column(name = "cine_nd_filter")
     private String cineNdFilter;
 
     @Column(name = "cine_dynamic_range", length = 160)
     private String cineDynamicRange;
 
-    @Column(name = "cine_shutter_angle", length = 80)
+    @Column(name = "cine_shutter_angle")
     private String cineShutterAngle;
 
     @Column(name = "cine_motion_blur", length = 160)
@@ -301,10 +301,10 @@ public class Shot {
     @Column(name = "cine_filtration_diffusion", length = 160)
     private String cineFiltrationDiffusion;
 
-    @Column(name = "cine_filtration_nd", length = 80)
+    @Column(name = "cine_filtration_nd")
     private String cineFiltrationNd;
 
-    @Column(name = "cine_filtration_polarizer", length = 80)
+    @Column(name = "cine_filtration_polarizer")
     private String cineFiltrationPolarizer;
 
     @Column(name = "cine_filtration_specialty", length = 160)
@@ -334,10 +334,10 @@ public class Shot {
     // --- Shot-plan richness restored from creator-service's real StoryboardTag (coverage/
     // continuity/production-logistics fields that had no equivalent here at all). ---
 
-    @Column(name = "coverage_type", length = 80)
+    @Column(name = "coverage_type")
     private String coverageType;
 
-    @Column(name = "screen_direction", length = 80)
+    @Column(name = "screen_direction")
     private String screenDirection;
 
     @Column(name = "people_in_frame")
@@ -348,7 +348,7 @@ public class Shot {
 
     /** Marketing sub-category for a PRODUCT_HERO shot, e.g. "Hero Shot"/"Ingredient Shot"/
      * "Pack Shot" -- free text, not an enum, since the real vocabulary is category-dependent. */
-    @Column(name = "product_shot_type", length = 80)
+    @Column(name = "product_shot_type")
     private String productShotType;
 
     @Column(name = "shoot_day", length = 40)
