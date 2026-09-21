@@ -55,6 +55,9 @@ public class AdminLlmJobService {
     private static final Set<JobStatus> STUCK_OR_RETRYABLE_STATUSES =
             EnumSet.of(JobStatus.PROCESSING, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.TIMED_OUT);
 
+    /** Every status for the "all jobs" listing. */
+    private static final Set<JobStatus> ALL_STATUSES = EnumSet.allOf(JobStatus.class);
+
     private final LlmJobRepository jobRepository;
     private final ChatJobRequestedPublisher requestedPublisher;
     private final ObjectMapper objectMapper;
@@ -66,6 +69,19 @@ public class AdminLlmJobService {
         OffsetDateTime cutoff = OffsetDateTime.now().minus(lookback);
         return jobRepository
                 .findByStatusInAndCreatedAtAfterOrderByCreatedAtDesc(STUCK_OR_RETRYABLE_STATUSES, cutoff)
+                .stream()
+                .map(StuckLlmJobView::from)
+                .toList();
+    }
+
+    /** Every job (all statuses, including COMPLETED) within the lookback window. This is the
+     * "did this ever run" view -- a creator asking "did my shot-list generation actually happen"
+     * shows up here alongside successes and failures. Newest first. */
+    @Transactional(readOnly = true)
+    public List<StuckLlmJobView> listAll(Duration lookback) {
+        OffsetDateTime cutoff = OffsetDateTime.now().minus(lookback);
+        return jobRepository
+                .findByStatusInAndCreatedAtAfterOrderByCreatedAtDesc(ALL_STATUSES, cutoff)
                 .stream()
                 .map(StuckLlmJobView::from)
                 .toList();

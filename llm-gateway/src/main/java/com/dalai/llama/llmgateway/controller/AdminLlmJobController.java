@@ -46,6 +46,15 @@ public class AdminLlmJobController {
         return ResponseEntity.ok(adminLlmJobService.listStuck(Duration.ofHours(lookbackHours)));
     }
 
+    /** Every job across every status in the window -- the "what has this platform run recently"
+     * view. Same DTO as stuck; the UI just doesn't hide COMPLETED rows. */
+    @GetMapping("/recent")
+    public ResponseEntity<List<StuckLlmJobView>> recent(
+            @RequestParam(name = "lookbackHours", defaultValue = "24") long lookbackHours
+    ) {
+        return ResponseEntity.ok(adminLlmJobService.listAll(Duration.ofHours(lookbackHours)));
+    }
+
     @PostMapping("/{jobId}/retry")
     public ResponseEntity<RetryLlmJobResponse> retry(@PathVariable UUID jobId) {
         return ResponseEntity.ok(adminLlmJobService.retry(jobId));
