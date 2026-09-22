@@ -20,6 +20,12 @@ public record LockedIdeaView(
         String keyMessage,
         String tone,
         BudgetTier budgetTier,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        /** Ad-hoc "leave room for a manual shot from the client's uploaded video" instruction --
+         * populated when the client answered Yes on the brief page's video-shots question, null
+         * otherwise. Consumed by pre-production-service's script prompt so ShotListGenerationService
+         * folds the intent into the brief text and generates a script that expects a slot for the
+         * creator's later hand-picked shot. */
+        String videoShotsIntent
 ) {
 }

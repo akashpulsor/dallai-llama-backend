@@ -6,10 +6,12 @@ import com.dalai.llama.creativeplanning.domain.entity.CampaignPlanningMessage;
 import com.dalai.llama.creativeplanning.domain.entity.CampaignPlanningSession;
 import com.dalai.llama.creativeplanning.domain.entity.LockedIdea;
 import com.dalai.llama.creativeplanning.domain.entity.ProductProfile;
+import com.dalai.llama.creativeplanning.domain.entity.ProjectRequirement;
 import com.dalai.llama.creativeplanning.dto.LockedIdeaView;
 import com.dalai.llama.creativeplanning.repository.CampaignPlanningMessageRepository;
 import com.dalai.llama.creativeplanning.repository.LockedIdeaRepository;
 import com.dalai.llama.creativeplanning.repository.ProductProfileRepository;
+import com.dalai.llama.creativeplanning.repository.ProjectRequirementRepository;
 import com.dalai.llama.creativeplanning.service.generation.ContextSummaryBuilder;
 import com.dalai.llama.creativeplanning.service.generation.JsonExtraction;
 import com.dalai.llama.creativeplanning.service.generation.LockedIdeaExtractionResult;
@@ -41,6 +43,7 @@ public class LockedIdeaService {
     private final BrandContextService brandContextService;
     private final ProductProfileRepository productProfileRepository;
     private final LockedIdeaRepository lockedIdeaRepository;
+    private final ProjectRequirementRepository projectRequirementRepository;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
@@ -51,6 +54,7 @@ public class LockedIdeaService {
             BrandContextService brandContextService,
             ProductProfileRepository productProfileRepository,
             LockedIdeaRepository lockedIdeaRepository,
+            ProjectRequirementRepository projectRequirementRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${creative-planning.llm-gateway.default-text-model}") String defaultModel
@@ -60,6 +64,7 @@ public class LockedIdeaService {
         this.brandContextService = brandContextService;
         this.productProfileRepository = productProfileRepository;
         this.lockedIdeaRepository = lockedIdeaRepository;
+        this.projectRequirementRepository = projectRequirementRepository;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.defaultModel = defaultModel;
@@ -129,9 +134,18 @@ public class LockedIdeaService {
     }
 
     private LockedIdeaView toView(LockedIdea idea) {
+        // Pull videoShotsIntent from the originating requirement if any -- only relevant for the
+        // requirement/brief flow (chat-session origin has projectRequirementId=null, hence no
+        // intent to expose). Kept as an on-read join to keep the LockedIdea table's schema clean
+        // and to always reflect the latest value the client may have edited after locking.
+        String videoShotsIntent = idea.getProjectRequirementId() == null ? null
+                : projectRequirementRepository.findById(idea.getProjectRequirementId())
+                        .map(ProjectRequirement::getVideoShotsIntent)
+                        .filter(s -> s != null && !s.isBlank())
+                        .orElse(null);
         return new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getProjectRequirementId(),
                 idea.getTitle(), idea.getConcept(),
                 idea.getTargetAudience(), idea.getCampaignAngle(), idea.getKeyMessage(), idea.getTone(),
-                idea.getBudgetTier(), idea.getCreatedAt());
+                idea.getBudgetTier(), idea.getCreatedAt(), videoShotsIntent);
     }
 }

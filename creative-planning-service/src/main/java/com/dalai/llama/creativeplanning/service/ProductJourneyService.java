@@ -63,7 +63,7 @@ public class ProductJourneyService {
                 .map(idea -> new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getProjectRequirementId(),
                         idea.getTitle(), idea.getConcept(),
                         idea.getTargetAudience(), idea.getCampaignAngle(), idea.getKeyMessage(), idea.getTone(),
-                        idea.getBudgetTier(), idea.getCreatedAt()))
+                        idea.getBudgetTier(), idea.getCreatedAt(), null))
                 .orElse(null);
         int messageCount = (int) campaignPlanningMessageRepository.countBySessionId(session.getId());
         return new CampaignSessionSummaryView(session.getId(), session.getStatus(), session.getBudgetTier(),

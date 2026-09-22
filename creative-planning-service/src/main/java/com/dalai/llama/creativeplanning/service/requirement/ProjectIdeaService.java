@@ -199,6 +199,6 @@ public class ProjectIdeaService {
         return new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getProjectRequirementId(),
                 idea.getTitle(), idea.getConcept(),
                 idea.getTargetAudience(), idea.getCampaignAngle(), idea.getKeyMessage(), idea.getTone(),
-                idea.getBudgetTier(), idea.getCreatedAt());
+                idea.getBudgetTier(), idea.getCreatedAt(), null);
     }
 }
