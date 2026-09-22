@@ -60,7 +60,8 @@ public class ProductJourneyService {
 
     private CampaignSessionSummaryView toSessionSummary(CampaignPlanningSession session) {
         LockedIdeaView lockedIdea = lockedIdeaRepository.findBySessionId(session.getId())
-                .map(idea -> new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getTitle(), idea.getConcept(),
+                .map(idea -> new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getProjectRequirementId(),
+                        idea.getTitle(), idea.getConcept(),
                         idea.getTargetAudience(), idea.getCampaignAngle(), idea.getKeyMessage(), idea.getTone(),
                         idea.getBudgetTier(), idea.getCreatedAt()))
                 .orElse(null);

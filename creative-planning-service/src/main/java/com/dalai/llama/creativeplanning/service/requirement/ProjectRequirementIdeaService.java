@@ -306,7 +306,8 @@ public class ProjectRequirementIdeaService {
     }
 
     private LockedIdeaView toView(LockedIdea idea) {
-        return new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getTitle(), idea.getConcept(),
+        return new LockedIdeaView(idea.getId(), idea.getSessionId(), idea.getProjectRequirementId(),
+                idea.getTitle(), idea.getConcept(),
                 idea.getTargetAudience(), idea.getCampaignAngle(), idea.getKeyMessage(), idea.getTone(),
                 idea.getBudgetTier(), idea.getCreatedAt());
     }
