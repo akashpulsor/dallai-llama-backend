@@ -57,6 +57,29 @@ spring:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/dalai-llama}
           jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8080/realms/dalai-llama/protocol/openid-connect/certs}
 
+  # SMTP -- Hostinger shared-hosting SMTP by default (smtp.hostinger.com:465 SSL). Credentials
+  # come from env (SMTP_USERNAME/SMTP_PASSWORD wired via values-secret.yaml so nothing lands in
+  # git); spring.mail.enabled=false in a deployment lets EmailService no-op cleanly if creds are
+  # absent. From-address must be a mailbox on the same authenticated account.
+  mail:
+    host: ${SMTP_HOST:smtp.hostinger.com}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    from: ${SMTP_FROM:}
+    enabled: ${SMTP_ENABLED:true}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
   allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,PATCH,OPTIONS}

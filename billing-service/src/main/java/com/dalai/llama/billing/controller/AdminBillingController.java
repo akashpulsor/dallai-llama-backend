@@ -5,8 +5,11 @@ import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.dto.AdminCreditRequest;
 import com.dalai.llama.billing.dto.AdminWalletView;
 import com.dalai.llama.billing.repository.WalletRepository;
+import com.dalai.llama.billing.service.EmailService;
 import com.dalai.llama.billing.service.WalletService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +42,7 @@ public class AdminBillingController {
 
     private final WalletRepository walletRepository;
     private final WalletService walletService;
+    private final EmailService emailService;
 
     @GetMapping("/wallets/{tenantId}")
     public ResponseEntity<AdminWalletView> wallet(@PathVariable UUID tenantId) {
@@ -47,6 +51,20 @@ public class AdminBillingController {
                         "No wallet for tenant " + tenantId));
         return ResponseEntity.ok(AdminWalletView.from(wallet));
     }
+
+    /** Manual SMTP smoke test for the ops dashboard. Sends a one-line plain-text email to the
+     * given address using the currently-configured spring.mail credentials -- the fastest way to
+     * confirm that a values-secret.yaml change actually landed and Hostinger accepted the auth
+     * without waiting for a real payment/webhook to fire. Returns 200 whether the send succeeded
+     * or not (EmailService swallows SMTP failures by design); check the pod logs for the
+     * "Sent email" / "Failed to send email" line to see the outcome. */
+    @PostMapping("/email-test")
+    public ResponseEntity<Void> emailTest(@Valid @RequestBody EmailTestRequest request) {
+        emailService.send(request.to(), request.subject(), request.body());
+        return ResponseEntity.accepted().build();
+    }
+
+    public record EmailTestRequest(@NotBlank @Email String to, @NotBlank String subject, @NotBlank String body) {}
 
     @PostMapping("/wallets/{tenantId}/credit")
     public ResponseEntity<AdminWalletView> credit(@PathVariable UUID tenantId,
