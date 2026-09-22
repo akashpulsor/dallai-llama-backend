@@ -297,8 +297,19 @@ public class ShotImageService {
      * PRODUCTION/MOTION_GRAPHIC image never had them at all. One extra LLM call per image; the
      * same call the lock path was already paying for, just moved earlier and per-image. Never
      * fails the caller -- the description helper degrades to {@code Description.EMPTY} on any
-     * error, matching its own class-level "never breaks the shot pipeline" contract. */
+     * error, matching its own class-level "never breaks the shot pipeline" contract.
+     *
+     * <p>Gated to PRODUCTION only. The affordance this feeds (client "fix on-image text" chat)
+     * only makes sense on the final photoreal frame; a black-and-white storyboard sketch, a
+     * lighting build sheet, a camera-plan diagram, or a motion-graphic preview don't have
+     * client-facing rendered text to correct, and paying for a describe on each of them was
+     * ~65% of the per-shot describe bill for zero user-visible benefit. The shot's own text
+     * context (brief, action, camera plan) still reaches chat through the existing embedding
+     * pipeline -- that flow does not depend on this per-image describe. */
     private void annotateFromVisionAnalysis(UUID tenantId, UUID projectId, ShotImage image) {
+        if (image.getKind() != ShotImageKind.PRODUCTION) {
+            return;
+        }
         ShotImageDescriptionService.Description described = shotImageDescriptionService.describe(tenantId, projectId, image);
         // Anything other than a full success (the describe helper degrades to null-fields
         // Description.EMPTY on any failure) is a "haven't successfully analyzed yet" state --
