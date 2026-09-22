@@ -497,7 +497,10 @@ public class FalAiProvider implements LlmProvider {
         // onto computeCost's existing input+output formula, no new billing branch needed.
         int inputTokens = 0;
         int outputTokens = 0;
-        if ("foley".equals(modelType)) {
+        if ("foley".equals(modelType) || "image".equals(modelType)) {
+            // Flat per-request pricing for both types -- foley (beatoven/sound-effect-generation)
+            // is $0.01/call, image models like fal-ai/flux/schnell are $0.003/call. Same billing
+            // shape either way: one "unit" of input × rate_card.input_token_cost.
             inputTokens = 1;
         } else if ("voice_clone".equals(modelType)) {
             inputTokens = 1;

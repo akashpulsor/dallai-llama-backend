@@ -91,6 +91,7 @@ public class ShotImageService {
     private final String storyboardPrefix;
     private final String imageModel;
     private final String identityImageModel;
+    private final String planningImageModel;
     private final String defaultTextModel;
 
     public ShotImageService(
@@ -115,6 +116,7 @@ public class ShotImageService {
             @Value("${pre-production.minio.storyboard-prefix}") String storyboardPrefix,
             @Value("${pre-production.llm-gateway.default-image-model}") String imageModel,
             @Value("${pre-production.llm-gateway.identity-image-model}") String identityImageModel,
+            @Value("${pre-production.llm-gateway.planning-image-model:${pre-production.llm-gateway.default-image-model}}") String planningImageModel,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultTextModel
     ) {
         this.shotRepository = shotRepository;
@@ -138,6 +140,7 @@ public class ShotImageService {
         this.storyboardPrefix = storyboardPrefix;
         this.imageModel = imageModel;
         this.identityImageModel = identityImageModel;
+        this.planningImageModel = planningImageModel;
         this.defaultTextModel = defaultTextModel;
     }
 
@@ -230,8 +233,14 @@ public class ShotImageService {
                 params = Map.of("reference_image_urls", List.of(signedUrl(refBucket, refObjectKey)));
             }
         } else {
-            modelId = imageModel;
-            params = imageParams(shot);
+            // PRODUCTION + STORYBOARD stay on the identity/product-aware Gemini model (product
+            // reference + composition fidelity matters); LIGHTING / CAMERA_PLAN / MOTION_GRAPHIC
+            // are schematic diagrams -- routed to the cheaper planning-image-model (fal-ai/flux
+            // /schnell) so a 20-shot project doesn't burn ~₹300 of provider spend on lit/camera
+            // sheets that don't need photoreal fidelity. See application.yml planning-image-model
+            // for the config knob.
+            modelId = isPlanningKind(kind) ? planningImageModel : imageModel;
+            params = imageParams(shot, modelId);
             // A chat-requested change ("make her jacket red") should edit the actual current
             // image, not regenerate blind from text alone -- Gemini's image model accepts multiple
             // input images inline alongside the instruction and edits from them directly (same
@@ -527,7 +536,13 @@ public class ShotImageService {
                         new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt, editDataUris)), params, null, null)
                                 .withProjectId(shot.getProjectId()));
                 DecodedImage decoded = decode(response, kind);
-                validateAspectRatio(decoded, shot, kind);
+                if (!isPlanningKind(kind)) {
+                    // Planning kinds (LIGHTING/CAMERA_PLAN/MOTION_GRAPHIC) come off fal.ai FLUX
+                    // schnell which honors image_size approximately but not exactly -- schematic
+                    // diagrams don't need strict aspect enforcement, and rejecting them here would
+                    // burn all 3 retries on a shape mismatch that doesn't matter for the artifact.
+                    validateAspectRatio(decoded, shot, kind);
+                }
                 return decoded;
             } catch (PreProductionException ex) {
                 lastFailure = ex;
@@ -701,10 +716,45 @@ public class ShotImageService {
      * honor and confirmed live often didn't, defaulting to square/landscape regardless of what the
      * shot was actually configured for. */
     private Map<String, Object> imageParams(Shot shot) {
-        String ratio = geminiAspectRatio(shot.getAspectRatio());
-        return ratio == null
-                ? Map.of("response_format", "image")
-                : Map.of("response_format", "image", "aspect_ratio", ratio);
+        return imageParams(shot, imageModel);
+    }
+
+    /** Same idea, provider-aware: Gemini gets its {@code aspect_ratio} + {@code
+     * response_format=image} shape; fal.ai FLUX schnell doesn't understand either and instead
+     * takes {@code image_size} as an enum -- LIGHTING/CAMERA_PLAN/MOTION_GRAPHIC being
+     * schematic-style diagrams, a slight aspect drift is fine (and generateWithRetry's aspect
+     * validation is gated by isPlanningKind so it doesn't reject them for it). */
+    private Map<String, Object> imageParams(Shot shot, String modelId) {
+        if (isGeminiModel(modelId)) {
+            String ratio = geminiAspectRatio(shot.getAspectRatio());
+            return ratio == null
+                    ? Map.of("response_format", "image")
+                    : Map.of("response_format", "image", "aspect_ratio", ratio);
+        }
+        // fal.ai flux/schnell -- image_size hint by shot aspect. Values match fal.ai's real
+        // documented enum for flux/schnell (square_hd default, portrait_16_9 / landscape_16_9 / etc).
+        String imageSize = fluxImageSize(shot.getAspectRatio());
+        return imageSize == null ? Map.of() : Map.of("image_size", imageSize);
+    }
+
+    /** True for kinds routed to planning-image-model -- schematic-style diagrams whose product
+     * fidelity does not matter and whose aspect ratio is not strictly enforced. */
+    private static boolean isPlanningKind(ShotImageKind kind) {
+        return kind == ShotImageKind.LIGHTING
+                || kind == ShotImageKind.CAMERA_PLAN
+                || kind == ShotImageKind.MOTION_GRAPHIC;
+    }
+
+    private String fluxImageSize(com.dalai.llama.preprod.domain.AspectRatio aspectRatio) {
+        if (aspectRatio == null) {
+            return null;
+        }
+        return switch (aspectRatio) {
+            case RATIO_16_9, RATIO_21_9 -> "landscape_16_9";
+            case RATIO_9_16 -> "portrait_16_9";
+            case RATIO_4_5 -> "portrait_4_3";
+            case RATIO_1_1 -> "square_hd";
+        };
     }
 
     private String geminiAspectRatio(com.dalai.llama.preprod.domain.AspectRatio aspectRatio) {

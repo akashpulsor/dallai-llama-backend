@@ -53,6 +53,16 @@ public class ShotAssetBatchExecutor implements BatchStepExecutor<ShotAssetStep> 
 
     @Override
     public void execute(UUID tenantId, UUID projectId, ShotAssetStep step) throws Exception {
+        // FK pre-check: planSteps captured shot IDs at batch-creation time; if that shot rolled
+        // back (e.g. shot_list_job persistence failure mid-batch, as with the peopleInFrame and
+        // VARCHAR(80) incidents that burned ~₹300 on Pragya's project), the downstream Gemini
+        // call would still succeed and cost real money before the shot_image INSERT died on
+        // shot_image_shot_id_fkey. Cheap SELECT here short-circuits before we pay the provider.
+        if (shotRepository.findByIdAndTenantId(step.shotId(), tenantId).isEmpty()) {
+            throw new IllegalStateException(
+                    "Shot " + step.shotId() + " no longer exists -- skipping " + step.kind()
+                            + " (batch was planned before shot rolled back)");
+        }
         switch (step.kind()) {
             case LIGHTING_PLAN -> lightingPlanService.generate(tenantId, step.shotId());
             case CAMERA_PLAN -> cameraPlanService.generate(tenantId, step.shotId());
