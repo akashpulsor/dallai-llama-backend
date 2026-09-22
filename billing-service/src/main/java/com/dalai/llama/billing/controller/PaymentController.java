@@ -130,6 +130,24 @@ public class PaymentController {
                 .build());
     }
 
+    /** Wallet-only pay path for a brief -- skips Razorpay when the tenant's wallet already
+     * holds enough. Same PaymentReceivedEvent gets published, so creative-planning-service
+     * marks the requirement funded identically to the Razorpay path. Idempotent on the
+     * requirement (a second call for an already-funded brief returns the existing paymentId). */
+    @PostMapping("/project-requirements/{requirementId}/wallet-pay")
+    @Operation(summary = "Fund a brief from wallet", description = "Debit the tenant's wallet directly instead of going to Razorpay")
+    public ResponseEntity<WalletPayResponse> walletPayProjectRequirement(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID requirementId,
+            @Valid @RequestBody CreateProjectRequirementPaymentRequest request
+    ) {
+        UUID paymentId = paymentService.fundProjectRequirementFromWallet(
+                tenantId, requirementId, request.getAmount(), request.getDescription());
+        return ResponseEntity.ok(new WalletPayResponse(paymentId));
+    }
+
+    public record WalletPayResponse(UUID paymentId) {}
+
     /** The "how much has this brief actually been funded" view -- what a project's page reads
      * on load, per a real payment ledger rather than a self-reported flag. */
     @GetMapping("/project-requirements/{requirementId}/funding")

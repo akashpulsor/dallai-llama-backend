@@ -47,7 +47,25 @@ public class InternalProjectRequirementPaymentController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Wallet-only pay path: skips Razorpay entirely when the tenant's wallet already holds
+     * enough balance for the brief. Same PaymentReceivedEvent gets published, so
+     * creative-planning-service marks the requirement funded identically to the Razorpay path.
+     */
+    @PostMapping("/{requirementId}/wallet-pay")
+    public ResponseEntity<WalletPayResult> walletPay(
+            @PathVariable UUID tenantId, @PathVariable UUID requirementId,
+            @RequestBody WalletPayRequest request) {
+        UUID paymentId = paymentService.fundProjectRequirementFromWallet(
+                tenantId, requirementId, request.amount(), request.description());
+        return ResponseEntity.ok(new WalletPayResult(paymentId));
+    }
+
     public record CreateOrderRequest(@NotBlank String currency, BigDecimal amount, String description) {}
 
     public record VerifyRequest(@NotBlank String gatewayOrderId, @NotBlank String gatewayPaymentId, @NotBlank String gatewaySignature) {}
+
+    public record WalletPayRequest(BigDecimal amount, String description) {}
+
+    public record WalletPayResult(UUID paymentId) {}
 }

@@ -80,6 +80,70 @@ public class PaymentServiceImpl implements PaymentService {
         return createOrder(tenantId, currency, amount, description, null, projectRequirementId);
     }
 
+    /** See PaymentService#fundProjectRequirementFromWallet -- mirrors the wallet-only pattern
+     * createSubscriptionPayment already uses (WALLET gateway, no Razorpay round trip), tagged
+     * with projectRequirementId so Payment.toEvent() carries the same brief context a Razorpay
+     * verify would produce. */
+    @Override
+    @Transactional
+    public UUID fundProjectRequirementFromWallet(UUID tenantId, UUID projectRequirementId,
+                                                 BigDecimal amount, String description) {
+        if (projectRequirementId == null) {
+            throw new IllegalArgumentException("projectRequirementId is required");
+        }
+        BigDecimal validated = validateRechargeAmount(amount);
+
+        // Idempotency: same partial-unique-index protection the Razorpay path relies on. If a
+        // SUCCESS payment already exists for this requirement, treat this as a duplicate submit
+        // and return the existing paymentId rather than double-debiting the wallet.
+        Optional<Payment> existingSuccess = paymentRepository.findByProjectRequirementIdOrderByCreatedAtDesc(projectRequirementId)
+                .stream()
+                .filter(p -> p.getStatus() == PaymentStatus.SUCCESS)
+                .findFirst();
+        if (existingSuccess.isPresent()) {
+            log.info("Requirement {} already funded via payment {} -- returning existing id", projectRequirementId, existingSuccess.get().getId());
+            return existingSuccess.get().getId();
+        }
+
+        Wallet wallet = walletRepository.findByTenantIdForUpdate(tenantId)
+                .orElseThrow(() -> new WalletNotFoundException(tenantId));
+
+        if (!wallet.hasSufficientBalance(validated)) {
+            throw new InsufficientBalanceException(wallet.getBalance(), validated);
+        }
+
+        wallet.debit(validated);
+        walletRepository.save(wallet);
+
+        UUID paymentId = UUID.randomUUID();
+        Payment payment = Payment.builder()
+                .id(paymentId)
+                .tenantId(tenantId)
+                .walletId(wallet.getId())
+                .amount(validated)
+                .currency(wallet.getCurrency())
+                .status(PaymentStatus.SUCCESS)
+                .gateway("WALLET")
+                .gatewayOrderId("WALLET_" + paymentId)
+                .gatewayPaymentId("WALLET_" + paymentId)
+                .description(description == null || description.isBlank()
+                        ? "Brief funded from wallet: " + projectRequirementId
+                        : description)
+                .projectRequirementId(projectRequirementId)
+                .createdAt(Instant.now())
+                .build();
+        paymentRepository.save(payment);
+
+        paymentEventRepository.save(PaymentEvent.record(
+                payment, null, PaymentStatus.SUCCESS, "Wallet-funded brief", "USER"));
+
+        // Same event a Razorpay-verified requirement payment publishes -- creative-planning-service
+        // consumes it and marks the requirement funded regardless of gateway.
+        eventProducer.publishPaymentReceived(payment.toEvent());
+
+        return paymentId;
+    }
+
     /** Single order-creation path both {@link #createPaymentOrder} and
      * {@link #createProjectRequirementPaymentOrder} delegate to -- Razorpay order creation,
      * the Payment row, and the audit PaymentEvent only need to exist once. */

@@ -27,6 +27,20 @@ public interface PaymentService {
                                                              String description);
 
     /**
+     * Wallet-only pay path for a brief -- caller has verified wallet balance >= amount and
+     * wants to skip the Razorpay round trip. Debits the wallet, writes a Payment row with
+     * gateway="WALLET" tagged with projectRequirementId, and publishes the same
+     * PaymentReceivedEvent that a Razorpay-verified path would (creative-planning-service
+     * consumes it and marks the requirement funded either way). Idempotent on the requirement:
+     * a second call for an already-funded requirement returns silently.
+     *
+     * <p>Insufficient balance throws InsufficientBalanceException -- the caller should have
+     * checked first, this is the safety net.
+     */
+    UUID fundProjectRequirementFromWallet(UUID tenantId, UUID projectRequirementId,
+                                          BigDecimal amount, String description);
+
+    /**
      * Every payment ever created against one brief, and how much of it actually succeeded.
      * Derived entirely from {@code payments} rows -- there's nothing else to keep in sync.
      */
