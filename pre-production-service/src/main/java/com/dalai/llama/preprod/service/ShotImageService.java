@@ -92,6 +92,7 @@ public class ShotImageService {
     private final String imageModel;
     private final String identityImageModel;
     private final String planningImageModel;
+    private final String storyboardImageModel;
     private final String defaultTextModel;
 
     public ShotImageService(
@@ -117,6 +118,7 @@ public class ShotImageService {
             @Value("${pre-production.llm-gateway.default-image-model}") String imageModel,
             @Value("${pre-production.llm-gateway.identity-image-model}") String identityImageModel,
             @Value("${pre-production.llm-gateway.planning-image-model:${pre-production.llm-gateway.default-image-model}}") String planningImageModel,
+            @Value("${pre-production.llm-gateway.storyboard-image-model:${pre-production.llm-gateway.default-image-model}}") String storyboardImageModel,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultTextModel
     ) {
         this.shotRepository = shotRepository;
@@ -141,6 +143,7 @@ public class ShotImageService {
         this.imageModel = imageModel;
         this.identityImageModel = identityImageModel;
         this.planningImageModel = planningImageModel;
+        this.storyboardImageModel = storyboardImageModel;
         this.defaultTextModel = defaultTextModel;
     }
 
@@ -233,13 +236,13 @@ public class ShotImageService {
                 params = Map.of("reference_image_urls", List.of(signedUrl(refBucket, refObjectKey)));
             }
         } else {
-            // PRODUCTION + STORYBOARD stay on the identity/product-aware Gemini model (product
-            // reference + composition fidelity matters); LIGHTING / CAMERA_PLAN / MOTION_GRAPHIC
-            // are schematic diagrams -- routed to the cheaper planning-image-model (fal-ai/flux
-            // /schnell) so a 20-shot project doesn't burn ~₹300 of provider spend on lit/camera
-            // sheets that don't need photoreal fidelity. See application.yml planning-image-model
-            // for the config knob.
-            modelId = isPlanningKind(kind) ? planningImageModel : imageModel;
+            // Three tiers of image model routing, by kind:
+            //   PRODUCTION -> default-image-model (gemini-3.1-flash-image, photoreal video anchor)
+            //   STORYBOARD -> storyboard-image-model (gemini-3.1-flash-lite-image, budget sketch)
+            //   LIGHTING / CAMERA_PLAN / MOTION_GRAPHIC -> planning-image-model (fal-ai/flux/schnell)
+            // Config knobs are all in application.yml so a deployment can collapse the tiers
+            // (e.g. set storyboard-image-model = default-image-model to disable the lite split).
+            modelId = pickModelForKind(kind);
             params = imageParams(shot, modelId);
             // A chat-requested change ("make her jacket red") should edit the actual current
             // image, not regenerate blind from text alone -- Gemini's image model accepts multiple
@@ -743,6 +746,16 @@ public class ShotImageService {
         return kind == ShotImageKind.LIGHTING
                 || kind == ShotImageKind.CAMERA_PLAN
                 || kind == ShotImageKind.MOTION_GRAPHIC;
+    }
+
+    private String pickModelForKind(ShotImageKind kind) {
+        if (isPlanningKind(kind)) {
+            return planningImageModel;
+        }
+        if (kind == ShotImageKind.STORYBOARD) {
+            return storyboardImageModel;
+        }
+        return imageModel;
     }
 
     private String fluxImageSize(com.dalai.llama.preprod.domain.AspectRatio aspectRatio) {

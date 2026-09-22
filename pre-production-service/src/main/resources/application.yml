@@ -122,12 +122,17 @@ pre-production:
     # Topic pre-production-service listens on for terminal job outcomes. llm-gateway publishes to
     # this on both SUCCEEDED and FAILED.
     job-completed-topic: ${LLM_GATEWAY_JOB_COMPLETED_TOPIC:llm.job.completed}
-    default-image-model: ${PRE_PROD_DEFAULT_IMAGE_MODEL:gemini-2.5-flash-image}
-    # Cheaper text-to-image for planning kinds that don't need identity/product fidelity
-    # (LIGHTING, CAMERA_PLAN, MOTION_GRAPHIC). ShotImageService routes STORYBOARD + PRODUCTION to
-    # default-image-model (Gemini, product-faithful) and everything else here. fal-ai/flux/schnell
-    # is ~$0.003/image vs Gemini's ~$0.039/image, so a 20-shot project drops from ~₹300 to ~₹160
-    # raw. Set to the same value as default-image-model to disable the split.
+    # gemini-2.5-flash-image reaches EOL 2026-10-02. Migrated to gemini-3.1-flash-image for
+    # PRODUCTION (video-generation anchor, photoreal quality matters) and gemini-3.1-flash-lite-
+    # image for STORYBOARD (planning sketch, budget fidelity acceptable).
+    default-image-model: ${PRE_PROD_DEFAULT_IMAGE_MODEL:gemini-3.1-flash-image}
+    # Ultra-cheap Gemini variant for STORYBOARD only -- planning sketch, doesn't need photoreal;
+    # 1024px lite runs ~$0.0336/image standard (vs $0.067 for 3.1-flash-image standard). Batch API
+    # further halves this to ~$0.0168 -- flagged as follow-up (needs batchGenerateContent + poll).
+    storyboard-image-model: ${PRE_PROD_STORYBOARD_IMAGE_MODEL:gemini-3.1-flash-lite-image}
+    # Cheapest text-to-image for schematic kinds that don't need identity/product fidelity
+    # (LIGHTING, CAMERA_PLAN, MOTION_GRAPHIC). fal-ai/flux/schnell is ~$0.003/image, ~10x cheaper
+    # than gemini-3.1-flash-lite-image. Set to the same value as default-image-model to disable.
     planning-image-model: ${PRE_PROD_PLANNING_IMAGE_MODEL:fal-ai/flux/schnell}
     # Defaults to Gemini (no separate credential needed) rather than fal.ai's flux-pulid-v1 --
     # confirmed live that FAL_API_KEY was never actually provisioned in this environment, so every
@@ -135,7 +140,7 @@ pre-production:
     # product reference) 502'd. Still configurable: a deployment with a real fal.ai key can set
     # this back to flux-pulid-v1 -- see ShotImageService#isGeminiModel for how the request shape
     # adapts to whichever is configured.
-    identity-image-model: ${PRE_PROD_IDENTITY_IMAGE_MODEL:gemini-2.5-flash-image}
+    identity-image-model: ${PRE_PROD_IDENTITY_IMAGE_MODEL:gemini-3.1-flash-image}
     default-text-model: ${PRE_PROD_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
     background-music-model: ${PRE_PROD_BACKGROUND_MUSIC_MODEL:elevenlabs/music-v1}
   video-gen:
