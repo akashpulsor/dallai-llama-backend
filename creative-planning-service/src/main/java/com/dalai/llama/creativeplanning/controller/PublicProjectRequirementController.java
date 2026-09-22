@@ -11,6 +11,7 @@ import com.dalai.llama.creativeplanning.service.BrandContextService;
 import com.dalai.llama.creativeplanning.service.ProductProfileService;
 import com.dalai.llama.creativeplanning.service.ProductReferenceImageService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceImageService;
+import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceVideoService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -43,19 +44,22 @@ public class PublicProjectRequirementController {
     private final ProductProfileService productProfileService;
     private final ProductReferenceImageService productReferenceImageService;
     private final ProjectReferenceImageService projectReferenceImageService;
+    private final ProjectReferenceVideoService projectReferenceVideoService;
 
     public PublicProjectRequirementController(
             ProjectRequirementService projectRequirementService,
             BrandContextService brandContextService,
             ProductProfileService productProfileService,
             ProductReferenceImageService productReferenceImageService,
-            ProjectReferenceImageService projectReferenceImageService
+            ProjectReferenceImageService projectReferenceImageService,
+            ProjectReferenceVideoService projectReferenceVideoService
     ) {
         this.projectRequirementService = projectRequirementService;
         this.brandContextService = brandContextService;
         this.productProfileService = productProfileService;
         this.productReferenceImageService = productReferenceImageService;
         this.projectReferenceImageService = projectReferenceImageService;
+        this.projectReferenceVideoService = projectReferenceVideoService;
     }
 
     /** The full picture the creator saw while building this brief -- brand context, product, and
@@ -80,6 +84,23 @@ public class PublicProjectRequirementController {
         return ResponseEntity.ok(fullView(shareToken, projectRequirementService.getByShareToken(shareToken)));
     }
 
+    /** Client-side video upload via share token -- capped at max-video-upload-size-mb (default
+     * 5 MB) per file, multiple allowed. Same "possession of the share token is the authorization"
+     * convention as the rest of this controller. Refused once the requirement is funded (same
+     * gate as the /project-requirements/{id} PATCH). */
+    @PostMapping(path = "/v1/public/project-requirements/{shareToken}/reference-videos", consumes = "multipart/form-data")
+    public ResponseEntity<com.dalai.llama.creativeplanning.dto.ProjectReferenceVideoView> uploadReferenceVideo(
+            @PathVariable String shareToken, @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        ProjectRequirementService.RequirementIdentity id = projectRequirementService.identifyByShareToken(shareToken);
+        return ResponseEntity.ok(projectReferenceVideoService.store(id.tenantId(), id.requirementId(), file));
+    }
+
+    @GetMapping("/v1/public/project-requirements/{shareToken}/reference-videos")
+    public ResponseEntity<List<com.dalai.llama.creativeplanning.dto.ProjectReferenceVideoView>> listReferenceVideos(@PathVariable String shareToken) {
+        ProjectRequirementService.RequirementIdentity id = projectRequirementService.identifyByShareToken(shareToken);
+        return ResponseEntity.ok(projectReferenceVideoService.list(id.requirementId()));
+    }
+
     /** Lets whoever holds the link fill in the whole brief themselves -- brief text, brand,
      * product, and reference images -- the creator may send a mostly-blank brief and have the
      * client (who, in the AI_VIDEO_CREATOR path this page serves, IS the brand/product owner)
@@ -99,7 +120,9 @@ public class PublicProjectRequirementController {
             @RequestPart(value = "productImages", required = false) List<MultipartFile> productImages) {
         PublicProjectRequirementView updated = projectRequirementService.updateFromClient(shareToken,
                 data == null ? null : data.briefText(), data == null ? null : data.targetAudience(),
-                data == null ? null : data.campaignDirection());
+                data == null ? null : data.campaignDirection(),
+                data == null ? null : data.includeVideoShots(),
+                data == null ? null : data.videoShotsIntent());
 
         ProjectRequirementService.RequirementIdentity id = projectRequirementService.identifyByShareToken(shareToken);
         UUID brandContextId = id.brandContextId();
@@ -155,7 +178,11 @@ public class PublicProjectRequirementController {
 
     public record UpdateBriefFromClientRequest(
             String briefText, String targetAudience, String campaignDirection,
-            BrandFields brand, ProductFields product
+            BrandFields brand, ProductFields product,
+            /** Ad-hoc "do you want us to reuse specific shots from your videos" pair. Both are
+             * only applied when includeVideoShots is non-null (client actually answered);
+             * omitting the pair leaves the existing values alone. */
+            Boolean includeVideoShots, String videoShotsIntent
     ) {
         public record BrandFields(String brandName, String industry, String brandVoice, String targetAudience, String brandValues) {}
         public record ProductFields(String name, String description, String category) {}
@@ -176,7 +203,9 @@ public class PublicProjectRequirementController {
                 base.durationSeconds(), base.languages(), base.quotedTotalPrice(), base.quotedCurrency(),
                 base.requiredPaymentPercent(), base.requiredAmount(), base.funded(),
                 brandContextService.findBrandView(id.tenantId(), id.brandContextId()), product, productImages,
-                projectReferenceImageService.list(id.requirementId()));
+                projectReferenceImageService.list(id.requirementId()),
+                projectReferenceVideoService.list(id.requirementId()),
+                base.includeVideoShots(), base.videoShotsIntent());
     }
 
     /** Records a payment confirmation -- see {@code ProjectRequirementService}'s class javadoc.

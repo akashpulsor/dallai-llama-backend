@@ -8,6 +8,7 @@ import com.dalai.llama.creativeplanning.dto.LockIdeaOptionResponse;
 import com.dalai.llama.creativeplanning.dto.ProductProfileView;
 import com.dalai.llama.creativeplanning.dto.ProductReferenceImageView;
 import com.dalai.llama.creativeplanning.dto.ProjectReferenceImageView;
+import com.dalai.llama.creativeplanning.dto.ProjectReferenceVideoView;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementAttachmentView;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementView;
 import com.dalai.llama.creativeplanning.dto.UpdateRequirementQuoteRequest;
@@ -15,6 +16,7 @@ import com.dalai.llama.creativeplanning.service.ProductProfileService;
 import com.dalai.llama.creativeplanning.service.ProductReferenceImageService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceImageService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementAttachmentService;
+import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceVideoService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementCreationManager;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementIdeaService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService;
@@ -45,6 +47,7 @@ public class ProjectRequirementController extends BaseController {
     private final ProjectRequirementIdeaService projectRequirementIdeaService;
     private final ProjectRequirementCreationManager projectRequirementCreationManager;
     private final ProjectReferenceImageService projectReferenceImageService;
+    private final ProjectReferenceVideoService projectReferenceVideoService;
     private final ProductProfileService productProfileService;
     private final ProductReferenceImageService productReferenceImageService;
 
@@ -54,6 +57,7 @@ public class ProjectRequirementController extends BaseController {
             ProjectRequirementIdeaService projectRequirementIdeaService,
             ProjectRequirementCreationManager projectRequirementCreationManager,
             ProjectReferenceImageService projectReferenceImageService,
+            ProjectReferenceVideoService projectReferenceVideoService,
             ProductProfileService productProfileService,
             ProductReferenceImageService productReferenceImageService
     ) {
@@ -62,6 +66,7 @@ public class ProjectRequirementController extends BaseController {
         this.projectRequirementIdeaService = projectRequirementIdeaService;
         this.projectRequirementCreationManager = projectRequirementCreationManager;
         this.projectReferenceImageService = projectReferenceImageService;
+        this.projectReferenceVideoService = projectReferenceVideoService;
         this.productProfileService = productProfileService;
         this.productReferenceImageService = productReferenceImageService;
     }
@@ -160,6 +165,19 @@ public class ProjectRequirementController extends BaseController {
     @GetMapping("/v1/project-requirements/{requirementId}/reference-images")
     public ResponseEntity<List<ProjectReferenceImageView>> listProjectReferenceImages(@PathVariable UUID requirementId) {
         return ResponseEntity.ok(projectReferenceImageService.list(requirementId));
+    }
+
+    /** Client-uploaded reference video clips -- see ProjectReferenceVideoService. Capped at
+     * the max-video-upload-size-mb (default 5 MB) per file; multiple files stored per requirement. */
+    @PostMapping(path = "/v1/project-requirements/{requirementId}/reference-videos", consumes = "multipart/form-data")
+    public ResponseEntity<ProjectReferenceVideoView> uploadProjectReferenceVideo(
+            @PathVariable UUID requirementId, @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(projectReferenceVideoService.store(tenant().tenantId(), requirementId, file));
+    }
+
+    @GetMapping("/v1/project-requirements/{requirementId}/reference-videos")
+    public ResponseEntity<List<ProjectReferenceVideoView>> listProjectReferenceVideos(@PathVariable UUID requirementId) {
+        return ResponseEntity.ok(projectReferenceVideoService.list(requirementId));
     }
 
     /** Only callable once {@code funded} is true -- see ProjectRequirementIdeaService. Options

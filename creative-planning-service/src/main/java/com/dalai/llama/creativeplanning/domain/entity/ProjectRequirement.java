@@ -114,6 +114,17 @@ public class ProjectRequirement {
     @Builder.Default
     private int requiredPaymentPercent = 100;
 
+    /** Ad-hoc capture on the brief: "Do you want us to reuse specific shots from the reference
+     * videos you uploaded?" Nullable (client hasn't answered yet); when true, {@link
+     * #videoShotsIntent} carries the free-text version of "what should those shots convey" that
+     * gets folded into the script prompt so ShotListGenerationService leaves room for a manual
+     * shot the creator adds later. Deliberately not analyzing the video itself pre-payment. */
+    @Column(name = "include_video_shots")
+    private Boolean includeVideoShots;
+
+    @Column(name = "video_shots_intent", columnDefinition = "text")
+    private String videoShotsIntent;
+
     @Column(name = "share_token", nullable = false, unique = true, length = 64)
     private String shareToken;
 

@@ -43,6 +43,9 @@ public record ProjectRequirementView(
         OffsetDateTime createdAt,
         // Null until the client edits this brief through the public share link -- "the client
         // updated this brief" signal for the requirement list, see ProjectRequirement's javadoc.
-        OffsetDateTime clientUpdatedAt
+        OffsetDateTime clientUpdatedAt,
+        // Ad-hoc video-shot capture on the brief -- see ProjectRequirement#getVideoShotsIntent.
+        Boolean includeVideoShots,
+        String videoShotsIntent
 ) {
 }

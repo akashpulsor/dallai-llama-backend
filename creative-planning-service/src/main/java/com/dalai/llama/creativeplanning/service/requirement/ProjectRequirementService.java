@@ -299,7 +299,9 @@ public class ProjectRequirementService {
      * generate ideas from, and duration/languages/price stay fixed regardless (those drive the
      * quote, not the creative brief). */
     @Transactional
-    public PublicProjectRequirementView updateFromClient(String shareToken, String briefText, String targetAudience, String campaignDirection) {
+    public PublicProjectRequirementView updateFromClient(String shareToken, String briefText, String targetAudience,
+                                                         String campaignDirection, Boolean includeVideoShots,
+                                                         String videoShotsIntent) {
         ProjectRequirement requirement = requireLiveByShareToken(shareToken);
         if (requirement.isFunded()) {
             throw CreativePlanningException.badRequest("This brief is already funded and can no longer be edited");
@@ -312,6 +314,13 @@ public class ProjectRequirementService {
         }
         if (campaignDirection != null) {
             requirement.setCampaignDirection(campaignDirection);
+        }
+        // The video-shots pair is one ad-hoc capture. Only applied when the client sent the flag
+        // -- otherwise leave both fields alone (client editing brief text shouldn't wipe the
+        // video-shot answer they gave earlier).
+        if (includeVideoShots != null) {
+            requirement.setIncludeVideoShots(includeVideoShots);
+            requirement.setVideoShotsIntent(videoShotsIntent);
         }
         requirement.setClientUpdatedAt(OffsetDateTime.now());
         requirement.setUpdatedAt(OffsetDateTime.now());
@@ -455,7 +464,7 @@ public class ProjectRequirementService {
                 requirement.getRequiredPaymentPercent(), requirement.getRequiredAmount(),
                 requirement.getShareToken(), requirement.getShareTokenExpiresAt(),
                 requirement.isFunded(), requirement.getFundedBy(), lockedProjectId, requirement.getCreatedAt(),
-                requirement.getClientUpdatedAt());
+                requirement.getClientUpdatedAt(), requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent());
     }
 
     /** The base fields only -- brand/product/reference-images are assembled by {@code
@@ -466,7 +475,8 @@ public class ProjectRequirementService {
                 requirement.getCampaignDirection(), requirement.getDurationSeconds(), splitLanguages(requirement.getLanguages()),
                 requirement.getQuotedTotalPrice(), requirement.getQuotedCurrency(),
                 requirement.getRequiredPaymentPercent(), requirement.getRequiredAmount(), requirement.isFunded(),
-                null, null, List.of(), List.of());
+                null, null, List.of(), List.of(), List.of(),
+                requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent());
     }
 
     private static List<String> splitLanguages(String languages) {

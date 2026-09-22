@@ -27,6 +27,14 @@ public record PublicProjectRequirementView(
         BrandContextView brand,
         ProductProfileView product,
         List<ProductReferenceImageView> productReferenceImages,
-        List<ProjectReferenceImageView> projectReferenceImages
+        List<ProjectReferenceImageView> projectReferenceImages,
+        /** Client-uploaded reference clips (nullable/empty when the brief has none). Empty list
+         * rather than null so the frontend doesn't need a null guard. */
+        List<ProjectReferenceVideoView> projectReferenceVideos,
+        /** "Do you want us to reuse specific shots from those clips?" -- null until the client
+         * answers. When true, {@link #videoShotsIntent} carries the free-text description of
+         * what those shots should convey. */
+        Boolean includeVideoShots,
+        String videoShotsIntent
 ) {
 }
