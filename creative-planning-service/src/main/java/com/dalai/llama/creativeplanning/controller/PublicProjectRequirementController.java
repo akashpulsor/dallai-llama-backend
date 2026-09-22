@@ -66,6 +66,20 @@ public class PublicProjectRequirementController {
         return ResponseEntity.ok(fullView(shareToken, projectRequirementService.getByShareToken(shareToken)));
     }
 
+    /** Client-review-page callers only have the project's lockedIdeaId (pre-production-service
+     * exposes it on PublicProjectPackageView.lockedIdeaId), not the requirement's share token.
+     * This hop resolves the share token internally and returns the same full view the share-token
+     * endpoint does -- 404 when the locked idea came from a chat session (no requirement to show)
+     * rather than the brief flow, so the review page's Brief section falls back cleanly. */
+    @GetMapping("/v1/public/locked-ideas/{lockedIdeaId}/brief")
+    public ResponseEntity<PublicProjectRequirementView> getBriefByLockedIdea(@PathVariable UUID lockedIdeaId) {
+        String shareToken = projectRequirementService.shareTokenByLockedIdeaId(lockedIdeaId);
+        if (shareToken == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(fullView(shareToken, projectRequirementService.getByShareToken(shareToken)));
+    }
+
     /** Lets whoever holds the link fill in the whole brief themselves -- brief text, brand,
      * product, and reference images -- the creator may send a mostly-blank brief and have the
      * client (who, in the AI_VIDEO_CREATOR path this page serves, IS the brand/product owner)

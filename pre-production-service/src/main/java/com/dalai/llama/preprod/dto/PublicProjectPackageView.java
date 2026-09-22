@@ -12,6 +12,11 @@ public record PublicProjectPackageView(
         UUID projectId,
         String name,
         ProjectStatus status,
+        /** Non-null when the project was locked from a requirement/brief flow; the review page
+         * uses this to lazy-load the originating brief summary from creative-planning-service so
+         * a client double-checking the deliverable can see what they briefed for without a round
+         * trip through the creator. Null for projects locked from a chat session. */
+        UUID lockedIdeaId,
         ScriptView script,
         ScreenplayView screenplay,
         List<PublicCastMemberView> cast,

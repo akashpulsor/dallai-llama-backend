@@ -261,6 +261,21 @@ public class ProjectRequirementService {
         return new RequirementIdentity(requirement.getTenantId(), requirement.getId(), requirement.getBrandContextId());
     }
 
+    /** Resolves a LockedIdea's brief share token so the client-review page (pre-production-service's
+     * public /v1/public/projects/{token} view surfaces {@code lockedIdeaId}) can look up the
+     * originating brief without knowing tenant context. Returns null when the locked idea came
+     * from a chat session (no attached requirement). */
+    @Transactional(readOnly = true)
+    public String shareTokenByLockedIdeaId(UUID lockedIdeaId) {
+        UUID requirementId = lockedIdeaRepository.findById(lockedIdeaId)
+                .map(li -> li.getProjectRequirementId())
+                .orElse(null);
+        if (requirementId == null) return null;
+        return projectRequirementRepository.findById(requirementId)
+                .map(ProjectRequirement::getShareToken)
+                .orElse(null);
+    }
+
     public record RequirementIdentity(UUID tenantId, UUID requirementId, UUID brandContextId) {}
 
     /** The client edited brand fields on the brief page but this requirement had no brand yet --

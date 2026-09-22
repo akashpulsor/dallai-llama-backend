@@ -102,7 +102,7 @@ public class PublicProjectService {
         List<PublicCastMemberView> cast = script == null ? List.of() : buildCast(identity, script);
         List<PublicShotView> shots = buildShots(identity);
 
-        return new PublicProjectPackageView(project.id(), project.name(), project.status(), script, screenplay, cast, shots);
+        return new PublicProjectPackageView(project.id(), project.name(), project.status(), project.lockedIdeaId(), script, screenplay, cast, shots);
     }
 
     /** The client's price to lock this package: the platform's base + the creator's own margin.
