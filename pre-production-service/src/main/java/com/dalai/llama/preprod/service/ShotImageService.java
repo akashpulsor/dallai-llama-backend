@@ -486,12 +486,30 @@ public class ShotImageService {
 
     private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile, ShotProductReference productReference) {
         return switch (kind) {
-            case STORYBOARD -> shot.getSketchPrompt();
+            case STORYBOARD -> wrapAsStoryboardSketch(shot.getSketchPrompt());
             case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(shot, castProfile, productReference);
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
             case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));
         };
+    }
+
+    /** Shot.sketchPrompt as the shot-list generator writes it is a plain scene description
+     * ("medium close-up of Anjali, ..., soft indoor light") -- no style hint at all. Feeding
+     * that raw to gemini-3.1-flash-lite-image produced a photoreal frame instead of the
+     * intended storyboard sketch (Pragya reported this on shot 1: expected black-and-white
+     * sketch, got a lite-quality photoreal frame). Wrapping the scene text in an explicit
+     * storyboard-style header + framing instructions here keeps every existing shot's
+     * sketchPrompt reusable without a schema/backfill change, and every future STORYBOARD
+     * request lands with the right art direction. */
+    private static String wrapAsStoryboardSketch(String scene) {
+        if (scene == null || scene.isBlank()) return scene;
+        return "STORYBOARD PANEL -- pencil-and-ink black-and-white storyboard sketch, hand-drawn look, "
+                + "loose but confident lines, cross-hatched shading, no colour, no photorealism, "
+                + "landscape panel with a thin outer border. Include a small inset frame showing the "
+                + "hero product close-up in the corner. Add brief on-panel notes for camera angle "
+                + "and framing (compact, hand-lettered).\n\nScene: "
+                + scene.trim();
     }
 
     /** Same resolution {@code ShotContextAssemblyService} does for dispatch -- duplicated rather
