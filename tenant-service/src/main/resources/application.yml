@@ -127,6 +127,21 @@ services:
 
   product:
     url: ${PRODUCT_SERVICE_URL:http://product-service:8080}
+
+# ================================================================
+# LEAD MANAGEMENT (Phase 1: creator email identities on partner.dalaillama.in;
+# inbound webhook shim only, no processing yet — see leadmanagement package)
+# ================================================================
+lead-management:
+  # Creator email namespace. NEVER change this at runtime; existing identities in the DB
+  # already carry the full address string, so a domain change here would silently desync.
+  domain: ${LEAD_MANAGEMENT_DOMAIN:partner.dalaillama.in}
+  # Shared secret Cloudflare Email Worker must present in X-Webhook-Secret. Empty default so
+  # the endpoint fails safe (returns 503) if the env var is missing rather than accepting
+  # unauthenticated traffic.
+  inbound-webhook-secret: ${INBOUND_EMAIL_WEBHOOK_SECRET:}
+  inbound-webhook-max-body-bytes: ${INBOUND_EMAIL_WEBHOOK_MAX_BODY_BYTES:10485760}
+  inbound-webhook-timestamp-tolerance-seconds: ${INBOUND_EMAIL_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:300}
 # ================================================================
 # SERVER
 # ================================================================

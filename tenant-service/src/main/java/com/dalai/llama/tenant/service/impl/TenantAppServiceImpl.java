@@ -9,6 +9,7 @@ import com.dalai.llama.tenant.domain.exception.ProvisioningException;
 import com.dalai.llama.tenant.dto.response.AdminCredentials;
 import com.dalai.llama.tenant.dto.response.SubscriptionDetailResponse;
 import com.dalai.llama.tenant.kafka.producer.TenantEventProducer;
+import com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService;
 import com.dalai.llama.tenant.repository.ProvisioningTaskRepository;
 import com.dalai.llama.tenant.repository.TenantAppRepository;
 import com.dalai.llama.tenant.repository.TenantRepository;
@@ -43,6 +44,7 @@ public class TenantAppServiceImpl implements TenantAppService {
     private final ProvisioningTaskRepository provisioningTaskRepository;
     private final TenantRepository tenantRepository;
     private final CredentialDeliveryService credentialDeliveryService;
+    private final CreatorEmailIdentityService creatorEmailIdentityService;
 
     @Override
     public Optional<TenantApp> getByDid(String did) {
@@ -136,6 +138,18 @@ public class TenantAppServiceImpl implements TenantAppService {
         provisionApp(app.getId());
         // NOTE: provisionApp() runs synchronously here (Kafka consumer thread).
         // The ProvisioningOrchestrator publishes the completion/failure event.
+
+        // Phase 1 of Lead Management: mint the deterministic creator email identity. Guarded
+        // by its own try/catch so a lead-management outage cannot roll back or abort the
+        // subscription activation itself -- the identity can always be back-filled from
+        // tenantId later (it's a pure function of the UUID). See CreatorEmailIdentityService.
+        try {
+            creatorEmailIdentityService.provisionForCreator(event.getTenantId(), tenantData.getName());
+        } catch (RuntimeException e) {
+            log.error("Failed to provision creator email identity for tenant {} -- continuing; "
+                    + "identity is a deterministic function of tenantId and can be back-filled.",
+                    event.getTenantId(), e);
+        }
     }
 
     // =========================
