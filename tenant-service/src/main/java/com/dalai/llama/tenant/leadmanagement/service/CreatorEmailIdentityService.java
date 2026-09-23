@@ -19,6 +19,11 @@ public interface CreatorEmailIdentityService {
 
     Optional<CreatorEmailIdentity> findByEmail(String email);
 
+    /** Rotates the mailbox password on an existing identity. Returns the row with the new
+     * plaintext password. Throws {@link IllegalArgumentException} if no identity exists for
+     * the tenant (caller should provision first). */
+    CreatorEmailIdentity rotatePassword(UUID tenantId);
+
     /** Pure function: same input, same output, no I/O. Public so callers (e.g. the inbound
      * router) can compute the expected address without hitting the DB, and so tests can pin
      * the format. Format: {@code cr_<32-hex-chars-no-dashes>@<configured-domain>}. */

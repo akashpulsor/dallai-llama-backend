@@ -87,6 +87,18 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
     }
 
     @Override
+    @Transactional
+    public CreatorEmailIdentity rotatePassword(UUID tenantId) {
+        CreatorEmailIdentity row = repository.findByTenantId(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "No creator email identity for tenant " + tenantId + " -- provision first"));
+        row.setEmailPassword(generatePassword());
+        CreatorEmailIdentity saved = repository.save(row);
+        log.info("Rotated creator email password tenantId={} email={}", tenantId, saved.getEmail());
+        return saved;
+    }
+
+    @Override
     public String computeEmail(UUID tenantId) {
         return localPart(tenantId) + "@" + properties.domain();
     }

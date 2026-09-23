@@ -99,6 +99,13 @@
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
+        <!-- Outbound email for the creator lead-management module (Hostinger SMTP via the
+             existing dalai-backend-smtp secret, same relay billing-service already uses). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- ===== Security ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

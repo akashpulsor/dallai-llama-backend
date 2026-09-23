@@ -36,6 +36,15 @@ public class InternalAdminCreatorEmailController {
     private final CreatorEmailIdentityService creatorEmailIdentityService;
     private final TenantRepository tenantRepository;
 
+    @PostMapping("/email/{tenantId}/rotate-password")
+    public ResponseEntity<Map<String, Object>> rotate(@PathVariable UUID tenantId) {
+        try {
+            return ResponseEntity.ok(toResponse(creatorEmailIdentityService.rotatePassword(tenantId)));
+        } catch (IllegalArgumentException notFound) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/email/{tenantId}")
     public ResponseEntity<Map<String, Object>> getForTenant(@PathVariable UUID tenantId) {
         return creatorEmailIdentityService.findByTenant(tenantId)

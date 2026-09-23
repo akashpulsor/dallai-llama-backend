@@ -58,6 +58,27 @@ spring:
         jwt:
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://auth.localhost:8081/realms/dalaillama}
 
+  # SMTP relay for the creator-email-identity outbound path. Same shape billing-service uses
+  # (see its EmailService); Hostinger SMTP by default. Sender no-ops cleanly when SMTP_USERNAME
+  # is blank so a deploy without creds still boots and returns 503 from /email/send instead of
+  # crashing the app.
+  mail:
+    host: ${SMTP_HOST:smtp.hostinger.com}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    from: ${SMTP_FROM:}
+    enabled: ${SMTP_ENABLED:true}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+          connectiontimeout: 10000
+
 
 # ════════════════════════════════════════════════════════════
 # ADD THESE SECTIONS TO YOUR application.yaml
