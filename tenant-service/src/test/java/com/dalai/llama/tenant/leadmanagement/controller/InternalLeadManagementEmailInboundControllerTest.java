@@ -131,4 +131,52 @@ class InternalLeadManagementEmailInboundControllerTest {
                         .content("{\"from\":\"a@b\"}"))
                 .andExpect(status().isAccepted());
     }
+
+    // ------------------------------------------------------------------------
+    // Public /webhooks/* path (the one the Cloudflare Worker actually hits;
+    // the platform intentionally does not expose /internal/* through the
+    // gateway VirtualService). Must run the SAME guards as the internal path.
+    // ------------------------------------------------------------------------
+
+    @Test
+    void publicPath_returns202OnHappyPath() throws Exception {
+        mvc.perform(post("/api/v1/webhooks/lead-management/email/inbound")
+                        .header("X-Webhook-Secret", SECRET)
+                        .header("X-Webhook-Timestamp", nowTs())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"from\":\"a@b\"}"))
+                .andExpect(status().isAccepted());
+    }
+
+    @Test
+    void publicPath_returns401OnMissingSecret() throws Exception {
+        mvc.perform(post("/api/v1/webhooks/lead-management/email/inbound")
+                        .header("X-Webhook-Timestamp", nowTs())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void publicPath_returns401OnExpiredTimestamp() throws Exception {
+        long tooOld = Instant.now().getEpochSecond() - TOLERANCE_SECS - 60;
+        mvc.perform(post("/api/v1/webhooks/lead-management/email/inbound")
+                        .header("X-Webhook-Secret", SECRET)
+                        .header("X-Webhook-Timestamp", String.valueOf(tooOld))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void publicPath_returns503WhenSecretNotConfigured() throws Exception {
+        // Same fail-safe as the internal path: missing secret => 503, not a silent accept.
+        buildMvcWithConfiguredSecret(null, MAX_BODY);
+        mvc.perform(post("/api/v1/webhooks/lead-management/email/inbound")
+                        .header("X-Webhook-Secret", SECRET)
+                        .header("X-Webhook-Timestamp", nowTs())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isServiceUnavailable());
+    }
 }

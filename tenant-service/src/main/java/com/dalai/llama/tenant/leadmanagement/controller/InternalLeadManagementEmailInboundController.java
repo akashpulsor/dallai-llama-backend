@@ -11,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
@@ -23,23 +22,39 @@ import java.util.Map;
  * class exists only to make the security boundary real: shared-secret header check, timestamp
  * replay guard, body-size cap, and a stable route the Worker can call.
  *
- * <p>Path lives under {@code /api/v1/internal/**}, which {@code SecurityConfig#internalFilterChain}
- * bypasses OAuth on; that is INTENTIONAL. The endpoint is reachable from outside the cluster
- * (the Worker runs on Cloudflare's edge, not inside k3s), so trusting the network is not an
- * option -- authenticity is decided ONLY by the shared secret + timestamp check below. */
+ * <p>Two mapped paths, one handler:
+ * <ul>
+ *   <li>{@code /api/v1/internal/lead-management/email/inbound} -- mesh-internal callers only
+ *       (never exposed by the gateway VirtualService, which only routes {@code apiPaths}).
+ *       Kept for consistency with how every other internal endpoint on this service is named.</li>
+ *   <li>{@code /api/v1/webhooks/lead-management/email/inbound} -- the PUBLIC path the
+ *       Cloudflare Worker (edge, not inside k3s) hits. {@code /api/v1/webhooks/*} is the
+ *       platform's established public-webhook prefix and is already recognised in the
+ *       tenant-service AuthorizationPolicy. This path still requires the shared-secret
+ *       check below -- the mesh boundary is not authentication.</li>
+ * </ul>
+ * Both paths run the same guards; there is no configuration that turns off the shared secret
+ * on either one. */
 @Slf4j
 @Hidden
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/internal/lead-management/email")
 public class InternalLeadManagementEmailInboundController {
+
+    /** Internal (mesh-only) mount point; keeps naming parity with the other {@code /internal/*}
+     * routes on this service. Not reachable from outside the cluster today. */
+    public static final String INTERNAL_PATH = "/api/v1/internal/lead-management/email/inbound";
+
+    /** Public (edge-facing) mount point for the Cloudflare Worker. Only path here that a
+     * Worker can actually reach -- the platform does not expose {@code /internal/*} publicly. */
+    public static final String PUBLIC_PATH = "/api/v1/webhooks/lead-management/email/inbound";
 
     private static final String HEADER_SECRET = "X-Webhook-Secret";
     private static final String HEADER_TIMESTAMP = "X-Webhook-Timestamp";
 
     private final LeadManagementProperties properties;
 
-    @PostMapping(value = "/inbound", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = {INTERNAL_PATH, PUBLIC_PATH}, consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, String>> inbound(
             @RequestHeader(value = HEADER_SECRET, required = false) String presentedSecret,
             @RequestHeader(value = HEADER_TIMESTAMP, required = false) String presentedTimestamp,
