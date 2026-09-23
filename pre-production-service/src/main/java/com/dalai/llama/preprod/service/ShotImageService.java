@@ -202,8 +202,6 @@ public class ShotImageService {
         List<String> editDataUris = null;
         if (productReference != null || castProfile != null) {
             modelId = identityImageModel;
-            String refBucket = productReference != null ? productReference.getBucket() : castProfile.getFaceRefBucket();
-            String refObjectKey = productReference != null ? productReference.getObjectKey() : castProfile.getFaceRefObjectKey();
             if (isGeminiModel(modelId)) {
                 // Gemini has no separate "reference image" request param the way fal.ai's
                 // FLUX_PULID does -- it conditions on whatever images ride along inline with the
@@ -225,15 +223,29 @@ public class ShotImageService {
                 if (note != null && !note.isBlank()) {
                     shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(uris::add);
                 }
-                // Identity ref is still the authoritative face/product source and stays in the
-                // call. On a plain (no-note) regenerate, it's the only image -- same behavior as
-                // before this fix; on an edit it's a second reference alongside the current frame.
-                String refDataUri = toDataUri(refBucket, refObjectKey);
-                if (refDataUri != null) uris.add(refDataUri);
+                // When BOTH refs exist, attach both (cast face first, then product) so Gemini
+                // gets both identities. Previously we picked ONE via a product-wins ternary and
+                // silently dropped the cast face for combined product+person shots. The prompt's
+                // "Primary subject: ..." + "Product identity ref" blocks (from
+                // ShotImagePromptBuilder) tell the model which image is which. On a plain (no-
+                // note) regenerate with only one ref, behavior is unchanged.
+                if (castProfile != null) {
+                    String castUri = toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
+                    if (castUri != null) uris.add(castUri);
+                }
+                if (productReference != null) {
+                    String productUri = toDataUri(productReference.getBucket(), productReference.getObjectKey());
+                    if (productUri != null) uris.add(productUri);
+                }
                 editDataUris = uris.isEmpty() ? null : uris;
                 prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
             } else {
-                params = Map.of("reference_image_urls", List.of(signedUrl(refBucket, refObjectKey)));
+                // fal.ai FLUX_PULID's reference_image_urls param: send both refs when both exist,
+                // same order as the Gemini path above so downstream behavior stays symmetric.
+                List<String> refUrls = new java.util.ArrayList<>();
+                if (castProfile != null) refUrls.add(signedUrl(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey()));
+                if (productReference != null) refUrls.add(signedUrl(productReference.getBucket(), productReference.getObjectKey()));
+                params = Map.of("reference_image_urls", refUrls);
             }
         } else {
             // Three tiers of image model routing, by kind:
@@ -498,7 +510,12 @@ public class ShotImageService {
     private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile, ShotProductReference productReference) {
         return switch (kind) {
             case STORYBOARD -> wrapAsStoryboardSketch(shot.getSketchPrompt());
-            case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(shot, castProfile, productReference);
+            // PRODUCTION reads the LightingPlan too (when one exists) so key/fill/rim direction
+            // reaches the still. Selective -- ShotImagePromptBuilder skips numbered build steps
+            // and gear part numbers, which belong on the lighting sheet, not the finished frame.
+            case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(
+                    shot, castProfile, productReference,
+                    lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
             case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));
@@ -512,15 +529,21 @@ public class ShotImageService {
      * sketch, got a lite-quality photoreal frame). Wrapping the scene text in an explicit
      * storyboard-style header + framing instructions here keeps every existing shot's
      * sketchPrompt reusable without a schema/backfill change, and every future STORYBOARD
-     * request lands with the right art direction. */
-    private static String wrapAsStoryboardSketch(String scene) {
+     * request lands with the right art direction.
+     *
+     * <p>Deliberately does NOT ask for a "hero product inset" -- the earlier wording did, but
+     * STORYBOARD calls attach zero product reference images (see the {@code kind == PRODUCTION}
+     * gates on castProfile/productReference in {@link #generate(UUID, UUID, ShotImageKind,
+     * String, List)}). Gemini had no source-of-truth for the actual product shape and invented
+     * a generic one, which is worse than a blank corner. */
+    static String wrapAsStoryboardSketch(String scene) {
         if (scene == null || scene.isBlank()) return scene;
         return "STORYBOARD PANEL -- pencil-and-ink black-and-white storyboard sketch, hand-drawn look, "
                 + "loose but confident lines, cross-hatched shading, no colour, no photorealism, "
-                + "landscape panel with a thin outer border. Include a small inset frame showing the "
-                + "hero product close-up in the corner. Add brief on-panel notes for camera angle "
-                + "and framing (compact, hand-lettered).\n\nScene: "
-                + scene.trim();
+                + "landscape panel with a thin outer border. Add brief on-panel notes for camera angle "
+                + "and framing (compact, hand-lettered). Under no circumstance render this as a photo, "
+                + "photorealistic frame, or color rendering -- if in doubt, prefer looser hand-drawn lines.\n\n"
+                + "Scene: " + scene.trim();
     }
 
     /** Same resolution {@code ShotContextAssemblyService} does for dispatch -- duplicated rather
