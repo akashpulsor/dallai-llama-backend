@@ -52,6 +52,12 @@ public class CreatorEmailIdentity {
     @Column(name = "display_name", length = 200)
     private String displayName;
 
+    /** Provisional plaintext login password (see V25 migration). Held here so the human
+     * operator can hand it to the creator once through the admin fetch endpoint. Will be
+     * migrated to encrypted-at-rest storage when the outbound-mail provider is chosen. */
+    @Column(name = "email_password", length = 64)
+    private String emailPassword;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 24)
     private CreatorEmailIdentityStatus status;

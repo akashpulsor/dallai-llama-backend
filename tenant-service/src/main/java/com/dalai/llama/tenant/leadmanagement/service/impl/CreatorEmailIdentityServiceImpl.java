@@ -11,6 +11,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +19,15 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityService {
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+    /** 24-char URL-safe alphabet: no 0/O/1/l ambiguity when the human operator reads the
+     * password off an admin screen and types it into a mail client's account setup. Length
+     * 24 gives ~139 bits of entropy over this alphabet -- comfortably above any brute-force
+     * threat for an internal-hosted SMTP/IMAP mailbox. */
+    private static final char[] PASSWORD_ALPHABET =
+            "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789".toCharArray();
+    private static final int PASSWORD_LENGTH = 24;
 
     private final CreatorEmailIdentityRepository repository;
     private final LeadManagementProperties properties;
@@ -45,6 +55,7 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
                 .localPart(localPart(tenantId))
                 .email(email)
                 .displayName(displayName)
+                .emailPassword(generatePassword())
                 .status(CreatorEmailIdentityStatus.PROVISIONED)
                 .build();
         try {
@@ -86,5 +97,13 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
      * intent explicit. */
     private static String localPart(UUID tenantId) {
         return "cr_" + tenantId.toString().replace("-", "").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String generatePassword() {
+        char[] out = new char[PASSWORD_LENGTH];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = PASSWORD_ALPHABET[RANDOM.nextInt(PASSWORD_ALPHABET.length)];
+        }
+        return new String(out);
     }
 }
