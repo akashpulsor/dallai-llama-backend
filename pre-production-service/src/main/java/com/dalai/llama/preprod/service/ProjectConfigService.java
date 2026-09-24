@@ -85,6 +85,25 @@ public class ProjectConfigService {
         return projectConfigRepository.findByProjectId(projectId).orElse(null);
     }
 
+    /** Single source of truth for "what language should the LLM write dialogue in for this
+     * project?" -- an explicit per-call {@code requestedLanguage} overrides the saved default AND
+     * is persisted so downstream stages (script -> screenplay -> shot-list -> dialogue-details)
+     * all see the same choice from one form submission. Falls back to whatever's already saved,
+     * then to en-US. Called from {@link ScriptGenerationService} and {@link ScreenplayGenerationService}
+     * so both stages honour the same override consistently -- the bug this replaces was screenplay
+     * ignoring the config entirely and rendering Devanagari for a hi-Latn-IN project. */
+    @Transactional
+    public String resolveDialogueLanguage(UUID tenantId, UUID projectId, String requestedLanguage) {
+        if (requestedLanguage != null && !requestedLanguage.isBlank()) {
+            update(tenantId, projectId,
+                    new UpdateProjectConfigRequest(null, null, null, requestedLanguage, null, null, null, null, null, null, null, null));
+            return requestedLanguage;
+        }
+        ProjectConfig config = getEntityOrDefault(projectId);
+        String saved = config == null ? null : config.getDialogueLanguage();
+        return (saved == null || saved.isBlank()) ? "en-US" : saved;
+    }
+
     private ProjectConfig requireConfig(UUID projectId) {
         return projectConfigRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.notFound("No project config for project " + projectId));

@@ -96,7 +96,7 @@ public class ScriptGenerationService {
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
         List<CastProfile> productProfiles = loadProductProfiles(tenantId, request.productCastProfileIds());
         int durationSeconds = resolveDuration(tenantId, projectId, request.targetDurationSeconds());
-        String dialogueLanguage = resolveDialogueLanguage(projectId);
+        String dialogueLanguage = resolveDialogueLanguage(tenantId, projectId, request.dialogueLanguage());
         String productContext = productContextBlock(productProfiles);
 
         String beatPlan = generateHookBeatPlan(tenantId, projectId, request.briefText(), durationSeconds);
@@ -195,13 +195,11 @@ public class ScriptGenerationService {
         return config != null && config.getTargetDurationSeconds() != null ? config.getTargetDurationSeconds() : 60;
     }
 
-    /** Reads the project's saved dialogue-language choice (set via the project-settings panel,
-     * same "set once, every stage reads it" pattern as {@link #resolveDuration}) -- falls back to
-     * English rather than failing generation when the creator hasn't picked one yet. */
-    private String resolveDialogueLanguage(UUID projectId) {
-        var config = projectConfigService.getEntityOrDefault(projectId);
-        String language = config == null ? null : config.getDialogueLanguage();
-        return (language == null || language.isBlank()) ? "en-US" : language;
+    /** Delegates to {@link ProjectConfigService#resolveDialogueLanguage} -- see that method's
+     * javadoc for the "explicit wins and becomes default" contract. Screenplay generation uses the
+     * same helper so a language chosen at script time propagates automatically. */
+    private String resolveDialogueLanguage(UUID tenantId, UUID projectId, String requestedLanguage) {
+        return projectConfigService.resolveDialogueLanguage(tenantId, projectId, requestedLanguage);
     }
 
     /** Only PRODUCT-typed profiles are valid grounding here -- an ACTOR profile has no place in
@@ -257,7 +255,7 @@ public class ScriptGenerationService {
         Script existing = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet to revise"));
         String briefText = existing.getScriptText() + "\n\nRequested change: " + note;
-        return generate(tenantId, projectId, new GenerateScriptRequest(briefText, null, null));
+        return generate(tenantId, projectId, new GenerateScriptRequest(briefText, null, null, null));
     }
 
     /** Manual correction/refinement of one character -- only fields present in the request change.

@@ -10,6 +10,7 @@ import com.dalai.llama.preprod.domain.entity.ScreenplayScene;
 import com.dalai.llama.preprod.domain.entity.ScreenplaySceneCharacter;
 import com.dalai.llama.preprod.domain.entity.Script;
 import com.dalai.llama.preprod.domain.entity.ScriptCharacter;
+import com.dalai.llama.preprod.dto.GenerateScreenplayRequest;
 import com.dalai.llama.preprod.dto.SaveScreenplayEditRequest;
 import com.dalai.llama.preprod.dto.SceneCharacterView;
 import com.dalai.llama.preprod.dto.ScreenplaySceneView;
@@ -61,6 +62,7 @@ public class ScreenplayGenerationService {
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final ProjectService projectService;
+    private final ProjectConfigService projectConfigService;
     private final String defaultModel;
 
     public ScreenplayGenerationService(
@@ -73,6 +75,7 @@ public class ScreenplayGenerationService {
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             ProjectService projectService,
+            ProjectConfigService projectConfigService,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
     ) {
         this.projectRepository = projectRepository;
@@ -84,22 +87,28 @@ public class ScreenplayGenerationService {
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.projectService = projectService;
+        this.projectConfigService = projectConfigService;
         this.defaultModel = defaultModel;
     }
 
     @Transactional
     public ScreenplayView generate(UUID tenantId, UUID projectId) {
-        return generate(tenantId, projectId, null);
+        return generate(tenantId, projectId, null, null);
+    }
+
+    @Transactional
+    public ScreenplayView generate(UUID tenantId, UUID projectId, GenerateScreenplayRequest request) {
+        return generate(tenantId, projectId, null, request == null ? null : request.dialogueLanguage());
     }
 
     /** Powers a change request's "apply" -- same generate() flow, with the requested change
      * folded into the script text the LLM sees, rather than a separate prompt/task key. */
     @Transactional
     public ScreenplayView regenerateWithNote(UUID tenantId, UUID projectId, String note) {
-        return generate(tenantId, projectId, note);
+        return generate(tenantId, projectId, note, null);
     }
 
-    private ScreenplayView generate(UUID tenantId, UUID projectId, String note) {
+    private ScreenplayView generate(UUID tenantId, UUID projectId, String note, String requestedLanguage) {
         Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
         Script script = scriptRepository.findByProjectId(projectId)
@@ -107,13 +116,14 @@ public class ScreenplayGenerationService {
         String scriptText = (note == null || note.isBlank())
                 ? script.getScriptText()
                 : script.getScriptText() + "\n\nRequested change for this screenplay: " + note;
+        String dialogueLanguage = projectConfigService.resolveDialogueLanguage(tenantId, projectId, requestedLanguage);
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "screenplay-generate-" + projectId,
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("scriptText", scriptText)).withProjectId(projectId));
+                        Map.of("scriptText", scriptText, "dialogueLanguage", dialogueLanguage)).withProjectId(projectId));
 
         ScreenplayGenerationResult parsed = parse(response);
         if (parsed.scenes() == null || parsed.scenes().isEmpty()) {

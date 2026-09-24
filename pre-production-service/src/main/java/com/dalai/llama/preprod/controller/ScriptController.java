@@ -33,6 +33,27 @@ public class ScriptController extends BaseController {
         return ResponseEntity.ok(scriptGenerationService.generate(tenant().tenantId(), projectId, request));
     }
 
+    /** Regenerates the script with the CURRENT live script text (including any {@code saveEdit}
+     * changes) folded back into the prompt, plus an optional creator note. The bug this replaces:
+     * the frontend's "Regenerate" button used {@link #generate} which reads {@code briefText} from
+     * the request and completely ignores the live {@code Script} row, so any {@code saveEdit} the
+     * creator did was silently wiped on regenerate. This endpoint calls {@link
+     * ScriptGenerationService#regenerateWithNote} which was already used by ChangeRequestService
+     * but never exposed as a first-class endpoint. */
+    @PostMapping("/v1/projects/{projectId}/script/regenerate")
+    public ResponseEntity<ScriptView> regenerate(
+            @PathVariable UUID projectId,
+            @RequestBody(required = false) RegenerateScriptRequest request) {
+        String note = request == null ? "" : (request.note() == null ? "" : request.note());
+        return ResponseEntity.ok(scriptGenerationService.regenerateWithNote(tenant().tenantId(), projectId, note));
+    }
+
+    /** @param note optional creator instruction folded into the LLM prompt on top of the current
+     *  script text (e.g. "make the ending softer"). Blank/null still regenerates with the current
+     *  script as context -- the value here is just that the creator's edits are respected, no
+     *  further instruction required. */
+    public record RegenerateScriptRequest(String note) {}
+
     @GetMapping("/v1/projects/{projectId}/script")
     public ResponseEntity<ScriptView> get(@PathVariable UUID projectId) {
         return ResponseEntity.ok(scriptGenerationService.get(tenant().tenantId(), projectId));
