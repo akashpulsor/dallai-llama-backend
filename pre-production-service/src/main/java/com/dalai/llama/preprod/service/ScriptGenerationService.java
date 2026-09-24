@@ -97,6 +97,7 @@ public class ScriptGenerationService {
         List<CastProfile> productProfiles = loadProductProfiles(tenantId, request.productCastProfileIds());
         int durationSeconds = resolveDuration(tenantId, projectId, request.targetDurationSeconds());
         String dialogueLanguage = resolveDialogueLanguage(tenantId, projectId, request.dialogueLanguage());
+        String narrativeLanguage = projectConfigService.resolveNarrativeLanguage(tenantId, projectId, request.narrativeLanguage());
         String productContext = productContextBlock(productProfiles);
 
         String beatPlan = generateHookBeatPlan(tenantId, projectId, request.briefText(), durationSeconds);
@@ -111,7 +112,8 @@ public class ScriptGenerationService {
                     "brief", briefWithPlan + critiqueFeedback,
                     "durationSeconds", String.valueOf(durationSeconds),
                     "productContext", productContext,
-                    "dialogueLanguage", dialogueLanguage
+                    "dialogueLanguage", dialogueLanguage,
+                    "narrativeLanguage", narrativeLanguage
             );
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -187,7 +189,7 @@ public class ScriptGenerationService {
             var config = projectConfigService.getEntityOrDefault(projectId);
             if (config != null && config.getTargetDurationSeconds() == null) {
                 projectConfigService.update(tenantId, projectId,
-                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null, null, null, null, null, null, null, null, null));
+                        new com.dalai.llama.preprod.dto.UpdateProjectConfigRequest(null, requestedDuration, null, null, null, null, null, null, null, null, null, null, null));
             }
             return requestedDuration;
         }
@@ -255,7 +257,7 @@ public class ScriptGenerationService {
         Script existing = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet to revise"));
         String briefText = existing.getScriptText() + "\n\nRequested change: " + note;
-        return generate(tenantId, projectId, new GenerateScriptRequest(briefText, null, null, null));
+        return generate(tenantId, projectId, new GenerateScriptRequest(briefText, null, null, null, null));
     }
 
     /** Manual correction/refinement of one character -- only fields present in the request change.

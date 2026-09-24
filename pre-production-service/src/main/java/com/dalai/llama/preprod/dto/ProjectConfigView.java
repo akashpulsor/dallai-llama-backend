@@ -14,6 +14,10 @@ public record ProjectConfigView(
         String preferredResolution,
         String preferredTtsModel,
         String dialogueLanguage,
+        /** Script/prose language -- separate from dialogueLanguage which is only spoken lines.
+         * See ProjectConfig entity javadoc. Frontend uses this to pre-fill the narrative-
+         * language picker on the generate forms. */
+        String narrativeLanguage,
         /** Feature-flag gates for the video-workspace UI's optional enrichments (see
          * ProjectConfig entity javadoc for per-flag intent). All default to a sensible on/off
          * that matches migration V48; UI honors them before showing the corresponding UX. */

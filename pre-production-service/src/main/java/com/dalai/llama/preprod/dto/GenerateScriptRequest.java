@@ -22,6 +22,13 @@ public record GenerateScriptRequest(
         @NotBlank String briefText,
         Integer targetDurationSeconds,
         List<UUID> productCastProfileIds,
-        String dialogueLanguage
+        String dialogueLanguage,
+        /** BCP-47 code for the SCRIPT PROSE language (scriptText / logline / emotionalArc) --
+         * separate from {@link #dialogueLanguage} which is only spoken lines. Same "explicit wins
+         * and becomes the persisted default" contract via {@link
+         * com.dalai.llama.preprod.service.ProjectConfigService#resolveNarrativeLanguage}. Common
+         * Indian-market shape: English narrative + Hindi/Hinglish dialogue. Null falls back to
+         * whatever's saved on the project, then en-US. */
+        String narrativeLanguage
 ) {
 }

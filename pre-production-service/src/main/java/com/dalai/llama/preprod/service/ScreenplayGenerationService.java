@@ -21,6 +21,7 @@ import com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository;
 import com.dalai.llama.preprod.repository.ScreenplaySceneRepository;
 import com.dalai.llama.preprod.repository.ScriptCharacterRepository;
 import com.dalai.llama.preprod.repository.ScriptRepository;
+import com.dalai.llama.preprod.repository.ScriptVersionRepository;
 import com.dalai.llama.preprod.service.generation.JsonExtraction;
 import com.dalai.llama.preprod.service.generation.ScreenplayGenerationResult;
 import com.dalai.llama.preprod.service.generation.TolerantEnumParser;
@@ -59,6 +60,7 @@ public class ScreenplayGenerationService {
     private final ScreenplayRepository screenplayRepository;
     private final ScreenplaySceneRepository screenplaySceneRepository;
     private final ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
+    private final ScriptVersionRepository scriptVersionRepository;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final ProjectService projectService;
@@ -72,6 +74,7 @@ public class ScreenplayGenerationService {
             ScreenplayRepository screenplayRepository,
             ScreenplaySceneRepository screenplaySceneRepository,
             ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository,
+            ScriptVersionRepository scriptVersionRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             ProjectService projectService,
@@ -84,6 +87,7 @@ public class ScreenplayGenerationService {
         this.screenplayRepository = screenplayRepository;
         this.screenplaySceneRepository = screenplaySceneRepository;
         this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
+        this.scriptVersionRepository = scriptVersionRepository;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.projectService = projectService;
@@ -91,39 +95,71 @@ public class ScreenplayGenerationService {
         this.defaultModel = defaultModel;
     }
 
+    /** Returns the live script's text when {@code requestedVersion} is null (existing behavior);
+     * a specific ScriptVersion's snapshot when a version number is given (the "screenplay from v2"
+     * use case -- a creator navigated to an older version and wants THAT text as the basis,
+     * not whatever is currently live). Throws notFound rather than silently falling back so a
+     * typo/stale UI reference surfaces instead of unexpectedly regenerating from the wrong text. */
+    private String resolveScriptText(UUID tenantId, UUID projectId, Script liveScript, Integer requestedVersion) {
+        if (requestedVersion == null) {
+            return liveScript.getScriptText();
+        }
+        var version = scriptVersionRepository.findByProjectIdAndVersion(projectId, requestedVersion)
+                .filter(v -> v.getTenantId().equals(tenantId))
+                .orElseThrow(() -> PreProductionException.notFound(
+                        "No script version " + requestedVersion + " for project " + projectId));
+        if (version.getScriptText() == null || version.getScriptText().isBlank()) {
+            throw PreProductionException.badRequest(
+                    "Script version " + requestedVersion + " has no scriptText -- cannot base a screenplay on it");
+        }
+        return version.getScriptText();
+    }
+
     @Transactional
     public ScreenplayView generate(UUID tenantId, UUID projectId) {
-        return generate(tenantId, projectId, null, null);
+        return generate(tenantId, projectId, null, null, null, null);
     }
 
     @Transactional
     public ScreenplayView generate(UUID tenantId, UUID projectId, GenerateScreenplayRequest request) {
-        return generate(tenantId, projectId, null, request == null ? null : request.dialogueLanguage());
+        return generate(tenantId, projectId, null,
+                request == null ? null : request.dialogueLanguage(),
+                request == null ? null : request.narrativeLanguage(),
+                request == null ? null : request.scriptVersion());
     }
 
     /** Powers a change request's "apply" -- same generate() flow, with the requested change
      * folded into the script text the LLM sees, rather than a separate prompt/task key. */
     @Transactional
     public ScreenplayView regenerateWithNote(UUID tenantId, UUID projectId, String note) {
-        return generate(tenantId, projectId, note, null);
+        return generate(tenantId, projectId, note, null, null, null);
     }
 
-    private ScreenplayView generate(UUID tenantId, UUID projectId, String note, String requestedLanguage) {
+    private ScreenplayView generate(UUID tenantId, UUID projectId, String note,
+                                    String requestedDialogueLanguage, String requestedNarrativeLanguage,
+                                    Integer requestedScriptVersion) {
         Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        // Always resolve the canonical Script row for id/characters/lockedIdea (screenplay FK'd to
+        // it, characters live only on the canonical row, not per-version). scriptText itself may
+        // come from an older ScriptVersion snapshot when the creator explicitly picked one.
         Script script = scriptRepository.findByProjectId(projectId)
                 .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
+        String baseScriptText = resolveScriptText(tenantId, projectId, script, requestedScriptVersion);
         String scriptText = (note == null || note.isBlank())
-                ? script.getScriptText()
-                : script.getScriptText() + "\n\nRequested change for this screenplay: " + note;
-        String dialogueLanguage = projectConfigService.resolveDialogueLanguage(tenantId, projectId, requestedLanguage);
+                ? baseScriptText
+                : baseScriptText + "\n\nRequested change for this screenplay: " + note;
+        String dialogueLanguage = projectConfigService.resolveDialogueLanguage(tenantId, projectId, requestedDialogueLanguage);
+        String narrativeLanguage = projectConfigService.resolveNarrativeLanguage(tenantId, projectId, requestedNarrativeLanguage);
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "screenplay-generate-" + projectId,
                 new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                        Map.of("scriptText", scriptText, "dialogueLanguage", dialogueLanguage)).withProjectId(projectId));
+                        Map.of("scriptText", scriptText,
+                                "dialogueLanguage", dialogueLanguage,
+                                "narrativeLanguage", narrativeLanguage)).withProjectId(projectId));
 
         ScreenplayGenerationResult parsed = parse(response);
         if (parsed.scenes() == null || parsed.scenes().isEmpty()) {

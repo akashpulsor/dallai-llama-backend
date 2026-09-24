@@ -131,7 +131,7 @@ public class LlmGatewayController {
      * of which model/provider ends up handling it. */
     @GetMapping("/v1/languages")
     public ResponseEntity<List<LanguageSummary>> listLanguages() {
-        List<LanguageSummary> languages = languageMasterRepository.findAll().stream()
+        List<LanguageSummary> languages = languageMasterRepository.findByActiveTrue().stream()
                 .map(l -> new LanguageSummary(l.getLanguageCode(), l.getDisplayName(), l.getNativeName()))
                 .toList();
         return ResponseEntity.ok(languages);

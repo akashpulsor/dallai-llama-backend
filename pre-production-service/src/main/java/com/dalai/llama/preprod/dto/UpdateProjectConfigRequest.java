@@ -9,6 +9,11 @@ public record UpdateProjectConfigRequest(
         Integer targetDurationSeconds,
         Boolean preferMotionGraphics,
         String dialogueLanguage,
+        /** BCP-47 code for the SCRIPT PROSE language (scriptText, logline, screenplay summaries)
+         * -- separate from dialogueLanguage which controls only spoken dialogue. Null leaves the
+         * saved value untouched (partial-update convention). Set via the same generate forms as
+         * dialogueLanguage; see ProjectConfigService.resolveNarrativeLanguage. */
+        String narrativeLanguage,
         /** A model_id from llm-gateway's real model_master (type=voice_clone) -- e.g.
          * "fal-ai/minimax/voice-clone" or "elevenlabs/instant-voice-clone". Null clears the
          * project's pin, back to video-generation-service's own configured default. */

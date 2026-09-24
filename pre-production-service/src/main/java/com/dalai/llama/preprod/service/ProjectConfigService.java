@@ -48,6 +48,9 @@ public class ProjectConfigService {
         if (request.dialogueLanguage() != null) {
             config.setDialogueLanguage(request.dialogueLanguage());
         }
+        if (request.narrativeLanguage() != null) {
+            config.setNarrativeLanguage(request.narrativeLanguage());
+        }
         if (request.preferredVoiceModel() != null) {
             config.setPreferredVoiceModel(request.preferredVoiceModel());
         }
@@ -96,11 +99,28 @@ public class ProjectConfigService {
     public String resolveDialogueLanguage(UUID tenantId, UUID projectId, String requestedLanguage) {
         if (requestedLanguage != null && !requestedLanguage.isBlank()) {
             update(tenantId, projectId,
-                    new UpdateProjectConfigRequest(null, null, null, requestedLanguage, null, null, null, null, null, null, null, null));
+                    new UpdateProjectConfigRequest(null, null, null, requestedLanguage, null, null, null, null, null, null, null, null, null));
             return requestedLanguage;
         }
         ProjectConfig config = getEntityOrDefault(projectId);
         String saved = config == null ? null : config.getDialogueLanguage();
+        return (saved == null || saved.isBlank()) ? "en-US" : saved;
+    }
+
+    /** Same explicit-wins-and-persists contract as {@link #resolveDialogueLanguage}, but for the
+     * NARRATIVE prose language (scriptText / logline / screenplay summaries). Default fallback is
+     * en-US because a creator who never picked a narrative language almost always wants readable
+     * English prose regardless of what the dialogue language is -- especially for hi-IN/hi-Latn-IN
+     * dialogue projects where the whole workflow assumes the prose stays English. */
+    @Transactional
+    public String resolveNarrativeLanguage(UUID tenantId, UUID projectId, String requestedLanguage) {
+        if (requestedLanguage != null && !requestedLanguage.isBlank()) {
+            update(tenantId, projectId,
+                    new UpdateProjectConfigRequest(null, null, null, null, requestedLanguage, null, null, null, null, null, null, null, null));
+            return requestedLanguage;
+        }
+        ProjectConfig config = getEntityOrDefault(projectId);
+        String saved = config == null ? null : config.getNarrativeLanguage();
         return (saved == null || saved.isBlank()) ? "en-US" : saved;
     }
 
@@ -113,6 +133,7 @@ public class ProjectConfigService {
         return new ProjectConfigView(config.getAspectRatio(), config.getTargetDurationSeconds(), config.getPreferMotionGraphics(),
                 config.getPreferredVideoModel(), config.getPreferredVoiceModel(), config.getPreferredLipSyncModel(),
                 config.getPreferredResolution(), config.getPreferredTtsModel(), config.getDialogueLanguage(),
+                config.getNarrativeLanguage(),
                 config.getRecommenderEnabled(), config.getCostPreviewEnabled(),
                 config.getAutoCloneAudioPromptEnabled(), config.getPriceDeltaModalEnabled());
     }

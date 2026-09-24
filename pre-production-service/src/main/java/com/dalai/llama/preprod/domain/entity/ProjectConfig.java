@@ -78,6 +78,14 @@ public class ProjectConfig {
     @Column(name = "dialogue_language", length = 16)
     private String dialogueLanguage;
 
+    /** BCP-47 code for the language the SCRIPT PROSE is written in -- scriptText, logline,
+     * emotionalArc, screenplay scene summaries. Separate from {@link #dialogueLanguage} which
+     * controls only spoken dialogue lines. Common Indian-market shape: English prose (creator can
+     * read and edit) + Hindi dialogue. Null falls back to en-US at read time (see
+     * ProjectConfigService.resolveNarrativeLanguage). */
+    @Column(name = "narrative_language", length = 16)
+    private String narrativeLanguage;
+
     /** When true, shot-list generation is told to prefer MOTION_GRAPHIC for text/data/graphic-
      * driven beats instead of leaving that judgment entirely to the model's own read of each
      * beat. */

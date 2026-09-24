@@ -49,4 +49,12 @@ public class LanguageMaster {
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
+
+    /** Gate on the listLanguages() read path -- V109 deactivates codes with no matching voice
+     * model (single-client, India-focused deployment). Deactivate rather than delete because
+     * builtin_voice_language / model_supported_language / project_config.dialogue_language all
+     * FK to this table and losing history would break existing projects. */
+    @Column(name = "active", nullable = false)
+    @Builder.Default
+    private Boolean active = true;
 }
