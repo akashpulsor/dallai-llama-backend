@@ -122,7 +122,7 @@ public class ProjectRequirementIdeaService {
                     tenantId.toString(),
                     "requirement-ideas-" + requirementId + "-attempt" + attempt,
                     new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                            JsonExtraction.JSON_MODE_PARAMS, GENERATE_TASK_KEY,
+                            JsonExtraction.JSON_MODE_WITH_SEARCH_PARAMS, GENERATE_TASK_KEY,
                             Map.of(
                                     "briefText", requirement.getBriefText() + critiqueFeedback,
                                     "targetAudience", orNotSpecified(requirement.getTargetAudience()),

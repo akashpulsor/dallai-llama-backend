@@ -61,7 +61,18 @@ public class BuiltinVoiceSyncService {
         this.languageMasterRepository = languageMasterRepository;
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
-        this.webClient = WebClient.builder().baseUrl(baseUrl).build();
+        // ElevenLabs' /v1/voices lists every voice in the account with full metadata (labels,
+        // preview URLs, sample IDs), so a real account routinely exceeds Spring WebFlux's 256KB
+        // default in-memory buffer and the sync fails with DataBufferLimitException -> 500 to the
+        // caller. GoogleGeminiProvider raises the same limit for the same reason; matching it
+        // here (16MB) covers any realistic voice-catalog size without pulling anything into
+        // config.
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .exchangeStrategies(org.springframework.web.reactive.function.client.ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                        .build())
+                .build();
     }
 
     /** Refreshes {@code builtin_voice} from the ElevenLabs account. Returns the voice_ids of every

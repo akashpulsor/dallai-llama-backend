@@ -278,11 +278,28 @@ public class GoogleGeminiProvider implements LlmProvider {
         if (!systemText.isBlank()) {
             body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", systemText))));
         }
+        // Gemini's tools[] can hold two separate entries:
+        //   - functionDeclarations (caller-defined tools)
+        //   - google_search (built-in web-search grounding on Gemini 2.5+)
+        // Callers opt into search by putting "google_search": true in params -- mirrors how the
+        // existing "response_format" / "aspect_ratio" params opt into other Gemini-side features
+        // without polluting CanonicalRequest with per-provider fields. The two entries coexist
+        // freely, so a caller can request search AND declare its own functions in the same call.
+        // Cost: Google bills grounded queries separately (see model_master rate card); this method
+        // just wires the flag through, cost bookkeeping is LlmGatewayService's concern.
+        List<Map<String, Object>> toolEntries = new ArrayList<>();
         if (request.tools() != null && !request.tools().isEmpty()) {
             List<Map<String, Object>> declarations = request.tools().stream()
                     .map(this::toFunctionDeclaration)
                     .toList();
-            body.put("tools", List.of(Map.of("functionDeclarations", declarations)));
+            toolEntries.add(Map.of("functionDeclarations", declarations));
+        }
+        if (Boolean.TRUE.equals(params.get("google_search"))
+                || "true".equalsIgnoreCase(String.valueOf(params.get("google_search")))) {
+            toolEntries.add(Map.of("google_search", Map.of()));
+        }
+        if (!toolEntries.isEmpty()) {
+            body.put("tools", toolEntries);
         }
         return body;
     }

@@ -117,7 +117,7 @@ public class ScriptGenerationService {
                     tenantId.toString(),
                     "script-generate-" + projectId + "-attempt" + attempt,
                     new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                            JsonExtraction.JSON_MODE_PARAMS, TASK_KEY, variables).withProjectId(projectId));
+                            JsonExtraction.JSON_MODE_WITH_SEARCH_PARAMS, TASK_KEY, variables).withProjectId(projectId));
 
             parsed = parse(response);
             if (parsed.scriptText() == null || parsed.scriptText().isBlank()) {

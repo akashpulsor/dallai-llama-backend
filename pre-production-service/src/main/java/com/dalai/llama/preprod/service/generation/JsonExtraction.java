@@ -13,6 +13,14 @@ public final class JsonExtraction {
 
     public static final Map<String, Object> JSON_MODE_PARAMS = Map.of("response_format", "json");
 
+    /** Same JSON-mode params PLUS Google Search grounding on Gemini 2.5+. Opt-in per call because
+     * grounded queries are billed separately -- use it for audience-aware content generation
+     * (script generation especially for investor / market-education / B2B briefs) where the
+     * model needs real numbers, and stick with plain JSON_MODE_PARAMS for critic passes and
+     * other reasoning-only calls. */
+    public static final Map<String, Object> JSON_MODE_WITH_SEARCH_PARAMS =
+            Map.of("response_format", "json", "google_search", true);
+
     public static String stripCodeFence(String raw) {
         if (raw == null) {
             return null;
