@@ -301,7 +301,7 @@ public class ProjectRequirementService {
     @Transactional
     public PublicProjectRequirementView updateFromClient(String shareToken, String briefText, String targetAudience,
                                                          String campaignDirection, Boolean includeVideoShots,
-                                                         String videoShotsIntent) {
+                                                         String videoShotsIntent, Integer newDurationSeconds) {
         ProjectRequirement requirement = requireLiveByShareToken(shareToken);
         if (requirement.isFunded()) {
             throw CreativePlanningException.badRequest("This brief is already funded and can no longer be edited");
@@ -322,9 +322,54 @@ public class ProjectRequirementService {
             requirement.setIncludeVideoShots(includeVideoShots);
             requirement.setVideoShotsIntent(videoShotsIntent);
         }
+        // Duration edit re-quotes pricing. Only fires when a value was actually sent AND it
+        // materially differs from the current duration; a re-post of the same value is a no-op
+        // so we don't hammer billing-service on every field save. Full quote (platform cost,
+        // creator margin, total, currency) plus the derived legacy tier are all refreshed
+        // together -- keeping any subset stale would leave downstream tier-keyed consumers
+        // (idea prompt, pre-prod Project.budgetTier) disagreeing with the visible price.
+        if (newDurationSeconds != null && newDurationSeconds > 0
+                && !newDurationSeconds.equals(requirement.getDurationSeconds())) {
+            BillingServiceClient.VideoPriceQuote quote = billingServiceClient.quoteVideoPrice(
+                    requirement.getTenantId(), newDurationSeconds);
+            requirement.setDurationSeconds(newDurationSeconds);
+            requirement.setBudgetTier(deriveLegacyBudgetTier(newDurationSeconds));
+            if (quote != null) {
+                requirement.setQuotedPlatformCost(quote.platformCost());
+                requirement.setQuotedCreatorMarginPercent(quote.creatorMarginPercent());
+                requirement.setQuotedTotalPrice(quote.totalPrice());
+                requirement.setQuotedCurrency(quote.currency());
+            }
+        }
         requirement.setClientUpdatedAt(OffsetDateTime.now());
         requirement.setUpdatedAt(OffsetDateTime.now());
         return toPublicView(projectRequirementRepository.save(requirement));
+    }
+
+    /** Read-only price preview for the client's duration slider. Resolves the tenant via the
+     * share token (so the preview uses that tenant's platform rate + margin) and hits billing
+     * WITHOUT persisting anything -- lets the client see the price update live before they hit
+     * Save. Refused after funding, same as {@link #updateFromClient}.
+     *
+     * <p>Returns only the client-safe fields (total + currency) via {@link
+     * PublicQuotePreviewView}; creator-only breakdown (platform cost, margin percent) is
+     * intentionally excluded so the public controller can't accidentally leak per-second
+     * economics through a share-token endpoint. */
+    @Transactional(readOnly = true)
+    public com.dalai.llama.creativeplanning.dto.PublicQuotePreviewView previewQuoteByShareToken(
+            String shareToken, int durationSeconds) {
+        ProjectRequirement requirement = requireLiveByShareToken(shareToken);
+        if (requirement.isFunded()) {
+            throw CreativePlanningException.badRequest("This brief is already funded; the price is fixed");
+        }
+        if (durationSeconds <= 0 || durationSeconds > 600) {
+            throw CreativePlanningException.badRequest("durationSeconds must be between 1 and 600");
+        }
+        BillingServiceClient.VideoPriceQuote quote = billingServiceClient.quoteVideoPrice(
+                requirement.getTenantId(), durationSeconds);
+        String total = quote == null || quote.totalPrice() == null ? "" : quote.totalPrice().toPlainString();
+        String currency = quote == null || quote.currency() == null ? "" : quote.currency();
+        return new com.dalai.llama.creativeplanning.dto.PublicQuotePreviewView(durationSeconds, total, currency);
     }
 
     /**

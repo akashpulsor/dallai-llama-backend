@@ -84,6 +84,20 @@ public class PublicProjectRequirementController {
         return ResponseEntity.ok(fullView(shareToken, projectRequirementService.getByShareToken(shareToken)));
     }
 
+    /** Read-only price preview for the client-side duration slider. Client passes the desired
+     * durationSeconds; we resolve their creator's tenant via the share token and quote through
+     * billing-service without persisting anything. UI uses this to live-update the total price
+     * as the client drags a slider, then commits with a PATCH once they hit Save. Refused after
+     * funding (price is fixed by then). */
+    @GetMapping("/v1/public/project-requirements/{shareToken}/quote-preview")
+    public ResponseEntity<com.dalai.llama.creativeplanning.dto.PublicQuotePreviewView> previewQuote(
+            @PathVariable String shareToken,
+            @org.springframework.web.bind.annotation.RequestParam("durationSeconds") int durationSeconds) {
+        // Service returns a typed PublicQuotePreviewView carrying only client-safe fields;
+        // creator per-second breakdown never enters this endpoint's return shape.
+        return ResponseEntity.ok(projectRequirementService.previewQuoteByShareToken(shareToken, durationSeconds));
+    }
+
     /** Client-side video upload via share token -- capped at max-video-upload-size-mb (default
      * 5 MB) per file, multiple allowed. Same "possession of the share token is the authorization"
      * convention as the rest of this controller. Refused once the requirement is funded (same
@@ -122,7 +136,8 @@ public class PublicProjectRequirementController {
                 data == null ? null : data.briefText(), data == null ? null : data.targetAudience(),
                 data == null ? null : data.campaignDirection(),
                 data == null ? null : data.includeVideoShots(),
-                data == null ? null : data.videoShotsIntent());
+                data == null ? null : data.videoShotsIntent(),
+                data == null ? null : data.durationSeconds());
 
         ProjectRequirementService.RequirementIdentity id = projectRequirementService.identifyByShareToken(shareToken);
         UUID brandContextId = id.brandContextId();
@@ -182,7 +197,11 @@ public class PublicProjectRequirementController {
             /** Ad-hoc "do you want us to reuse specific shots from your videos" pair. Both are
              * only applied when includeVideoShots is non-null (client actually answered);
              * omitting the pair leaves the existing values alone. */
-            Boolean includeVideoShots, String videoShotsIntent
+            Boolean includeVideoShots, String videoShotsIntent,
+            /** Client-side duration edit. When non-null AND different from current, triggers a
+             * fresh billing quote and updates duration + budget-tier + all quoted* fields.
+             * Refused (like every other mutation on this share-token endpoint) once funded. */
+            Integer durationSeconds
     ) {
         public record BrandFields(String brandName, String industry, String brandVoice, String targetAudience, String brandValues) {}
         public record ProductFields(String name, String description, String category) {}
