@@ -64,6 +64,7 @@ public class ProjectRequirementIdeaService {
     private final PreProductionServiceClient preProductionServiceClient;
     private final ReferenceMaterialAnalysisService referenceMaterialAnalysisService;
     private final IdeaCriticServiceClient ideaCriticServiceClient;
+    private final BillingServiceClient billingServiceClient;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
@@ -76,6 +77,7 @@ public class ProjectRequirementIdeaService {
             PreProductionServiceClient preProductionServiceClient,
             ReferenceMaterialAnalysisService referenceMaterialAnalysisService,
             IdeaCriticServiceClient ideaCriticServiceClient,
+            BillingServiceClient billingServiceClient,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${creative-planning.llm-gateway.default-text-model}") String defaultModel
@@ -87,9 +89,28 @@ public class ProjectRequirementIdeaService {
         this.preProductionServiceClient = preProductionServiceClient;
         this.referenceMaterialAnalysisService = referenceMaterialAnalysisService;
         this.ideaCriticServiceClient = ideaCriticServiceClient;
+        this.billingServiceClient = billingServiceClient;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.defaultModel = defaultModel;
+    }
+
+    /** "Can this generation proceed?" gate. Passes if either (a) the client actually paid via
+     * the share link (requirement.funded=true, normal path), or (b) the creator's tenant wallet
+     * has ANY positive balance -- the creator can front the LLM cost from their own wallet while
+     * the client-facing status stays "awaiting funding" (llm-gateway debits real per-call cost
+     * as usual). Only blocks when both are false: neither funded nor any wallet balance, so
+     * generation would silently run up cost with no source of funds. */
+    private void requireFundedOrWalletBalance(UUID tenantId, ProjectRequirement requirement) {
+        if (requirement.isFunded()) {
+            return;
+        }
+        java.math.BigDecimal balance = billingServiceClient.getWalletBalance(tenantId);
+        if (balance != null && balance.signum() > 0) {
+            return;
+        }
+        throw CreativePlanningException.badRequest(
+                "Requirement " + requirement.getId() + " is not funded yet -- either wait for the client to pay or top up your wallet to proceed");
     }
 
     /** Idempotency key for one submit -- {@link IdeaGenerationJobService} sends it to
@@ -109,9 +130,7 @@ public class ProjectRequirementIdeaService {
     @Transactional(readOnly = true)
     public LlmGatewayChatRequest buildChatRequest(UUID tenantId, UUID requirementId, Integer count) {
         ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
-        if (!requirement.isFunded()) {
-            throw CreativePlanningException.badRequest("Requirement " + requirementId + " is not funded yet");
-        }
+        requireFundedOrWalletBalance(tenantId, requirement);
         int optionCount = resolveOptionCount(count);
         String referenceImageAnalysis = referenceMaterialAnalysisService.summarizeForRequirement(tenantId, requirementId);
         return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
@@ -242,9 +261,7 @@ public class ProjectRequirementIdeaService {
      * from there using the same lockedIdeaId rather than minting a new one. */
     public LockIdeaOptionResponse lockOption(UUID tenantId, UUID requirementId, LockIdeaOptionRequest chosen) {
         ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
-        if (!requirement.isFunded()) {
-            throw CreativePlanningException.badRequest("Requirement " + requirementId + " is not funded yet");
-        }
+        requireFundedOrWalletBalance(tenantId, requirement);
 
         LockedIdea lockedIdea = lockedIdeaWriter.findOrCreate(tenantId, requirementId, chosen, requirement.getBudgetTier());
         if (lockedIdea.getProjectId() != null) {

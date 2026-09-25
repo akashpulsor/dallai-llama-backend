@@ -55,6 +55,31 @@ class BillingServiceClient {
         this.timeoutMs = timeoutMs;
     }
 
+    /** Structural mirror of billing-service's {@code WalletBalanceResponse} -- only {@code
+     * balance} is read here (the gate is simply "any balance > 0"), the other fields carry
+     * through faithfully so this stays a lossless copy. */
+    record WalletBalanceView(BigDecimal balance, String currency, Boolean withinCap, BigDecimal totalSpent) {}
+
+    /** Simple wallet-balance read used by the "creator can proceed with generation while wallet
+     * has any money" bypass (see ProjectRequirementIdeaService.buildChatRequest). Returns null
+     * on a billing-service failure -- the caller treats that as "no bypass, fall back to the
+     * hard funded check" rather than blocking generation on a transient wallet-lookup failure. */
+    BigDecimal getWalletBalance(UUID tenantId) {
+        try {
+            WalletBalanceView view = webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/internal/tenants/{tenantId}/wallet/balance")
+                            .build(tenantId))
+                    .retrieve()
+                    .bodyToMono(WalletBalanceView.class)
+                    .block(Duration.ofMillis(timeoutMs));
+            return view == null ? null : view.balance();
+        } catch (Exception ex) {
+            log.warn("Could not read wallet balance for tenant {}: {}", tenantId, ex.getMessage());
+            return null;
+        }
+    }
+
     VideoPriceQuote quoteVideoPrice(UUID tenantId, int durationSeconds) {
         try {
             VideoPriceQuote quote = webClient.get()
