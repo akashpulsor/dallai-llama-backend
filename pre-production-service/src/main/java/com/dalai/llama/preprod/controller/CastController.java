@@ -12,6 +12,7 @@ import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceCommand;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.service.CastAssignmentService;
+import com.dalai.llama.preprod.service.CastFaceGenerationService;
 import com.dalai.llama.preprod.service.CastMediaUploadService;
 import com.dalai.llama.preprod.service.CastProfileService;
 import jakarta.validation.Valid;
@@ -34,12 +35,15 @@ public class CastController extends BaseController {
     private final CastProfileService castProfileService;
     private final CastAssignmentService castAssignmentService;
     private final CastMediaUploadService castMediaUploadService;
+    private final CastFaceGenerationService castFaceGenerationService;
 
     public CastController(
-            CastProfileService castProfileService, CastAssignmentService castAssignmentService, CastMediaUploadService castMediaUploadService) {
+            CastProfileService castProfileService, CastAssignmentService castAssignmentService,
+            CastMediaUploadService castMediaUploadService, CastFaceGenerationService castFaceGenerationService) {
         this.castProfileService = castProfileService;
         this.castAssignmentService = castAssignmentService;
         this.castMediaUploadService = castMediaUploadService;
+        this.castFaceGenerationService = castFaceGenerationService;
     }
 
     @PostMapping(path = "/v1/cast-profiles/media", consumes = "multipart/form-data")
@@ -74,6 +78,16 @@ public class CastController extends BaseController {
     public ResponseEntity<List<CastProfileView>> listProfiles(
             @RequestParam(required = false) UUID projectId, @RequestParam(required = false) CastProfileType profileType) {
         return ResponseEntity.ok(castProfileService.list(tenant().tenantId(), projectId, profileType));
+    }
+
+    /** On-demand AI face generation for a cast profile with no uploaded face -- see
+     * {@link CastFaceGenerationService}. Idempotent-ish: each call generates a fresh image and
+     * replaces the current face_ref, so a second click just regenerates rather than doing
+     * anything different. Slow (one image-model call + a MinIO put); the frontend disables the
+     * button while inflight. */
+    @PostMapping("/v1/cast-profiles/{castProfileId}/generate-face")
+    public ResponseEntity<CastProfileView> generateFace(@PathVariable UUID castProfileId) {
+        return ResponseEntity.ok(castFaceGenerationService.generateFace(tenant().tenantId(), castProfileId));
     }
 
     @PostMapping("/v1/projects/{projectId}/cast-assignments")

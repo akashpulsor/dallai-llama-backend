@@ -262,6 +262,12 @@ public class CastProfileService {
                 .orElseThrow(() -> PreProductionException.notFound("No cast profile " + castProfileId));
     }
 
+    /** Public wrapper around the private {@link #toView} so sibling services (e.g.
+     * {@link CastFaceGenerationService}) can return the same shape the controller returns. */
+    CastProfileView toViewForExternalCallers(CastProfile profile) {
+        return toView(profile);
+    }
+
     private CastProfileView toView(CastProfile profile) {
         long projectCount = castAssignmentRepository.countDistinctProjectsByCastProfileIdIn(List.of(profile.getId())).stream()
                 .findFirst().map(CastAssignmentRepository.CastProfileProjectCount::getProjectCount).orElse(0L);
