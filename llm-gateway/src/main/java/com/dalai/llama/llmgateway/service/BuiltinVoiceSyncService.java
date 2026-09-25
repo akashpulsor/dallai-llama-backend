@@ -18,6 +18,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -120,7 +121,18 @@ public class BuiltinVoiceSyncService {
             // "elevenlabs-<providerVoiceId>", so a straight-by-id lookup would insert a duplicate
             // row for the very voices that were already seeded. Provider+providerVoiceId is the
             // real natural key of "which ElevenLabs voice is this".
-            BuiltinVoice existing = builtinVoiceRepository.findByProviderIdAndProviderVoiceId("elevenlabs", v.voiceId()).orElse(null);
+            //
+            // Duplicate-tolerant lookup: a prior sync run inserted duplicates for some voices
+            // (see V111 dedupe migration), so the singular findBy... would throw
+            // IncorrectResultSize on those rows and 500 the whole sync. Grab all matches and
+            // prefer the shortest voice_id (friendly V80 rows are shorter than
+            // "elevenlabs-<providerVoiceId>"), matching V111's winner-selection logic so code
+            // and migration agree on which row survives.
+            List<BuiltinVoice> matches = builtinVoiceRepository
+                    .findAllByProviderIdAndProviderVoiceIdOrderByVoiceIdAsc("elevenlabs", v.voiceId());
+            BuiltinVoice existing = matches.stream()
+                    .min(Comparator.comparingInt(row -> row.getVoiceId().length()))
+                    .orElse(null);
             boolean existed = existing != null;
             BuiltinVoice row = existing != null ? existing : BuiltinVoice.builder()
                     .voiceId("elevenlabs-" + v.voiceId())
