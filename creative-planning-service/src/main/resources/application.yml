@@ -107,6 +107,14 @@ creative-planning:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}
     default-text-model: ${CREATIVE_PLANNING_DEFAULT_TEXT_MODEL:gemini-2.5-flash}
+    # Kafka topic idea-generation-job submits to -- llm-gateway's ChatJobRequestedConsumer reads
+    # from the same topic name (shared with pre-production-service's shot-list jobs).
+    job-requested-topic: ${LLM_GATEWAY_JOB_REQUESTED_TOPIC:llm.job.requested}
+    # Topic this service listens on for terminal outcomes. Same topic pre-production-service
+    # subscribes to; our ChatJobCompletedConsumer filters to its own by idempotency-key lookup.
+    job-completed-topic: ${LLM_GATEWAY_JOB_COMPLETED_TOPIC:llm.job.completed}
+    # Per-service consumer group so both services get the completed events independently.
+    job-completed-consumer-group: ${LLM_GATEWAY_JOB_COMPLETED_CONSUMER_GROUP:creative-planning-service-llm-job-completed}
   critic:
     # The marketing-plan pre-flight harness lives in critic-service, not here -- see
     # MarketingPlanCriticServiceClient. Same mandatory-gate discipline pre-production-service

@@ -2,6 +2,7 @@ package com.dalai.llama.creativeplanning.controller;
 
 import com.dalai.llama.creativeplanning.dto.CreateRequirementFromIdeaRequest;
 import com.dalai.llama.creativeplanning.dto.CreateStandaloneRequirementRequest;
+import com.dalai.llama.creativeplanning.dto.IdeaGenerationJobView;
 import com.dalai.llama.creativeplanning.dto.IdeaOptionView;
 import com.dalai.llama.creativeplanning.dto.LockIdeaOptionRequest;
 import com.dalai.llama.creativeplanning.dto.LockIdeaOptionResponse;
@@ -18,9 +19,11 @@ import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceImag
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementAttachmentService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectReferenceVideoService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementCreationManager;
+import com.dalai.llama.creativeplanning.service.requirement.IdeaGenerationJobService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementIdeaService;
 import com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -45,6 +48,7 @@ public class ProjectRequirementController extends BaseController {
     private final ProjectRequirementService projectRequirementService;
     private final ProjectRequirementAttachmentService projectRequirementAttachmentService;
     private final ProjectRequirementIdeaService projectRequirementIdeaService;
+    private final IdeaGenerationJobService ideaGenerationJobService;
     private final ProjectRequirementCreationManager projectRequirementCreationManager;
     private final ProjectReferenceImageService projectReferenceImageService;
     private final ProjectReferenceVideoService projectReferenceVideoService;
@@ -55,6 +59,7 @@ public class ProjectRequirementController extends BaseController {
             ProjectRequirementService projectRequirementService,
             ProjectRequirementAttachmentService projectRequirementAttachmentService,
             ProjectRequirementIdeaService projectRequirementIdeaService,
+            IdeaGenerationJobService ideaGenerationJobService,
             ProjectRequirementCreationManager projectRequirementCreationManager,
             ProjectReferenceImageService projectReferenceImageService,
             ProjectReferenceVideoService projectReferenceVideoService,
@@ -64,6 +69,7 @@ public class ProjectRequirementController extends BaseController {
         this.projectRequirementService = projectRequirementService;
         this.projectRequirementAttachmentService = projectRequirementAttachmentService;
         this.projectRequirementIdeaService = projectRequirementIdeaService;
+        this.ideaGenerationJobService = ideaGenerationJobService;
         this.projectRequirementCreationManager = projectRequirementCreationManager;
         this.projectReferenceImageService = projectReferenceImageService;
         this.projectReferenceVideoService = projectReferenceVideoService;
@@ -180,13 +186,40 @@ public class ProjectRequirementController extends BaseController {
         return ResponseEntity.ok(projectReferenceVideoService.list(requirementId));
     }
 
-    /** Only callable once {@code funded} is true -- see ProjectRequirementIdeaService. Options
-     * are generated fresh each call, not persisted, so this is safe to call again for a new set. */
+    /** Async job submission: returns immediately with the jobId + PENDING status; generation
+     * runs on llm-gateway's Kafka worker (see {@link IdeaGenerationJobService}). The UI polls
+     * {@link #getGenerateIdeaOptionsJob} until the status flips to SUCCEEDED (then re-fetch
+     * /ideas) or FAILED. Same shape pre-production-service's shot-list-generate-list endpoint
+     * uses; motivated by the same 504 UT upstream_per_try_timeout the sync path was hitting on
+     * every LLM call because a real audience-aware generation runs well past Istio's per-try
+     * timeout. Only callable once {@code funded} is true (validation runs on this request thread
+     * before the job row is written, so a not-funded requirement gets a clean 400 instead of a
+     * stranded PENDING row). */
     @PostMapping("/v1/project-requirements/{requirementId}/ideas/generate")
-    public ResponseEntity<List<IdeaOptionView>> generateIdeaOptions(
+    public ResponseEntity<IdeaGenerationJobView> generateIdeaOptions(
             @PathVariable UUID requirementId,
             @RequestParam(required = false) Integer count) {
-        return ResponseEntity.ok(projectRequirementIdeaService.generateOptions(tenant().tenantId(), requirementId, count));
+        IdeaGenerationJobView job = ideaGenerationJobService.submit(tenant().tenantId(), requirementId, count);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    /** Status endpoint the UI polls after {@link #generateIdeaOptions} responds. */
+    @GetMapping("/v1/project-requirements/{requirementId}/ideas/generate/{jobId}")
+    public ResponseEntity<IdeaGenerationJobView> getGenerateIdeaOptionsJob(
+            @PathVariable UUID requirementId, @PathVariable UUID jobId) {
+        return ResponseEntity.ok(ideaGenerationJobService.get(tenant().tenantId(), requirementId, jobId));
+    }
+
+    /** Latest submitted job for this requirement, or 204 when none was ever submitted. What the
+     * UI reads on mount to rehydrate a still-PENDING or terminal FAILED run instead of showing
+     * the empty-options panel a fresh requirement shows -- same rationale as the shot-list
+     * latest-list-job endpoint. */
+    @GetMapping("/v1/project-requirements/{requirementId}/ideas/generate/latest")
+    public ResponseEntity<IdeaGenerationJobView> latestGenerateIdeaOptionsJob(
+            @PathVariable UUID requirementId) {
+        return ideaGenerationJobService.latest(tenant().tenantId(), requirementId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     /** What a refreshed page reads instead of losing the generated list -- every option ever

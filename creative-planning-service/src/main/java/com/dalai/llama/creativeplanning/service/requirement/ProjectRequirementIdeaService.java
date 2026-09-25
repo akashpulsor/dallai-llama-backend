@@ -51,10 +51,11 @@ public class ProjectRequirementIdeaService {
 
     private static final String GENERATE_TASK_KEY = "PROJECT_REQUIREMENT_IDEA_GENERATION";
     private static final int DEFAULT_OPTION_COUNT = 3;
-    /** One retry of the whole batch if every candidate fails critique -- regenerating a fresh
-     * batch is cheap (this is an exploratory step the creator picks from manually anyway), so
-     * this stays low unlike script generation's 3 attempts for a single committed document. */
-    private static final int MAX_GENERATION_ATTEMPTS = 2;
+    // MAX_GENERATION_ATTEMPTS removed with the async migration: the old sync flow's up-to-two
+    // retry-with-critique loop doesn't fit the one-job-one-LLM-call shape of the shot-list-job
+    // pattern. If every candidate in a batch fails critique, the creator sees the critic verdicts
+    // on the persisted options and clicks Regenerate for a fresh batch -- one billed generation
+    // per submit, manual retry.
 
     private final ProjectRequirementService projectRequirementService;
     private final IdeaOptionRepository ideaOptionRepository;
@@ -91,65 +92,57 @@ public class ProjectRequirementIdeaService {
         this.defaultModel = defaultModel;
     }
 
-    /** Only a funded requirement can generate ideas -- see the class javadoc: this is what the
-     * "generate ideas" CTA on a project page calls once funded flips true. Every candidate the
-     * model returns is saved immediately (source=GENERATED), not just handed back in the
-     * response -- see {@link #listOptions} for how a refreshed page gets them back.
-     * <p>
-     * Each batch is scored by critic-service ({@link IdeaCriticServiceClient}) before saving --
-     * completeness (does it actually use the brief/brand/reference-image context), story craft,
-     * and distinctiveness. If every candidate in a batch fails, the whole batch is regenerated
-     * once with the critic's concerns fed back as feedback (same retry-with-feedback shape as
-     * pre-production-service's {@code ScriptGenerationService}); a batch with at least one PASS is
-     * kept as-is even if others in it failed, so the creator can still see and compare all of them
-     * rather than losing options silently. */
-    @Transactional
-    public List<IdeaOptionView> generateOptions(UUID tenantId, UUID requirementId, Integer count) {
+    /** Idempotency key for one submit -- {@link IdeaGenerationJobService} sends it to
+     * llm-gateway as the {@code Idempotency-Key} and llm-gateway carries it back on the
+     * completion event so {@link com.dalai.llama.creativeplanning.kafka.ChatJobCompletedConsumer}
+     * can join the arriving event back to the local job row. The jobId is embedded to keep two
+     * concurrent submits for the same requirement (e.g. two browser tabs) as distinct jobs; the
+     * unique index on the DB side still catches a genuine retry of the same jobId. */
+    public static String ideaGenerationIdempotencyKey(UUID requirementId, UUID jobId) {
+        return "requirement-ideas-" + requirementId + "-" + jobId;
+    }
+
+    /** Exposed so {@link IdeaGenerationJobService#submit} can build the exact same LLM request
+     * the sync path would have, then publish it to Kafka instead of calling llm-gateway itself.
+     * Runs the same funded/optionCount validation up front so the caller gets a clean 400 on the
+     * request thread rather than persisting a job that would only fail on the worker side. */
+    @Transactional(readOnly = true)
+    public LlmGatewayChatRequest buildChatRequest(UUID tenantId, UUID requirementId, Integer count) {
         ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
         if (!requirement.isFunded()) {
             throw CreativePlanningException.badRequest("Requirement " + requirementId + " is not funded yet");
         }
-
-        int optionCount = (count == null || count < 1) ? DEFAULT_OPTION_COUNT : Math.min(count, 5);
+        int optionCount = resolveOptionCount(count);
         String referenceImageAnalysis = referenceMaterialAnalysisService.summarizeForRequirement(tenantId, requirementId);
+        return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
+                JsonExtraction.JSON_MODE_WITH_SEARCH_PARAMS, GENERATE_TASK_KEY,
+                Map.of(
+                        "briefText", requirement.getBriefText(),
+                        "targetAudience", orNotSpecified(requirement.getTargetAudience()),
+                        "campaignDirection", orNotSpecified(requirement.getCampaignDirection()),
+                        "budgetTier", requirement.getBudgetTier().name(),
+                        "optionCount", String.valueOf(optionCount),
+                        "referenceImageAnalysis", referenceImageAnalysis
+                ));
+    }
 
-        List<RawIdeaCandidate> candidates = List.of();
-        Map<String, IdeaCritiqueItem> critiqueByTitle = Map.of();
-        String critiqueFeedback = "";
-
-        for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
-            LlmGatewayChatResponse response = llmGatewayClient.chat(
-                    tenantId.toString(),
-                    "requirement-ideas-" + requirementId + "-attempt" + attempt,
-                    new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                            JsonExtraction.JSON_MODE_WITH_SEARCH_PARAMS, GENERATE_TASK_KEY,
-                            Map.of(
-                                    "briefText", requirement.getBriefText() + critiqueFeedback,
-                                    "targetAudience", orNotSpecified(requirement.getTargetAudience()),
-                                    "campaignDirection", orNotSpecified(requirement.getCampaignDirection()),
-                                    "budgetTier", requirement.getBudgetTier().name(),
-                                    "optionCount", String.valueOf(optionCount),
-                                    "referenceImageAnalysis", referenceImageAnalysis
-                            )));
-            candidates = parseCandidates(response);
-            critiqueByTitle = critiqueCandidates(tenantId, requirement, referenceImageAnalysis, candidates);
-
-            boolean anyPass = critiqueByTitle.values().stream().anyMatch(item -> item.verdict() == IdeaCritiqueVerdict.PASS);
-            if (anyPass || critiqueByTitle.isEmpty() || attempt == MAX_GENERATION_ATTEMPTS) {
-                break;
-            }
-            String concerns = critiqueByTitle.values().stream()
-                    .flatMap(item -> item.concerns().stream())
-                    .distinct()
-                    .collect(Collectors.joining("; "));
-            critiqueFeedback = "\n\nCRITIC FEEDBACK FROM A PRIOR ATTEMPT (every option failed review -- fix these issues, do not repeat them): " + concerns;
-        }
+    /** Exposed so {@link com.dalai.llama.creativeplanning.kafka.ChatJobCompletedConsumer} runs
+     * the same parse -> critic -> save path the old sync flow ran inline, once the async LLM
+     * call comes back on the completed event. Async removes the retry-with-critique loop the
+     * sync path had -- the tradeoff is one billed LLM call per submit vs. the old up-to-two,
+     * and a "regenerate for a better batch" is now a manual click rather than an automatic
+     * follow-up. Reflects the shot-list-job convention where post-response work happens once. */
+    @Transactional
+    public List<IdeaOptionView> persistFromLlmResponse(UUID tenantId, UUID requirementId, LlmGatewayChatResponse response) {
+        ProjectRequirement requirement = projectRequirementService.requireRequirement(tenantId, requirementId);
+        String referenceImageAnalysis = referenceMaterialAnalysisService.summarizeForRequirement(tenantId, requirementId);
+        List<RawIdeaCandidate> candidates = parseCandidates(response);
+        Map<String, IdeaCritiqueItem> critiqueByTitle = critiqueCandidates(tenantId, requirement, referenceImageAnalysis, candidates);
 
         OffsetDateTime now = OffsetDateTime.now();
-        Map<String, IdeaCritiqueItem> finalCritiqueByTitle = critiqueByTitle;
         List<IdeaOption> saved = candidates.stream()
                 .map(candidate -> {
-                    IdeaCritiqueItem critique = finalCritiqueByTitle.get(candidate.title());
+                    IdeaCritiqueItem critique = critiqueByTitle.get(candidate.title());
                     return ideaOptionRepository.save(IdeaOption.builder()
                             .tenantId(tenantId)
                             .projectRequirementId(requirementId)
@@ -173,6 +166,10 @@ public class ProjectRequirementIdeaService {
                 .collect(Collectors.toList());
 
         return saved.stream().map(this::toOptionView).collect(Collectors.toList());
+    }
+
+    private int resolveOptionCount(Integer count) {
+        return (count == null || count < 1) ? DEFAULT_OPTION_COUNT : Math.min(count, 5);
     }
 
     /** Empty map (never throws) if critic-service is unreachable or returns nothing usable --
