@@ -94,8 +94,22 @@ public final class ShotImagePromptBuilder {
      *    rim and any motivated practical, NOT the numbered build steps or gear part numbers
      *    (those belong on the lighting-sheet image, not this still).
      */
+    /** Backwards-compat overload -- passes no secondary characters, same behaviour as before the
+     * scene-wide identity fix. */
     public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
                                                 LightingPlan lightingPlan) {
+        return buildProductionPrompt(shot, castProfile, productReference, lightingPlan, java.util.List.of());
+    }
+
+    /** {@code secondaryCasts} are every OTHER on-screen character staged in the shot's parent
+     * scene (via screenplay_scene_character) whose CastProfile has a face MinIO ref -- typically
+     * the antagonist alongside a protagonist-primary shot, or a supporting character in the same
+     * frame. ShotImageService attaches their face images to the Gemini/fal.ai call in the same
+     * order they appear here, right after the primary cast and before the product ref, so an
+     * "Additional subject N" block below maps to reference image N by position. Empty list is
+     * the old single-primary behaviour. */
+    public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
+                                                LightingPlan lightingPlan, java.util.List<CastProfile> secondaryCasts) {
         StringBuilder sb = new StringBuilder();
         sb.append("Create one final, production-quality advertising still that will be used as an image-to-video anchor. ")
                 .append("This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.\n\n");
@@ -189,15 +203,40 @@ public final class ShotImagePromptBuilder {
         // to the Gemini call in that order.
         if (productReference != null && castProfile != null) {
             appendCastIdentityBlock(sb, castProfile);
+            appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
             appendProductReferenceInstruction(sb, productReference);
         } else if (productReference != null) {
+            appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
             appendProductReferenceInstruction(sb, productReference);
         } else if (castProfile != null) {
             appendCastIdentityBlock(sb, castProfile);
+            appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
+        } else if (secondaryCasts != null && !secondaryCasts.isEmpty()) {
+            appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
         }
 
         sb.append("\nOutput: ").append(orNotSpecified(shot.getAspectRatio())).append(" composition, clean mobile-safe framing, commercial lighting, no on-image text or labels.");
         return sb.toString();
+    }
+
+    /** Additional identity locks for every OTHER on-screen character in the scene. Numbered
+     * "Additional subject 1..N" so the ordered reference-image attachments (same order in
+     * ShotImageService) map cleanly to the named subject in the prompt -- Gemini has no other
+     * way to correlate a reference photo with the person description in text. */
+    private static void appendSecondaryCastIdentityBlocks(StringBuilder sb, java.util.List<CastProfile> secondaryCasts) {
+        if (secondaryCasts == null || secondaryCasts.isEmpty()) return;
+        int index = 0;
+        for (CastProfile secondary : secondaryCasts) {
+            if (secondary == null) continue;
+            index++;
+            sb.append("\nAdditional subject ").append(index).append(": ")
+                    .append(secondary.getDisplayName() == null ? "unnamed subject" : secondary.getDisplayName());
+            if (secondary.getDescription() != null && !secondary.getDescription().isBlank()) {
+                sb.append(" -- ").append(secondary.getDescription());
+            }
+            sb.append(". A reference photo is attached as the IDENTITY REFERENCE for this subject in that position.\n")
+                    .append(personIdentityLockInstruction(pronounFor(secondary)));
+        }
     }
 
     /** Shared cast-identity block extracted from the original inline branch. Only performs the

@@ -73,6 +73,7 @@ public class ShotImageService {
     private final ShotRepository shotRepository;
     private final ScriptRepository scriptRepository;
     private final ScriptCharacterRepository scriptCharacterRepository;
+    private final com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
     private final CastAssignmentRepository castAssignmentRepository;
     private final CastProfileRepository castProfileRepository;
     private final ShotImageRepository shotImageRepository;
@@ -99,6 +100,7 @@ public class ShotImageService {
             ShotRepository shotRepository,
             ScriptRepository scriptRepository,
             ScriptCharacterRepository scriptCharacterRepository,
+            com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository,
             CastAssignmentRepository castAssignmentRepository,
             CastProfileRepository castProfileRepository,
             ShotImageRepository shotImageRepository,
@@ -124,6 +126,7 @@ public class ShotImageService {
         this.shotRepository = shotRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
+        this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
         this.castAssignmentRepository = castAssignmentRepository;
         this.castProfileRepository = castProfileRepository;
         this.shotImageRepository = shotImageRepository;
@@ -185,8 +188,13 @@ public class ShotImageService {
         CastProfile castProfile = kind == ShotImageKind.PRODUCTION ? resolveCastProfile(tenantId, shot) : null;
         ShotProductReference productReference = kind == ShotImageKind.PRODUCTION
                 ? shotProductReferenceRepository.findByShotId(shotId).orElse(null) : null;
+        // Other on-screen characters staged in the parent scene (antagonist alongside protagonist,
+        // etc). Only meaningful for the PRODUCTION still -- storyboard/planning kinds don't
+        // condition on faces and shouldn't burn extra reference images.
+        List<CastProfile> secondaryCasts = kind == ShotImageKind.PRODUCTION
+                ? resolveSecondarySceneCastProfiles(tenantId, shot, castProfile) : List.of();
 
-        String prompt = promptFor(shot, kind, castProfile, productReference);
+        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts);
         if (prompt == null || prompt.isBlank()) {
             throw PreProductionException.badRequest(
                     "Shot " + shotId + " has no " + kind + " prompt available yet -- generate the shot list first");
@@ -233,6 +241,16 @@ public class ShotImageService {
                     String castUri = toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
                     if (castUri != null) uris.add(castUri);
                 }
+                // Other on-screen characters (antagonist, supporting) attached AFTER the primary
+                // cast face and BEFORE the product ref -- ShotImagePromptBuilder's ordered
+                // "Additional subject" blocks call out each attached image position-wise so Gemini
+                // knows which reference belongs to which named subject. Skips profiles with no
+                // face MinIO ref (already filtered in resolveSecondarySceneCastProfiles but the
+                // toDataUri guard is cheap and keeps this loop self-contained).
+                for (CastProfile secondary : secondaryCasts) {
+                    String uri = toDataUri(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
+                    if (uri != null) uris.add(uri);
+                }
                 if (productReference != null) {
                     String productUri = toDataUri(productReference.getBucket(), productReference.getObjectKey());
                     if (productUri != null) uris.add(productUri);
@@ -244,6 +262,13 @@ public class ShotImageService {
                 // same order as the Gemini path above so downstream behavior stays symmetric.
                 List<String> refUrls = new java.util.ArrayList<>();
                 if (castProfile != null) refUrls.add(signedUrl(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey()));
+                // Secondary scene characters in the same primary-cast -> other -> product order the
+                // Gemini path uses, so ShotImagePromptBuilder's ordered subject blocks and the
+                // reference_image_urls positions stay aligned across providers.
+                for (CastProfile secondary : secondaryCasts) {
+                    String url = signedUrl(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
+                    if (url != null) refUrls.add(url);
+                }
                 if (productReference != null) refUrls.add(signedUrl(productReference.getBucket(), productReference.getObjectKey()));
                 params = Map.of("reference_image_urls", refUrls);
             }
@@ -507,7 +532,8 @@ public class ShotImageService {
         return shotImageRepository.findByShotId(shotId).stream().map(this::toView).collect(Collectors.toList());
     }
 
-    private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile, ShotProductReference productReference) {
+    private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile,
+                             ShotProductReference productReference, List<CastProfile> secondaryCasts) {
         return switch (kind) {
             case STORYBOARD -> wrapAsStoryboardSketch(shot.getSketchPrompt());
             // PRODUCTION reads the LightingPlan too (when one exists) so key/fill/rim direction
@@ -515,7 +541,8 @@ public class ShotImageService {
             // and gear part numbers, which belong on the lighting sheet, not the finished frame.
             case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(
                     shot, castProfile, productReference,
-                    lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
+                    lightingPlanRepository.findByShotId(shot.getId()).orElse(null),
+                    secondaryCasts);
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
             case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));
@@ -544,6 +571,44 @@ public class ShotImageService {
                 + "and framing (compact, hand-lettered). Under no circumstance render this as a photo, "
                 + "photorealistic frame, or color rendering -- if in doubt, prefer looser hand-drawn lines.\n\n"
                 + "Scene: " + scene.trim();
+    }
+
+    /** Every OTHER on-screen character staged in the shot's parent scene (via
+     * screenplay_scene_character), minus the shot's primary character and any PRODUCT/NARRATOR
+     * roles (product rides on ShotProductReference; narrator has no face). Their face refs are
+     * attached to the PRODUCTION still so a scene that stages protagonist AND antagonist doesn't
+     * ship an image with only the primary's identity locked and the antagonist invented from
+     * scratch. Empty list when the scene has no other characters, no cast assignment for them,
+     * or no scene at all. */
+    private List<CastProfile> resolveSecondarySceneCastProfiles(UUID tenantId, Shot shot, CastProfile primary) {
+        if (shot.getScreenplaySceneId() == null) return List.of();
+        List<UUID> sceneCharacterIds = screenplaySceneCharacterRepository.findByScreenplaySceneId(shot.getScreenplaySceneId()).stream()
+                .map(link -> link.getScriptCharacterId())
+                .toList();
+        if (sceneCharacterIds.isEmpty()) return List.of();
+        Map<UUID, ScriptCharacter> charactersById = scriptCharacterRepository.findAllById(sceneCharacterIds).stream()
+                .collect(Collectors.toMap(ScriptCharacter::getId, c -> c, (a, b) -> a));
+        List<CastAssignment> assignments = castAssignmentRepository.findByProjectId(shot.getProjectId()).stream()
+                .filter(a -> charactersById.containsKey(a.getScriptCharacterId()))
+                .toList();
+        if (assignments.isEmpty()) return List.of();
+        List<UUID> profileIds = assignments.stream().map(CastAssignment::getCastProfileId).distinct().toList();
+        Map<UUID, CastProfile> profileById = castProfileRepository.findAllById(profileIds).stream()
+                .collect(Collectors.toMap(CastProfile::getId, p -> p));
+        java.util.UUID primaryId = primary == null ? null : primary.getId();
+        List<CastProfile> result = new java.util.ArrayList<>();
+        for (CastAssignment a : assignments) {
+            ScriptCharacter sc = charactersById.get(a.getScriptCharacterId());
+            if (sc == null) continue;
+            if (sc.getCharacterType() == com.dalai.llama.preprod.domain.CharacterType.PRODUCT
+                    || sc.getCharacterType() == com.dalai.llama.preprod.domain.CharacterType.NARRATOR) continue;
+            CastProfile p = profileById.get(a.getCastProfileId());
+            if (p == null) continue;
+            if (primaryId != null && primaryId.equals(p.getId())) continue;
+            if (p.getFaceRefBucket() == null || p.getFaceRefObjectKey() == null) continue;
+            result.add(p);
+        }
+        return result;
     }
 
     /** Same resolution {@code ShotContextAssemblyService} does for dispatch -- duplicated rather
