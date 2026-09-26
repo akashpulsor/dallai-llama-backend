@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -53,9 +54,11 @@ public class ShotListController extends BaseController {
      * reaches SUCCEEDED (then re-fetch /v1/projects/{projectId}/shots) or FAILED.
      */
     @PostMapping("/v1/projects/{projectId}/shots/generate-list")
-    public ResponseEntity<ShotListJobView> generateList(@PathVariable UUID projectId) {
+    public ResponseEntity<ShotListJobView> generateList(
+            @PathVariable UUID projectId,
+            @RequestParam(name = "force", defaultValue = "false") boolean force) {
         UUID tenantId = tenant().tenantId();
-        ShotListJobView job = shotListGenerationJobService.submit(tenantId, projectId);
+        ShotListJobView job = shotListGenerationJobService.submit(tenantId, projectId, force);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
     }
 

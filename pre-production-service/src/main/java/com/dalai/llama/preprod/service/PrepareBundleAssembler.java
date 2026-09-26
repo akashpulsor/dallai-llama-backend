@@ -62,6 +62,7 @@ public class PrepareBundleAssembler {
     private final ShotBackgroundMusicService shotBackgroundMusicService;
     private final ShotProductReferenceService shotProductReferenceService;
     private final ShotFoleyCueService shotFoleyCueService;
+    private final ShotReferenceImageService shotReferenceImageService;
 
 
     public PrepareBundleView assemble(UUID tenantId, UUID projectId) {
@@ -87,6 +88,8 @@ public class PrepareBundleAssembler {
         Map<UUID, ShotBackgroundMusicView> musicByShot = shotBackgroundMusicService.listByShotIds(tenantId, shotIds);
         Map<UUID, ShotProductReferenceView> productRefsByShot = shotProductReferenceService.listByShotIds(tenantId, shotIds);
         Map<UUID, List<ShotFoleyCueView>> foleyCuesByShot = shotFoleyCueService.listByShotIds(shotIds);
+        Map<UUID, List<com.dalai.llama.preprod.dto.ShotReferenceImageView>> referenceImagesByShot =
+                shotReferenceImageService.listByShotIds(shotIds);
 
         List<ShotBundleView> shotBundles = new ArrayList<>(shots.size());
         for (ShotView shot : shots) {
@@ -105,7 +108,8 @@ public class PrepareBundleAssembler {
                     // shot rather than batched because a project has one or two of them at most.
                     ShotType.MOTION_GRAPHIC == shot.shotType()
                             ? softGet(() -> motionGraphicPlanService.get(tenantId, shotId), "motion-graphic-plan", shotId)
-                            : null
+                            : null,
+                    referenceImagesByShot.getOrDefault(shotId, List.of())
             ));
         }
 
@@ -129,8 +133,10 @@ public class PrepareBundleAssembler {
         MotionGraphicPlanView motionGraphicPlan = ShotType.MOTION_GRAPHIC == shot.shotType()
                 ? softGet(() -> motionGraphicPlanService.get(tenantId, shotId), "motion-graphic-plan", shotId)
                 : null;
+        List<com.dalai.llama.preprod.dto.ShotReferenceImageView> referenceImages =
+                softList(() -> shotReferenceImageService.list(tenantId, shotId), "shot-reference-images", shotId);
         return new ShotBundleView(shot, beats, cameraPlan, lightingPlan, shotImages, backgroundMusic,
-                productReference, foleyCues, motionGraphicPlan);
+                productReference, foleyCues, motionGraphicPlan, referenceImages);
     }
 
 

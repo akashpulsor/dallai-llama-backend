@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -129,7 +130,14 @@ public class ShotContextAssemblyService {
                 buildReferenceFrames(shotImages),
                 // Null for every shot that is not a motion graphic, which is what keeps this branch
                 // from touching anything else.
-                buildMotionGraphic(shotBundle.motionGraphicPlan())
+                buildMotionGraphic(shotBundle.motionGraphicPlan()),
+                // The creator's multi-image bundle + its label + the scene's structural type.
+                // These used to be populated ONLY on pre-prod's own dispatch path, so a prompt
+                // built through PREPARE (the batch/scene flow) silently lost them -- the model
+                // never learned a real product-flow/app-flow image set existed for the beat.
+                buildShotReferenceImages(shotBundle.referenceImages()),
+                shot.multiImageLabel(),
+                shot.sceneType()
         );
 
         FeatureFlags flagsOverride = overrides == null ? null : overrides.featureFlagOverrides();
@@ -690,6 +698,18 @@ public class ShotContextAssemblyService {
      * <p>LIGHTING and CAMERA_PLAN are not included here: those already flow onto the ShotContext
      * as Lighting.dpLightingImage* / Camera.cameraPlanImage* and are saved by saveReferences from
      * there, so adding them again would double up the rows. */
+    /** Creator-uploaded multi-image bundle, kept in the creator's own ordinal order so the
+     * "Nth reference image" the prompt talks about is the Nth image the creator uploaded. */
+    private List<ShotContext.ShotReferenceImage> buildShotReferenceImages(
+            List<PreProductionViews.ShotReferenceImageView> refs) {
+        if (refs == null || refs.isEmpty()) return List.of();
+        return refs.stream()
+                .sorted(Comparator.comparing(r -> r.ordinal() == null ? Integer.MAX_VALUE : r.ordinal()))
+                .map(r -> new ShotContext.ShotReferenceImage(
+                        r.bucket(), r.objectKey(), r.contentType(), r.caption(), r.ordinal()))
+                .toList();
+    }
+
     private List<ReferenceFrame> buildReferenceFrames(List<PreProductionViews.ShotImageView> images) {
         PreProductionViews.ShotImageView frame = pickImage(images, "PRODUCTION");
         if (frame == null) {

@@ -82,8 +82,8 @@ public class GoogleGeminiProvider implements LlmProvider {
         // was no reason this inner leg was the tightest link in the chain.
         int timeoutMs = request.timeoutMs() > 0 ? request.timeoutMs() : defaultTimeoutMs;
         // Whether the caller asked for JSON decides what a truncated answer means below.
-        boolean jsonRequested = body.get("generationConfig") instanceof Map<?, ?> config
-                && "application/json".equals(config.get("responseMimeType"));
+        boolean jsonRequested = request.params() != null
+                && "json".equalsIgnoreCase(String.valueOf(request.params().get("response_format")));
         return callGemini(path, body, timeoutMs)
                 .flatMap(response -> jsonRequested && "MAX_TOKENS".equals(response.finishReason())
                         ? regenerateCompact(request, path, timeoutMs)
@@ -300,6 +300,17 @@ public class GoogleGeminiProvider implements LlmProvider {
         }
         if (!toolEntries.isEmpty()) {
             body.put("tools", toolEntries);
+            // Some Gemini models reject JSON MIME mode with tools. Preserve grounding/tool
+            // access and express the final-answer format in the prompt for these requests.
+            if (generationConfig.remove("responseMimeType") != null) {
+                String jsonInstruction = "Return your final answer as valid JSON matching the requested schema. "
+                        + "Do not wrap it in Markdown fences or include commentary outside the JSON.";
+                body.put("systemInstruction", Map.of("parts", List.of(Map.of("text",
+                        systemText.isBlank() ? jsonInstruction : systemText + "\n\n" + jsonInstruction))));
+                if (generationConfig.isEmpty()) {
+                    body.remove("generationConfig");
+                }
+            }
         }
         return body;
     }

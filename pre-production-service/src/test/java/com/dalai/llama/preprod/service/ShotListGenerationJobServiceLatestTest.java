@@ -25,7 +25,8 @@ class ShotListGenerationJobServiceLatestTest {
     private final ShotListGenerationService generation = mock(ShotListGenerationService.class);
     private final ChatJobRequestedPublisher publisher = mock(ChatJobRequestedPublisher.class);
     private final ShotListGenerationJobService service =
-            new ShotListGenerationJobService(jobs, generation, publisher);
+            new ShotListGenerationJobService(jobs, generation, publisher,
+                    mock(org.springframework.transaction.PlatformTransactionManager.class));
 
     private final UUID tenantId = UUID.randomUUID();
     private final UUID projectId = UUID.randomUUID();

@@ -25,6 +25,24 @@ public record ShotBundleView(
          * motion graphic has no camera and no characters, so the prompt said nothing about the one
          * thing that matters -- what moves, and how -- and the model was left to invent it. Null for
          * every other shot type. */
-        MotionGraphicPlanView motionGraphicPlan
+        MotionGraphicPlanView motionGraphicPlan,
+        /** Creator-uploaded multi-image bundle for this shot (V66 shot_reference_image), in the
+         * creator's own ordinal order. Empty unless the parent scene was flagged needsMultiImage.
+         *
+         * <p>Carried because the PREPARE path builds its ShotContext from this bundle, not from
+         * pre-prod's own dispatch-time assembly -- so without it a prompt composed through
+         * prepare/prepare-batch silently lost the bundle entirely and the model never learned a
+         * real product-flow/app-flow image set existed for the beat. The bundle's creator-facing
+         * name travels separately on {@code ShotView.multiImageLabel}. */
+        List<ShotReferenceImageView> referenceImages
 ) {
+
+    /** Pre-referenceImages arity, kept so existing callers/tests compile unchanged. */
+    public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
+                          LightingPlanView lightingPlan, List<ShotImageView> shotImages,
+                          ShotBackgroundMusicView backgroundMusic, ShotProductReferenceView productReference,
+                          List<ShotFoleyCueView> foleyCues, MotionGraphicPlanView motionGraphicPlan) {
+        this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference,
+                foleyCues, motionGraphicPlan, List.of());
+    }
 }

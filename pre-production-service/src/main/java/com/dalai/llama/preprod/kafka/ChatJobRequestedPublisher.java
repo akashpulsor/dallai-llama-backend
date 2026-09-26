@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Publishes {@link ChatJobRequestedEvent} to {@code llm.job.requested} for llm-gateway's async
@@ -31,8 +32,11 @@ public class ChatJobRequestedPublisher {
 
     public void publish(ChatJobRequestedEvent event) {
         try {
-            kafkaTemplate.send(topic, event.tenantId(), event);
-        } catch (RuntimeException ex) {
+            kafkaTemplate.send(topic, event.tenantId(), event).get(10, TimeUnit.SECONDS);
+        } catch (Exception ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.error("Failed to publish chat job requested tenantId={} idempotencyKey={} errorType={} errorMessage={}",
                     event.tenantId(), event.idempotencyKey(), ex.getClass().getSimpleName(), ex.getMessage());
             throw PreProductionException.upstream(

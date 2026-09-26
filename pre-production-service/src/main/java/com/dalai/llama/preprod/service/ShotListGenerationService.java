@@ -72,6 +72,7 @@ public class ShotListGenerationService {
     private final ScriptCharacterRepository scriptCharacterRepository;
     private final ScreenplayRepository screenplayRepository;
     private final ScreenplaySceneRepository screenplaySceneRepository;
+    private final com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
     private final ShotRepository shotRepository;
     private final CastAssignmentRepository castAssignmentRepository;
     private final CastProfileRepository castProfileRepository;
@@ -99,6 +100,7 @@ public class ShotListGenerationService {
             ScriptCharacterRepository scriptCharacterRepository,
             ScreenplayRepository screenplayRepository,
             ScreenplaySceneRepository screenplaySceneRepository,
+            com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository,
             ShotRepository shotRepository,
             CastAssignmentRepository castAssignmentRepository,
             CastProfileRepository castProfileRepository,
@@ -121,6 +123,7 @@ public class ShotListGenerationService {
         this.scriptCharacterRepository = scriptCharacterRepository;
         this.screenplayRepository = screenplayRepository;
         this.screenplaySceneRepository = screenplaySceneRepository;
+        this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
         this.shotRepository = shotRepository;
         this.castAssignmentRepository = castAssignmentRepository;
         this.castProfileRepository = castProfileRepository;
@@ -216,6 +219,45 @@ public class ShotListGenerationService {
                         + " | description=" + (c.getDescription() == null ? "" : c.getDescription()))
                 .collect(Collectors.joining("\n"));
         if (characterProfiles.isBlank()) characterProfiles = "(no characters registered on this script)";
+        // Screenplay scene block. Passing raw scriptText alone made the model re-derive scenes
+        // from scratch and ignore creator edits (added scenes, updated slugs, per-scene
+        // needsMultiImage/multiImageLabel/sceneType tags never reached the shot planner). Each
+        // scene emits its number, slug, location, time, summary, character focus, emotional
+        // purpose, estimated seconds, plus the three inherited-to-shot flags -- so the shot
+        // plan can honor "this scene is PRODUCT_HERO with a labelled multi-image bundle" instead
+        // of re-inventing structure.
+        Map<UUID, List<String>> sceneCharacterKeysBySceneId = new java.util.HashMap<>();
+        List<UUID> sceneIds = scenes.stream().map(ScreenplayScene::getId).toList();
+        if (!sceneIds.isEmpty()) {
+            Map<UUID, String> keyByCharacterId = allCharacters.stream()
+                    .collect(Collectors.toMap(ScriptCharacter::getId, ScriptCharacter::getCharacterKey, (a, b) -> a));
+            screenplaySceneCharacterRepository.findByScreenplaySceneIdIn(sceneIds).forEach(link -> {
+                String key = keyByCharacterId.get(link.getScriptCharacterId());
+                if (key == null) return;
+                sceneCharacterKeysBySceneId.computeIfAbsent(link.getScreenplaySceneId(), id -> new java.util.ArrayList<>()).add(key);
+            });
+        }
+        String scenesBlock = scenes.stream().map(s -> {
+            String chars = String.join(", ", sceneCharacterKeysBySceneId.getOrDefault(s.getId(), List.of()));
+            StringBuilder line = new StringBuilder();
+            line.append("- sceneNumber=").append(s.getSceneNumber())
+                    .append(" | slug=").append(s.getSlug() == null ? "" : s.getSlug())
+                    .append(" | location=").append(s.getLocation() == null ? "" : s.getLocation())
+                    .append(" | timeOfDay=").append(s.getTimeOfDay() == null ? "" : s.getTimeOfDay().name())
+                    .append(" | summary=").append(s.getSummary() == null ? "" : s.getSummary());
+            if (s.getCharacterFocus() != null && !s.getCharacterFocus().isBlank()) line.append(" | characterFocus=").append(s.getCharacterFocus());
+            if (s.getEmotionalPurpose() != null && !s.getEmotionalPurpose().isBlank()) line.append(" | emotionalPurpose=").append(s.getEmotionalPurpose());
+            if (s.getEstimatedSeconds() != null) line.append(" | estimatedSeconds=").append(s.getEstimatedSeconds());
+            if (!chars.isBlank()) line.append(" | charactersInScene=").append(chars);
+            if (Boolean.TRUE.equals(s.getNeedsMultiImage())) {
+                line.append(" | needsMultiImage=true");
+                if (s.getMultiImageLabel() != null && !s.getMultiImageLabel().isBlank()) {
+                    line.append(" | multiImageLabel=").append(s.getMultiImageLabel());
+                }
+            }
+            if (s.getSceneType() != null) line.append(" | sceneType=").append(s.getSceneType().name());
+            return line.toString();
+        }).collect(Collectors.joining("\n"));
         var projectConfig = projectConfigService.getEntityOrDefault(projectId);
         AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
         boolean preferMotionGraphics = projectConfig != null && Boolean.TRUE.equals(projectConfig.getPreferMotionGraphics());
@@ -223,6 +265,7 @@ public class ShotListGenerationService {
         return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                 JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
                 Map.of("scriptText", script.getScriptText(),
+                        "scenes", scenesBlock,
                         "characterKeys", String.join(", ", knownCharacterKeys),
                         "characterProfiles", characterProfiles,
                         // The script itself is written in the project's dialogue language, and
@@ -643,7 +686,8 @@ public class ShotListGenerationService {
                 shot.getSketchPrompt(), shot.getCoverageType(), shot.getScreenDirection(), shot.getPeopleInFrame(),
                 shot.getCulturalReferences(), shot.getProductShotType(), shot.getShootDay(), shot.getShootBlock(),
                 shot.getDirectorNote(), CinematographyMapper.toView(shot), cast,
-                Boolean.TRUE.equals(shot.getNeedsMultiImage()), shot.getMultiImageLabel());
+                Boolean.TRUE.equals(shot.getNeedsMultiImage()), shot.getMultiImageLabel(),
+                shot.getSceneType() == null ? null : shot.getSceneType().name());
     }
 
     /** No one on screen but there's still a line to speak (voiceOver, no primaryCharacterKey) --

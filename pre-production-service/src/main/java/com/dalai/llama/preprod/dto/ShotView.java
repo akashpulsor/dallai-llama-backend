@@ -64,6 +64,10 @@ public record ShotView(
          * the shot_reference_image rows and captions them for the model. */
         Boolean needsMultiImage,
         /** Creator-set label for the multi-image bundle (e.g. "app flow", "before/after"). */
-        String multiImageLabel
+        String multiImageLabel,
+        /** Structural intent inherited from the parent scene (IDENTITY / MOTION_GRAPHIC /
+         * LIVE_ACTION / PRODUCT_HERO / GENERIC). Wire-string so video-gen needs no shared enum;
+         * null reads as GENERIC downstream. */
+        String sceneType
 ) {
 }

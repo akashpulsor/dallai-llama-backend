@@ -134,6 +134,18 @@ public class ShotReferenceImageService {
                 .toList();
     }
 
+    /** Batch variant for the prepare bundle -- one query for every shot in the project instead
+     * of N. Keyed by shotId, ordered by the creator's own ordinal within each shot so the "Nth
+     * reference image" the prompt names is the Nth one they uploaded. */
+    @Transactional(readOnly = true)
+    public java.util.Map<UUID, List<ShotReferenceImageView>> listByShotIds(List<UUID> shotIds) {
+        if (shotIds == null || shotIds.isEmpty()) return java.util.Map.of();
+        return shotReferenceImageRepository.findByShotIdInOrderByShotIdAscOrdinalAsc(shotIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        ShotReferenceImage::getShotId,
+                        java.util.stream.Collectors.mapping(this::toView, java.util.stream.Collectors.toList())));
+    }
+
     @Transactional
     public void delete(UUID tenantId, UUID shotId, UUID imageId) {
         ShotReferenceImage image = shotReferenceImageRepository.findById(imageId)

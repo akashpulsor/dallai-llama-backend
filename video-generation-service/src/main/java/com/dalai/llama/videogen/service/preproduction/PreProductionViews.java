@@ -125,7 +125,30 @@ public final class PreProductionViews {
             String productShotType,
             String directorNote,
             CinematographyView cinematography,
-            ShotCastView cast
+            ShotCastView cast,
+            /** Inherited from the parent screenplay scene. True means the creator uploaded a
+             * labelled bundle of real reference images for this beat (see referenceImages on
+             * ShotBundleView) -- the prompt must USE them rather than inventing UI/packaging. */
+            Boolean needsMultiImage,
+            /** Creator's name for that bundle ("product flow", "before/after"). Null when
+             * needsMultiImage is false. */
+            String multiImageLabel,
+            /** IDENTITY / MOTION_GRAPHIC / LIVE_ACTION / PRODUCT_HERO / GENERIC, inherited from
+             * the scene. Wire-string, no shared enum. Null reads as GENERIC. */
+            String sceneType
+    ) {
+    }
+
+    /** One creator-uploaded reference image in a shot's multi-image bundle (pre-production V66
+     * shot_reference_image). Mirrors pre-prod's ShotReferenceImageView. Caption is carried but
+     * deliberately NOT surfaced as prompt text -- the prompt names the bundle by its label. */
+    public record ShotReferenceImageView(
+            UUID id,
+            String bucket,
+            String objectKey,
+            String contentType,
+            String caption,
+            Integer ordinal
     ) {}
 
     /** The shot's full cinematography spec (pre-prod stores these as flat {@code cine_*} columns).
@@ -328,8 +351,21 @@ public final class PreProductionViews {
             /** Derived once by pre-production when the shot was planned. */
             List<ShotFoleyCueView> foleyCues,
             /** Only MOTION_GRAPHIC shots have one; null for every other shot type. */
-            MotionGraphicPlanView motionGraphicPlan
+            MotionGraphicPlanView motionGraphicPlan,
+            /** Creator-uploaded multi-image bundle for this shot, ordered. Empty unless the shot's
+             * scene was flagged needsMultiImage. These reach the composed prompt (named by
+             * ShotView.multiImageLabel) and ride in reference_image_urls at dispatch. */
+            List<ShotReferenceImageView> referenceImages
     ) {
+
+        /** Pre-referenceImages arity. */
+        public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
+                              LightingPlanView lightingPlan, List<ShotImageView> shotImages,
+                              ShotBackgroundMusicView backgroundMusic, ShotProductReferenceView productReference,
+                              List<ShotFoleyCueView> foleyCues, MotionGraphicPlanView motionGraphicPlan) {
+            this(shot, dialogueBeats, cameraPlan, lightingPlan, shotImages, backgroundMusic, productReference,
+                    foleyCues, motionGraphicPlan, List.of());
+        }
 
         /** Pre-foleyCues arity, for callers and tests that build a bundle by hand. */
         public ShotBundleView(ShotView shot, List<ShotDialogueBeatView> dialogueBeats, CameraPlanView cameraPlan,
