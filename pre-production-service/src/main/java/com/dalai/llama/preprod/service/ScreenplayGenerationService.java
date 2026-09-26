@@ -236,6 +236,11 @@ public class ScreenplayGenerationService {
                         .characterFocus(item.characterFocus())
                         .emotionalPurpose(item.emotionalPurpose())
                         .estimatedSeconds(item.estimatedSeconds())
+                        // Explicit false when the caller sent null so the entity's @Builder.Default
+                        // fires; passing raw null would set the column to null and the NOT NULL
+                        // constraint on the migration rejects the insert.
+                        .needsMultiImage(Boolean.TRUE.equals(item.needsMultiImage()))
+                        .multiImageLabel(item.multiImageLabel())
                         .createdAt(screenplay.getCreatedAt())
                         .build())
                 .map(screenplaySceneRepository::save)
@@ -322,6 +327,7 @@ public class ScreenplayGenerationService {
         List<ScreenplaySceneView> sceneViews = scenes.stream()
                 .map(s -> new ScreenplaySceneView(s.getId(), s.getSceneNumber(), s.getSlug(), s.getLocation(), s.getTimeOfDay(),
                         s.getSummary(), s.getCharacterFocus(), s.getEmotionalPurpose(), s.getEstimatedSeconds(),
+                        Boolean.TRUE.equals(s.getNeedsMultiImage()), s.getMultiImageLabel(),
                         charactersByScene.getOrDefault(s.getId(), List.of())))
                 .collect(Collectors.toList());
         return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getLockedIdeaId(),

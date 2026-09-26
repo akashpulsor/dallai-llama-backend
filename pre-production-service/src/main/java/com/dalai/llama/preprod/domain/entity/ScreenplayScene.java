@@ -68,6 +68,20 @@ public class ScreenplayScene {
     @Column(name = "estimated_seconds")
     private Integer estimatedSeconds;
 
+    /** Creator-set flag: this scene needs multiple reference images uploaded (e.g. an app-flow
+     * scene showing several screenshots). Phase 1: recorded on the scene here so a saved-edit
+     * of the screenplay persists it. Phase 2 (follow-up) propagates the flag to the shot(s)
+     * generated from this scene, and the shot page reveals the actual multi-image upload UI. */
+    @Column(name = "needs_multi_image", nullable = false)
+    @Builder.Default
+    private Boolean needsMultiImage = false;
+
+    /** Optional creator-set label the multi-image bundle should be called ("app flow",
+     * "before/after", "product angles"). Feeds the eventual upload UI label and the video-gen
+     * prompt reference. Null when needsMultiImage is false. */
+    @Column(name = "multi_image_label", length = 120)
+    private String multiImageLabel;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 }

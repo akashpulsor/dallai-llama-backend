@@ -20,7 +20,14 @@ public record SaveScreenplayEditRequest(
             String summary,
             String characterFocus,
             String emotionalPurpose,
-            Integer estimatedSeconds
+            Integer estimatedSeconds,
+            /** Creator-set: this scene needs a multi-image reference bundle. Phase 1: persisted
+             * on the scene; phase 2 propagates to shots + reveals upload UI. Null preserves the
+             * server-side default (false). */
+            Boolean needsMultiImage,
+            /** Optional label ("app flow", "before/after") the multi-image bundle should be
+             * called. Null keeps whatever's already saved (or null). */
+            String multiImageLabel
     ) {
     }
 }

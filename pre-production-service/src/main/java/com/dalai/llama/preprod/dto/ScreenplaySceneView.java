@@ -15,6 +15,13 @@ public record ScreenplaySceneView(
         String characterFocus,
         String emotionalPurpose,
         Integer estimatedSeconds,
+        /** Creator-set: this scene needs a multi-image reference bundle uploaded (e.g. app flow,
+         * before/after, product angles). Phase 1 -- flag rides here, actual upload UI lives on
+         * the shot page in phase 2. Default false. */
+        Boolean needsMultiImage,
+        /** Optional label ("app flow", "before/after") for the multi-image bundle. Null when
+         * needsMultiImage is false. */
+        String multiImageLabel,
         /** Real characters present in this scene (via screenplay_scene_character) -- empty means a
          * pure motion-graphic/B-roll beat with no character in it. */
         List<SceneCharacterView> characters
