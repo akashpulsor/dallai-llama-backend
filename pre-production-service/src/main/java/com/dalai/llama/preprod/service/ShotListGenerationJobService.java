@@ -6,6 +6,7 @@ import com.dalai.llama.preprod.dto.ShotListJobView;
 import com.dalai.llama.preprod.kafka.ChatJobRequestedEvent;
 import com.dalai.llama.preprod.kafka.ChatJobRequestedPublisher;
 import com.dalai.llama.preprod.repository.ShotListJobRepository;
+import com.dalai.llama.preprod.service.ShotListGenerationService.ShotListJobPreparation;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,11 +51,13 @@ public class ShotListGenerationJobService {
     public ShotListJobView submit(UUID tenantId, UUID projectId) {
         // Fail fast if the prerequisites (script, screenplay, scenes) aren't there -- surface a
         // clean 400 to the client synchronously rather than persisting a job that would only fail
-        // on the worker side moments later. buildChatRequest throws PreProductionException
-        // (badRequest/notFound) for each of those preconditions.
-        LlmGatewayChatRequest request = shotListGenerationService.buildChatRequest(tenantId, projectId);
-
-        String idempotencyKey = ShotListGenerationService.shotListIdempotencyKey(projectId);
+        // on the worker side moments later. prepareJob throws PreProductionException
+        // (badRequest/notFound) for each of those preconditions AND encodes the current
+        // screenplay id + script updatedAt into the idempotency key so a regenerate after any
+        // upstream edit doesn't replay llm-gateway's cached completed response.
+        ShotListJobPreparation prep = shotListGenerationService.prepareJob(tenantId, projectId);
+        LlmGatewayChatRequest request = prep.request();
+        String idempotencyKey = prep.idempotencyKey();
         ShotListJob job = shotListJobRepository.findByLlmJobIdempotencyKey(idempotencyKey)
                 .map(existing -> resubmitIfTerminal(existing, tenantId))
                 .orElseGet(() -> createPending(tenantId, projectId, idempotencyKey));

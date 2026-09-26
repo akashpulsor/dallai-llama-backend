@@ -142,19 +142,45 @@ public class ShotListGenerationService {
 
     @Transactional
     public List<ShotView> generate(UUID tenantId, UUID projectId) {
+        ShotListJobPreparation prep = prepareJob(tenantId, projectId);
         LlmGatewayChatResponse response = llmGatewayClient.chat(
-                tenantId.toString(),
-                shotListIdempotencyKey(projectId),
-                buildChatRequest(tenantId, projectId));
+                tenantId.toString(), prep.idempotencyKey(), prep.request());
         return persistFromLlmResponse(tenantId, projectId, response);
     }
 
-    /** The idempotency key both the sync path and the async path use for this project's
-     * shot-list LLM job. Stable per-project so a replay hits the same {@code llm_job} row rather
-     * than costing a second Gemini call. Exposed for the async caller to store on
+    /** The idempotency key both the sync path and the async path use for this project's shot-list
+     * LLM job. Includes the screenplay + script versions the job is being built against so a
+     * regeneration after a screenplay edit doesn't hit the CACHED completed row from the previous
+     * screenplay version -- llm-gateway's {@code handleExisting} returns the stored resultContent
+     * as-is for any COMPLETED row with the same key, and until this carried the version a creator
+     * who edited their screenplay and regenerated the shot list would just get the old shots back.
+     * Stable within a version so a genuine replay (crash mid-request) still deduplicates against
+     * one llm_job row. Exposed for the async caller to store on
      * {@link com.dalai.llama.preprod.domain.entity.ShotListJob#getLlmJobIdempotencyKey}. */
-    public static String shotListIdempotencyKey(UUID projectId) {
-        return "shot-list-generate-" + projectId;
+    public static String shotListIdempotencyKey(UUID projectId, UUID screenplayId, java.time.OffsetDateTime scriptUpdatedAt) {
+        long scriptStamp = scriptUpdatedAt == null ? 0L : scriptUpdatedAt.toInstant().toEpochMilli();
+        return "shot-list-generate-" + projectId + "-sp" + screenplayId + "-sc" + scriptStamp;
+    }
+
+    /** Preparation carrier for a shot-list generation call: the LLM request payload plus the
+     * idempotency key that has to travel with it (both sync and async callers submit through the
+     * same llm-gateway {@code chat} contract). Kept together so a caller can't drift the key from
+     * the payload it was computed against. */
+    public record ShotListJobPreparation(LlmGatewayChatRequest request, String idempotencyKey) {}
+
+    /** Preload versions + request in one place so the idempotency key is always in sync with the
+     * inputs the request was built from. Screenplay id changes on every new screenplay version
+     * (each regenerate/edit inserts a new row); script updatedAt changes on every script edit --
+     * either shift produces a fresh key, so llm-gateway can't replay a cached result from before
+     * the change. */
+    public ShotListJobPreparation prepareJob(UUID tenantId, UUID projectId) {
+        Script script = scriptRepository.findByProjectId(projectId)
+                .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no script yet"));
+        Screenplay screenplay = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
+                .orElseThrow(() -> PreProductionException.badRequest("Project " + projectId + " has no screenplay yet"));
+        LlmGatewayChatRequest request = buildChatRequest(tenantId, projectId);
+        String key = shotListIdempotencyKey(projectId, screenplay.getId(), script.getUpdatedAt());
+        return new ShotListJobPreparation(request, key);
     }
 
     /** Assembles the exact {@link LlmGatewayChatRequest} the sync path sends -- exposed so the
