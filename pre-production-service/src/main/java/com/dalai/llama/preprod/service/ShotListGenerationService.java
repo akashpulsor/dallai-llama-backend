@@ -51,6 +51,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -172,16 +173,32 @@ public class ShotListGenerationService {
         if (scenes.isEmpty()) {
             throw PreProductionException.badRequest("Screenplay for project " + projectId + " has no scenes");
         }
-        List<String> knownCharacterKeys = scriptCharacterRepository.findByScriptId(script.getId()).stream()
+        List<ScriptCharacter> allCharacters = scriptCharacterRepository.findByScriptId(script.getId());
+        List<String> knownCharacterKeys = allCharacters.stream()
                 .map(ScriptCharacter::getCharacterKey)
                 .collect(Collectors.toList());
+        // Full character block sent as {{characterProfiles}} in v10+ of the prompt. Old
+        // {{characterKeys}} is still emitted for back-compat with older template versions but is
+        // just a bare comma list -- v9 and earlier used it, v10 replaced it because the LLM
+        // needed to know each character's type (antagonist vs protagonist) and description in
+        // order to distribute them across scenes correctly.
+        String characterProfiles = allCharacters.stream()
+                .map(c -> "- key=" + c.getCharacterKey()
+                        + " | name=" + (c.getCharacterName() == null ? "" : c.getCharacterName())
+                        + " | type=" + (c.getCharacterType() == null ? "" : c.getCharacterType().name())
+                        + (c.getCharacterRole() == null || c.getCharacterRole().isBlank() ? "" : " | role=" + c.getCharacterRole())
+                        + " | description=" + (c.getDescription() == null ? "" : c.getDescription()))
+                .collect(Collectors.joining("\n"));
+        if (characterProfiles.isBlank()) characterProfiles = "(no characters registered on this script)";
         var projectConfig = projectConfigService.getEntityOrDefault(projectId);
         AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
         boolean preferMotionGraphics = projectConfig != null && Boolean.TRUE.equals(projectConfig.getPreferMotionGraphics());
 
         return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                 JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
-                Map.of("scriptText", script.getScriptText(), "characterKeys", String.join(", ", knownCharacterKeys),
+                Map.of("scriptText", script.getScriptText(),
+                        "characterKeys", String.join(", ", knownCharacterKeys),
+                        "characterProfiles", characterProfiles,
                         // The script itself is written in the project's dialogue language, and
                         // without being told otherwise the model mirrors that language into every
                         // descriptive field too -- producing Hindi camera notes and scene
@@ -243,8 +260,24 @@ public class ShotListGenerationService {
         shotRepository.flush();
 
         AspectRatio defaultAspectRatio = configuredAspectRatio == null ? AspectRatio.RATIO_9_16 : configuredAspectRatio;
-        List<Shot> shots = parsed.shots().stream()
-                .map(item -> toShot(tenantId, projectId, project.getLockedIdeaId(), sceneIdByNumber, sceneByNumber, item, now, defaultAspectRatio))
+        // Order items by (scene, shot-within-scene) so the persisted shot_number reflects the
+        // narrative sequence the screenplay dictates. The LLM's shotNumber is scene-SCOPED
+        // (1..N per scene), which used to be persisted verbatim -- every scene's first shot got
+        // shot_number=1, later ordering by shot_number was undefined for ties, and the film
+        // assembled scenes in an arbitrary order. Sorting by (sceneNumber, shotNumber) and then
+        // renumbering 1..N globally gives one canonical project-wide order and unblocks reorder
+        // (which also expects unique, dense shot_numbers).
+        List<ShotListGenerationResult.ShotItem> ordered = new ArrayList<>(parsed.shots());
+        ordered.sort(java.util.Comparator
+                .comparingInt((ShotListGenerationResult.ShotItem it) -> it.sceneNumber() == null ? Integer.MAX_VALUE : it.sceneNumber())
+                .thenComparingInt(it -> it.shotNumber() == null ? Integer.MAX_VALUE : it.shotNumber()));
+        int[] seq = {0};
+        List<Shot> shots = ordered.stream()
+                .map(item -> {
+                    Shot shot = toShot(tenantId, projectId, project.getLockedIdeaId(), sceneIdByNumber, sceneByNumber, item, now, defaultAspectRatio);
+                    shot.setShotNumber(++seq[0]);
+                    return shot;
+                })
                 .map(shotRepository::save)
                 .collect(Collectors.toList());
 
@@ -351,10 +384,20 @@ public class ShotListGenerationService {
                 .orElseThrow(() -> PreProductionException.badRequest(
                         "screenplaySceneId=" + request.screenplaySceneId() + " does not belong to project " + projectId + "'s current screenplay"));
 
-        int nextShotNumber = shotRepository.findByScreenplaySceneIdOrderByShotNumberAsc(scene.getId()).stream()
+        // shot_number is PROJECT-wide (film assembly, reorder, storyboard all order by it), so
+        // a hand-created shot has to take max-across-the-project + 1, not max-within-the-scene +
+        // 1. The scene-scoped version silently collided with existing shots in later scenes and
+        // broke the global order. Creator can drag the appended shot into place via the reorder
+        // endpoint afterwards.
+        int nextShotNumber = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
                 .mapToInt(Shot::getShotNumber)
                 .max()
                 .orElse(0) + 1;
+        // shot_ref keeps its scene-scoped display form ("shot-{scene:02d}-{seq:03d}") so a
+        // creator glancing at refs still sees which scene a shot belongs to; the scene-local
+        // sequence for the ref is just "count of shots already in this scene + 1" -- shot_number
+        // is global now, so it can't be reused as the intra-scene index.
+        int refSequenceWithinScene = shotRepository.findByScreenplaySceneIdOrderByShotNumberAsc(scene.getId()).size() + 1;
         var projectConfig = projectConfigService.getEntityOrDefault(projectId);
         AspectRatio aspectRatio = projectConfig == null || projectConfig.getAspectRatio() == null
                 ? AspectRatio.RATIO_9_16 : projectConfig.getAspectRatio();
@@ -370,7 +413,7 @@ public class ShotListGenerationService {
                 .needsMultiImage(Boolean.TRUE.equals(scene.getNeedsMultiImage()))
                 .multiImageLabel(scene.getMultiImageLabel())
                 .sceneType(scene.getSceneType())
-                .shotRef("shot-%02d-%03d".formatted(scene.getSceneNumber(), nextShotNumber))
+                .shotRef("shot-%02d-%03d".formatted(scene.getSceneNumber(), refSequenceWithinScene))
                 .shotNumber(nextShotNumber)
                 .shotType(request.shotType() == null ? ShotType.ACTION : request.shotType())
                 .scriptLine(request.scriptLine())

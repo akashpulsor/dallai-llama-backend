@@ -85,6 +85,7 @@ public class ShotContextAssemblyService {
     private final ContinuityBibleService continuityBibleService;
     private final MinioClient publicMinioClient;
     private final com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository;
+    private final com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
 
     public ShotContextAssemblyService(
             ShotRepository shotRepository,
@@ -104,7 +105,8 @@ public class ShotContextAssemblyService {
             GenerationThoughtService generationThoughtService,
             ContinuityBibleService continuityBibleService,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
-            com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository
+            com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository,
+            com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository
     ) {
         this.shotRepository = shotRepository;
         this.projectRepository = projectRepository;
@@ -124,6 +126,7 @@ public class ShotContextAssemblyService {
         this.continuityBibleService = continuityBibleService;
         this.publicMinioClient = publicMinioClient;
         this.shotReferenceImageRepository = shotReferenceImageRepository;
+        this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
     }
 
     /**
@@ -260,9 +263,72 @@ public class ShotContextAssemblyService {
                         .toList();
         String referenceImagesLabel = shot.getMultiImageLabel();
         String sceneType = shot.getSceneType() == null ? null : shot.getSceneType().name();
-        return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),
+        // Merge in every OTHER character the scene has (antagonist alongside a speaking
+        // protagonist, both leads alongside a product hero, etc). Strategy-produced characters
+        // (base.characters()) win for anything they populated -- they carry wardrobe/perf/faceRef
+        // specific to a speaking role. Other scene characters ride along with just their face
+        // ref so the video-gen model sees their identity in the reference set and can compose
+        // them into the frame; wardrobe/perf are left null since the shot plan doesn't direct
+        // them here. Without this, PRODUCT_HERO/B_ROLL/ACTION shots always dispatched with an
+        // empty character list even when the screenplay explicitly staged multiple characters
+        // in the scene.
+        List<com.dalai.llama.preprod.service.videogen.shotcontext.Character> mergedCharacters =
+                mergeSceneCharacters(assemblyContext, base.characters());
+        return new ShotContext(base.shotRef(), base.narrative(), mergedCharacters, base.environment(), base.lighting(),
                 base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(),
                 dialogueBeats, referenceImages, referenceImagesLabel, sceneType);
+    }
+
+    /** Add face-referenced Character rows for every other character staged in this shot's parent
+     * scene (via screenplay_scene_character). PRODUCT-type characters are skipped -- the product
+     * hero already rides on ProductBrand, and duplicating it as a Character would tell the model
+     * the product is another on-screen person. NARRATOR characters are skipped too: they're a
+     * voice-only role, no visual identity to compose in the frame. */
+    private List<com.dalai.llama.preprod.service.videogen.shotcontext.Character> mergeSceneCharacters(
+            ShotAssemblyContext ctx,
+            List<com.dalai.llama.preprod.service.videogen.shotcontext.Character> baseCharacters) {
+        List<com.dalai.llama.preprod.service.videogen.shotcontext.Character> merged = new java.util.ArrayList<>();
+        if (baseCharacters != null) merged.addAll(baseCharacters);
+        if (ctx.scene() == null) return merged;
+        Script sceneScript = scriptRepository.findByProjectId(ctx.project().getId()).orElse(null);
+        if (sceneScript == null) return merged;
+        java.util.Set<String> alreadyPresentCastIds = merged.stream()
+                .map(com.dalai.llama.preprod.service.videogen.shotcontext.Character::castId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        List<UUID> sceneCharacterIds = screenplaySceneCharacterRepository.findByScreenplaySceneId(ctx.scene().getId()).stream()
+                .map(link -> link.getScriptCharacterId())
+                .toList();
+        if (sceneCharacterIds.isEmpty()) return merged;
+        Map<UUID, ScriptCharacter> charactersById = scriptCharacterRepository.findAllById(sceneCharacterIds).stream()
+                .collect(Collectors.toMap(ScriptCharacter::getId, c -> c, (a, b) -> a));
+        List<CastAssignment> assignments = castAssignmentRepository.findByProjectId(ctx.project().getId());
+        Map<UUID, CastAssignment> assignmentByCharacterId = assignments.stream()
+                .filter(a -> charactersById.containsKey(a.getScriptCharacterId()))
+                .collect(Collectors.toMap(CastAssignment::getScriptCharacterId, a -> a, (a, b) -> a));
+        List<UUID> profileIds = assignmentByCharacterId.values().stream()
+                .map(CastAssignment::getCastProfileId).distinct().toList();
+        Map<UUID, CastProfile> profileById = profileIds.isEmpty() ? Map.of()
+                : castProfileRepository.findAllById(profileIds).stream()
+                .collect(Collectors.toMap(CastProfile::getId, p -> p));
+        for (UUID characterId : sceneCharacterIds) {
+            ScriptCharacter sc = charactersById.get(characterId);
+            if (sc == null) continue;
+            if (sc.getCharacterType() == CharacterType.PRODUCT || sc.getCharacterType() == CharacterType.NARRATOR) continue;
+            CastAssignment assignment = assignmentByCharacterId.get(sc.getId());
+            if (assignment == null) continue;
+            CastProfile profile = profileById.get(assignment.getCastProfileId());
+            if (profile == null) continue;
+            String castIdKey = profile.getId().toString();
+            if (alreadyPresentCastIds.contains(castIdKey)) continue;
+            merged.add(new com.dalai.llama.preprod.service.videogen.shotcontext.Character(
+                    castIdKey,
+                    profile.getFaceRefBucket(), profile.getFaceRefObjectKey(),
+                    profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(),
+                    assignment.getWardrobeNote(), assignment.getPerformanceDirection()));
+            alreadyPresentCastIds.add(castIdKey);
+        }
+        return merged;
     }
 
     /** A beat's speaking character resolves to a prepared clone, raw sample, or stock voice. A
