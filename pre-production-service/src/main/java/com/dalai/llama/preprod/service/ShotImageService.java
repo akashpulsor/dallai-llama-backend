@@ -208,6 +208,7 @@ public class ShotImageService {
         String modelId;
         Map<String, Object> params;
         List<String> editDataUris = null;
+        java.util.function.IntFunction<List<String>> refsForAttempt = null;
         if (productReference != null || castProfile != null) {
             modelId = identityImageModel;
             if (isGeminiModel(modelId)) {
@@ -219,43 +220,26 @@ public class ShotImageService {
                 // actually provisioned in this environment, so identity-image-model now defaults
                 // to Gemini (see application.yml), which needs no separate credential at all.
                 params = imageParams(shot);
-                List<String> uris = new java.util.ArrayList<>();
-                // Chat/creator edit path: the CURRENT image goes in FIRST so Gemini treats it as
-                // the frame to edit (preserve composition, only change what the note asks). Without
-                // this, an identity-conditioned PRODUCTION shot regenerated from just the face ref
-                // would blow away the on-image text placement / composition every time -- exactly
-                // the "apply text change and everything else got replaced" failure this branch was
-                // silently causing when a SHOT_IMAGE change request landed on a cast-conditioned
-                // frame (chat-service always routes text edits through this path via
-                // ShotImageEditPromptComposer, so this is the common case, not an edge).
-                if (note != null && !note.isBlank()) {
-                    shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(uris::add);
-                }
-                // When BOTH refs exist, attach both (cast face first, then product) so Gemini
-                // gets both identities. Previously we picked ONE via a product-wins ternary and
-                // silently dropped the cast face for combined product+person shots. The prompt's
-                // "Primary subject: ..." + "Product identity ref" blocks (from
-                // ShotImagePromptBuilder) tell the model which image is which. On a plain (no-
-                // note) regenerate with only one ref, behavior is unchanged.
-                if (castProfile != null) {
-                    String castUri = toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
-                    if (castUri != null) uris.add(castUri);
-                }
-                // Other on-screen characters (antagonist, supporting) attached AFTER the primary
-                // cast face and BEFORE the product ref -- ShotImagePromptBuilder's ordered
-                // "Additional subject" blocks call out each attached image position-wise so Gemini
-                // knows which reference belongs to which named subject. Skips profiles with no
-                // face MinIO ref (already filtered in resolveSecondarySceneCastProfiles but the
-                // toDataUri guard is cheap and keeps this loop self-contained).
-                for (CastProfile secondary : secondaryCasts) {
-                    String uri = toDataUri(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
-                    if (uri != null) uris.add(uri);
-                }
-                if (productReference != null) {
-                    String productUri = toDataUri(productReference.getBucket(), productReference.getObjectKey());
-                    if (productUri != null) uris.add(productUri);
-                }
-                editDataUris = uris.isEmpty() ? null : uris;
+                // Compute each ref slot ONCE. generateWithRetry rebuilds the actual attached list
+                // per attempt via identityRefsForAttempt so IMAGE_OTHER refusals get a real chance
+                // to succeed with fewer refs (drop secondaries on attempt 2; drop the current-
+                // image edit source on attempt 3, primary-character-only being the most reliable
+                // combination). Order within an attempt stays current-image -> primary ->
+                // secondaries -> product so the numbered subject blocks in the prompt still map
+                // to the numbered reference image by position.
+                final String currentImageUri = (note != null && !note.isBlank())
+                        ? shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).orElse(null)
+                        : null;
+                final String primaryUri = castProfile == null ? null
+                        : toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
+                final List<String> secondaryUris = secondaryCasts.stream()
+                        .map(s -> toDataUri(s.getFaceRefBucket(), s.getFaceRefObjectKey()))
+                        .filter(java.util.Objects::nonNull)
+                        .toList();
+                final String productUri = productReference == null ? null
+                        : toDataUri(productReference.getBucket(), productReference.getObjectKey());
+                refsForAttempt = attempt -> identityRefsForAttempt(attempt, currentImageUri, primaryUri, secondaryUris, productUri);
+                editDataUris = refsForAttempt.apply(1);
                 prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
             } else {
                 // fal.ai FLUX_PULID's reference_image_urls param: send both refs when both exist,
@@ -295,7 +279,9 @@ public class ShotImageService {
             editDataUris = images.isEmpty() ? null : images;
         }
 
-        DecodedImage decoded = generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, editDataUris, params);
+        DecodedImage decoded = refsForAttempt != null
+                ? generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, params, refsForAttempt)
+                : generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, editDataUris, params);
         String objectKey = "%s/%s/%s/%s.%s".formatted(storyboardPrefix, kind.name().toLowerCase(), shotId, UUID.randomUUID(), decoded.extension());
         upload(objectKey, decoded);
 
@@ -647,13 +633,28 @@ public class ShotImageService {
      * one call instead of spread across separate dead-letter-tracked attempts. */
     private DecodedImage generateWithRetry(UUID tenantId, UUID shotId, ShotImageKind kind, Shot shot,
             String modelId, String prompt, List<String> editDataUris, Map<String, Object> params) {
+        return generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, params,
+                attempt -> editDataUris);
+    }
+
+    /** Attempt-aware variant: {@code refsForAttempt} rebuilds the identity-reference set per try
+     * so the identity path can PROGRESSIVELY STRIP references on retry -- Gemini's
+     * IMAGE_OTHER refusals are correlated with too many reference photos in one call (esp.
+     * multiple face refs alongside a product ref and a current-image edit source). Sending the
+     * same maxed-out payload 3 times just yielded the same 3 refusals. The identity caller uses
+     * this to drop secondaries on attempt 2 and drop the current-image edit ref on attempt 3,
+     * so at least the primary-character-only call gets a chance to land before we give up. */
+    private DecodedImage generateWithRetry(UUID tenantId, UUID shotId, ShotImageKind kind, Shot shot,
+            String modelId, String prompt, Map<String, Object> params,
+            java.util.function.IntFunction<List<String>> refsForAttempt) {
         PreProductionException lastFailure = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
+                List<String> attemptRefs = refsForAttempt.apply(attempt);
                 LlmGatewayChatResponse response = llmGatewayClient.chat(
                         tenantId.toString(),
                         "shot-image-" + kind.name().toLowerCase() + "-" + shotId + "-" + UUID.randomUUID(),
-                        new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt, editDataUris)), params, null, null)
+                        new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", prompt, attemptRefs)), params, null, null)
                                 .withProjectId(shot.getProjectId()));
                 DecodedImage decoded = decode(response, kind);
                 if (!isPlanningKind(kind)) {
@@ -669,6 +670,26 @@ public class ShotImageService {
             }
         }
         throw lastFailure;
+    }
+
+    /** Trim policy for the Gemini identity path across the 3-retry budget:
+     * <ul>
+     *   <li>attempt 1: everything (current image edit source + primary + secondaries + product)</li>
+     *   <li>attempt 2: drop secondaries -- keep primary + product + current image edit source</li>
+     *   <li>attempt 3: drop the current image edit source too -- primary + product only, the
+     *       most permissive combination Gemini reliably accepts.</li>
+     * </ul>
+     * A null slot is skipped naturally. */
+    private List<String> identityRefsForAttempt(int attempt, String currentImageUri, String primaryUri,
+                                                List<String> secondaryUris, String productUri) {
+        List<String> out = new java.util.ArrayList<>();
+        if (attempt <= 2 && currentImageUri != null) out.add(currentImageUri);
+        if (primaryUri != null) out.add(primaryUri);
+        if (attempt == 1 && secondaryUris != null) {
+            for (String uri : secondaryUris) if (uri != null) out.add(uri);
+        }
+        if (productUri != null) out.add(productUri);
+        return out.isEmpty() ? null : out;
     }
 
     private DecodedImage decode(LlmGatewayChatResponse response, ShotImageKind kind) {

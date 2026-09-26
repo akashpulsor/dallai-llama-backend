@@ -10,6 +10,8 @@ import com.dalai.llama.preprod.domain.entity.ScreenplayScene;
 import com.dalai.llama.preprod.domain.entity.ScreenplaySceneCharacter;
 import com.dalai.llama.preprod.domain.entity.Script;
 import com.dalai.llama.preprod.domain.entity.ScriptCharacter;
+import com.dalai.llama.preprod.domain.entity.Shot;
+import com.dalai.llama.preprod.repository.ShotRepository;
 import com.dalai.llama.preprod.dto.GenerateScreenplayRequest;
 import com.dalai.llama.preprod.dto.SaveScreenplayEditRequest;
 import com.dalai.llama.preprod.dto.SceneCharacterView;
@@ -61,6 +63,7 @@ public class ScreenplayGenerationService {
     private final ScreenplaySceneRepository screenplaySceneRepository;
     private final ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
     private final ScriptVersionRepository scriptVersionRepository;
+    private final ShotRepository shotRepository;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final ProjectService projectService;
@@ -75,6 +78,7 @@ public class ScreenplayGenerationService {
             ScreenplaySceneRepository screenplaySceneRepository,
             ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository,
             ScriptVersionRepository scriptVersionRepository,
+            ShotRepository shotRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             ProjectService projectService,
@@ -88,6 +92,7 @@ public class ScreenplayGenerationService {
         this.screenplaySceneRepository = screenplaySceneRepository;
         this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
         this.scriptVersionRepository = scriptVersionRepository;
+        this.shotRepository = shotRepository;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
         this.projectService = projectService;
@@ -246,6 +251,44 @@ public class ScreenplayGenerationService {
                         .build())
                 .map(screenplaySceneRepository::save)
                 .collect(Collectors.toList());
+
+        // A new Screenplay row means brand-new ScreenplayScene UUIDs. Existing shots still point
+        // at the OLD screenplay's scene ids, so scene-level flags a creator just set
+        // (needsMultiImage / multiImageLabel / sceneType) would silently NOT reach any shots that
+        // already exist -- the shot page wouldn't reveal the multi-image upload panel, the video-
+        // gen prompt wouldn't tag the bundle, and shots would keep their previous sceneType.
+        // Match by scene_number (which is stable across versions), relink shots to the new scene
+        // row, and update the three inherited fields. Doesn't touch anything else on the shot --
+        // the creator's manual edits to camera/action/prompts are preserved.
+        Map<Integer, ScreenplayScene> newSceneByNumber = scenes.stream()
+                .collect(Collectors.toMap(ScreenplayScene::getSceneNumber, s -> s, (a, b) -> a));
+        List<Shot> existingShots = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId);
+        // Old scene id -> its old sceneNumber, so we can look up the corresponding new scene by
+        // that number (shots don't carry sceneNumber directly, they only reference the scene row).
+        List<UUID> oldSceneIds = existingShots.stream()
+                .map(Shot::getScreenplaySceneId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<UUID, Integer> oldSceneNumberById = oldSceneIds.isEmpty() ? Map.of()
+                : screenplaySceneRepository.findAllById(oldSceneIds).stream()
+                .collect(Collectors.toMap(ScreenplayScene::getId, ScreenplayScene::getSceneNumber, (a, b) -> a));
+        List<Shot> shotsToUpdate = new java.util.ArrayList<>();
+        for (Shot shot : existingShots) {
+            Integer sceneNumber = oldSceneNumberById.get(shot.getScreenplaySceneId());
+            if (sceneNumber == null) continue;
+            ScreenplayScene newScene = newSceneByNumber.get(sceneNumber);
+            if (newScene == null) continue;
+            shot.setScreenplaySceneId(newScene.getId());
+            shot.setNeedsMultiImage(Boolean.TRUE.equals(newScene.getNeedsMultiImage()));
+            shot.setMultiImageLabel(newScene.getMultiImageLabel());
+            shot.setSceneType(newScene.getSceneType());
+            shot.setUpdatedAt(OffsetDateTime.now());
+            shotsToUpdate.add(shot);
+        }
+        if (!shotsToUpdate.isEmpty()) {
+            shotRepository.saveAll(shotsToUpdate);
+        }
 
         return toView(screenplay, scenes);
     }
