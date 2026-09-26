@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.dto;
 
+import com.dalai.llama.preprod.domain.SceneType;
 import com.dalai.llama.preprod.domain.TimeOfDay;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -27,7 +28,10 @@ public record SaveScreenplayEditRequest(
             Boolean needsMultiImage,
             /** Optional label ("app flow", "before/after") the multi-image bundle should be
              * called. Null keeps whatever's already saved (or null). */
-            String multiImageLabel
+            String multiImageLabel,
+            /** Creator-set structural intent. Null preserves the existing value (or leaves it
+             * null -- downstream reads null as GENERIC). */
+            SceneType sceneType
     ) {
     }
 }

@@ -15,6 +15,12 @@ public record BuiltinVoiceView(
         String displayName,
         String gender,
         String previewAudioUrl,
+        /** MinIO object key of the creator-uploaded face image (Pro plan). Null when nothing has
+         * been uploaded yet; frontend degrades to no thumbnail. llm-gateway has no MinIO client
+         * of its own, so it returns the raw key -- the frontend resolves it against pre-production-
+         * service's public MinIO reverse-proxy for display (same pattern already used for cast
+         * media). */
+        String faceRefObjectKey,
         List<String> languageCodes
 ) {
 }

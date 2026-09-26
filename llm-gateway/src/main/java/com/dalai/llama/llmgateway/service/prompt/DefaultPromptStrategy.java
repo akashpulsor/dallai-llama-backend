@@ -137,6 +137,30 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
                 if (anchor.description() != null) lines.add("Continuity: " + anchor.description());
             });
         }
+        // Structural tag for the multi-image reference bundle. The bundle images themselves ride
+        // in reference_image_urls (SHOT_REFERENCE-kind rows appended after character/product/
+        // lighting/camera refs), so the model sees them; this single line names the set so it
+        // knows what to do with them ("this is the app flow", "this is the before/after") without
+        // per-image captions bloating the prompt. Character identity images are already
+        // structurally associated via each Character's faceRefBucket/faceRefObjectKey and the
+        // CHARACTER_FACE reference row -- so "character1 is this image" holds automatically.
+        if (shotContext.referenceImages() != null && !shotContext.referenceImages().isEmpty()) {
+            String label = shotContext.referenceImagesLabel();
+            String tag = (label == null || label.isBlank()) ? "reference frames" : label;
+            lines.add("Reference frames ('" + tag + "'): "
+                    + shotContext.referenceImages().size()
+                    + " creator-supplied image(s) at the end of the reference set describe the exact "
+                    + "content, states, or layout to depict on-screen for this shot -- treat them as the source of truth for that content.");
+        }
+        // Structural scene-type tag from the creator. Named intent, not a scenic description --
+        // "this is an IDENTITY beat" tells the model to hold on faces; "MOTION_GRAPHIC" tells it
+        // to lean typographic/graphic; "PRODUCT_HERO" tells it product-first framing; etc. Unknown
+        // or null reads as GENERIC and we don't add a line for GENERIC to keep the prompt lean.
+        String sceneTypeRaw = shotContext.sceneType();
+        if (sceneTypeRaw != null && !sceneTypeRaw.isBlank() && !"GENERIC".equalsIgnoreCase(sceneTypeRaw)) {
+            lines.add("Scene type: " + sceneTypeRaw.toUpperCase(java.util.Locale.ROOT)
+                    + " -- treat this as the shot's structural intent.");
+        }
         // The resolution the caller actually asked for -- resolved from the per-request override
         // or the project config before it ever got here. The prompt states it because it is the
         // one authority on the question; captureFormat describes the LOOK (codec, bit depth) and

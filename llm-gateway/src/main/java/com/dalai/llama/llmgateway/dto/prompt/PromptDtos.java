@@ -33,7 +33,54 @@ public final class PromptDtos {
             Technical technical,
             List<ContinuityAnchor> continuityAnchors,
             AudioAmbience audioAmbience,
-            List<DialogueBeat> dialogueBeats
+            List<DialogueBeat> dialogueBeats,
+            /** Creator-uploaded multi-image reference bundle -- V66 on pre-production-service.
+             * Present when the shot's scene was flagged needsMultiImage. The composed prompt
+             * mentions the bundle by its label (never per-image captions), so the model knows
+             * the trailing reference_image_urls carry a labeled set. The label
+             * (multiImageLabel) is a structural tag like "app flow" or "before/after". */
+            List<ShotReferenceImage> referenceImages,
+            /** Bundle label -- carried alongside referenceImages so the prompt can name the set
+             * without walking every image. Null when no bundle exists. */
+            String referenceImagesLabel,
+            /** Structural scene-type tag from pre-prod (IDENTITY / MOTION_GRAPHIC / LIVE_ACTION /
+             * PRODUCT_HERO / GENERIC). Read as a plain string, no shared enum. Null or unknown
+             * flows through as GENERIC in DefaultPromptStrategy. */
+            String sceneType
+    ) {
+        /** Backward-compat arity for callers that don't send reference-image fields yet. */
+        public ShotContext(String shotRef, Narrative narrative, List<Character> characters,
+                           Environment environment, Lighting lighting, Camera camera,
+                           ProductBrand productBrand, Technical technical,
+                           List<ContinuityAnchor> continuityAnchors, AudioAmbience audioAmbience,
+                           List<DialogueBeat> dialogueBeats) {
+            this(shotRef, narrative, characters, environment, lighting, camera, productBrand,
+                    technical, continuityAnchors, audioAmbience, dialogueBeats, null, null, null);
+        }
+
+        /** Pre-sceneType arity -- for callers that already send the reference-image bundle but
+         * not sceneType yet. */
+        public ShotContext(String shotRef, Narrative narrative, List<Character> characters,
+                           Environment environment, Lighting lighting, Camera camera,
+                           ProductBrand productBrand, Technical technical,
+                           List<ContinuityAnchor> continuityAnchors, AudioAmbience audioAmbience,
+                           List<DialogueBeat> dialogueBeats,
+                           List<ShotReferenceImage> referenceImages, String referenceImagesLabel) {
+            this(shotRef, narrative, characters, environment, lighting, camera, productBrand,
+                    technical, continuityAnchors, audioAmbience, dialogueBeats,
+                    referenceImages, referenceImagesLabel, null);
+        }
+    }
+
+    /** One creator-uploaded reference image on a shot. Just the URL parts + ordinal are needed
+     * for structural tagging in the prompt -- captions are deliberately NOT read here (they
+     * live on the pre-prod row but the model prompt names the bundle, not each image). */
+    public record ShotReferenceImage(
+            String bucket,
+            String objectKey,
+            String contentType,
+            String caption,
+            Integer ordinal
     ) {}
 
     /** {@code dialogue} is what the character says; {@code scriptLine} is what happens in frame.

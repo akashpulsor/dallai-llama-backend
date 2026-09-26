@@ -214,10 +214,40 @@ public class LlmGatewayController {
 
         List<BuiltinVoiceView> views = voices.stream()
                 .map(v -> new BuiltinVoiceView(v.getVoiceId(), v.getProviderId(), v.getProviderVoiceId(), v.getDisplayName(),
-                        v.getGender(), v.getPreviewAudioUrl(), languagesByVoiceId.getOrDefault(v.getVoiceId(), List.of())))
+                        v.getGender(), v.getPreviewAudioUrl(),
+                        // Pro-plan uploaded face: prefer presigning here if we had a MinIO client;
+                        // llm-gateway doesn't (it has no upload path today), so we expose the
+                        // face_ref_object_key path and pre-production-service's public MinIO
+                        // reverse-proxy renders it directly. Null when no face has been attached.
+                        v.getFaceRefObjectKey(),
+                        languagesByVoiceId.getOrDefault(v.getVoiceId(), List.of())))
                 .toList();
         return ResponseEntity.ok(views);
     }
+
+    /** Pro-plan face attach for a built-in voice. Two-step upload: frontend first uploads the
+     * image to pre-production-service's existing cast-media endpoint (which handles the MinIO
+     * put + returns {bucket, objectKey}), then calls this to persist the refs on the voice row.
+     * Kept as PUT so re-uploading a new face for the same voice replaces cleanly. */
+    @org.springframework.web.bind.annotation.PutMapping("/v1/voices/builtin/{voiceId}/face")
+    public ResponseEntity<BuiltinVoiceView> setBuiltinVoiceFace(
+            @PathVariable String voiceId,
+            @RequestBody SetBuiltinVoiceFaceRequest request
+    ) {
+        BuiltinVoice voice = builtinVoiceRepository.findById(voiceId)
+                .orElseThrow(() -> new IllegalArgumentException("No built-in voice " + voiceId));
+        voice.setFaceRefBucket(request.bucket());
+        voice.setFaceRefObjectKey(request.objectKey());
+        voice.setFaceRefContentType(request.contentType());
+        BuiltinVoice saved = builtinVoiceRepository.save(voice);
+        List<String> langs = builtinVoiceLanguageRepository.findByIdVoiceIdIn(List.of(saved.getVoiceId())).stream()
+                .map(row -> row.getId().getLanguageCode()).toList();
+        return ResponseEntity.ok(new BuiltinVoiceView(saved.getVoiceId(), saved.getProviderId(), saved.getProviderVoiceId(),
+                saved.getDisplayName(), saved.getGender(), saved.getPreviewAudioUrl(),
+                saved.getFaceRefObjectKey(), langs));
+    }
+
+    public record SetBuiltinVoiceFaceRequest(String bucket, String objectKey, String contentType) {}
 
     /** One-shot admin trigger: refreshes {@code builtin_voice} + {@code builtin_voice_language}
      * from the ElevenLabs account's current voice list (only voices ElevenLabs itself verifies for

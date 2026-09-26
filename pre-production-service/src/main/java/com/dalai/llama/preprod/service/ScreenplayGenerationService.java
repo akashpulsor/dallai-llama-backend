@@ -241,6 +241,7 @@ public class ScreenplayGenerationService {
                         // constraint on the migration rejects the insert.
                         .needsMultiImage(Boolean.TRUE.equals(item.needsMultiImage()))
                         .multiImageLabel(item.multiImageLabel())
+                        .sceneType(item.sceneType())
                         .createdAt(screenplay.getCreatedAt())
                         .build())
                 .map(screenplaySceneRepository::save)
@@ -328,6 +329,7 @@ public class ScreenplayGenerationService {
                 .map(s -> new ScreenplaySceneView(s.getId(), s.getSceneNumber(), s.getSlug(), s.getLocation(), s.getTimeOfDay(),
                         s.getSummary(), s.getCharacterFocus(), s.getEmotionalPurpose(), s.getEstimatedSeconds(),
                         Boolean.TRUE.equals(s.getNeedsMultiImage()), s.getMultiImageLabel(),
+                        s.getSceneType(),
                         charactersByScene.getOrDefault(s.getId(), List.of())))
                 .collect(Collectors.toList());
         return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getLockedIdeaId(),

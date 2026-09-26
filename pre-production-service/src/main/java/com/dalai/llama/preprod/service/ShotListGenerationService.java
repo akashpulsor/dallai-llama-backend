@@ -369,6 +369,7 @@ public class ShotListGenerationService {
                 // flagged scene wouldn't show the upload UI.
                 .needsMultiImage(Boolean.TRUE.equals(scene.getNeedsMultiImage()))
                 .multiImageLabel(scene.getMultiImageLabel())
+                .sceneType(scene.getSceneType())
                 .shotRef("shot-%02d-%03d".formatted(scene.getSceneNumber(), nextShotNumber))
                 .shotNumber(nextShotNumber)
                 .shotType(request.shotType() == null ? ShotType.ACTION : request.shotType())
@@ -486,6 +487,7 @@ public class ShotListGenerationService {
                 .screenplaySceneId(sceneId)
                 .needsMultiImage(scene != null && Boolean.TRUE.equals(scene.getNeedsMultiImage()))
                 .multiImageLabel(scene == null ? null : scene.getMultiImageLabel())
+                .sceneType(scene == null ? null : scene.getSceneType())
                 .shotRef("shot-%02d-%03d".formatted(item.sceneNumber(), shotNumber))
                 .shotNumber(shotNumber)
                 .shotType(TolerantEnumParser.parse(ShotType.class, item.shotType(), ShotType.ACTION))

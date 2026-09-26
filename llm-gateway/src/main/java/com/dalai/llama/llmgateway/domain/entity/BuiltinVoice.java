@@ -50,6 +50,19 @@ public class BuiltinVoice {
     @Column(nullable = false)
     private Boolean active;
 
+    /** Creator-uploaded face image for this stock voice -- Pro plan. Nullable: not every voice
+     * has an associated face image, and the frontend degrades to no thumbnail. Stored in the
+     * same MinIO bucket the frontend can reach; face_ref_url is a presigned URL cached on read
+     * (short TTL) for direct display. */
+    @Column(name = "face_ref_bucket", length = 120)
+    private String faceRefBucket;
+
+    @Column(name = "face_ref_object_key", length = 512)
+    private String faceRefObjectKey;
+
+    @Column(name = "face_ref_content_type", length = 120)
+    private String faceRefContentType;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 }

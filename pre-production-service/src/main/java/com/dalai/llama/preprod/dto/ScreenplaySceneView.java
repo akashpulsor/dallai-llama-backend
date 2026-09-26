@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.dto;
 
+import com.dalai.llama.preprod.domain.SceneType;
 import com.dalai.llama.preprod.domain.TimeOfDay;
 
 import java.util.List;
@@ -22,6 +23,9 @@ public record ScreenplaySceneView(
         /** Optional label ("app flow", "before/after") for the multi-image bundle. Null when
          * needsMultiImage is false. */
         String multiImageLabel,
+        /** Creator-set structural intent (IDENTITY / MOTION_GRAPHIC / LIVE_ACTION / PRODUCT_HERO /
+         * GENERIC). Nullable on older rows; UI shows GENERIC when null. */
+        SceneType sceneType,
         /** Real characters present in this scene (via screenplay_scene_character) -- empty means a
          * pure motion-graphic/B-roll beat with no character in it. */
         List<SceneCharacterView> characters

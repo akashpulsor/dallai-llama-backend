@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.domain.entity;
 
+import com.dalai.llama.preprod.domain.SceneType;
 import com.dalai.llama.preprod.domain.TimeOfDay;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -81,6 +82,14 @@ public class ScreenplayScene {
      * prompt reference. Null when needsMultiImage is false. */
     @Column(name = "multi_image_label", length = 120)
     private String multiImageLabel;
+
+    /** Creator-set structural intent for the scene (identity/motion-graphic/live-action/product
+     * -hero/generic). Nullable back-compat; a null value reads as GENERIC in downstream services
+     * (see V67 migration). Propagates to shots at generate/create time -- same pattern as
+     * needsMultiImage. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "scene_type", length = 24)
+    private SceneType sceneType;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

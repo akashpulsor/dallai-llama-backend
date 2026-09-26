@@ -3,6 +3,7 @@ package com.dalai.llama.preprod.domain.entity;
 import com.dalai.llama.preprod.domain.AspectRatio;
 import com.dalai.llama.preprod.domain.ExecutionDifficulty;
 import com.dalai.llama.preprod.domain.MoodProfile;
+import com.dalai.llama.preprod.domain.SceneType;
 import com.dalai.llama.preprod.domain.ShotSize;
 import com.dalai.llama.preprod.domain.ShotStatus;
 import com.dalai.llama.preprod.domain.ShotType;
@@ -382,6 +383,13 @@ public class Shot {
      * prompt uses to reference the image group. Null when needsMultiImage is false. */
     @Column(name = "multi_image_label", length = 120)
     private String multiImageLabel;
+
+    /** Inherited from ScreenplayScene.sceneType -- structural intent so the video-gen prompt
+     * strategy composes accordingly (identity beat vs motion-graphic vs live-action, etc.).
+     * Nullable back-compat: null reads as GENERIC downstream. See V67 migration. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "scene_type", length = 24)
+    private SceneType sceneType;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

@@ -36,12 +36,20 @@ public record ShotContext(
          * saveReferences as SHOT_REFERENCE-kind rows and end up in reference_image_urls at
          * dispatch, so the video model actually sees the images alongside the character-face /
          * product-hero / DP-lighting refs it already gets. */
-        List<@Valid ShotReferenceImage> referenceImages
+        List<@Valid ShotReferenceImage> referenceImages,
+        /** Bundle label -- shot.multiImageLabel from pre-prod. Passed through to llm-gateway
+         * where the prompt strategy names the bundle in one structural line ("app flow",
+         * "before/after") without per-image captions. */
+        String referenceImagesLabel,
+        /** Structural intent tag from pre-prod (IDENTITY / MOTION_GRAPHIC / LIVE_ACTION /
+         * PRODUCT_HERO / GENERIC). Wire-string, no shared enum. Null flows through as GENERIC
+         * downstream. */
+        String sceneType
 ) {
 
     /** One uploaded reference image on a shot -- mirror of pre-prod-service's
-     * ShotReferenceImageView. Caption is optional and (follow-up) will feed prompt text so the
-     * model knows what each image represents. */
+     * ShotReferenceImageView. Caption is intentionally NOT surfaced in the prompt text (see
+     * DefaultPromptStrategy for the structural bundle line). */
     public record ShotReferenceImage(
             String bucket,
             String objectKey,
@@ -61,7 +69,7 @@ public record ShotContext(
     public ShotContext withNarrative(Narrative replacement) {
         return new ShotContext(shotRef, replacement, characters, environment, lighting, camera,
                 productBrand, technical, continuityAnchors, audioAmbience, dialogueBeats, referenceFrames,
-                motionGraphic, referenceImages);
+                motionGraphic, referenceImages, referenceImagesLabel, sceneType);
     }
 
     /** Pre-referenceFrames arity, kept so existing callers and tests compile unchanged. */
@@ -79,7 +87,7 @@ public record ShotContext(
             List<DialogueBeat> dialogueBeats
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, null, null, null);
+                continuityAnchors, audioAmbience, dialogueBeats, null, null, null, null);
     }
 
     /** Pre-motionGraphic arity, kept so existing callers and tests compile unchanged. */
@@ -98,7 +106,7 @@ public record ShotContext(
             List<ReferenceFrame> referenceFrames
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, null, null);
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, null, null, null);
     }
 
     /** Pre-referenceImages arity -- keeps every existing motionGraphic-aware caller compatible. */
@@ -118,6 +126,50 @@ public record ShotContext(
             MotionGraphic motionGraphic
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, motionGraphic, null);
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, motionGraphic, null, null, null);
+    }
+
+    /** Pre-referenceImagesLabel arity. */
+    public ShotContext(
+            String shotRef,
+            Narrative narrative,
+            List<Character> characters,
+            Environment environment,
+            Lighting lighting,
+            Camera camera,
+            ProductBrand productBrand,
+            Technical technical,
+            List<ContinuityAnchor> continuityAnchors,
+            AudioAmbience audioAmbience,
+            List<DialogueBeat> dialogueBeats,
+            List<ReferenceFrame> referenceFrames,
+            MotionGraphic motionGraphic,
+            List<ShotReferenceImage> referenceImages
+    ) {
+        this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, motionGraphic, referenceImages, null, null);
+    }
+
+    /** Pre-sceneType arity. */
+    public ShotContext(
+            String shotRef,
+            Narrative narrative,
+            List<Character> characters,
+            Environment environment,
+            Lighting lighting,
+            Camera camera,
+            ProductBrand productBrand,
+            Technical technical,
+            List<ContinuityAnchor> continuityAnchors,
+            AudioAmbience audioAmbience,
+            List<DialogueBeat> dialogueBeats,
+            List<ReferenceFrame> referenceFrames,
+            MotionGraphic motionGraphic,
+            List<ShotReferenceImage> referenceImages,
+            String referenceImagesLabel
+    ) {
+        this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, motionGraphic,
+                referenceImages, referenceImagesLabel, null);
     }
 }

@@ -258,9 +258,11 @@ public class ShotContextAssemblyService {
                         .map(r -> new com.dalai.llama.preprod.service.videogen.shotcontext.ShotReferenceImage(
                                 r.getBucket(), r.getObjectKey(), r.getContentType(), r.getCaption(), r.getOrdinal()))
                         .toList();
+        String referenceImagesLabel = shot.getMultiImageLabel();
+        String sceneType = shot.getSceneType() == null ? null : shot.getSceneType().name();
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),
                 base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(),
-                dialogueBeats, referenceImages);
+                dialogueBeats, referenceImages, referenceImagesLabel, sceneType);
     }
 
     /** A beat's speaking character resolves to a prepared clone, raw sample, or stock voice. A
