@@ -59,6 +59,19 @@ public class ChatJobCompletedConsumer {
         }
         ShotListJob job = maybeJob.get();
 
+        // Kafka redelivery is real: a rebalance can reset the consumer's offset (observed live --
+        // "Resetting offset ... to position offset=0" during a llm-gateway pod restart), replaying
+        // every already-processed completed event. Without this guard, an already-SUCCEEDED
+        // shot-list job re-runs persistFromLlmResponse against the OLD LLM output on top of the
+        // NOW-CURRENT screenplay's scene rows -- creator sees the old shot text mapped onto their
+        // edited scenes, i.e. "wrong data" that looks like a cache bug but is actually a rewrite.
+        // Only PENDING jobs are new work; anything else is already terminal.
+        if (job.getStatus() != ShotListJobStatus.PENDING) {
+            log.info("Skipping already-terminal shot-list jobId={} status={} on Kafka redelivery",
+                    job.getId(), job.getStatus());
+            return;
+        }
+
         if (event.status() == ChatJobCompletedEvent.Status.FAILED) {
             markFailed(job, event.errorMessage() == null ? "llm-gateway reported FAILED with no message" : event.errorMessage());
             return;
