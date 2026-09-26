@@ -84,6 +84,7 @@ public class ShotContextAssemblyService {
     private final GenerationThoughtService generationThoughtService;
     private final ContinuityBibleService continuityBibleService;
     private final MinioClient publicMinioClient;
+    private final com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository;
 
     public ShotContextAssemblyService(
             ShotRepository shotRepository,
@@ -102,7 +103,8 @@ public class ShotContextAssemblyService {
             CriticServiceClient criticServiceClient,
             GenerationThoughtService generationThoughtService,
             ContinuityBibleService continuityBibleService,
-            @Qualifier("publicMinioClient") MinioClient publicMinioClient
+            @Qualifier("publicMinioClient") MinioClient publicMinioClient,
+            com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository
     ) {
         this.shotRepository = shotRepository;
         this.projectRepository = projectRepository;
@@ -121,6 +123,7 @@ public class ShotContextAssemblyService {
         this.generationThoughtService = generationThoughtService;
         this.continuityBibleService = continuityBibleService;
         this.publicMinioClient = publicMinioClient;
+        this.shotReferenceImageRepository = shotReferenceImageRepository;
     }
 
     /**
@@ -247,8 +250,17 @@ public class ShotContextAssemblyService {
                             voice.builtinVoiceId(), shot.getEmotion(), languageCode);
                 })
                 .collect(Collectors.toList());
+        // Creator-uploaded multi-image reference bundle (V66). Loaded here so the outbound
+        // ShotContext carries them straight through to video-gen without a separate cross
+        // -service fetch. Empty list when the shot has none.
+        List<com.dalai.llama.preprod.service.videogen.shotcontext.ShotReferenceImage> referenceImages =
+                shotReferenceImageRepository.findByShotIdOrderByOrdinalAsc(shot.getId()).stream()
+                        .map(r -> new com.dalai.llama.preprod.service.videogen.shotcontext.ShotReferenceImage(
+                                r.getBucket(), r.getObjectKey(), r.getContentType(), r.getCaption(), r.getOrdinal()))
+                        .toList();
         return new ShotContext(base.shotRef(), base.narrative(), base.characters(), base.environment(), base.lighting(),
-                base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(), dialogueBeats);
+                base.camera(), base.productBrand(), base.technical(), base.continuityAnchors(), base.audioAmbience(),
+                dialogueBeats, referenceImages);
     }
 
     /** A beat's speaking character resolves to a prepared clone, raw sample, or stock voice. A

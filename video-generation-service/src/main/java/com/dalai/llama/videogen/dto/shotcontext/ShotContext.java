@@ -29,8 +29,26 @@ public record ShotContext(
         List<@Valid ReferenceFrame> referenceFrames,
         /** Set only on MOTION_GRAPHIC shots, and its presence is what identifies one. Null
          * everywhere else, so every other shot type composes its prompt exactly as before. */
-        @Valid MotionGraphic motionGraphic
+        @Valid MotionGraphic motionGraphic,
+        /** Creator-uploaded multi-image reference bundle for this shot (see pre-production
+         * -service V66 -- shot_reference_image rows on a shot whose parent scene was flagged
+         * needsMultiImage). Empty or null when the shot has no such bundle. These flow through
+         * saveReferences as SHOT_REFERENCE-kind rows and end up in reference_image_urls at
+         * dispatch, so the video model actually sees the images alongside the character-face /
+         * product-hero / DP-lighting refs it already gets. */
+        List<@Valid ShotReferenceImage> referenceImages
 ) {
+
+    /** One uploaded reference image on a shot -- mirror of pre-prod-service's
+     * ShotReferenceImageView. Caption is optional and (follow-up) will feed prompt text so the
+     * model knows what each image represents. */
+    public record ShotReferenceImage(
+            String bucket,
+            String objectKey,
+            String contentType,
+            String caption,
+            Integer ordinal
+    ) {}
 
     /** True when this shot is a motion graphic with something planned to animate. The single test
      * the prepare path branches on -- nothing else changes behaviour by shot type. */
@@ -43,7 +61,7 @@ public record ShotContext(
     public ShotContext withNarrative(Narrative replacement) {
         return new ShotContext(shotRef, replacement, characters, environment, lighting, camera,
                 productBrand, technical, continuityAnchors, audioAmbience, dialogueBeats, referenceFrames,
-                motionGraphic);
+                motionGraphic, referenceImages);
     }
 
     /** Pre-referenceFrames arity, kept so existing callers and tests compile unchanged. */
@@ -61,7 +79,7 @@ public record ShotContext(
             List<DialogueBeat> dialogueBeats
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, null, null);
+                continuityAnchors, audioAmbience, dialogueBeats, null, null, null);
     }
 
     /** Pre-motionGraphic arity, kept so existing callers and tests compile unchanged. */
@@ -80,6 +98,26 @@ public record ShotContext(
             List<ReferenceFrame> referenceFrames
     ) {
         this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
-                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, null);
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, null, null);
+    }
+
+    /** Pre-referenceImages arity -- keeps every existing motionGraphic-aware caller compatible. */
+    public ShotContext(
+            String shotRef,
+            Narrative narrative,
+            List<Character> characters,
+            Environment environment,
+            Lighting lighting,
+            Camera camera,
+            ProductBrand productBrand,
+            Technical technical,
+            List<ContinuityAnchor> continuityAnchors,
+            AudioAmbience audioAmbience,
+            List<DialogueBeat> dialogueBeats,
+            List<ReferenceFrame> referenceFrames,
+            MotionGraphic motionGraphic
+    ) {
+        this(shotRef, narrative, characters, environment, lighting, camera, productBrand, technical,
+                continuityAnchors, audioAmbience, dialogueBeats, referenceFrames, motionGraphic, null);
     }
 }

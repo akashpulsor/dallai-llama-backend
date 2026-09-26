@@ -795,6 +795,25 @@ public class ShotGenerationOrchestrator {
                     .slotIndex(slot++)
                     .build());
         }
+        // Creator-uploaded multi-image reference bundle (pre-prod-service V66). Ordinal on the
+        // source row governs the order the creator picked; keeping that in slotIndex means
+        // resolveReferenceImageUrls preserves it into reference_image_urls so the model sees
+        // e.g. "app flow" screenshots in the intended sequence.
+        if (shotContext.referenceImages() != null) {
+            List<ShotContext.ShotReferenceImage> sortedImages = new java.util.ArrayList<>(shotContext.referenceImages());
+            sortedImages.sort(java.util.Comparator.comparing(
+                    (ShotContext.ShotReferenceImage img) -> img.ordinal() == null ? Integer.MAX_VALUE : img.ordinal()));
+            for (ShotContext.ShotReferenceImage img : sortedImages) {
+                if (img.bucket() == null || img.objectKey() == null) continue;
+                references.add(ShotPromptReference.builder()
+                        .promptId(promptId)
+                        .refKind(ReferenceKind.SHOT_REFERENCE)
+                        .bucket(img.bucket())
+                        .objectKey(img.objectKey())
+                        .slotIndex(slot++)
+                        .build());
+            }
+        }
         if (!references.isEmpty()) {
             shotPromptReferenceRepository.saveAll(references);
         }
@@ -1046,7 +1065,8 @@ public class ShotGenerationOrchestrator {
                 || kind == ReferenceKind.PRIOR_SHOT_LAST_FRAME
                 || kind == ReferenceKind.PRODUCT_HERO
                 || kind == ReferenceKind.DP_LIGHTING
-                || kind == ReferenceKind.CAMERA_PLAN_IMAGE;
+                || kind == ReferenceKind.CAMERA_PLAN_IMAGE
+                || kind == ReferenceKind.SHOT_REFERENCE;
     }
 
     private void saveFoleyCues(UUID promptId, List<DerivedFoleyCue> cues) {
