@@ -50,6 +50,17 @@ public class ShotReferenceImage {
     @Column(name = "caption", length = 240)
     private String caption;
 
+    /** Free-text handle the video prompt refers to this asset by ("logo", "app home screen",
+     * "product pack front"). Images uploaded together share one tag, so a tag is also the group:
+     * "app flow" can be four screenshots while "logo" is one image.
+     *
+     * <p>This is what separates a tagged asset from a plain reference frame. A reference frame is
+     * loose guidance; a tagged asset is the real artwork that must appear verbatim, and the tag is
+     * how the prompt points at it instead of leaving the model to invent a logo. Null on rows
+     * predating V68 -- the composer falls back to the shot's multiImageLabel for those. */
+    @Column(name = "tag", length = 120)
+    private String tag;
+
     @Column(name = "ordinal", nullable = false)
     @Builder.Default
     private Integer ordinal = 0;

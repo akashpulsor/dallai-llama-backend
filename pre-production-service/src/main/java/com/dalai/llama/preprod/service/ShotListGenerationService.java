@@ -530,6 +530,35 @@ public class ShotListGenerationService {
         return toView(saved, castByCharacterKeyForProject(tenantId, shot.getProjectId()));
     }
 
+    /** Removes one shot and closes the gap in shot_number so the remaining list stays dense and
+     * 1..N -- everything downstream (film assembly, storyboard, reorder) orders by shot_number,
+     * and a hole makes "position 5" ambiguous. Child rows (images, reference images, dialogue
+     * beats, plans) are removed by the FK ON DELETE CASCADE the V4/V66 migrations declare, so
+     * this only has to delete the shot row itself. Refreshes the continuity bible and plan
+     * quality afterwards, same as createShot, since both are derived from the full shot list. */
+    @Transactional
+    public void deleteShot(UUID tenantId, UUID shotId) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        UUID projectId = shot.getProjectId();
+        shotRepository.delete(shot);
+        shotRepository.flush();
+
+        List<Shot> remaining = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId);
+        for (int i = 0; i < remaining.size(); i++) {
+            Shot s = remaining.get(i);
+            if (s.getShotNumber() == null || s.getShotNumber() != i + 1) {
+                s.setShotNumber(i + 1);
+                s.setUpdatedAt(OffsetDateTime.now());
+            }
+        }
+        shotRepository.saveAll(remaining);
+
+        continuityBibleService.refresh(tenantId, projectId);
+        shotPlanQualityService.refresh(tenantId, projectId);
+        log.info("Deleted shot shotId={} projectId={} remainingShots={}", shotId, projectId, remaining.size());
+    }
+
     private Map<String, ShotCastView> castByCharacterKeyForProject(UUID tenantId, UUID projectId) {
         return scriptRepository.findByProjectId(projectId)
                 .map(script -> resolveCastByCharacterKey(tenantId, projectId, script.getId()))

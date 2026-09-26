@@ -95,6 +95,15 @@ public class ShotListController extends BaseController {
         return ResponseEntity.ok(shotListGenerationService.createShot(tenant().tenantId(), projectId, request));
     }
 
+    /** Removes one shot and renumbers the rest so shot_number stays dense. Child rows (images,
+     * uploaded reference assets, dialogue beats, plans) go with it via FK cascade. There is no
+     * undo -- the creator regenerates or re-adds by hand. */
+    @org.springframework.web.bind.annotation.DeleteMapping("/v1/shots/{shotId}")
+    public ResponseEntity<Void> deleteShot(@PathVariable UUID shotId) {
+        shotListGenerationService.deleteShot(tenant().tenantId(), shotId);
+        return ResponseEntity.noContent().build();
+    }
+
     /** Hand-edit a shot's script line and/or length after the fact -- see {@link
      * UpdateShotRequest}'s class comment. */
     @PatchMapping("/v1/shots/{shotId}")

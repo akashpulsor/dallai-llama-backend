@@ -145,12 +145,40 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
         // structurally associated via each Character's faceRefBucket/faceRefObjectKey and the
         // CHARACTER_FACE reference row -- so "character1 is this image" holds automatically.
         if (shotContext.referenceImages() != null && !shotContext.referenceImages().isEmpty()) {
-            String label = shotContext.referenceImagesLabel();
-            String tag = (label == null || label.isBlank()) ? "reference frames" : label;
-            lines.add("Reference frames ('" + tag + "'): "
-                    + shotContext.referenceImages().size()
-                    + " creator-supplied image(s) at the end of the reference set describe the exact "
-                    + "content, states, or layout to depict on-screen for this shot -- treat them as the source of truth for that content.");
+            // Named, per-tag handles. A tagged asset is NOT loose guidance the way a storyboard
+            // reference frame is -- it is the real artwork that must appear verbatim (the actual
+            // logo, the actual app screens, the actual pack). Naming each group lets the prompt
+            // say "the logo" and have the model know precisely which attached image that is,
+            // instead of inventing one. Images uploaded together share a tag, so a tag is also
+            // the group: "app flow" can be four screenshots, "logo" one image.
+            //
+            // Positions are 1-based over the SORTED list and must match the order
+            // reference_image_urls is built in downstream, or the numbering lies.
+            List<PromptDtos.ShotReferenceImage> ordered = shotContext.referenceImages().stream()
+                    .filter(java.util.Objects::nonNull)
+                    .sorted(java.util.Comparator.comparing(
+                            r -> r.ordinal() == null ? Integer.MAX_VALUE : r.ordinal()))
+                    .toList();
+            // Preserve first-appearance order of tags so the listing reads in upload order.
+            java.util.Map<String, List<Integer>> positionsByTag = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < ordered.size(); i++) {
+                String raw = ordered.get(i).tag();
+                // Untagged rows (pre-V68) fall back to the shot-level bundle label so older
+                // uploads keep working instead of silently losing their name.
+                String tag = (raw == null || raw.isBlank()) ? shotContext.referenceImagesLabel() : raw.trim();
+                if (tag == null || tag.isBlank()) tag = "reference frames";
+                positionsByTag.computeIfAbsent(tag, t -> new java.util.ArrayList<>()).add(i + 1);
+            }
+            StringBuilder assets = new StringBuilder(
+                    "Tagged reference assets -- these are REAL creator-supplied artwork attached at the end of "
+                            + "the reference set, not style inspiration. Reproduce them exactly as given; never "
+                            + "redraw, restyle or invent a substitute. When the shot calls for one of these by "
+                            + "name, use that exact image:");
+            positionsByTag.forEach((tag, positions) -> assets.append("\n  - \"").append(tag).append("\" = ")
+                    .append(positions.size() == 1 ? "reference image " : "reference images ")
+                    .append(positions.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")))
+                    .append(positions.size() > 1 ? " (in that order)" : ""));
+            lines.add(assets.toString());
         }
         // Structural scene-type tag from the creator. Named intent, not a scenic description --
         // "this is an IDENTITY beat" tells the model to hold on faces; "MOTION_GRAPHIC" tells it

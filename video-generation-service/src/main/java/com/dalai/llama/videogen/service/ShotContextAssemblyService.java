@@ -706,7 +706,7 @@ public class ShotContextAssemblyService {
         return refs.stream()
                 .sorted(Comparator.comparing(r -> r.ordinal() == null ? Integer.MAX_VALUE : r.ordinal()))
                 .map(r -> new ShotContext.ShotReferenceImage(
-                        r.bucket(), r.objectKey(), r.contentType(), r.caption(), r.ordinal()))
+                        r.bucket(), r.objectKey(), r.contentType(), r.caption(), r.tag(), r.ordinal()))
                 .toList();
     }
 

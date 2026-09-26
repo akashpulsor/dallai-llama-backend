@@ -16,6 +16,9 @@ public record ShotReferenceImageView(
         String signedUrl,
         String contentType,
         String caption,
+        /** Free-text handle the video prompt refers to this asset by ("logo", "app home
+         * screen"). Images uploaded together share a tag, so the tag also groups them. */
+        String tag,
         Integer ordinal,
         OffsetDateTime createdAt
 ) {

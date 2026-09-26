@@ -34,8 +34,9 @@ public class ShotReferenceImageController extends BaseController {
     public ResponseEntity<List<ShotReferenceImageView>> upload(
             @PathVariable UUID shotId,
             @RequestParam("files") List<MultipartFile> files,
-            @RequestParam(value = "captions", required = false) List<String> captions) {
-        return ResponseEntity.ok(shotReferenceImageService.upload(tenant().tenantId(), shotId, files, captions));
+            @RequestParam(value = "captions", required = false) List<String> captions,
+            @RequestParam(value = "tag", required = false) String tag) {
+        return ResponseEntity.ok(shotReferenceImageService.upload(tenant().tenantId(), shotId, files, captions, tag));
     }
 
     @GetMapping("/v1/shots/{shotId}/reference-images")

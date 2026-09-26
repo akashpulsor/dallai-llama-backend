@@ -66,6 +66,18 @@ public class ShotReferenceImageService {
 
     @Transactional
     public List<ShotReferenceImageView> upload(UUID tenantId, UUID shotId, List<MultipartFile> files, List<String> captions) {
+        return upload(tenantId, shotId, files, captions, null);
+    }
+
+    /** {@code tag} is the free-text handle the video prompt will refer to this upload by ("logo",
+     * "app home screen"). Every file in one call shares it, which is what makes a tag a GROUP:
+     * uploading four screenshots under "app flow" is one tagged asset set, uploading one file
+     * under "logo" is another. Re-uploading with an existing tag extends that group rather than
+     * replacing it. Null tag keeps the pre-V68 behaviour (composer falls back to the shot's
+     * multiImageLabel). */
+    @Transactional
+    public List<ShotReferenceImageView> upload(UUID tenantId, UUID shotId, List<MultipartFile> files,
+                                               List<String> captions, String tag) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         if (files == null || files.isEmpty()) {
@@ -118,6 +130,7 @@ public class ShotReferenceImageService {
                     .objectKey(objectKey)
                     .contentType(contentType)
                     .caption(caption == null || caption.isBlank() ? null : caption.trim())
+                    .tag(tag == null || tag.isBlank() ? null : tag.trim())
                     .ordinal(startOrdinal + i)
                     .createdAt(now)
                     .build());
@@ -171,7 +184,7 @@ public class ShotReferenceImageService {
         return new ShotReferenceImageView(
                 image.getId(), image.getShotId(),
                 image.getBucket(), image.getObjectKey(), signedUrl(image.getBucket(), image.getObjectKey()),
-                image.getContentType(), image.getCaption(), image.getOrdinal(), image.getCreatedAt());
+                image.getContentType(), image.getCaption(), image.getTag(), image.getOrdinal(), image.getCreatedAt());
     }
 
     /** Presigned browser-accessible URL for one-hour display. Nullable on presign failure --

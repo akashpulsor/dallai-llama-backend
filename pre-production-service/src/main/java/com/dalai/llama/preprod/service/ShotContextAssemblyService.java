@@ -259,7 +259,7 @@ public class ShotContextAssemblyService {
         List<com.dalai.llama.preprod.service.videogen.shotcontext.ShotReferenceImage> referenceImages =
                 shotReferenceImageRepository.findByShotIdOrderByOrdinalAsc(shot.getId()).stream()
                         .map(r -> new com.dalai.llama.preprod.service.videogen.shotcontext.ShotReferenceImage(
-                                r.getBucket(), r.getObjectKey(), r.getContentType(), r.getCaption(), r.getOrdinal()))
+                                r.getBucket(), r.getObjectKey(), r.getContentType(), r.getCaption(), r.getTag(), r.getOrdinal()))
                         .toList();
         String referenceImagesLabel = shot.getMultiImageLabel();
         String sceneType = shot.getSceneType() == null ? null : shot.getSceneType().name();

@@ -55,6 +55,8 @@ public record ShotContext(
             String objectKey,
             String contentType,
             String caption,
+            /** Free-text handle the prompt refers to this asset by ("logo", "app home screen"). */
+            String tag,
             Integer ordinal
     ) {}
 

@@ -148,6 +148,7 @@ public final class PreProductionViews {
             String objectKey,
             String contentType,
             String caption,
+            String tag,
             Integer ordinal
     ) {}
 

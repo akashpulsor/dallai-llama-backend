@@ -80,6 +80,8 @@ public final class PromptDtos {
             String objectKey,
             String contentType,
             String caption,
+            /** Free-text handle the composed prompt names this asset by. */
+            String tag,
             Integer ordinal
     ) {}
 
