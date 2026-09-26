@@ -370,6 +370,19 @@ public class Shot {
     @Column(name = "dubbed_audio_object_key", length = 512)
     private String dubbedAudioObjectKey;
 
+    /** Inherited from ScreenplayScene.needsMultiImage at shot-list generation time -- true
+     * means the shot page shows a multi-image upload panel and the uploaded ShotReferenceImage
+     * rows get tagged into the video-generation prompt so the model actually uses them. */
+    @Column(name = "needs_multi_image", nullable = false)
+    @Builder.Default
+    private Boolean needsMultiImage = false;
+
+    /** Inherited from ScreenplayScene.multiImageLabel -- creator-set bundle name ("app flow",
+     * "before/after", "product angles") the upload UI labels the panel with and the video-gen
+     * prompt uses to reference the image group. Null when needsMultiImage is false. */
+    @Column(name = "multi_image_label", length = 120)
+    private String multiImageLabel;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

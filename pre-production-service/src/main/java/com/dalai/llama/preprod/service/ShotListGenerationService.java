@@ -215,6 +215,12 @@ public class ShotListGenerationService {
         }
         Map<Integer, UUID> sceneIdByNumber = scenes.stream()
                 .collect(Collectors.toMap(ScreenplayScene::getSceneNumber, ScreenplayScene::getId, (a, b) -> a));
+        // Also index the whole scene so toShot() can propagate the needs-multi-image flag +
+        // label to each shot it produces (see V66 -- the shot page reads these to reveal the
+        // multi-image upload UI, and the video-gen prompt uses the label to reference the
+        // bundle).
+        Map<Integer, ScreenplayScene> sceneByNumber = scenes.stream()
+                .collect(Collectors.toMap(ScreenplayScene::getSceneNumber, s -> s, (a, b) -> a));
         var projectConfig = projectConfigService.getEntityOrDefault(projectId);
         AspectRatio configuredAspectRatio = projectConfig == null ? null : projectConfig.getAspectRatio();
 
@@ -238,7 +244,7 @@ public class ShotListGenerationService {
 
         AspectRatio defaultAspectRatio = configuredAspectRatio == null ? AspectRatio.RATIO_9_16 : configuredAspectRatio;
         List<Shot> shots = parsed.shots().stream()
-                .map(item -> toShot(tenantId, projectId, project.getLockedIdeaId(), sceneIdByNumber, item, now, defaultAspectRatio))
+                .map(item -> toShot(tenantId, projectId, project.getLockedIdeaId(), sceneIdByNumber, sceneByNumber, item, now, defaultAspectRatio))
                 .map(shotRepository::save)
                 .collect(Collectors.toList());
 
@@ -358,6 +364,11 @@ public class ShotListGenerationService {
                 .projectId(projectId)
                 .lockedIdeaId(project.getLockedIdeaId())
                 .screenplaySceneId(scene.getId())
+                // Manually-created shots inherit the multi-image flag from their parent scene
+                // too, same as the AI-generated toShot() path -- otherwise a hand-added shot in a
+                // flagged scene wouldn't show the upload UI.
+                .needsMultiImage(Boolean.TRUE.equals(scene.getNeedsMultiImage()))
+                .multiImageLabel(scene.getMultiImageLabel())
                 .shotRef("shot-%02d-%03d".formatted(scene.getSceneNumber(), nextShotNumber))
                 .shotNumber(nextShotNumber)
                 .shotType(request.shotType() == null ? ShotType.ACTION : request.shotType())
@@ -458,19 +469,23 @@ public class ShotListGenerationService {
         }
     }
 
-    private Shot toShot(UUID tenantId, UUID projectId, UUID lockedIdeaId, Map<Integer, UUID> sceneIdByNumber,
+    private Shot toShot(UUID tenantId, UUID projectId, UUID lockedIdeaId,
+                         Map<Integer, UUID> sceneIdByNumber, Map<Integer, ScreenplayScene> sceneByNumber,
                          ShotListGenerationResult.ShotItem item, OffsetDateTime now, AspectRatio defaultAspectRatio) {
         UUID sceneId = sceneIdByNumber.get(item.sceneNumber());
         if (sceneId == null) {
             throw PreProductionException.upstream(
                     "PRE_PROD_SHOT_LIST_GENERATE referenced unknown sceneNumber=" + item.sceneNumber());
         }
+        ScreenplayScene scene = sceneByNumber.get(item.sceneNumber());
         int shotNumber = item.shotNumber() == null ? 0 : item.shotNumber();
         Shot shot = Shot.builder()
                 .tenantId(tenantId)
                 .projectId(projectId)
                 .lockedIdeaId(lockedIdeaId)
                 .screenplaySceneId(sceneId)
+                .needsMultiImage(scene != null && Boolean.TRUE.equals(scene.getNeedsMultiImage()))
+                .multiImageLabel(scene == null ? null : scene.getMultiImageLabel())
                 .shotRef("shot-%02d-%03d".formatted(item.sceneNumber(), shotNumber))
                 .shotNumber(shotNumber)
                 .shotType(TolerantEnumParser.parse(ShotType.class, item.shotType(), ShotType.ACTION))
@@ -556,7 +571,8 @@ public class ShotListGenerationService {
                 shot.getExecutionDifficulty(), shot.getCinematicExecution(), shot.getRookieFriendlyGuide(),
                 shot.getSketchPrompt(), shot.getCoverageType(), shot.getScreenDirection(), shot.getPeopleInFrame(),
                 shot.getCulturalReferences(), shot.getProductShotType(), shot.getShootDay(), shot.getShootBlock(),
-                shot.getDirectorNote(), CinematographyMapper.toView(shot), cast);
+                shot.getDirectorNote(), CinematographyMapper.toView(shot), cast,
+                Boolean.TRUE.equals(shot.getNeedsMultiImage()), shot.getMultiImageLabel());
     }
 
     /** No one on screen but there's still a line to speak (voiceOver, no primaryCharacterKey) --

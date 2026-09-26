@@ -58,6 +58,12 @@ public record ShotView(
         String shootBlock,
         String directorNote,
         CinematographyView cinematography,
-        ShotCastView cast
+        ShotCastView cast,
+        /** True when this shot inherited the multi-image reference flag from its scene (V65 ->
+         * V66). Frontend reveals the multi-image upload panel; video-generation prompt walks
+         * the shot_reference_image rows and captions them for the model. */
+        Boolean needsMultiImage,
+        /** Creator-set label for the multi-image bundle (e.g. "app flow", "before/after"). */
+        String multiImageLabel
 ) {
 }
