@@ -193,7 +193,8 @@ public class FalAiProvider implements LlmProvider {
             case "lip_sync" -> lipSyncRequestBody(request);
             case "audio_video_merge" -> audioVideoMergeRequestBody(request);
             case "tts" -> ttsRequestBody(request);
-            case "foley", "music" -> audioGenerationRequestBody(request);
+            case "foley" -> audioGenerationRequestBody(request);
+            case "music" -> musicRequestBody(request);
             case "transcription" -> transcriptionRequestBody(request);
             case "video_edit" -> videoEditRequestBody(request);
             case "image" -> imageRequestBody(request);
@@ -427,6 +428,47 @@ public class FalAiProvider implements LlmProvider {
         Map<String, Object> params = request.params() == null ? Map.of() : request.params();
         Map<String, Object> body = new LinkedHashMap<>(params);
         body.putIfAbsent("prompt", promptFromMessages(request));
+        return body;
+    }
+
+    /**
+     * {@code fal-ai/ace-step}: text-to-music, queued, verified against fal's published schema --
+     * {@code tags} (comma-separated style descriptors, required), {@code lyrics} (empty or
+     * {@code [instrumental]} for a vocal-free result), {@code duration} in SECONDS as a float.
+     *
+     * <p>Duration translation lives here and only here. Callers state the score length once, in
+     * seconds; ElevenLabs Music wants {@code music_length_ms} and this wants {@code duration}, so
+     * each adapter reads the unit it needs rather than domain code guessing which provider is
+     * configured. A caller that sent only milliseconds still gets the right length because that
+     * is converted back here.
+     *
+     * <p>Known limitation, deliberately not papered over: ACE-Step is tag-driven, not prose-
+     * driven. A master prompt describing timestamped sections will steer style but will not be
+     * honoured as a timeline the way ElevenLabs Music honours it. The prompt is still sent (fal
+     * accepts it on the prompt-to-audio variant and it costs nothing to include) but continuous
+     * section-accurate scoring is an ElevenLabs strength, not an ACE-Step one.
+     */
+    private Map<String, Object> musicRequestBody(CanonicalRequest request) {
+        Map<String, Object> params = request.params() == null ? Map.of() : request.params();
+        Map<String, Object> body = new LinkedHashMap<>(params);
+        String prompt = firstNonBlank(String.valueOf(params.getOrDefault("prompt", "")), promptFromMessages(request));
+        body.put("prompt", prompt);
+        // tags is the field ACE-Step actually steers on. Callers that already supply one win;
+        // otherwise the prompt doubles as the style descriptor.
+        body.putIfAbsent("tags", prompt);
+
+        Object seconds = params.get("duration");
+        if (seconds == null) {
+            Object lengthMs = params.get("music_length_ms");
+            if (lengthMs != null) {
+                body.put("duration", Double.parseDouble(String.valueOf(lengthMs)) / 1000.0);
+            }
+        }
+        // Millisecond keys are ElevenLabs' vocabulary; sending them on would be an unknown field.
+        body.remove("music_length_ms");
+        // Empty lyrics is fal's documented signal for an instrumental result, which is what a
+        // background score always is here.
+        body.putIfAbsent("lyrics", "");
         return body;
     }
 

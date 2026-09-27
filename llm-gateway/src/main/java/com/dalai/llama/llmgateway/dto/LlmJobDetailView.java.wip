@@ -1,0 +1,54 @@
+package com.dalai.llama.llmgateway.dto;
+
+import com.dalai.llama.llmgateway.domain.entity.LlmJob;
+
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+/**
+ * Full-detail view of a single {@link LlmJob} row for the ops-dashboard "prompt debug" panel.
+ * Same rows as {@link StuckLlmJobView} plus the two big payload columns -- {@code requestContent}
+ * (the exact prompt sent to the provider) and {@code resultContent} (the exact response received).
+ * Kept as a separate DTO from the list view because the payloads can be tens of KB each; sending
+ * them in the list would balloon the recent-jobs response and pin memory for the browser table.
+ */
+public record LlmJobDetailView(
+        UUID jobId,
+        String tenantId,
+        UUID projectId,
+        String modelId,
+        String status,
+        String taskKey,
+        Integer inputTokens,
+        Integer outputTokens,
+        BigDecimal cost,
+        int attemptCount,
+        String lastError,
+        OffsetDateTime createdAt,
+        OffsetDateTime processingStartedAt,
+        OffsetDateTime completedAt,
+        String requestContent,
+        String resultContent
+) {
+    public static LlmJobDetailView from(LlmJob j) {
+        return new LlmJobDetailView(
+                j.getJobId(),
+                j.getTenantId(),
+                j.getProjectId(),
+                j.getModelId(),
+                j.getStatus() == null ? null : j.getStatus().name(),
+                j.getTaskKey(),
+                j.getInputTokens(),
+                j.getOutputTokens(),
+                j.getCost(),
+                j.getAttemptCount(),
+                j.getLastError(),
+                j.getCreatedAt(),
+                j.getProcessingStartedAt(),
+                j.getCompletedAt(),
+                j.getRequestContent(),
+                j.getResultContent()
+        );
+    }
+}
