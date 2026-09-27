@@ -45,9 +45,12 @@ public class MusicPlanController extends BaseController {
         return ResponseEntity.ok(plannerService.plan(tenant().tenantId(), projectId));
     }
 
+    /** The plan, plus whether the shot timeline has moved under it since it was planned. The
+     * staleness flag is why this returns a view rather than the bare plan: a score composed for
+     * a 30s film laid under a 34s one is the failure this surfaces. */
     @GetMapping("/v1/projects/{projectId}/music-plan")
-    public ResponseEntity<MusicPlan> get(@PathVariable UUID projectId) {
-        return ResponseEntity.ok(plannerService.get(tenant().tenantId(), projectId));
+    public ResponseEntity<MusicDirectorPlannerService.MusicPlanView> get(@PathVariable UUID projectId) {
+        return ResponseEntity.ok(plannerService.getView(tenant().tenantId(), projectId));
     }
 
     /** Hand-edit the generation prompt without re-planning. The structured plan is left as it

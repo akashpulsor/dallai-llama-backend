@@ -134,10 +134,48 @@ public class MusicDirectorPlannerService {
         return plan;
     }
 
+    /**
+     * The stored plan, plus whether the shot timeline has moved under it.
+     *
+     * <p>A plan is scored against the timeline that existed when it was planned. Retime a shot,
+     * delete one, or add one, and the score no longer matches the film -- it would be laid under
+     * a runtime it was not composed for. Nothing recomputes automatically (re-planning is a
+     * model call, and silently spending on one because a creator nudged a duration would be
+     * worse), so the staleness is surfaced and the creator decides.
+     */
+    @Transactional(readOnly = true)
+    public MusicPlanView getView(UUID tenantId, UUID projectId) {
+        MusicPlanRecord record = require(tenantId, projectId);
+        MusicPlan plan = toPlan(record);
+        double planned = record.getTotalDurationSeconds().doubleValue();
+        double current = currentTimelineSeconds(projectId);
+        // Same tolerance the validator uses: sub-frame drift is not a changed edit.
+        boolean stale = Math.abs(current - planned) > 0.05;
+        return new MusicPlanView(plan, stale, current);
+    }
+
     @Transactional(readOnly = true)
     public MusicPlan get(UUID tenantId, UUID projectId) {
         return toPlan(require(tenantId, projectId));
     }
+
+    /** The film's length as the shots currently stand -- the number a fresh plan would be built
+     * against. */
+    private double currentTimelineSeconds(UUID projectId) {
+        return shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
+                .mapToDouble(shot -> shot.getDurationSeconds() == null ? 0 : shot.getDurationSeconds())
+                .sum();
+    }
+
+    /**
+     * A plan with the one fact the creator needs that is not in the plan itself: whether it still
+     * fits the film.
+     *
+     * @param stale                  true when the shot timeline has changed since planning, so the
+     *                               score is composed for a different runtime than the film now has.
+     * @param currentTimelineSeconds what the film is now, for the UI to show against the planned length.
+     */
+    public record MusicPlanView(MusicPlan plan, boolean stale, double currentTimelineSeconds) {}
 
     /**
      * Hand-edits the prompt the score is generated from, leaving the structured plan intact.

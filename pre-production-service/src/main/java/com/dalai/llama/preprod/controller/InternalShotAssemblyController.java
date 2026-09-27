@@ -11,6 +11,7 @@ import com.dalai.llama.preprod.dto.ProjectConfigView;
 import com.dalai.llama.preprod.dto.ScriptView;
 import com.dalai.llama.preprod.dto.ShotDialogueView;
 import com.dalai.llama.preprod.dto.ShotBackgroundMusicView;
+import com.dalai.llama.preprod.service.PreProductionException;
 import com.dalai.llama.preprod.dto.ShotDialogueBeatView;
 import com.dalai.llama.preprod.dto.ShotImageView;
 import com.dalai.llama.preprod.dto.ShotProductReferenceView;
@@ -66,6 +67,7 @@ public class InternalShotAssemblyController {
     private final LightingPlanService lightingPlanService;
     private final ShotImageService shotImageService;
     private final ShotBackgroundMusicService shotBackgroundMusicService;
+    private final com.dalai.llama.preprod.service.music.ProjectScoreGenerationService projectScoreGenerationService;
     private final ShotProductReferenceService shotProductReferenceService;
     private final PrepareBundleAssembler prepareBundleAssembler;
     private final DialogueDetailsService dialogueDetailsService;
@@ -82,6 +84,7 @@ public class InternalShotAssemblyController {
             LightingPlanService lightingPlanService,
             ShotImageService shotImageService,
             ShotBackgroundMusicService shotBackgroundMusicService,
+            com.dalai.llama.preprod.service.music.ProjectScoreGenerationService projectScoreGenerationService,
             ShotProductReferenceService shotProductReferenceService,
             PrepareBundleAssembler prepareBundleAssembler,
             DialogueDetailsService dialogueDetailsService
@@ -97,6 +100,7 @@ public class InternalShotAssemblyController {
         this.lightingPlanService = lightingPlanService;
         this.shotImageService = shotImageService;
         this.shotBackgroundMusicService = shotBackgroundMusicService;
+        this.projectScoreGenerationService = projectScoreGenerationService;
         this.shotProductReferenceService = shotProductReferenceService;
         this.prepareBundleAssembler = prepareBundleAssembler;
         this.dialogueDetailsService = dialogueDetailsService;
@@ -231,5 +235,18 @@ public class InternalShotAssemblyController {
     @GetMapping("/shots/{shotId}/product-reference")
     public ResponseEntity<ShotProductReferenceView> productReference(@PathVariable UUID tenantId, @PathVariable UUID shotId) {
         return ResponseEntity.ok(shotProductReferenceService.get(tenantId, shotId));
+    }
+
+    /** The project's whole-video score, for post-production to lay under the finished film.
+     * 204 when the project has no generated score -- a film without one is ordinary, and the
+     * caller assembles it dry rather than failing. */
+    @GetMapping("/projects/{projectId}/score")
+    public ResponseEntity<com.dalai.llama.preprod.service.music.ProjectScoreGenerationService.ScoreView> projectScore(
+            @PathVariable UUID tenantId, @PathVariable UUID projectId) {
+        try {
+            return ResponseEntity.ok(projectScoreGenerationService.get(tenantId, projectId));
+        } catch (PreProductionException ex) {
+            return ResponseEntity.noContent().build();
+        }
     }
 }

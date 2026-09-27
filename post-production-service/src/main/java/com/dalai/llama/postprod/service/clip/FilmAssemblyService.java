@@ -215,8 +215,30 @@ public class FilmAssemblyService {
             }
 
             int[] size = targetSize(render.getTenantId(), render.getProjectId(), cutsInOrder);
-            Path output = workDir.resolve("film.mp4");
-            ffmpeg.concat(clips, size[0], size[1], output);
+            Path joined = workDir.resolve("film.mp4");
+            ffmpeg.concat(clips, size[0], size[1], joined);
+
+            // The project's planned score, laid under the joined film. Best-effort by design:
+            // a project that has not had a score generated assembles exactly as it did before,
+            // and a score that cannot be fetched must not cost the creator a film that
+            // otherwise rendered fine.
+            Path output = joined;
+            String scoreUrl = preProductionClient.getProjectScoreUrl(render.getTenantId(), render.getProjectId());
+            if (scoreUrl != null && !scoreUrl.isBlank()) {
+                try {
+                    Path score = workDir.resolve("score.mp3");
+                    fetchToFile(scoreUrl, score);
+                    Path scored = workDir.resolve("film-scored.mp4");
+                    ffmpeg.layScoreUnderFilm(joined, score, scored);
+                    output = scored;
+                    log.info("Laid the project score under the film renderId={} projectId={}",
+                            renderId, render.getProjectId());
+                } catch (RuntimeException ex) {
+                    log.warn("Could not lay the score under the film renderId={} -- assembling without it: {}",
+                            renderId, ex.getMessage());
+                    output = joined;
+                }
+            }
 
             ClipProbe probe = ffmpeg.probe(output);
             if (!probe.isPlayable()) {
@@ -458,6 +480,17 @@ public class FilmAssemblyService {
 
         public boolean isReady() {
             return total > 0 && missingShotRefs.isEmpty();
+        }
+    }
+
+    /** Pulls a presigned asset to disk for ffmpeg. Deliberately local rather than shared with
+     * ShotClipVersionService's copy: that one is private to a different concern, and one small
+     * duplicated download is cheaper than widening another class's surface for it. */
+    private void fetchToFile(String url, java.nio.file.Path target) {
+        try (var in = java.net.URI.create(url).toURL().openStream()) {
+            java.nio.file.Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception ex) {
+            throw new ClipProcessingException("Could not download the project score: " + ex.getMessage());
         }
     }
 }

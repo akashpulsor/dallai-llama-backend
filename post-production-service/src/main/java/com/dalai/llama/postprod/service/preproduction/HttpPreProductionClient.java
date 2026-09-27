@@ -134,4 +134,21 @@ public class HttpPreProductionClient implements PreProductionClient {
 
     /** Only the field this service reads off the background-music view. */
     private record BackgroundMusic(String signedUrl) {}
+
+    @Override
+    public String getProjectScoreUrl(UUID tenantId, UUID projectId) {
+        try {
+            ProjectScore score = webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/score", tenantId, projectId)
+                    .retrieve()
+                    .bodyToMono(ProjectScore.class)
+                    .block(java.time.Duration.ofMillis(timeoutMs));
+            return score == null ? null : score.signedUrl();
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException.NotFound ex) {
+            return null;
+        }
+    }
+
+    /** Only the field this service reads off the score view. Field name must match the wire. */
+    private record ProjectScore(String signedUrl) {}
 }

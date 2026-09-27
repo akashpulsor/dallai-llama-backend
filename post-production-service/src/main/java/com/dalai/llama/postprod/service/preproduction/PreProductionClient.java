@@ -32,4 +32,8 @@ public interface PreProductionClient {
      * uploaded. Null rather than an exception: a shot with no bed is ordinary, and the caller
      * decides whether that is a problem. */
     String getBackgroundMusicUrl(UUID tenantId, UUID shotId);
+
+    /** Presigned URL of the project's whole-video score, or null when none has been generated.
+     * Null rather than an exception: a film without a score is ordinary and assembles dry. */
+    String getProjectScoreUrl(UUID tenantId, UUID projectId);
 }

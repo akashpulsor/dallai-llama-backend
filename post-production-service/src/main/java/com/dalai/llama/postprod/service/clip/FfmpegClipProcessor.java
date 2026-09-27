@@ -176,6 +176,30 @@ public class FfmpegClipProcessor {
         run(cmd);
     }
 
+    /**
+     * Lays the project's score under a finished film, keeping the film's own audio on top.
+     *
+     * <p>This is what makes planning a score worth doing -- without it the track is generated,
+     * stored and never heard. The film already carries dialogue and per-shot audio from the
+     * concat, so the score is mixed underneath rather than replacing anything.
+     *
+     * <p>The score is ducked to {@code 0.22} and the film's audio left at full. That is a fixed
+     * ratio, not sidechain ducking: the planner is asked to thin the ARRANGEMENT under dialogue,
+     * which solves the same problem musically and avoids a second, competing ducking system.
+     * {@code apad} then {@code -shortest} cuts the score to the film, so a score that ran a
+     * little long is trimmed rather than extending the runtime -- and one that came back short
+     * leaves the tail dry instead of truncating the picture.
+     *
+     * <p>Video is stream-copied: the film is not re-encoded to add music.
+     */
+    public void layScoreUnderFilm(Path film, Path score, Path output) {
+        run(List.of("ffmpeg", "-y", "-i", film.toString(), "-i", score.toString(),
+                "-filter_complex",
+                "[1:a]volume=0.22,apad[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                "-map", "0:v:0", "-map", "[a]",
+                "-c:v", "copy", "-c:a", "aac", "-shortest", output.toString()));
+    }
+
     /** The picture untouched, carrying silence instead of whatever it decided to say. */
     public void stripAudio(Path clip, Path output) {
         run(List.of("ffmpeg", "-y", "-i", clip.toString(),
