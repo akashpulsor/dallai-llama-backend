@@ -2,6 +2,7 @@ package com.dalai.llama.postprod.controller;
 
 import com.dalai.llama.postprod.domain.entity.ShotClipVersion;
 import com.dalai.llama.postprod.dto.ShotClipVersionView;
+import com.dalai.llama.postprod.domain.ClipOrigin;
 import com.dalai.llama.postprod.service.clip.ShotClipVersionService;
 import com.dalai.llama.postprod.web.TenantContext;
 import com.dalai.llama.postprod.web.TenantContextHolder;
@@ -74,6 +75,50 @@ public class ShotClipVersionController {
                                                       @PathVariable UUID shotId,
                                                       @RequestParam(required = false) String shotRef) {
         return ResponseEntity.ok(toView(clipVersionService.createSilentPreview(context(projectId, shotId, shotRef))));
+    }
+
+    /** The picture stretched to fill a longer slot than it was generated for, muted.
+     *
+     * <p>{@code targetSeconds} is the length the shot plan wants. Generate short to save money,
+     * retime to the planned length, watch it, then accept -- or don't, if the slow motion reads
+     * badly for that beat. Run /dubbed afterwards to put the cloned line back at normal speed. */
+    @PostMapping("/retimed")
+    public ResponseEntity<ShotClipVersionView> retimed(@PathVariable UUID projectId,
+                                                       @PathVariable UUID shotId,
+                                                       @RequestParam int targetSeconds,
+                                                       @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(toView(
+                clipVersionService.createRetimedPreview(context(projectId, shotId, shotRef), targetSeconds)));
+    }
+
+    /** Render a combination to watch, without keeping it.
+     *
+     * <p>Any mix of: stretch to {@code targetSeconds}, lay on the dubbed line, lay on the
+     * background music. Produces a throwaway object and returns a URL to play it -- no version
+     * row, nothing the film can pick up. Keep it with /keep-preview, or do nothing and it ages
+     * out. */
+    @PostMapping("/preview-mix")
+    public ResponseEntity<ShotClipVersionService.PreviewMix> previewMix(
+            @PathVariable UUID projectId,
+            @PathVariable UUID shotId,
+            @RequestParam(required = false) Integer targetSeconds,
+            @RequestParam(defaultValue = "false") boolean withDub,
+            @RequestParam(defaultValue = "false") boolean withMusic,
+            @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(clipVersionService.previewMix(
+                context(projectId, shotId, shotRef), targetSeconds, withDub, withMusic));
+    }
+
+    /** Keep a preview: promotes it to a real version without re-rendering. */
+    @PostMapping("/keep-preview")
+    public ResponseEntity<ShotClipVersionView> keepPreview(
+            @PathVariable UUID projectId,
+            @PathVariable UUID shotId,
+            @RequestParam String previewKey,
+            @RequestParam(defaultValue = "RETIMED") ClipOrigin origin,
+            @RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(toView(
+                clipVersionService.keepPreview(context(projectId, shotId, shotRef), previewKey, origin)));
     }
 
     /** A cut the creator made themselves and brought back. */

@@ -47,6 +47,7 @@ public class ShotClipVersionService {
     private final VideoGenerationClient videoGenerationClient;
     private final FfmpegClipProcessor ffmpeg;
     private final ClipObjectStore objectStore;
+    private final com.dalai.llama.postprod.service.preproduction.PreProductionClient preProductionClient;
 
     /** Every cut of a shot, newest first, each with a URL that plays so it can be judged before it
      * is chosen. */
@@ -116,6 +117,106 @@ public class ShotClipVersionService {
         ShotClipSource source = clipSource(context);
         return cut(context, source, ClipOrigin.SILENT, (work, clip, output) -> ffmpeg.stripAudio(clip, output));
     }
+
+    /** The same picture stretched to {@code targetSeconds}, muted.
+     *
+     * <p>The point of generating a shot shorter than the plan calls for: pay for 2s, stretch to 3s,
+     * and decide by watching it whether the slow motion is acceptable for that beat. Muted by
+     * construction -- run the dubbed cut afterwards to put the cloned line back at normal speed. */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
+    })
+    @Transactional
+    public ShotClipVersion createRetimedPreview(Context context, int targetSeconds) {
+        ShotClipSource source = clipSource(context);
+        return cut(context, source, ClipOrigin.RETIMED,
+                (work, clip, output) -> ffmpeg.retime(clip, targetSeconds, output));
+    }
+
+    /**
+     * Renders a combination without committing to it: optionally stretched, optionally with the
+     * dubbed line, optionally with the background music. Writes a throwaway object and hands back
+     * a URL to play. No version row, nothing the film can pick up.
+     *
+     * <p>This is the whole point of the flow. Retiming and dubbing each used to write a version
+     * the moment they ran, so the only way to hear the combination was to commit to it and clean
+     * up afterwards if it was wrong. Now the creator watches first and {@link #keepPreview} is
+     * what makes it real -- a discarded preview is just an object that ages out.
+     */
+    public PreviewMix previewMix(Context context, Integer targetSeconds, boolean withDub, boolean withMusic) {
+        ShotClipSource source = clipSource(context);
+        if (withDub && !source.hasDub()) {
+            throw new ClipProcessingException(
+                    "Nothing has been dubbed for this shot yet, so there is no voice to put on it");
+        }
+        String musicUrl = withMusic ? preProductionClient.getBackgroundMusicUrl(context.tenantId(), context.shotId()) : null;
+        if (withMusic && (musicUrl == null || musicUrl.isBlank())) {
+            throw new ClipProcessingException(
+                    "No background music has been generated or uploaded for this shot yet");
+        }
+
+        ShotClipVersion current = repository.findByShotIdAndStatus(context.shotId(), ClipVersionStatus.ACTIVE)
+                .orElseThrow(() -> new ClipProcessingException(
+                        "This shot has no clip yet, so there is nothing to mix"));
+
+        Path workDir = ffmpeg.createWorkDir(context.shotId() + "-preview");
+        try {
+            Path clip = workDir.resolve("current.mp4");
+            objectStore.download(current.getBucket(), current.getObjectKey(), clip);
+
+            Path dub = null;
+            if (withDub) {
+                dub = workDir.resolve("take.mp3");
+                fetch(source.dubbedAudioUrl(), dub);
+            }
+            Path music = null;
+            if (withMusic) {
+                music = workDir.resolve("bed.mp3");
+                fetch(musicUrl, music);
+            }
+
+            Path output = workDir.resolve("preview.mp4");
+            ffmpeg.mix(clip, dub, music, targetSeconds, output);
+
+            ClipProbe probe = ffmpeg.probe(output);
+            if (!probe.isPlayable()) {
+                throw new ClipProcessingException("That combination produced nothing playable");
+            }
+            // Deliberately outside objectKeyFor's versioned naming -- this is not a version, and
+            // giving it a version-shaped key would make it look like one to anything that lists.
+            String previewKey = "shot-clip-previews/%s/%s.mp4".formatted(context.shotId(), UUID.randomUUID());
+            objectStore.upload(previewKey, output);
+            return new PreviewMix(previewKey, objectStore.presignedUrl(objectStore.bucket(), previewKey),
+                    probe.durationSeconds(), targetSeconds, withDub, withMusic);
+        } finally {
+            ffmpeg.deleteQuietly(workDir);
+        }
+    }
+
+    /**
+     * Promotes a preview into a real version. No re-render -- the bytes already exist, so this
+     * copies them to the version's own key and inserts the row.
+     *
+     * @param previewKey the key returned by {@link #previewMix}.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
+    })
+    @Transactional
+    public ShotClipVersion keepPreview(Context context, String previewKey, ClipOrigin origin) {
+        if (previewKey == null || previewKey.isBlank()) {
+            throw new ClipProcessingException("No preview was given to keep");
+        }
+        ShotClipSource source = clipSource(context);
+        return cut(context, source, origin,
+                (work, clip, output) -> objectStore.download(objectStore.bucket(), previewKey, output));
+    }
+
+    /** What a preview is: something to play, and the key needed to keep it. */
+    public record PreviewMix(String previewKey, String videoUrl, java.math.BigDecimal durationSeconds,
+                             Integer targetSeconds, boolean withDub, boolean withMusic) {}
 
     /** The creator's own cut, brought back after editing it elsewhere. {@code editedFromVersionId}
      * links it to the cut it was made from, so a version that went out and came back reads as a

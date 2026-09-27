@@ -70,22 +70,55 @@ public class ShotBackgroundMusicService {
         this.musicModel = musicModel;
     }
 
+    /** Model floor. ElevenLabs music rejects anything shorter, so a 2s shot still gets 3s of
+     * music -- trimmed at mix time rather than refused here. Named so the clamp is visible
+     * instead of looking like the requested length was honoured. */
+    private static final int MIN_MUSIC_MS = 3000;
+
     @Transactional
     public ShotBackgroundMusicView generate(UUID tenantId, UUID shotId) {
+        return generate(tenantId, shotId, null, null);
+    }
+
+    /**
+     * {@code promptOverride} is the creator's own description of the music they want -- "indian
+     * tense bgm, taut strings, no vocals". When absent this still derives one from the shot's
+     * sound design, which is what it always did.
+     *
+     * <p>That derivation is why generated music kept sounding like a room rather than a score:
+     * {@code Shot.soundDesign} is prose about the whole soundscape ("gentle ambient office
+     * sounds; subtle music begins to swell") and it was handed to a music model verbatim. It is a
+     * reasonable default and a poor instruction, so it is now a fallback rather than the only
+     * option.
+     *
+     * <p>The idempotency key carries a hash of the prompt and the requested length. Without that
+     * it was {@code shot-bg-music-<shotId>} -- stable per shot -- so llm-gateway replayed the
+     * first result forever and editing the prompt changed nothing audible.
+     */
+    @Transactional
+    public ShotBackgroundMusicView generate(UUID tenantId, UUID shotId, String promptOverride, Integer lengthSeconds) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
-        String prompt = ambientPrompt(shot);
+        String prompt = (promptOverride != null && !promptOverride.isBlank())
+                ? promptOverride.trim()
+                : ambientPrompt(shot);
         if (prompt == null || prompt.isBlank()) {
             throw PreProductionException.badRequest(
-                    "Shot " + shot.getShotRef() + " has no ambient_bed sound design planned to generate music from");
+                    "Shot " + shot.getShotRef() + " has no ambient_bed sound design planned to generate music from"
+                            + " -- describe the music you want instead");
         }
 
+        Integer requestedSeconds = lengthSeconds != null ? lengthSeconds : shot.getDurationSeconds();
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("prompt", prompt);
-        if (shot.getDurationSeconds() != null) {
-            params.put("music_length_ms", Math.max(3000, shot.getDurationSeconds() * 1000));
+        if (requestedSeconds != null) {
+            params.put("music_length_ms", Math.max(MIN_MUSIC_MS, requestedSeconds * 1000));
         }
-        LlmGatewayChatResponse response = llmGatewayClient.chat(tenantId.toString(), "shot-bg-music-" + shotId,
+        // Prompt + length in the key: same inputs replay (which is the point of idempotency),
+        // changed inputs actually re-generate.
+        String idempotencyKey = "shot-bg-music-" + shotId + "-"
+                + Integer.toHexString((prompt + "|" + requestedSeconds).hashCode());
+        LlmGatewayChatResponse response = llmGatewayClient.chat(tenantId.toString(), idempotencyKey,
                 new LlmGatewayChatRequest(musicModel, java.util.List.of(new LlmGatewayMessage("user", prompt)), params, null, null)
                         .withProjectId(shot.getProjectId()));
         if (response == null || response.response() == null || !response.response().startsWith("data:audio")) {
@@ -102,6 +135,37 @@ public class ShotBackgroundMusicService {
         music.setBucket(bucket);
         music.setObjectKey(objectKey);
         music.setPrompt(prompt);
+        music.setUpdatedAt(now);
+        music = shotBackgroundMusicRepository.save(music);
+        mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.SHOT_BACKGROUND_MUSIC);
+        return toView(music);
+    }
+
+    /** The creator's own track in place of anything generated. Same escape hatch as uploading a
+     * cut: when no generated result is worth shipping, bring your own. Replaces whatever the shot
+     * had; the prompt is cleared because the file did not come from one. */
+    @Transactional
+    public ShotBackgroundMusicView uploadOwn(UUID tenantId, UUID shotId, org.springframework.web.multipart.MultipartFile file) {
+        shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        if (file == null || file.isEmpty()) {
+            throw PreProductionException.badRequest("No audio file was uploaded");
+        }
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (java.io.IOException ex) {
+            throw PreProductionException.badRequest("Could not read the uploaded audio: " + ex.getMessage());
+        }
+        String objectKey = "%s/%s/%s.mp3".formatted(prefix, shotId, UUID.randomUUID());
+        upload(objectKey, bytes);
+
+        OffsetDateTime now = OffsetDateTime.now();
+        ShotBackgroundMusic music = shotBackgroundMusicRepository.findByShotIdAndTenantId(shotId, tenantId)
+                .orElseGet(() -> ShotBackgroundMusic.builder().tenantId(tenantId).shotId(shotId).createdAt(now).build());
+        music.setBucket(bucket);
+        music.setObjectKey(objectKey);
+        music.setPrompt(null);
         music.setUpdatedAt(now);
         music = shotBackgroundMusicRepository.save(music);
         mediaAssetService.registerIfAbsent(tenantId, bucket, objectKey, MediaAssetType.SHOT_BACKGROUND_MUSIC);

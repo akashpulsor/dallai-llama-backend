@@ -64,6 +64,118 @@ public class FfmpegClipProcessor {
                 "-af", "apad", "-shortest", output.toString()));
     }
 
+    /**
+     * The same picture stretched to {@code targetSeconds}, carrying silence.
+     *
+     * <p>{@code setpts} rewrites presentation timestamps, so no frames are invented -- a 2s clip
+     * asked for 3s plays its existing frames 1.5x slower. That reads as slow motion, which is the
+     * point when the shot was deliberately generated short to save money, and is why this is a
+     * previewable version rather than something applied automatically.
+     *
+     * <p>The video is re-encoded (timestamps changed, so copy is not available) and the audio is
+     * replaced with silence rather than stretched: {@code atempo} on speech is exactly what makes
+     * a retimed shot sound wrong, and the DUBBED cut downstream puts the cloned line back at
+     * normal speed. Refuses to speed a clip up or to work from an unmeasurable source -- both
+     * would silently produce something other than what was asked for.
+     */
+    public void retime(Path clip, int targetSeconds, Path output) {
+        if (targetSeconds <= 0) {
+            throw new ClipProcessingException("Target length must be a positive number of seconds");
+        }
+        ClipProbe source = probe(clip);
+        if (source.durationSeconds() == null || source.durationSeconds().signum() <= 0) {
+            throw new ClipProcessingException("Could not measure the clip's length, so it cannot be retimed");
+        }
+        double current = source.durationSeconds().doubleValue();
+        double factor = targetSeconds / current;
+        if (factor < 1.0) {
+            throw new ClipProcessingException(
+                    "Retime only lengthens a clip -- this one is already %.2fs, longer than the %ds asked for"
+                            .formatted(current, targetSeconds));
+        }
+        run(List.of("ffmpeg", "-y", "-i", clip.toString(),
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-filter:v", "setpts=" + String.format(java.util.Locale.ROOT, "%.6f", factor) + "*PTS",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-t", String.valueOf(targetSeconds), output.toString()));
+    }
+
+    /**
+     * One render that does the whole experiment: optionally stretch the picture, then lay on the
+     * dubbed line, the background music, both, or neither.
+     *
+     * <p>This exists because the parts were only testable by committing to them. Retiming wrote a
+     * version, dubbing wrote another, and the creator could not hear the combination until both
+     * were saved. Here the combination is produced first and kept only if it works.
+     *
+     * <p>Mixing rules that matter: the dub is never time-stretched -- it plays at normal speed over
+     * slowed picture, which is the entire reason this approach sounds right. Music is ducked well
+     * under a present dub ({@code 0.25}) and sits at {@code 0.6} when it is the only track, and
+     * both are padded then cut to the video with {@code -shortest} so a 3s bed over a 2s picture
+     * does not extend the clip. Silence is substituted when neither is asked for, because the
+     * film's concat filter requires an audio stream on every input.
+     *
+     * @param targetSeconds null leaves the picture at its own length.
+     */
+    public void mix(Path clip, Path dubAudio, Path musicAudio, Integer targetSeconds, Path output) {
+        List<String> cmd = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", clip.toString()));
+        List<String> audioLabels = new java.util.ArrayList<>();
+        int nextInput = 1;
+
+        if (dubAudio != null) {
+            cmd.addAll(List.of("-i", dubAudio.toString()));
+            audioLabels.add(nextInput++ + ":a");
+        }
+        if (musicAudio != null) {
+            cmd.addAll(List.of("-i", musicAudio.toString()));
+            audioLabels.add(nextInput++ + ":a");
+        }
+        if (audioLabels.isEmpty()) {
+            cmd.addAll(List.of("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"));
+            audioLabels.add(nextInput + ":a");
+        }
+
+        StringBuilder filter = new StringBuilder();
+        String videoOut = "0:v";
+        if (targetSeconds != null) {
+            ClipProbe source = probe(clip);
+            if (source.durationSeconds() == null || source.durationSeconds().signum() <= 0) {
+                throw new ClipProcessingException("Could not measure the clip's length, so it cannot be retimed");
+            }
+            double factor = targetSeconds / source.durationSeconds().doubleValue();
+            if (factor < 1.0) {
+                throw new ClipProcessingException(
+                        "Retime only lengthens a clip -- this one is already %.2fs, longer than the %ds asked for"
+                                .formatted(source.durationSeconds().doubleValue(), targetSeconds));
+            }
+            filter.append("[0:v]setpts=")
+                    .append(String.format(java.util.Locale.ROOT, "%.6f", factor))
+                    .append("*PTS[v];");
+            videoOut = "v";
+        }
+
+        String audioOut;
+        if (audioLabels.size() == 2) {
+            // Dub first, music second -- the order they were appended above.
+            filter.append("[").append(audioLabels.get(0)).append("]apad[dub];")
+                  .append("[").append(audioLabels.get(1)).append("]volume=0.25,apad[bed];")
+                  .append("[dub][bed]amix=inputs=2:duration=longest:dropout_transition=0[a]");
+            audioOut = "a";
+        } else {
+            double volume = musicAudio != null && dubAudio == null ? 0.6 : 1.0;
+            filter.append("[").append(audioLabels.get(0)).append("]volume=")
+                  .append(String.format(java.util.Locale.ROOT, "%.2f", volume)).append(",apad[a]");
+            audioOut = "a";
+        }
+
+        cmd.addAll(List.of("-filter_complex", filter.toString(),
+                "-map", "[" + videoOut + "]", "-map", "[" + audioOut + "]",
+                "-c:v", targetSeconds != null ? "libx264" : "copy",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", output.toString()));
+        run(cmd);
+    }
+
     /** The picture untouched, carrying silence instead of whatever it decided to say. */
     public void stripAudio(Path clip, Path output) {
         run(List.of("ffmpeg", "-y", "-i", clip.toString(),

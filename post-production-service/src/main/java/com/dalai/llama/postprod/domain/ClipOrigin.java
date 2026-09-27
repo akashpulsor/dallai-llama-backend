@@ -16,6 +16,15 @@ public enum ClipOrigin {
      * assembled with a concat filter that demands an audio stream on every input. */
     SILENT,
 
+    /** The same picture slowed to fill a longer slot than it was generated for.
+     *
+     * <p>Exists to let a shot be generated short -- and paid for short -- then stretched to the
+     * length the plan actually wants. The audio is dropped rather than stretched: time-stretching
+     * speech is what makes a retimed shot sound wrong, and the dubbed cut already puts the cloned
+     * line back at normal speed. So the chain is GENERATED (short) -> RETIMED (right length, mute)
+     * -> DUBBED (line restored), each a version the creator can play before accepting. */
+    RETIMED,
+
     /** A file the creator cut themselves and brought back. The escape hatch that stops any of this
      * being a dead end when no automatic cut is worth shipping. */
     UPLOADED
