@@ -279,6 +279,14 @@ public class ShotClipVersionService {
             current.setStatus(ClipVersionStatus.SUPERSEDED);
             repository.save(current);
         });
+        // Demote before promote, at the DATABASE, not just in call order. uq_shot_clip_version_active
+        // is a partial unique index on (shot_id) WHERE status = 'ACTIVE', and save() only queues an
+        // update -- Hibernate decides when each one actually runs at flush. When the promote hit
+        // first, the shot briefly had two ACTIVE rows and the index rejected it: accept blew up
+        // with a 23505 and the chosen cut silently stayed unaccepted, so the player kept showing
+        // the previous one. Same fix, same reason, as the shot_ref flush in
+        // ShotListGenerationService.persistFromLlmResponse.
+        repository.flush();
         chosen.setStatus(ClipVersionStatus.ACTIVE);
         chosen.setAcceptedAt(OffsetDateTime.now());
         log.info("Accepted a cut shotId={} version={} origin={}",
