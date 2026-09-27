@@ -44,6 +44,7 @@ class InternalShotDialogueRouteTest {
                 mock(LightingPlanService.class),
                 mock(ShotImageService.class),
                 mock(ShotBackgroundMusicService.class),
+                mock(com.dalai.llama.preprod.service.music.ProjectScoreGenerationService.class),
                 mock(ShotProductReferenceService.class),
                 mock(PrepareBundleAssembler.class),
                 dialogueDetailsService)).build();
