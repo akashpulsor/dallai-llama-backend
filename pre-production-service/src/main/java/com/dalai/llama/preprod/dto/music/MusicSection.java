@@ -35,9 +35,14 @@ public record MusicSection(
         /** What the arrangement does underneath speech here. Density instruction only: actual
          * level automation is the mixer's job, not the composer's. */
         String dialogueTreatment,
-        /** Moments inside this section the music should land on, in seconds from film start. */
-        List<Double> importantSyncPoints
+        /** Moments inside this section the music should land on. A bare timestamp is not much
+         * use to a composer, so each carries what is happening there -- which is also what the
+         * planner naturally returns when asked. */
+        List<SyncPoint> importantSyncPoints
 ) {
+    /** A moment the music should hit, in seconds from the start of the film. */
+    public record SyncPoint(Double atSeconds, String description) {}
+
     public double durationSeconds() {
         return (endTime == null ? 0 : endTime) - (startTime == null ? 0 : startTime);
     }
