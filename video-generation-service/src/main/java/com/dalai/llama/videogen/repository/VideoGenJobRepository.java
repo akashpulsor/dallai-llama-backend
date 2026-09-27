@@ -17,4 +17,6 @@ public interface VideoGenJobRepository extends JpaRepository<VideoGenJob, UUID> 
     /** Candidates for {@code StaleJobReconciliationTask} -- PROCESSING rows whose dispatch
      * started before the staleness cutoff, presumed crashed rather than genuinely still running. */
     List<VideoGenJob> findByStatusAndProcessingStartedAtBefore(JobStatus status, OffsetDateTime cutoff);
+
+    int deleteByTenantIdAndShotRef(java.util.UUID tenantId, String shotRef);
 }

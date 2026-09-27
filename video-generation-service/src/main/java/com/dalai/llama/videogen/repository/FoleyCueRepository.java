@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface FoleyCueRepository extends JpaRepository<FoleyCue, Long> {
 
     List<FoleyCue> findByPromptIdOrderByTimestampMsAsc(UUID promptId);
+
+    int deleteByPromptIdIn(java.util.List<java.util.UUID> promptIds);
 }

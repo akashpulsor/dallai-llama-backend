@@ -10,4 +10,6 @@ public interface DubJobRepository extends JpaRepository<DubJob, UUID> {
 
     /** The newest dub for this shot -- what a page reopening a card wants to know about. */
     Optional<DubJob> findTopByShotIdOrderByCreatedAtDesc(UUID shotId);
+
+    int deleteByShotId(java.util.UUID shotId);
 }

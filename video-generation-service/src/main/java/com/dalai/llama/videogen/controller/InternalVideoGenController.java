@@ -25,9 +25,13 @@ import java.util.UUID;
 public class InternalVideoGenController {
 
     private final ShotGenerationOrchestrator orchestrator;
+    private final com.dalai.llama.videogen.service.ShotArtifactCleanupService shotArtifactCleanupService;
 
-    public InternalVideoGenController(ShotGenerationOrchestrator orchestrator) {
+    public InternalVideoGenController(
+            ShotGenerationOrchestrator orchestrator,
+            com.dalai.llama.videogen.service.ShotArtifactCleanupService shotArtifactCleanupService) {
         this.orchestrator = orchestrator;
+        this.shotArtifactCleanupService = shotArtifactCleanupService;
     }
 
     @PostMapping("/shots/generate")
@@ -56,5 +60,20 @@ public class InternalVideoGenController {
     /** Just the URL -- a record rather than a bare string so the route can grow a field without
      * breaking the caller's parse. */
     public record VideoUrlView(String url) {
+    }
+
+    /** Called by pre-production-service when a creator deletes a shot. Drops this service's own
+     * rows for it (prompts + their references/foley/export bundles, dub jobs, and video-gen jobs
+     * matched on shotRef) so they don't linger as orphans in a different database.
+     *
+     * <p>{@code shotRef} is a query param rather than part of the path because VideoGenJob keys on
+     * it while everything else keys on shotId -- the caller has both and sends both. Omitting it
+     * skips only the VideoGenJob half. */
+    @org.springframework.web.bind.annotation.DeleteMapping("/shots/{shotId}/artifacts")
+    public ResponseEntity<com.dalai.llama.videogen.service.ShotArtifactCleanupService.Summary> deleteShotArtifacts(
+            @PathVariable UUID tenantId,
+            @PathVariable UUID shotId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String shotRef) {
+        return ResponseEntity.ok(shotArtifactCleanupService.deleteForShot(tenantId, shotId, shotRef));
     }
 }

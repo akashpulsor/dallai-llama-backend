@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface ShotPromptReferenceRepository extends JpaRepository<ShotPromptReference, Long> {
 
     List<ShotPromptReference> findByPromptId(UUID promptId);
+
+    int deleteByPromptIdIn(java.util.List<java.util.UUID> promptIds);
 }

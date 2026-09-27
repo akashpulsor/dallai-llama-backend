@@ -91,6 +91,7 @@ public class ShotListGenerationService {
     private final CameraPlanService cameraPlanService;
     private final ShotFoleyCueService shotFoleyCueService;
     private final ShotImageService shotImageService;
+    private final com.dalai.llama.preprod.service.videogen.VideoGenClient videoGenClient;
     private final MinioClient publicMinioClient;
     private final String defaultModel;
 
@@ -115,6 +116,7 @@ public class ShotListGenerationService {
             CameraPlanService cameraPlanService,
             ShotFoleyCueService shotFoleyCueService,
             ShotImageService shotImageService,
+            com.dalai.llama.preprod.service.videogen.VideoGenClient videoGenClient,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
     ) {
@@ -139,6 +141,7 @@ public class ShotListGenerationService {
         this.cameraPlanService = cameraPlanService;
         this.shotFoleyCueService = shotFoleyCueService;
         this.shotImageService = shotImageService;
+        this.videoGenClient = videoGenClient;
         this.publicMinioClient = publicMinioClient;
         this.defaultModel = defaultModel;
     }
@@ -541,8 +544,17 @@ public class ShotListGenerationService {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         UUID projectId = shot.getProjectId();
+        String shotRef = shot.getShotRef();
         shotRepository.delete(shot);
         shotRepository.flush();
+
+        // video-generation-service keeps its own prompts/jobs/clips for this shot in a separate
+        // database, so they'd survive as orphans without an explicit cascade. Best-effort: a
+        // failed cleanup must not block a delete the creator asked for.
+        if (!videoGenClient.deleteShotArtifacts(tenantId, shotId, shotRef)) {
+            log.warn("Could not clean video-gen artifacts for deleted shot shotId={} shotRef={} -- "
+                    + "orphan prompts/jobs may remain in video-generation-service", shotId, shotRef);
+        }
 
         List<Shot> remaining = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId);
         for (int i = 0; i < remaining.size(); i++) {
