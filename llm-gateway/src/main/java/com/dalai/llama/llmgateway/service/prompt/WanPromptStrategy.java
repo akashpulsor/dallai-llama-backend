@@ -149,6 +149,13 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
                 clauses.add(shotContext.lighting().keyLightNote());
             }
             addClause(clauses, shotContext.lighting().mood());
+            // The planned fixtures. Wan takes bare clauses, so each reads as part of the image
+            // description rather than a spec line.
+            addClause(clauses, shotContext.lighting().keyLightGear());
+            addClause(clauses, shotContext.lighting().fillLightGear());
+            addClause(clauses, shotContext.lighting().rimLightGear());
+            addClause(clauses, shotContext.lighting().negFillGear());
+            addClause(clauses, shotContext.lighting().diffuserGear());
         }
         if (shotContext.camera() != null && shotContext.camera().cameraNote() != null
                 && !shotContext.camera().cameraNote().isBlank()) {

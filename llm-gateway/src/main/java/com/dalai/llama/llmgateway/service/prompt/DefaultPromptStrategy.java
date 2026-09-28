@@ -119,6 +119,15 @@ public class DefaultPromptStrategy implements ProviderPromptStrategy {
             if (hasText(shotContext.lighting().mood())) {
                 lines.add("Lighting mood: " + shotContext.lighting().mood());
             }
+            // The planned fixtures, grouped like the camera gear. Thirteen fields of lighting plan
+            // used to arrive as keyLightNote alone, so a designed key/fill/rim/neg/diffusion setup
+            // reached the model as one adjective.
+            addGroup(lines, "Lighting setup",
+                    shotContext.lighting().keyLightGear(),
+                    shotContext.lighting().fillLightGear(),
+                    shotContext.lighting().rimLightGear(),
+                    shotContext.lighting().negFillGear(),
+                    shotContext.lighting().diffuserGear());
         }
         if (shotContext.camera() != null && shotContext.camera().cameraNote() != null) {
             lines.add("Camera: " + shotContext.camera().cameraNote());

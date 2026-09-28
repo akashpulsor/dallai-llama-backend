@@ -170,6 +170,23 @@ public class VideoShotPromptService {
         List<String> lines = new ArrayList<>();
         int position = 1;
 
+        // ORDER IS NOT COSMETIC. These numbers must match the order the provider actually receives
+        // the images in, which is ShotGenerationOrchestrator.saveReferences' slotIndex sequence,
+        // filtered to image kinds. Numbering them in a different order told the model "reference
+        // image 1 = Neha" when slot 0 is the shot's own frame, and it duly described the frame as
+        // if it were the person. Any change to saveReferences' sequence has to change this one.
+        // ShotReferenceOrderTest pins the two together.
+        //
+        // 1. the shot's own frame
+        if (shotContext.referenceFrames() != null) {
+            for (int i = 0; i < shotContext.referenceFrames().size(); i++) {
+                lines.add("  - reference image " + position++ + " = this shot's own frame. What the shot"
+                        + " should look like: composition, framing and staging. Where it and the written"
+                        + " plan disagree, the PLAN wins -- it is the newer decision.");
+            }
+        }
+
+        // 2. the cast, in assembly order (CHARACTER_VOICE is audio and takes no image number)
         if (shotContext.characters() != null) {
             for (Character character : shotContext.characters()) {
                 if (character.faceRefObjectKey() == null) {
@@ -186,23 +203,35 @@ public class VideoShotPromptService {
             }
         }
 
+        // 3. the product
         if (shotContext.productBrand() != null && shotContext.productBrand().productRefObjectKey() != null) {
             lines.add("  - reference image " + position++ + " = the product itself. Reproduce it exactly:"
                     + " shape, colour, markings and packaging are the real article, never redrawn.");
         }
 
+        // 4. the DP's lighting frame
+        if (shotContext.lighting() != null && shotContext.lighting().dpLightingImageObjectKey() != null) {
+            lines.add("  - reference image " + position++ + " = the lighting reference. Match its"
+                    + " quality, direction and contrast; it is about light, not about staging.");
+        }
+
+        // 5. the camera-plan frame
+        if (shotContext.camera() != null && shotContext.camera().cameraPlanImageObjectKey() != null) {
+            lines.add("  - reference image " + position++ + " = the camera-plan frame. Match its lens"
+                    + " and camera position.");
+        }
+
+        // 6. the creator's own bundle, in the ordinal they chose
         if (shotContext.referenceImages() != null) {
-            for (ShotContext.ShotReferenceImage image : shotContext.referenceImages()) {
+            List<ShotContext.ShotReferenceImage> ordered = new ArrayList<>(shotContext.referenceImages());
+            ordered.sort(java.util.Comparator.comparing(
+                    (ShotContext.ShotReferenceImage img) -> img.ordinal() == null ? Integer.MAX_VALUE : img.ordinal()));
+            for (ShotContext.ShotReferenceImage image : ordered) {
                 String tag = image.tag() == null || image.tag().isBlank() ? "creator reference" : image.tag();
                 lines.add("  - reference image " + position++ + " = \"" + tag + "\". Real creator-supplied"
                         + " artwork -- an app screen, a logo, a layout. Reproduce it as given; never"
                         + " redraw, restyle or invent a substitute.");
             }
-        }
-
-        if (shotContext.referenceFrames() != null && !shotContext.referenceFrames().isEmpty()) {
-            lines.add("  - reference image " + position + " = this shot's own frame. What the shot"
-                    + " should look like: composition, framing and staging.");
         }
 
         return lines.isEmpty() ? "No reference images are attached to this shot." : String.join("\n", lines);

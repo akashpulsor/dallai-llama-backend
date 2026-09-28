@@ -106,9 +106,18 @@ public final class PromptDtos {
 
     public record Environment(String location, String timeOfDay, String weather, String environmentalEffects) {}
 
+    /** Mirrors video-generation-service's Lighting. The gear fields were missing here for the same
+     * reason Camera's once were: a thirteen-field lighting plan arrived as one note and a mood,
+     * so a shot with a designed key, fill, rim, negative fill and diffusion was described as
+     * "soft". All nullable: "not specified by this shot". */
     public record Lighting(
             String keyLightNote,
             String mood,
+            String keyLightGear,
+            String fillLightGear,
+            String rimLightGear,
+            String negFillGear,
+            String diffuserGear,
             String dpLightingImageBucket,
             String dpLightingImageObjectKey
     ) {}

@@ -318,6 +318,11 @@ public class ShotContextAssemblyService {
         }
         return new Lighting(
                 keyLightNote, mood,
+                plan == null ? null : plan.keyLightGear(),
+                plan == null ? null : plan.fillLightGear(),
+                plan == null ? null : plan.rimLightGear(),
+                plan == null ? null : plan.negFillGear(),
+                plan == null ? null : plan.diffuserGear(),
                 image == null ? null : image.bucket(),
                 image == null ? null : image.objectKey()
         );
