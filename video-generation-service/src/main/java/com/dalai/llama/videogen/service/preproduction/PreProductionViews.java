@@ -33,7 +33,17 @@ public final class PreProductionViews {
             String preferredVoiceModel,
             String preferredLipSyncModel,
             String preferredTtsModel,
-            String dialogueLanguage
+            String dialogueLanguage,
+            /** The language the NARRATIVE is written in, which is not always the language it is
+             * spoken in -- dialogueLanguage covers the spoken line only. */
+            String narrativeLanguage,
+            /** 480p/720p. The shot's own override wins; this is the project default, and without
+             * it here a project-wide resolution choice never reached the job. */
+            String preferredResolution,
+            Boolean recommenderEnabled,
+            Boolean costPreviewEnabled,
+            Boolean priceDeltaModalEnabled,
+            Boolean autoCloneAudioPromptEnabled
     ) {}
 
     public record CastAssignmentView(
@@ -81,6 +91,13 @@ public final class PreProductionViews {
      * additions there won't break this consumer. */
     public record ShotView(
             UUID id,
+            /** The idea this project was locked to. Carried so a shot can be traced back to it
+             * without a second call; not prompt content. */
+            UUID lockedIdeaId,
+            /** Which screenplay scene this shot belongs to. The one genuinely useful omission of
+             * the five that were missing: without it nothing here can group shots by scene, which
+             * is how scene-level context would ever be assembled. */
+            UUID screenplaySceneId,
             String shotRef,
             Integer shotNumber,
             String shotType,
@@ -120,12 +137,18 @@ public final class PreProductionViews {
             String safeZoneNotes,
             String executionDifficulty,
             String cinematicExecution,
+            /** How a human crew would shoot this. Production guidance rather than prompt content,
+             * mirrored so the record is a complete copy of what pre-production sends. */
+            String rookieFriendlyGuide,
             String sketchPrompt,
             String coverageType,
             String screenDirection,
             Integer peopleInFrame,
             String culturalReferences,
             String productShotType,
+            /** Scheduling for a live shoot. Mirrored for completeness; nothing here reads them. */
+            String shootDay,
+            String shootBlock,
             String directorNote,
             CinematographyView cinematography,
             ShotCastView cast,
@@ -147,12 +170,17 @@ public final class PreProductionViews {
      * deliberately NOT surfaced as prompt text -- the prompt names the bundle by its label. */
     public record ShotReferenceImageView(
             UUID id,
+            UUID shotId,
             String bucket,
             String objectKey,
             String contentType,
             String caption,
             String tag,
-            Integer ordinal
+            Integer ordinal,
+            /** Presigned by pre-production. This service reads bucket/objectKey and signs its own,
+             * so nothing depends on it -- mirrored so the record is a complete copy. */
+            String signedUrl,
+            OffsetDateTime createdAt
     ) {}
 
     /** The shot's full cinematography spec (pre-prod stores these as flat {@code cine_*} columns).
@@ -273,6 +301,12 @@ public final class PreProductionViews {
             String bucket,
             String objectKey,
             String signedUrl,
+            /** Words rendered INTO this frame, and the script they are written in. The frame is
+             * handed to the video model as a reference, so the prompt has to know what it already
+             * says -- otherwise the model is free to invent different words over the top, or to
+             * romanise Devanagari that the film deliberately set in its own script. */
+            String onScreenText,
+            String onScreenTextLanguage,
             OffsetDateTime createdAt
     ) {}
 
@@ -295,6 +329,17 @@ public final class PreProductionViews {
     public record ScriptView(
             UUID id,
             UUID projectId,
+            UUID lockedIdeaId,
+            /** The script itself. Everything else here is metadata ABOUT it; the prose was the one
+             * thing not carried across. */
+            String scriptText,
+            /** The film has no people in it. A real creative constraint -- a prompt that invents a
+             * presenter for a product film breaks the brief -- and it could not reach the prompt
+             * while this was dropped on deserialize. */
+            Boolean noHumans,
+            String status,
+            Integer currentVersion,
+            String currentSource,
             String pacingStyle,
             String emotionalArc,
             String hookStrategy,
