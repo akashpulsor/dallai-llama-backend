@@ -643,19 +643,54 @@ public class ShotGenerationOrchestrator {
      */
     public List<VideoGenJobView> listJobsForProject(UUID tenantId, UUID projectId) {
         List<VideoGenJob> jobs = videoGenJobRepository.findByTenantIdAndProjectIdOrderByCreatedAtDesc(tenantId, projectId);
-        java.util.LinkedHashMap<String, VideoGenJob> chosen = new java.util.LinkedHashMap<>();
-        // Newest first, so the first COMPLETED one seen is the most recent finished render.
-        for (VideoGenJob job : jobs) {
-            VideoGenJob held = chosen.get(job.getShotRef());
-            boolean finished = job.getStatus() == JobStatus.COMPLETED && job.getOutputObjectKey() != null;
-            if (held == null) {
-                chosen.put(job.getShotRef(), job);
-            } else if (finished && !(held.getStatus() == JobStatus.COMPLETED && held.getOutputObjectKey() != null)) {
-                // Replaces a newer row that has no video with the finished one underneath it.
-                chosen.put(job.getShotRef(), job);
+
+        // Grouped by shot_id, not shot_ref.
+        //
+        // shot_ref is renumbered whenever a shot is added, deleted, or the list is regenerated --
+        // a job row keeps the string it was created with, so "shot-01-002" on an old job can name
+        // a different shot than the one that carries it today. Grouping by it reported one shot's
+        // FAILED render on another shot's card: the caller resolves each row back to a shot by
+        // shot_id, so the two disagreed and a shot that had never failed was shown as failed.
+        // shot_id is assigned once and never moves.
+        //
+        // One query for the whole project rather than one per job; a prompt is what ties a job to
+        // a shot, and the newest prompt for a job is the authority (edits keep the parent's ids).
+        Map<UUID, UUID> shotIdByJob = new java.util.HashMap<>();
+        for (ShotPrompt prompt : shotPromptRepository.findByProjectIdOrderByCreatedAtDesc(projectId)) {
+            if (prompt.getJobId() != null && prompt.getShotId() != null) {
+                shotIdByJob.putIfAbsent(prompt.getJobId(), prompt.getShotId());
             }
         }
-        return chosen.values().stream().map(this::toJobView).toList();
+
+        return latestJobPerShot(jobs, shotIdByJob).stream().map(this::toJobView).toList();
+    }
+
+    /**
+     * One job per shot from a newest-first list: the newest, except that a finished render always
+     * beats a newer row with no video behind it.
+     *
+     * <p>Package-private and static so the choosing rule can be tested without standing up the
+     * orchestrator's twenty collaborators.
+     *
+     * @param shotIdByJob job_id to shot_id; a job missing from it falls back to its shot_ref.
+     */
+    static List<VideoGenJob> latestJobPerShot(List<VideoGenJob> newestFirst, Map<UUID, UUID> shotIdByJob) {
+        java.util.LinkedHashMap<Object, VideoGenJob> chosen = new java.util.LinkedHashMap<>();
+        for (VideoGenJob job : newestFirst) {
+            // Falls back to shot_ref only for a job no prompt points at, which should not happen
+            // but must not collapse every such row onto one key.
+            UUID byShot = shotIdByJob.get(job.getJobId());
+            Object key = byShot != null ? byShot : job.getShotRef();
+            VideoGenJob held = chosen.get(key);
+            boolean finished = job.getStatus() == JobStatus.COMPLETED && job.getOutputObjectKey() != null;
+            if (held == null) {
+                chosen.put(key, job);
+            } else if (finished && !(held.getStatus() == JobStatus.COMPLETED && held.getOutputObjectKey() != null)) {
+                // Replaces a newer row that has no video with the finished one underneath it.
+                chosen.put(key, job);
+            }
+        }
+        return List.copyOf(chosen.values());
     }
 
     private ShotPromptView toPromptView(ShotPrompt prompt) {
