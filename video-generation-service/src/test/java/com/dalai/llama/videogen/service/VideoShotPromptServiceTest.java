@@ -1,6 +1,7 @@
 package com.dalai.llama.videogen.service;
 
 import com.dalai.llama.videogen.dto.shotcontext.Character;
+import com.dalai.llama.videogen.dto.shotcontext.MotionGraphic;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
@@ -116,6 +117,47 @@ class VideoShotPromptServiceTest {
         ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
         verify(gateway).chat(anyString(), anyString(), sent.capture());
         assertThat(sent.getValue().templateVariables().get("shotJson")).contains("shotRef");
+    }
+
+    @Test
+    void aMotionGraphicPicksItsOwnMasterPromptAndGetsTheSameRichPayload() {
+        // The whole reason the two writers were merged. A motion graphic used to be written from
+        // four plan fields and nothing else -- no references, no budget -- because it went through
+        // a separate service that never caught up. Now only the task key differs.
+        ShotContext context = shot();
+        // (concept, onScreenText, visualStyle, animationNotes) -- not the order they read in.
+        MotionGraphic plan = new MotionGraphic("a report card reveal", "आपका स्कोर",
+                "flat pastel cards", "cards slide in from opposite sides");
+        when(context.motionGraphic()).thenReturn(plan);
+        when(context.isPlannedMotionGraphic()).thenReturn(true);
+        gatewayAnswers("Two pastel cards slide in from opposite sides.");
+
+        service(true).writePrompt(tenant, project, context, "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().taskKey()).isEqualTo("VIDEO_MOTION_GRAPHIC_PROMPT");
+        assertThat(sent.getValue().templateVariables())
+                .containsEntry("concept", "a report card reveal")
+                .containsEntry("animationNotes", "cards slide in from opposite sides")
+                // Verbatim, in its own script -- romanising it changes the deliverable.
+                .containsEntry("onScreenText", "आपका स्कोर")
+                .containsEntry("maxChars", "20000")
+                .containsKey("references");
+    }
+
+    @Test
+    void anOrdinaryShotStillGetsTheShotTemplateAndTheMotionFieldsAreHarmless() {
+        gatewayAnswers("A courier under a streetlight.");
+
+        service(true).writePrompt(tenant, project, shot(), "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().taskKey()).isEqualTo("VIDEO_SHOT_PROMPT");
+        // Always sent, never read by this template -- which is what lets the call site stay
+        // free of a motion-graphic branch.
+        assertThat(sent.getValue().templateVariables()).containsEntry("concept", "not stated");
     }
 
     @Test

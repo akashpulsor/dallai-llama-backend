@@ -31,7 +31,6 @@ import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitMath;
-import com.dalai.llama.videogen.service.dialoguefit.MotionGraphicPromptService;
 import com.dalai.llama.videogen.web.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -93,7 +92,6 @@ public class ShotGenerationOrchestrator {
     private final VideoGenJobPersistenceService jobPersistenceService;
     private final BeatDubbingService beatDubbingService;
     private final BackgroundMusicMixService backgroundMusicMixService;
-    private final MotionGraphicPromptService motionGraphicPromptService;
     private final VideoShotPromptService videoShotPromptService;
     private final VideoGenerationRequestedPublisher generationRequestedPublisher;
     private final String defaultModel;
@@ -116,7 +114,6 @@ public class ShotGenerationOrchestrator {
             VideoGenJobPersistenceService jobPersistenceService,
             BeatDubbingService beatDubbingService,
             BackgroundMusicMixService backgroundMusicMixService,
-            MotionGraphicPromptService motionGraphicPromptService,
             VideoShotPromptService videoShotPromptService,
             VideoGenerationRequestedPublisher generationRequestedPublisher,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
@@ -138,7 +135,6 @@ public class ShotGenerationOrchestrator {
         this.jobPersistenceService = jobPersistenceService;
         this.beatDubbingService = beatDubbingService;
         this.backgroundMusicMixService = backgroundMusicMixService;
-        this.motionGraphicPromptService = motionGraphicPromptService;
         this.videoShotPromptService = videoShotPromptService;
         this.generationRequestedPublisher = generationRequestedPublisher;
         this.defaultModel = defaultModel;
@@ -227,20 +223,17 @@ public class ShotGenerationOrchestrator {
         // falls straight through, unchanged. The negative prompt is kept either way; it is about
         // what the model must avoid, which does not differ by shot type.
         int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
-        String motionGraphicPrompt = motionGraphicPromptService.writePrompt(tenantId, projectId, shotContext);
-        if (motionGraphicPrompt != null) {
-            builtPrompt = new BuiltPrompt(motionGraphicPrompt, builtPrompt.negative());
-        } else {
-            // Every other shot type: the composed text is a spec sheet, so it is handed to a model
-            // to be written as a shot -- same direction, same numbers, expressed rather than
-            // listed, and written to the target model's real character budget so the lossy
-            // compression pass below has nothing left to do. Null means it could not answer or
-            // came back over budget, and the composed prompt stands exactly as it did before.
-            String writtenPrompt = videoShotPromptService.writePrompt(
-                    tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength);
-            if (writtenPrompt != null) {
-                builtPrompt = new BuiltPrompt(writtenPrompt, builtPrompt.negative());
-            }
+        // One path for every shot type. This used to branch: motion graphics went to their own
+        // service and everything else to another, so the two prompts drifted -- the richer
+        // reference data and the character budget were added to one and not the other. Which
+        // MASTER PROMPT to use is a question about prompts, so it is answered where the prompts
+        // live: the writer picks a task key, llm-gateway holds a template per key. Null means the
+        // gateway could not answer or came back over budget, and the composed prompt stands
+        // exactly as it did before.
+        String writtenPrompt = videoShotPromptService.writePrompt(
+                tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength);
+        if (writtenPrompt != null) {
+            builtPrompt = new BuiltPrompt(writtenPrompt, builtPrompt.negative());
         }
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         CompressionResult compression = promptCompressionService.compressIfNeeded(

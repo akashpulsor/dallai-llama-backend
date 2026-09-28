@@ -1,6 +1,7 @@
 package com.dalai.llama.videogen.service;
 
 import com.dalai.llama.videogen.dto.shotcontext.Character;
+import com.dalai.llama.videogen.dto.shotcontext.MotionGraphic;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -35,19 +37,25 @@ import java.util.UUID;
  * that fits needs no compression afterwards, and compression is a lossy pass that drops exactly
  * the specifics this exists to preserve.
  *
- * <h2>Scope and failure</h2>
- * Motion graphics keep their own writer ({@link
- * com.dalai.llama.videogen.service.dialoguefit.MotionGraphicPromptService}) -- they are described
- * as motion, not cinematography, and that template already does it. Best-effort by design: a
- * gateway that cannot answer, or an answer that comes back empty or over budget, leaves the shot
- * with the composed prompt it would have had anyway. A shot described adequately beats one that
- * cannot be prepared at all.
+ * <h2>Every shot type, one path</h2>
+ * Motion graphics used to have a service of their own, and the two drifted: the richer reference
+ * data and the character budget were added to one and not the other, so a motion graphic went on
+ * being written from four plan fields and nothing else. Which MASTER PROMPT to use is a question
+ * about prompts, so it is answered where the prompts live -- this picks a task key
+ * ({@code VIDEO_SHOT_PROMPT} or {@code VIDEO_MOTION_GRAPHIC_PROMPT}) and llm-gateway holds a
+ * template per key. Both receive the same payload; each template reads the variables it needs.
+ *
+ * <h2>Failure</h2>
+ * Best-effort by design: a gateway that cannot answer, or an answer that comes back empty or over
+ * budget, leaves the shot with the composed prompt it would have had anyway. A shot described
+ * adequately beats one that cannot be prepared at all.
  */
 @Slf4j
 @Service
 public class VideoShotPromptService {
 
     private static final String TASK_KEY = "VIDEO_SHOT_PROMPT";
+    private static final String MOTION_GRAPHIC_TASK_KEY = "VIDEO_MOTION_GRAPHIC_PROMPT";
 
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
@@ -87,13 +95,8 @@ public class VideoShotPromptService {
                             model,
                             List.of(new LlmGatewayMessage("user", "")),
                             Map.of(),
-                            TASK_KEY,
-                            Map.of("composedPrompt", composedPrompt,
-                                    "shotJson", shotJson(shotContext),
-                                    "references", describeReferences(shotContext),
-                                    "maxChars", String.valueOf(maxChars),
-                                    "durationSeconds", duration == null ? "unspecified" : String.valueOf(duration),
-                                    "shotType", orUnstated(shotContext.sceneType())),
+                            shotContext.isPlannedMotionGraphic() ? MOTION_GRAPHIC_TASK_KEY : TASK_KEY,
+                            templateVariables(shotContext, composedPrompt, maxChars, duration),
                             projectId));
 
             String written = response == null || response.response() == null
@@ -119,6 +122,36 @@ public class VideoShotPromptService {
                     shotContext.shotRef(), ex.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Everything both templates can read. The task key decides which of them is used, and a
+     * template simply ignores the variables it does not mention -- so one payload serves both and
+     * neither has to be special-cased at the call site.
+     */
+    private Map<String, String> templateVariables(ShotContext shotContext, String composedPrompt,
+                                                  int maxChars, Integer duration) {
+        Map<String, String> variables = new LinkedHashMap<>();
+        variables.put("composedPrompt", composedPrompt);
+        variables.put("shotJson", shotJson(shotContext));
+        variables.put("references", describeReferences(shotContext));
+        variables.put("maxChars", String.valueOf(maxChars));
+        variables.put("durationSeconds", duration == null ? "unspecified" : String.valueOf(duration));
+        variables.put("fps", shotContext.technical() == null || shotContext.technical().fps() == null
+                ? "unspecified" : String.valueOf(shotContext.technical().fps()));
+        variables.put("shotType", orUnstated(shotContext.sceneType()));
+
+        // The motion-graphic plan. Sent whether or not the shot has one: the shot template never
+        // mentions these, so the cost of always filling them is nothing, and the alternative is a
+        // branch at the call site -- which is exactly the special-casing being removed.
+        MotionGraphic plan = shotContext.motionGraphic();
+        variables.put("concept", plan == null ? "not stated" : orUnstated(plan.concept()));
+        variables.put("visualStyle", plan == null ? "not stated" : orUnstated(plan.visualStyle()));
+        // Verbatim, in its own script. It is rendered as glyphs in the frame, so anything that
+        // "tidies" it changes the deliverable.
+        variables.put("onScreenText", plan == null ? "not stated" : orUnstated(plan.onScreenText()));
+        variables.put("animationNotes", plan == null ? "not stated" : orUnstated(plan.animationNotes()));
+        return variables;
     }
 
     /**

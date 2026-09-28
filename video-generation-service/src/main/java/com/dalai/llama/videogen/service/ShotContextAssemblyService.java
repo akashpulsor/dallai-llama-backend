@@ -161,9 +161,19 @@ public class ShotContextAssemblyService {
     private Narrative buildNarrative(PreProductionViews.ShotView shot, PreProductionViews.ScriptView script) {
         String storyFrame = buildStoryFrame(script);
         String dialogue = dialogueFor(shot);
-        // What happens in frame. Prefer the shot's action; scriptLine stands in when a shot has no
-        // separate action written, which is common for dialogue shots where the line IS the beat.
-        String action = hasText(shot.action()) ? shot.action() : shot.scriptLine();
+        // What happens in frame. Both the action and the script line, not one or the other.
+        //
+        // This used to prefer action and DISCARD scriptLine whenever there was one, on the
+        // reasoning that scriptLine only stands in for a shot with no action written. But they are
+        // not two phrasings of the same thing. On shot-01-002 the action is the mechanics -- "the
+        // technician's hand shoves an inflated bill into Neha's view, her eyes drop to it" -- and
+        // the script line is the point of the beat: "her face clearly shows that sinking feeling
+        // of being exploited". The second never reached the prompt, in the composed text or in the
+        // JSON, so what the shot was FOR was missing while how it was staged came through.
+        //
+        // Both, always. joinNonBlank drops whichever is absent, so a shot with only one of them
+        // reads exactly as before.
+        String action = joinNonBlank(" ", shot.action(), shot.scriptLine());
         if (!hasText(action) && !hasText(dialogue) && storyFrame == null) {
             return null;
         }
