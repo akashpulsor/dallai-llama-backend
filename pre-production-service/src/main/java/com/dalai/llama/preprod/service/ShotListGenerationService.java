@@ -517,6 +517,11 @@ public class ShotListGenerationService {
         if (request.durationSeconds() != null) shot.setDurationSeconds(request.durationSeconds());
         if (request.action() != null) shot.setAction(request.action());
         if (request.voiceOver() != null) shot.setVoiceOver(request.voiceOver());
+        // Blank is how the override is cleared -- stored as null so "use the cast" is one value
+        // downstream rather than two that every reader has to know are the same thing.
+        if (request.dubVoiceId() != null) {
+            shot.setDubVoiceId(request.dubVoiceId().isBlank() ? null : request.dubVoiceId().trim());
+        }
         if (request.emotion() != null) shot.setEmotion(request.emotion());
         if (request.textOverlay() != null) shot.setTextOverlay(request.textOverlay());
         if (request.soundDesign() != null) shot.setSoundDesign(request.soundDesign());
@@ -720,7 +725,7 @@ public class ShotListGenerationService {
                 shot.getLightingMood(), shot.getDurationSeconds(), shot.getAspectRatio(), shot.getStatus(),
                 shot.getCameraAngle(), shot.getCameraMovement(), shot.getLensSuggestion(), shot.getFps(),
                 shot.getComposition(), shot.getExpression(), shot.getEmotion(), shot.getBodyLanguage(),
-                shot.getAction(), shot.getVoiceOver(), shot.getTextOverlay(), shot.getSoundDesign(),
+                shot.getAction(), shot.getVoiceOver(), shot.getDubVoiceId(), shot.getTextOverlay(), shot.getSoundDesign(),
                 shot.getEditingNotes(), shot.getRetentionGoal(), shot.getCreatorDirection(),
                 shot.getSubtitlePosition(), shot.getMobileFocusArea(), shot.getSafeZoneNotes(),
                 shot.getExecutionDifficulty(), shot.getCinematicExecution(), shot.getRookieFriendlyGuide(),

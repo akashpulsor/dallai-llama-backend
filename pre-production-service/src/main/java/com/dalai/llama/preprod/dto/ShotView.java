@@ -37,6 +37,8 @@ public record ShotView(
         String bodyLanguage,
         String action,
         String voiceOver,
+        /** Set only when this shot overrides the cast's voice. Null means the cast decides. */
+        String dubVoiceId,
         String textOverlay,
         String soundDesign,
         String editingNotes,

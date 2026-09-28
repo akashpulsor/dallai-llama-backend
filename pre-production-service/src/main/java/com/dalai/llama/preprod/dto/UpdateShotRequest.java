@@ -24,6 +24,9 @@ public record UpdateShotRequest(
         @Positive Integer durationSeconds,
         String action,
         String voiceOver,
+        /** Provider voice id to dub this shot with, overriding the cast. An empty string clears
+         * it and hands the shot back to the cast, per this DTO's PATCH semantics. */
+        String dubVoiceId,
         String emotion,
         String textOverlay,
         String soundDesign,
@@ -42,6 +45,6 @@ public record UpdateShotRequest(
      * not be said in the shot's duration and writes the result back. */
     public static UpdateShotRequest ofVoiceOver(String voiceOver) {
         return new UpdateShotRequest(null, null, null, voiceOver, null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 }

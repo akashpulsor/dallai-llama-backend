@@ -183,6 +183,19 @@ public class CloneVoiceService {
         String characterKey = shot.primaryCharacterKey();
         boolean named = characterKey != null && !characterKey.isBlank();
 
+        // An override on the shot settles who speaks before any of the cast resolution below runs.
+        //
+        // It has to short-circuit rather than merge, because the whole point is the shot the cast
+        // gets wrong: a shot whose character has no profile, or none at all, is exactly the one a
+        // creator reaches for a different voice on, and making the override wait for a profile to
+        // resolve would refuse it in the case it exists to serve.
+        String override = shot.dubVoiceId() == null ? null : shot.dubVoiceId().trim();
+        if (override != null && !override.isEmpty()) {
+            log.info("clone-voice per-shot voice override projectId={} shotId={} voiceId={}",
+                    projectId, shot.id(), override);
+            return speak(tenantId, projectId, shot, bundle, text, beatId, override, "built_in");
+        }
+
         // A shot with no character at all used to be refused outright. But "who is in this shot" and
         // "whose voice is heard over it" are different questions, and a narrator answers the second
         // without appearing in the first: shot-01-010 has no primary character because nobody is in
@@ -211,9 +224,6 @@ public class CloneVoiceService {
                     : "Shot " + shot.shotRef() + " has no character of its own, and this project has"
                       + " no cast assigned to narrate it -- assign a voice in Cast first");
         }
-
-        String line = text == null || text.isBlank() ? defaultLineFor(shot) : text.trim();
-        String languageCode = bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage();
 
         String voiceId;
         String mode;
@@ -245,9 +255,20 @@ public class CloneVoiceService {
             throw VideoGenException.badRequest("Cast profile " + profile.id() + " has neither an uploaded voice sample nor a built-in voice set");
         }
 
+        return speak(tenantId, projectId, shot, bundle, text, beatId, voiceId, mode);
+    }
+
+    /** Records the line in the given voice and files the take. The tail every path shares once
+     * the only question that differs between them -- which voice -- has been answered. */
+    private CloneVoiceResult speak(UUID tenantId, UUID projectId, PreProductionViews.ShotView shot,
+                                   PreProductionViews.PrepareBundleView bundle, String text, UUID beatId,
+                                   String voiceId, String mode) {
+        String line = text == null || text.isBlank() ? defaultLineFor(shot) : text.trim();
+        String languageCode = bundle.projectConfig() == null ? null : bundle.projectConfig().dialogueLanguage();
         String ttsKey = idempotencyKey("voice-tts", shot.id(), voiceId, line, languageCode, ttsModel);
 
-        log.debug("clone-voice synthesizing projectId={} shotId={} mode={} language={} textLength={}", projectId, shot.id(), mode, languageCode, line.length());
+        log.debug("clone-voice synthesizing projectId={} shotId={} mode={} language={} textLength={}",
+                projectId, shot.id(), mode, languageCode, line.length());
 
         String audioDataUri = synthesize(tenantId, projectId, voiceId, line, languageCode, ttsKey);
 

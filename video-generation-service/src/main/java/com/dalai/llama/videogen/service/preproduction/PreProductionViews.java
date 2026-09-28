@@ -104,6 +104,9 @@ public final class PreProductionViews {
             String bodyLanguage,
             String action,
             String voiceOver,
+            /** Dub this shot with this provider voice instead of the one its cast resolves to.
+             * Null is the normal state and means the cast decides. */
+            String dubVoiceId,
             String textOverlay,
             String soundDesign,
             String editingNotes,

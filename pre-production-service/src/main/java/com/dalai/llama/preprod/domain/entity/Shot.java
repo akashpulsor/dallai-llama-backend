@@ -135,6 +135,12 @@ public class Shot {
     @Column(name = "voice_over", columnDefinition = "text")
     private String voiceOver;
 
+    /** Dub THIS shot with this provider voice instead of the one the cast resolves to. Null is
+     * the normal state and means "use the cast" -- the override exists for the single shot that
+     * wants a different read, without moving every other shot the character speaks in. */
+    @Column(name = "dub_voice_id", length = 128)
+    private String dubVoiceId;
+
     @Column(name = "text_overlay", columnDefinition = "text")
     private String textOverlay;
 
