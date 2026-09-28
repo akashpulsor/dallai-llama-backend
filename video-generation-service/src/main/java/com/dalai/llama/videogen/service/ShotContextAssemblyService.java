@@ -244,10 +244,27 @@ public class ShotContextAssemblyService {
                     assignment.wardrobeNote(),
                     joinNonBlank(" | ", assignment.performanceDirection(), performance),
                     profile == null ? null : profile.voiceRefBucket(),
-                    profile == null ? null : profile.voiceRefObjectKey()
+                    profile == null ? null : profile.voiceRefObjectKey(),
+                    // The name the film calls this person, so the prompt can say whose face it
+                    // has attached instead of a UUID.
+                    profile == null ? null : profile.displayName(),
+                    describeIdentity(profile)
             ));
         }
         return result;
+    }
+
+    /** Who this person IS -- description, age, gender -- as one line. Deliberately not wardrobe or
+     * setting: those are the shot's decisions, and a face reference must not be read as dressing
+     * the character or placing them somewhere. */
+    private String describeIdentity(PreProductionViews.CastProfileView profile) {
+        if (profile == null) {
+            return null;
+        }
+        return joinNonBlank(", ",
+                profile.description(),
+                profile.age() == null ? null : profile.age() + " years old",
+                profile.gender());
     }
 
     /** The shot's performance direction, from the columns that describe how it should be played. */

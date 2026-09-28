@@ -1,5 +1,6 @@
 package com.dalai.llama.videogen.service;
 
+import com.dalai.llama.videogen.dto.shotcontext.Character;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
@@ -7,6 +8,7 @@ import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,7 +33,7 @@ class VideoShotPromptServiceTest {
     private final UUID project = UUID.randomUUID();
 
     private VideoShotPromptService service(boolean enabled) {
-        return new VideoShotPromptService(gateway, "gemini-2.5-flash", enabled);
+        return new VideoShotPromptService(gateway, new com.fasterxml.jackson.databind.ObjectMapper(), "gemini-2.5-flash", enabled);
     }
 
     private ShotContext shot() {
@@ -65,6 +67,55 @@ class VideoShotPromptServiceTest {
                 .containsEntry("maxChars", "20000")
                 .containsEntry("composedPrompt", composed)
                 .containsEntry("shotType", "LIVE_ACTION");
+    }
+
+    @Test
+    void aCastImageIsNamedAndMarkedIdentityOnly() {
+        // The face was already attached and nothing said whose it was, so the model could not tie
+        // it to the line -- and a cast photo was as likely to dictate the wardrobe and the room.
+        ShotContext context = shot();
+        when(context.characters()).thenReturn(List.of(new Character(
+                UUID.randomUUID().toString(), "bucket", "faces/neha.png",
+                "grey kurta", "calm, unhurried", null, null,
+                "Neha", "38, warm, tired around the eyes")));
+        gatewayAnswers("Neha, calm and unhurried, in a grey kurta.");
+
+        service(true).writePrompt(tenant, project, context, "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        String references = sent.getValue().templateVariables().get("references");
+        assertThat(references)
+                .contains("reference image 1 = Neha")
+                .contains("38, warm, tired around the eyes")
+                .contains("IDENTITY ONLY")
+                // The whole point: the photograph must not decide what she wears or where she is.
+                .contains("come from the shot plan, NOT from this image");
+    }
+
+    @Test
+    void aShotWithNoAttachmentsSaysSoRatherThanSendingAnEmptyBlock() {
+        gatewayAnswers("A locked-off wide of an empty office.");
+
+        service(true).writePrompt(tenant, project, shot(), "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().templateVariables().get("references"))
+                .isEqualTo("No reference images are attached to this shot.");
+    }
+
+    @Test
+    void theStructuredPlanIsSentAlongsideTheComposedText() {
+        // A flattened string loses the field names: "85mm" is a number the model may drop,
+        // lensFocalLength is a decision it can honour.
+        gatewayAnswers("A shot.");
+
+        service(true).writePrompt(tenant, project, shot(), "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().templateVariables().get("shotJson")).contains("shotRef");
     }
 
     @Test

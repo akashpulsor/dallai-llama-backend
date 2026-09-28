@@ -12,6 +12,13 @@ public record Character(
          * Nullable: a character without a captured voice reference degrades gracefully to no
          * voice attachment. */
         String voiceRefBucket,
-        String voiceRefObjectKey
+        String voiceRefObjectKey,
+        /** What this person is CALLED. castId is a UUID, so until now the prompt could attach a
+         * face and never say whose it was -- the model got a photograph and no name to tie it to
+         * the line being spoken. */
+        String name,
+        /** The cast profile's own description, plus age and gender where set. Identity the model
+         * should honour, not wardrobe or setting -- those come from the shot plan. */
+        String description
 ) {
 }

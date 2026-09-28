@@ -97,7 +97,11 @@ public final class PromptDtos {
             String wardrobeNote,
             String performanceDirection,
             String voiceRefBucket,
-            String voiceRefObjectKey
+            String voiceRefObjectKey,
+            /** What this person is called, and who they are. castId is a UUID, so without these
+             * a prompt could attach a face and never say whose it was. */
+            String name,
+            String description
     ) {}
 
     public record Environment(String location, String timeOfDay, String weather, String environmentalEffects) {}

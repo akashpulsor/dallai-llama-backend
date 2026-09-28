@@ -1,14 +1,17 @@
 package com.dalai.llama.videogen.service;
 
+import com.dalai.llama.videogen.dto.shotcontext.Character;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.videogen.service.llmgateway.LlmGatewayClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -47,15 +50,18 @@ public class VideoShotPromptService {
     private static final String TASK_KEY = "VIDEO_SHOT_PROMPT";
 
     private final LlmGatewayClient llmGatewayClient;
+    private final ObjectMapper objectMapper;
     private final String model;
     private final boolean enabled;
 
     public VideoShotPromptService(
             LlmGatewayClient llmGatewayClient,
+            ObjectMapper objectMapper,
             @Value("${video-gen.shot-prompt.model:gemini-2.5-flash}") String model,
             @Value("${video-gen.shot-prompt.enabled:true}") boolean enabled
     ) {
         this.llmGatewayClient = llmGatewayClient;
+        this.objectMapper = objectMapper;
         this.model = model;
         this.enabled = enabled;
     }
@@ -83,6 +89,8 @@ public class VideoShotPromptService {
                             Map.of(),
                             TASK_KEY,
                             Map.of("composedPrompt", composedPrompt,
+                                    "shotJson", shotJson(shotContext),
+                                    "references", describeReferences(shotContext),
                                     "maxChars", String.valueOf(maxChars),
                                     "durationSeconds", duration == null ? "unspecified" : String.valueOf(duration),
                                     "shotType", orUnstated(shotContext.sceneType())),
@@ -110,6 +118,74 @@ public class VideoShotPromptService {
             log.warn("Could not write a shot prompt shotRef={} -- composing the usual way: {}",
                     shotContext.shotRef(), ex.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * What each attached image IS, in the order the model receives them.
+     *
+     * <p>The images were already being sent; nothing said what they were. A face arrived with no
+     * name, so the model could not tie it to the line being spoken, and nothing distinguished "this
+     * is who the person is" from "this is what the shot looks like" -- so a cast photo was as
+     * likely to dictate the wardrobe and the room as the face.
+     *
+     * <p>Hence the per-kind instruction rather than a bare list. A cast image is identity ONLY:
+     * face, build, hair. Wardrobe, location, lighting and action come from the plan, which is the
+     * one place they were decided.
+     */
+    private String describeReferences(ShotContext shotContext) {
+        List<String> lines = new ArrayList<>();
+        int position = 1;
+
+        if (shotContext.characters() != null) {
+            for (Character character : shotContext.characters()) {
+                if (character.faceRefObjectKey() == null) {
+                    continue;
+                }
+                String who = character.name() == null || character.name().isBlank()
+                        ? "this character" : character.name();
+                String identity = character.description() == null || character.description().isBlank()
+                        ? "" : " -- " + character.description();
+                lines.add("  - reference image " + position++ + " = " + who + identity
+                        + ". IDENTITY ONLY: take the face, build and hair from this photograph. Their"
+                        + " clothing, the location, the lighting and what they are doing come from the"
+                        + " shot plan, NOT from this image.");
+            }
+        }
+
+        if (shotContext.productBrand() != null && shotContext.productBrand().productRefObjectKey() != null) {
+            lines.add("  - reference image " + position++ + " = the product itself. Reproduce it exactly:"
+                    + " shape, colour, markings and packaging are the real article, never redrawn.");
+        }
+
+        if (shotContext.referenceImages() != null) {
+            for (ShotContext.ShotReferenceImage image : shotContext.referenceImages()) {
+                String tag = image.tag() == null || image.tag().isBlank() ? "creator reference" : image.tag();
+                lines.add("  - reference image " + position++ + " = \"" + tag + "\". Real creator-supplied"
+                        + " artwork -- an app screen, a logo, a layout. Reproduce it as given; never"
+                        + " redraw, restyle or invent a substitute.");
+            }
+        }
+
+        if (shotContext.referenceFrames() != null && !shotContext.referenceFrames().isEmpty()) {
+            lines.add("  - reference image " + position + " = this shot's own frame. What the shot"
+                    + " should look like: composition, framing and staging.");
+        }
+
+        return lines.isEmpty() ? "No reference images are attached to this shot." : String.join("\n", lines);
+    }
+
+    /** The whole shot context as JSON, so the model reads named fields rather than a flattened
+     * string. The composed prompt says "85mm"; this says it was lensFocalLength, which is the
+     * difference between a number the model can honour deliberately and one it may drop. */
+    private String shotJson(ShotContext shotContext) {
+        try {
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(shotContext);
+        } catch (Exception ex) {
+            // Never fatal: the composed prompt alone is still a usable brief.
+            log.warn("Could not serialise the shot context shotRef={} -- sending the composed prompt only: {}",
+                    shotContext.shotRef(), ex.getMessage());
+            return "(unavailable)";
         }
     }
 
