@@ -1,7 +1,7 @@
 package com.dalai.llama.llmgateway.service.prompt;
 
 import com.dalai.llama.llmgateway.dto.prompt.PromptDtos;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -9,17 +9,29 @@ import java.util.List;
 
 /**
  * Alibaba Wan (alibaba/wan-3.0-prime and siblings) prefers a single flowing paragraph over
- * line-per-directive lists -- verified against fal.ai's real Wan model page examples. Max
- * prompt length is Wan's documented ~1000 char limit; going over silently truncates on their
- * side.
+ * line-per-directive lists -- verified against fal.ai's real Wan model page examples.
+ *
+ * <p>The limit was hardcoded at 1000 characters, twenty times smaller than Wan 3.0's actual
+ * 20000. That number is not just a ceiling: anything composed above it is handed to the
+ * compression model to be SHORTENED, so every Wan prompt of any substance was being rewritten
+ * down to a fifth of a page. The lighting, camera and continuity detail the shot plan exists to
+ * carry is exactly what a compressor drops first, which is why prepared prompts read nothing
+ * like the plan behind them. Configurable now rather than a constant, so a real provider limit
+ * can be corrected without a rebuild.
  */
 @Component
-@RequiredArgsConstructor
 public class WanPromptStrategy implements ProviderPromptStrategy {
 
-    private static final int WAN_MAX_PROMPT_LENGTH = 1000;
-
+    private final int maxPromptLength;
     private final NegativePromptComposer negativePromptComposer;
+
+    public WanPromptStrategy(
+            NegativePromptComposer negativePromptComposer,
+            @Value("${llm-gateway.prompt-format.wan-max-prompt-length:20000}") int maxPromptLength
+    ) {
+        this.negativePromptComposer = negativePromptComposer;
+        this.maxPromptLength = maxPromptLength;
+    }
 
     @Override
     public boolean supports(String modelId) {
@@ -28,7 +40,7 @@ public class WanPromptStrategy implements ProviderPromptStrategy {
 
     @Override
     public int maxPromptLength() {
-        return WAN_MAX_PROMPT_LENGTH;
+        return maxPromptLength;
     }
 
     @Override

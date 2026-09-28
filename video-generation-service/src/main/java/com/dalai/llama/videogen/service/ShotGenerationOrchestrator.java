@@ -94,6 +94,7 @@ public class ShotGenerationOrchestrator {
     private final BeatDubbingService beatDubbingService;
     private final BackgroundMusicMixService backgroundMusicMixService;
     private final MotionGraphicPromptService motionGraphicPromptService;
+    private final VideoShotPromptService videoShotPromptService;
     private final VideoGenerationRequestedPublisher generationRequestedPublisher;
     private final String defaultModel;
 
@@ -116,6 +117,7 @@ public class ShotGenerationOrchestrator {
             BeatDubbingService beatDubbingService,
             BackgroundMusicMixService backgroundMusicMixService,
             MotionGraphicPromptService motionGraphicPromptService,
+            VideoShotPromptService videoShotPromptService,
             VideoGenerationRequestedPublisher generationRequestedPublisher,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
@@ -137,6 +139,7 @@ public class ShotGenerationOrchestrator {
         this.beatDubbingService = beatDubbingService;
         this.backgroundMusicMixService = backgroundMusicMixService;
         this.motionGraphicPromptService = motionGraphicPromptService;
+        this.videoShotPromptService = videoShotPromptService;
         this.generationRequestedPublisher = generationRequestedPublisher;
         this.defaultModel = defaultModel;
     }
@@ -223,12 +226,23 @@ public class ShotGenerationOrchestrator {
         // angle, lens, lighting mood -- and says nothing about what moves. Every other shot type
         // falls straight through, unchanged. The negative prompt is kept either way; it is about
         // what the model must avoid, which does not differ by shot type.
+        int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         String motionGraphicPrompt = motionGraphicPromptService.writePrompt(tenantId, projectId, shotContext);
         if (motionGraphicPrompt != null) {
             builtPrompt = new BuiltPrompt(motionGraphicPrompt, builtPrompt.negative());
+        } else {
+            // Every other shot type: the composed text is a spec sheet, so it is handed to a model
+            // to be written as a shot -- same direction, same numbers, expressed rather than
+            // listed, and written to the target model's real character budget so the lossy
+            // compression pass below has nothing left to do. Null means it could not answer or
+            // came back over budget, and the composed prompt stands exactly as it did before.
+            String writtenPrompt = videoShotPromptService.writePrompt(
+                    tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength);
+            if (writtenPrompt != null) {
+                builtPrompt = new BuiltPrompt(writtenPrompt, builtPrompt.negative());
+            }
         }
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
-        int maxPromptLength = resolveMaxPromptLength(modelId, maxPromptLengthCache);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
                 projectId, builtPrompt.positive(), maxPromptLength, modelId);
         CostEstimate estimate = costEstimationService.estimate(
