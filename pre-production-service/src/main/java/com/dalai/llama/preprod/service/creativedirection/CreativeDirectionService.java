@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service.creativedirection;
 
+import com.dalai.llama.joblifecycle.JobLifecycleStatus;
 import com.dalai.llama.preprod.domain.CreativeDirectionReviewStatus;
 import com.dalai.llama.preprod.domain.ReviewActor;
 import com.dalai.llama.preprod.domain.entity.CreativeDirection;
@@ -10,6 +11,8 @@ import com.dalai.llama.preprod.domain.entity.Project;
 import com.dalai.llama.preprod.dto.CreativeDirectionBoardView;
 import com.dalai.llama.preprod.dto.CreativeDirectionFeedbackRequest;
 import com.dalai.llama.preprod.dto.CreativeDirectionView;
+import com.dalai.llama.preprod.kafka.ChatJobRequestedEvent;
+import com.dalai.llama.preprod.kafka.ChatJobRequestedPublisher;
 import com.dalai.llama.preprod.repository.CreativeDirectionFeedbackRepository;
 import com.dalai.llama.preprod.repository.CreativeDirectionGenerationRepository;
 import com.dalai.llama.preprod.repository.CreativeDirectionReferenceRepository;
@@ -30,7 +33,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -44,8 +50,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Creative Direction, the stage between the locked idea and hook/beat planning: three alternative
- * director's treatments, reviewed, revised and approved by the creator or the client.
+ * Creative Direction, the stage between the locked idea and hook/beat planning: 5-10 alternative
+ * director's treatments per round (written asynchronously -- see {@link #generate}), reviewed,
+ * revised and approved by the creator or the client.
  * <p>
  * Inputs (idea, brief, client references and their analysis) come from creative-planning-service,
  * which owns them; the treatments are written by PRE_PROD_CREATIVE_DIRECTION_GENERATE through the
@@ -61,6 +68,10 @@ public class CreativeDirectionService {
 
     static final String GENERATE_TASK_KEY = "PRE_PROD_CREATIVE_DIRECTION_GENERATE";
     static final String REVISE_TASK_KEY = "PRE_PROD_CREATIVE_DIRECTION_REVISE";
+    static final int MIN_DIRECTION_COUNT = 5;
+    static final int MAX_DIRECTION_COUNT = 10;
+    static final int DEFAULT_DIRECTION_COUNT = 6;
+    public static final int DEFAULT_PAGE_SIZE = 3;
 
     private static final List<CreativeDirectionReviewStatus> OPEN = List.of(
             CreativeDirectionReviewStatus.PROPOSED,
@@ -77,6 +88,8 @@ public class CreativeDirectionService {
     private final ProjectConfigService projectConfigService;
     private final CreativeDirectionMapper mapper;
     private final ObjectMapper objectMapper;
+    private final ChatJobRequestedPublisher chatJobRequestedPublisher;
+    private final PlatformTransactionManager transactionManager;
     private final String defaultModel;
 
     public CreativeDirectionService(
@@ -90,6 +103,8 @@ public class CreativeDirectionService {
             ProjectConfigService projectConfigService,
             CreativeDirectionMapper mapper,
             ObjectMapper objectMapper,
+            ChatJobRequestedPublisher chatJobRequestedPublisher,
+            PlatformTransactionManager transactionManager,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
     ) {
         this.projectRepository = projectRepository;
@@ -102,48 +117,114 @@ public class CreativeDirectionService {
         this.projectConfigService = projectConfigService;
         this.mapper = mapper;
         this.objectMapper = objectMapper;
+        this.chatJobRequestedPublisher = chatJobRequestedPublisher;
+        this.transactionManager = transactionManager;
         this.defaultModel = defaultModel;
     }
 
-    /** Writes three new alternatives for the locked idea. Open treatments from earlier rounds are
-     * superseded; an approved one is untouched and stays the project's contract until a newer
-     * treatment is approved. */
-    @Transactional
-    public CreativeDirectionBoardView generate(UUID tenantId, UUID projectId, UUID userId) {
-        Project project = requireProject(tenantId, projectId);
-        CreativeContext context = creativePlanningClient.getCreativeContext(tenantId, projectId);
-        int round = generationRepository.findTopByProjectIdOrderByRoundDesc(projectId)
-                .map(previous -> previous.getRound() + 1).orElse(1);
-        Integer durationSeconds = durationFor(projectId, context);
+    /** Starts a round of {@code count} alternatives (5-10, default {@value #DEFAULT_DIRECTION_COUNT})
+     * as an asynchronous job: the round is stored PENDING and the request goes to llm-gateway over
+     * Kafka, because writing up to ten full treatments runs past the gateway's request timeout.
+     * {@link #completeGeneration} stores the treatments when the model answers. A press while a
+     * round is still running returns that round instead of starting another. */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public CreativeDirectionBoardView generate(UUID tenantId, UUID projectId, UUID userId, Integer count) {
+        int requested = count == null ? DEFAULT_DIRECTION_COUNT : count;
+        if (requested < MIN_DIRECTION_COUNT || requested > MAX_DIRECTION_COUNT) {
+            throw PreProductionException.badRequest(
+                    "Ask for between " + MIN_DIRECTION_COUNT + " and " + MAX_DIRECTION_COUNT + " creative directions");
+        }
+        requireProject(tenantId, projectId);
+        if (generationRepository.findTopByProjectIdAndStatusOrderByRoundDesc(projectId, JobLifecycleStatus.PENDING).isEmpty()) {
+            submit(tenantId, projectId, userId, requested);
+        }
+        return board(tenantId, projectId, 0, DEFAULT_PAGE_SIZE);
+    }
 
+    private void submit(UUID tenantId, UUID projectId, UUID userId, int requested) {
+        CreativeContext context = creativePlanningClient.getCreativeContext(tenantId, projectId);
+        Integer durationSeconds = durationFor(projectId, context);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        // The PENDING round must be committed before Kafka has the request: a cached gateway answer
+        // can come back immediately, and the completion consumer looks the round up by its key.
+        CreativeDirectionGeneration generation = transaction.execute(status -> {
+            int round = generationRepository.findTopByProjectIdOrderByRoundDesc(projectId)
+                    .map(previous -> previous.getRound() + 1).orElse(1);
+            return generationRepository.save(snapshot(tenantId, projectId, round, context, durationSeconds, userId, requested,
+                    "creative-direction-" + projectId + "-round" + round, OffsetDateTime.now()));
+        });
         Map<String, String> variables = new LinkedHashMap<>(inputVariables(context, durationSeconds));
-        CreativeDirectionGenerationResult result = callModel(tenantId, projectId,
-                "creative-direction-" + projectId + "-round" + round, GENERATE_TASK_KEY, variables,
-                CreativeDirectionGenerationResult.class).validated();
+        variables.put("directionCount", String.valueOf(requested));
+        try {
+            chatJobRequestedPublisher.publish(new ChatJobRequestedEvent(tenantId.toString(), generation.getLlmIdempotencyKey(),
+                    request(GENERATE_TASK_KEY, variables, projectId)));
+        } catch (RuntimeException ex) {
+            transaction.executeWithoutResult(status -> fail(generation.getId(),
+                    "Could not start creative direction generation. Please retry. " + ex.getMessage()));
+            throw ex;
+        }
+        log.info("Submitted creative direction round {} ({} directions) for project {} key={}",
+                generation.getRound(), requested, projectId, generation.getLlmIdempotencyKey());
+    }
+
+    /** The completion half, run by ChatJobCompletedConsumer when the model answers: validates the
+     * reply against the round's requested count, supersedes treatments nobody approved, and stores
+     * the new ones -- the first as the AI's (advisory) recommendation. A round that is no longer
+     * PENDING (a Kafka redelivery) is left alone. */
+    @Transactional
+    public void completeGeneration(UUID generationId, LlmGatewayChatResponse response) {
+        CreativeDirectionGeneration generation = generationRepository.findById(generationId)
+                .orElseThrow(() -> PreProductionException.notFound("No creative direction round " + generationId));
+        if (generation.getStatus() != JobLifecycleStatus.PENDING) {
+            return;
+        }
+        CreativeDirectionGenerationResult result = parse(GENERATE_TASK_KEY, response, CreativeDirectionGenerationResult.class)
+                .validated(generation.getRequestedCount());
+        Map<UUID, ReferenceAsset> available = assetsById(
+                creativePlanningClient.getCreativeContext(generation.getTenantId(), generation.getProjectId()));
 
         OffsetDateTime now = OffsetDateTime.now();
-        directionRepository.findByProjectIdAndReviewStatusIn(projectId, OPEN)
+        directionRepository.findByProjectIdAndReviewStatusIn(generation.getProjectId(), OPEN).stream()
+                .filter(open -> !open.getGenerationId().equals(generationId))
                 .forEach(open -> supersede(open, now));
-        CreativeDirectionGeneration generation = generationRepository.save(snapshot(tenantId, projectId, round, context,
-                durationSeconds, userId, now));
-        Map<UUID, ReferenceAsset> available = assetsById(context);
         List<CreativeDirectionGenerationResult.Direction> directions = result.directions();
         for (int i = 0; i < directions.size(); i++) {
             boolean recommended = i == 0;
-            CreativeDirection saved = directionRepository.save(newDirection(tenantId, projectId, generation.getId(),
-                    i + 1, 1, null, directions.get(i), recommended, recommended ? result.recommendationReason() : null,
+            CreativeDirection saved = directionRepository.save(newDirection(generation.getTenantId(), generation.getProjectId(),
+                    generationId, i + 1, 1, null, directions.get(i), recommended, recommended ? result.recommendationReason() : null,
                     CreativeDirectionReviewStatus.PROPOSED, now));
             saveReferences(saved.getId(), directions.get(i).referenceAssetIds(), available, now);
         }
-        return board(project, available);
+        generation.setStatus(JobLifecycleStatus.COMPLETED);
+        generation.setErrorMessage(null);
+        generation.setCompletedAt(now);
+        generationRepository.save(generation);
+    }
+
+    /** The model failed, or its reply could not be stored: the round ends FAILED with the reason the
+     * UI shows next to "try again". Earlier treatments are untouched. */
+    @Transactional
+    public void failGeneration(UUID generationId, String errorMessage) {
+        fail(generationId, errorMessage);
+    }
+
+    private void fail(UUID generationId, String errorMessage) {
+        generationRepository.findById(generationId)
+                .filter(generation -> generation.getStatus() == JobLifecycleStatus.PENDING)
+                .ifPresent(generation -> {
+                    generation.setStatus(JobLifecycleStatus.FAILED);
+                    generation.setErrorMessage(errorMessage);
+                    generation.setCompletedAt(OffsetDateTime.now());
+                    generationRepository.save(generation);
+                });
     }
 
     /** The Creative Direction screen. Reference URLs are signed fresh by creative-planning; when it
      * cannot be reached the treatments still render, with references marked unavailable. */
     @Transactional(readOnly = true)
-    public CreativeDirectionBoardView board(UUID tenantId, UUID projectId) {
+    public CreativeDirectionBoardView board(UUID tenantId, UUID projectId, int page, int size) {
         Project project = requireProject(tenantId, projectId);
-        return board(project, liveAssets(tenantId, projectId));
+        return board(project, liveAssets(tenantId, projectId), Math.max(page, 0), Math.min(Math.max(size, 1), MAX_DIRECTION_COUNT));
     }
 
     @Transactional(readOnly = true)
@@ -255,11 +336,14 @@ public class CreativeDirectionService {
 
     // ---------------------------------------------------------------- board
 
-    private CreativeDirectionBoardView board(Project project, Map<UUID, ReferenceAsset> liveAssets) {
+    private CreativeDirectionBoardView board(Project project, Map<UUID, ReferenceAsset> liveAssets, int page, int size) {
         Optional<CreativeDirectionGeneration> latest = generationRepository.findTopByProjectIdOrderByRoundDesc(project.getId());
-        List<CreativeDirection> directions = latest
+        Optional<CreativeDirectionGeneration> completed = generationRepository.findTopByProjectIdAndStatusOrderByRoundDesc(
+                project.getId(), JobLifecycleStatus.COMPLETED);
+        List<CreativeDirection> all = completed
                 .map(generation -> latestVersionPerOption(directionRepository.findByGenerationIdOrderByOptionNumberAscVersionDesc(generation.getId())))
                 .orElse(List.of());
+        List<CreativeDirection> directions = all.stream().skip((long) page * size).limit(size).toList();
         Optional<CreativeDirection> approved = directionRepository.findByProjectIdAndReviewStatus(project.getId(),
                 CreativeDirectionReviewStatus.APPROVED);
 
@@ -274,16 +358,22 @@ public class CreativeDirectionService {
         Function<CreativeDirection, CreativeDirectionView> view = direction -> mapper.toView(direction,
                 references.getOrDefault(direction.getId(), List.of()), feedback.getOrDefault(direction.getId(), List.of()), liveAssets);
 
-        CreativeDirectionGeneration generation = latest.orElse(null);
+        CreativeDirectionGeneration source = completed.orElse(null);
         return new CreativeDirectionBoardView(
                 project.getId(),
                 project.isCreativeDirectionRequired(),
-                generation == null ? 0 : generation.getRound(),
-                mapper.toBoardIdea(generation),
-                generation == null ? null : generation.getBriefText(),
-                generation == null ? null : generation.getDurationSeconds(),
+                source == null ? 0 : source.getRound(),
+                mapper.toBoardIdea(source),
+                source == null ? null : source.getBriefText(),
+                source == null ? null : source.getDurationSeconds(),
                 directions.stream().map(view).toList(),
-                approved.map(view).orElse(null));
+                page,
+                size,
+                all.size(),
+                approved.map(view).orElse(null),
+                latest.map(generation -> new CreativeDirectionBoardView.Generation(generation.getId(), generation.getRound(),
+                        generation.getStatus(), generation.getRequestedCount(), generation.getErrorMessage(),
+                        generation.getCreatedAt(), generation.getCompletedAt())).orElse(null));
     }
 
     /** One entry per option, its newest version -- the recommended option (1) first. */
@@ -338,9 +428,15 @@ public class CreativeDirectionService {
 
     private <T> T callModel(UUID tenantId, UUID projectId, String idempotencyKey, String taskKey,
                             Map<String, String> variables, Class<T> type) {
-        LlmGatewayChatResponse response = llmGatewayClient.chat(tenantId.toString(), idempotencyKey,
-                new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
-                        JsonExtraction.JSON_MODE_PARAMS, taskKey, variables).withProjectId(projectId));
+        return parse(taskKey, llmGatewayClient.chat(tenantId.toString(), idempotencyKey, request(taskKey, variables, projectId)), type);
+    }
+
+    private LlmGatewayChatRequest request(String taskKey, Map<String, String> variables, UUID projectId) {
+        return new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
+                JsonExtraction.JSON_MODE_PARAMS, taskKey, variables).withProjectId(projectId);
+    }
+
+    private <T> T parse(String taskKey, LlmGatewayChatResponse response, Class<T> type) {
         if (response == null || response.response() == null || response.response().isBlank()) {
             throw PreProductionException.upstream(taskKey + " returned no content");
         }
@@ -432,7 +528,8 @@ public class CreativeDirectionService {
     // ---------------------------------------------------------------- persistence helpers
 
     private static CreativeDirectionGeneration snapshot(UUID tenantId, UUID projectId, int round, CreativeContext context,
-                                                        Integer durationSeconds, UUID userId, OffsetDateTime now) {
+                                                        Integer durationSeconds, UUID userId, int requestedCount,
+                                                        String idempotencyKey, OffsetDateTime now) {
         CreativeContext.Idea idea = context.idea();
         return CreativeDirectionGeneration.builder()
                 .tenantId(tenantId)
@@ -448,6 +545,9 @@ public class CreativeDirectionService {
                 .briefText(context.brief() == null ? null : context.brief().briefText())
                 .durationSeconds(durationSeconds)
                 .createdBy(userId)
+                .requestedCount(requestedCount)
+                .status(JobLifecycleStatus.PENDING)
+                .llmIdempotencyKey(idempotencyKey)
                 .createdAt(now)
                 .build();
     }

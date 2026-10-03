@@ -3,7 +3,9 @@ package com.dalai.llama.preprod.kafka;
 import com.dalai.llama.preprod.domain.ShotListJobStatus;
 import com.dalai.llama.preprod.domain.entity.ShotListJob;
 import com.dalai.llama.preprod.dto.ShotView;
+import com.dalai.llama.preprod.repository.CreativeDirectionGenerationRepository;
 import com.dalai.llama.preprod.repository.ShotListJobRepository;
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionService;
 import com.dalai.llama.preprod.service.ShotListGenerationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +39,8 @@ public class ChatJobCompletedConsumer {
     private final ObjectMapper objectMapper;
     private final ShotListJobRepository shotListJobRepository;
     private final ShotListGenerationService shotListGenerationService;
+    private final CreativeDirectionGenerationRepository creativeDirectionGenerationRepository;
+    private final CreativeDirectionService creativeDirectionService;
 
     @KafkaListener(
             topics = "${pre-production.llm-gateway.job-completed-topic}",
@@ -53,8 +57,10 @@ public class ChatJobCompletedConsumer {
 
         Optional<ShotListJob> maybeJob = shotListJobRepository.findByLlmJobIdempotencyKey(event.idempotencyKey());
         if (maybeJob.isEmpty()) {
-            // Not one of ours -- another service (or a shot-list job that's already been reaped)
-            // owns this idempotency key. Silent drop, not an error.
+            // A creative-direction round is the other job this service submits; anything else
+            // belongs to another service. Silent drop, not an error.
+            creativeDirectionGenerationRepository.findByLlmIdempotencyKey(event.idempotencyKey())
+                    .ifPresent(round -> completeCreativeDirectionRound(round.getId(), event));
             return;
         }
         ShotListJob job = maybeJob.get();
@@ -85,6 +91,24 @@ public class ChatJobCompletedConsumer {
             // stops polling and shows a clean error rather than spinning forever.
             log.error("Post-response persistence failed for shot-list jobId={}", job.getId(), ex);
             markFailed(job, "Post-response persistence failed: " + ex.getMessage());
+        }
+    }
+
+    /** Same contract as the shot-list path: a redelivered event for a finished round is ignored (the
+     * service checks PENDING), and a reply that cannot be stored ends the round FAILED rather than
+     * being retried -- the model call already happened and was billed. */
+    private void completeCreativeDirectionRound(java.util.UUID roundId, ChatJobCompletedEvent event) {
+        if (event.status() == ChatJobCompletedEvent.Status.FAILED) {
+            creativeDirectionService.failGeneration(roundId,
+                    event.errorMessage() == null ? "llm-gateway reported FAILED with no message" : event.errorMessage());
+            return;
+        }
+        try {
+            creativeDirectionService.completeGeneration(roundId, event.response());
+            log.info("Creative direction round {} completed", roundId);
+        } catch (Exception ex) {
+            log.error("Storing creative direction round {} failed", roundId, ex);
+            creativeDirectionService.failGeneration(roundId, "The treatments could not be stored: " + ex.getMessage());
         }
     }
 

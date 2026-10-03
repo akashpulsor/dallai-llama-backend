@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service.creativedirection;
 
+import com.dalai.llama.joblifecycle.JobLifecycleStatus;
 import com.dalai.llama.preprod.domain.CreativeDirectionReviewStatus;
 import com.dalai.llama.preprod.domain.ReferenceMediaType;
 import com.dalai.llama.preprod.domain.ReviewActor;
@@ -7,6 +8,8 @@ import com.dalai.llama.preprod.domain.entity.CreativeDirection;
 import com.dalai.llama.preprod.domain.entity.CreativeDirectionGeneration;
 import com.dalai.llama.preprod.domain.entity.CreativeDirectionReference;
 import com.dalai.llama.preprod.domain.entity.Project;
+import com.dalai.llama.preprod.kafka.ChatJobRequestedEvent;
+import com.dalai.llama.preprod.kafka.ChatJobRequestedPublisher;
 import com.dalai.llama.preprod.repository.CreativeDirectionFeedbackRepository;
 import com.dalai.llama.preprod.repository.CreativeDirectionGenerationRepository;
 import com.dalai.llama.preprod.repository.CreativeDirectionReferenceRepository;
@@ -84,17 +87,58 @@ class CreativeDirectionServiceTest {
     }
 
     @Test
-    void generatesThreeAdvisoryDirectionsWithEveryFieldInItsOwnColumn() {
-        reply("""
+    void generationIsSubmittedAsAPendingRoundCarryingTheRequestedCount() {
+        when(generations.findTopByProjectIdAndStatusOrderByRoundDesc(projectId, JobLifecycleStatus.PENDING)).thenReturn(Optional.empty());
+
+        service.generate(tenantId, projectId, UUID.randomUUID(), 8);
+
+        ArgumentCaptor<CreativeDirectionGeneration> round = ArgumentCaptor.forClass(CreativeDirectionGeneration.class);
+        verify(generations).save(round.capture());
+        assertThat(round.getValue().getStatus()).isEqualTo(JobLifecycleStatus.PENDING);
+        assertThat(round.getValue().getRequestedCount()).isEqualTo(8);
+        assertThat(round.getValue().getIdeaTitle()).isEqualTo("The Verified Difference");
+
+        ArgumentCaptor<ChatJobRequestedEvent> event = ArgumentCaptor.forClass(ChatJobRequestedEvent.class);
+        verify(built.dependency(ChatJobRequestedPublisher.class)).publish(event.capture());
+        assertThat(event.getValue().idempotencyKey()).isEqualTo(round.getValue().getLlmIdempotencyKey());
+        LlmGatewayChatRequest request = event.getValue().request();
+        assertThat(request.taskKey()).isEqualTo("PRE_PROD_CREATIVE_DIRECTION_GENERATE");
+        assertThat(request.templateVariables()).containsEntry("directionCount", "8")
+                .containsKeys("idea", "brief", "durationSeconds", "references", "referenceAnalysis");
+        assertThat(request.templateVariables().get("references")).contains(image.toString()).contains("VIDEO");
+        verify(directions, never()).save(any());
+    }
+
+    @Test
+    void askingForFewerThanFiveOrMoreThanTenIsRefused() {
+        assertThatThrownBy(() -> service.generate(tenantId, projectId, null, 4)).isInstanceOf(PreProductionException.class);
+        assertThatThrownBy(() -> service.generate(tenantId, projectId, null, 11)).isInstanceOf(PreProductionException.class);
+    }
+
+    @Test
+    void aSecondPressWhileARoundIsRunningDoesNotStartAnother() {
+        CreativeDirectionGeneration running = round(6);
+        when(generations.findTopByProjectIdAndStatusOrderByRoundDesc(projectId, JobLifecycleStatus.PENDING))
+                .thenReturn(Optional.of(running));
+
+        service.generate(tenantId, projectId, null, 6);
+
+        verify(built.dependency(ChatJobRequestedPublisher.class), never()).publish(any());
+    }
+
+    @Test
+    void aCompletedRoundStoresAdvisoryDirectionsWithEveryFieldInItsOwnColumn() {
+        CreativeDirectionGeneration round = round(5);
+        String reply = """
                 {"recommendationReason":"Only the diary device carries the trust story in 30 seconds",
-                 "directions":[%s,%s,%s]}""".formatted(
+                 "directions":[%s,%s,%s,%s,%s]}""".formatted(
                 direction("The Diary", "[\"" + image + "\"]"),
                 direction("Night Shift", "[\"" + video + "\", \"" + UUID.randomUUID() + "\", \"not-a-uuid\"]"),
-                direction("Open Door", "[]")));
+                direction("Open Door", "[]"), direction("Two Kitchens", "[]"), direction("The Checklist", "[]"));
 
-        service.generate(tenantId, projectId, UUID.randomUUID());
+        service.completeGeneration(round.getId(), response(reply));
 
-        assertThat(saved).hasSize(3);
+        assertThat(saved).hasSize(5);
         CreativeDirection recommended = saved.get(0);
         assertThat(recommended.isRecommended()).isTrue();
         assertThat(recommended.getRecommendationReason()).isEqualTo("Only the diary device carries the trust story in 30 seconds");
@@ -103,8 +147,11 @@ class CreativeDirectionServiceTest {
         assertThat(recommended.getStoryPeriod()).isEqualTo("present day");
         assertThat(recommended.getSignatureCreativeDevice()).isEqualTo("a handwritten diary");
         assertThat(saved).allSatisfy(direction -> assertThat(direction.getReviewStatus()).isEqualTo(CreativeDirectionReviewStatus.PROPOSED));
-        assertThat(saved.get(1).isRecommended()).isFalse();
-        assertThat(saved.get(1).getRecommendationReason()).isNull();
+        assertThat(saved.subList(1, 5)).allSatisfy(direction -> {
+            assertThat(direction.isRecommended()).isFalse();
+            assertThat(direction.getRecommendationReason()).isNull();
+        });
+        assertThat(round.getStatus()).isEqualTo(JobLifecycleStatus.COMPLETED);
 
         ArgumentCaptor<CreativeDirectionReference> refs = ArgumentCaptor.forClass(CreativeDirectionReference.class);
         verify(references, atLeastOnce()).save(refs.capture());
@@ -113,21 +160,15 @@ class CreativeDirectionServiceTest {
         assertThat(refs.getAllValues().get(0).getMediaType()).isEqualTo(ReferenceMediaType.IMAGE);
         assertThat(refs.getAllValues().get(0).getReferenceAnalysis()).isEqualTo("warm window light");
         assertThat(refs.getAllValues().get(1).getClientInstruction()).isEqualTo("show the real technician");
-
-        ArgumentCaptor<LlmGatewayChatRequest> request = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
-        verify(llm).chat(anyString(), anyString(), request.capture());
-        assertThat(request.getValue().taskKey()).isEqualTo("PRE_PROD_CREATIVE_DIRECTION_GENERATE");
-        assertThat(request.getValue().templateVariables())
-                .containsKeys("idea", "brief", "durationSeconds", "references", "referenceAnalysis");
-        assertThat(request.getValue().templateVariables().get("references")).contains(image.toString()).contains("VIDEO");
     }
 
     @Test
-    void aReplyWithoutExactlyThreeDirectionsIsNeverPersisted() {
-        reply("""
-                {"recommendationReason":"r","directions":[%s,%s]}""".formatted(direction("A", "[]"), direction("B", "[]")));
+    void aReplyWithTheWrongNumberOfDirectionsIsNeverPersisted() {
+        CreativeDirectionGeneration round = round(6);
+        String reply = """
+                {"recommendationReason":"r","directions":[%s,%s,%s]}""".formatted(direction("A", "[]"), direction("B", "[]"), direction("C", "[]"));
 
-        assertThatThrownBy(() -> service.generate(tenantId, projectId, null)).isInstanceOf(PreProductionException.class);
+        assertThatThrownBy(() -> service.completeGeneration(round.getId(), response(reply))).isInstanceOf(PreProductionException.class);
         verify(directions, never()).save(any());
     }
 
@@ -146,14 +187,16 @@ class CreativeDirectionServiceTest {
     }
 
     @Test
-    void regeneratingSupersedesOpenDirectionsButNeverTheApprovedOne() {
+    void aNewRoundSupersedesOpenDirectionsButNeverTheApprovedOne() {
         CreativeDirection open = stored(CreativeDirectionReviewStatus.SELECTED, false);
         CreativeDirection approved = stored(CreativeDirectionReviewStatus.APPROVED, true);
         when(directions.findByProjectIdAndReviewStatusIn(eq(projectId), any())).thenReturn(List.of(open));
-        reply("""
-                {"recommendationReason":"r","directions":[%s,%s,%s]}""".formatted(direction("A", "[]"), direction("B", "[]"), direction("C", "[]")));
+        CreativeDirectionGeneration round = round(5);
+        String reply = """
+                {"recommendationReason":"r","directions":[%s,%s,%s,%s,%s]}""".formatted(
+                direction("A", "[]"), direction("B", "[]"), direction("C", "[]"), direction("D", "[]"), direction("E", "[]"));
 
-        service.generate(tenantId, projectId, null);
+        service.completeGeneration(round.getId(), response(reply));
 
         assertThat(open.getReviewStatus()).isEqualTo(CreativeDirectionReviewStatus.SUPERSEDED);
         assertThat(approved.getReviewStatus()).isEqualTo(CreativeDirectionReviewStatus.APPROVED);
@@ -188,9 +231,23 @@ class CreativeDirectionServiceTest {
     }
 
     private void reply(String json) {
+        LlmGatewayChatResponse response = response(json);
+        when(llm.chat(anyString(), anyString(), any())).thenReturn(response);
+    }
+
+    private static LlmGatewayChatResponse response(String json) {
         LlmGatewayChatResponse response = mock(LlmGatewayChatResponse.class);
         when(response.response()).thenReturn(json);
-        when(llm.chat(anyString(), anyString(), any())).thenReturn(response);
+        return response;
+    }
+
+    private CreativeDirectionGeneration round(int requestedCount) {
+        CreativeDirectionGeneration round = CreativeDirectionGeneration.builder()
+                .id(UUID.randomUUID()).tenantId(tenantId).projectId(projectId).round(1).requestedCount(requestedCount)
+                .status(JobLifecycleStatus.PENDING).llmIdempotencyKey("creative-direction-" + projectId + "-round1")
+                .createdAt(OffsetDateTime.now()).build();
+        when(generations.findById(round.getId())).thenReturn(Optional.of(round));
+        return round;
     }
 
     private static String direction(String title, String referenceIds) {

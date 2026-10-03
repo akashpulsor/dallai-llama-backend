@@ -135,9 +135,9 @@ public class PublicProjectService {
     // ---- Creative Direction, shared with the client through the review link ----
 
     /** The project's director's treatments, as the creator sees them. */
-    public CreativeDirectionBoardView creativeDirections(String token) {
+    public CreativeDirectionBoardView creativeDirections(String token, int page, int size) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
-        return creativeDirectionService.board(identity.tenantId(), identity.projectId());
+        return creativeDirectionService.board(identity.tenantId(), identity.projectId(), page, size);
     }
 
     public CreativeDirectionView creativeDirectionFeedback(String token, UUID directionId, CreativeDirectionFeedbackRequest request) {

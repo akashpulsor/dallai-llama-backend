@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -28,15 +29,21 @@ public class CreativeDirectionController extends BaseController {
         this.creativeDirectionService = creativeDirectionService;
     }
 
-    /** Writes three new alternatives. An approved direction is kept until another is approved. */
+    /** Starts a round of {@code count} new alternatives (5-10, default 6) and returns at once with
+     * the round PENDING -- poll the board until it completes. An approved direction is kept until
+     * another is approved. */
     @PostMapping("/v1/projects/{projectId}/creative-directions/generate")
-    public ResponseEntity<CreativeDirectionBoardView> generate(@PathVariable UUID projectId) {
-        return ResponseEntity.ok(creativeDirectionService.generate(tenant().tenantId(), projectId, tenant().userId()));
+    public ResponseEntity<CreativeDirectionBoardView> generate(@PathVariable UUID projectId,
+                                                               @RequestParam(required = false) Integer count) {
+        return ResponseEntity.accepted().body(creativeDirectionService.generate(tenant().tenantId(), projectId, tenant().userId(), count));
     }
 
+    /** One page of the latest completed round, the AI's recommendation first on page 0. */
     @GetMapping("/v1/projects/{projectId}/creative-directions")
-    public ResponseEntity<CreativeDirectionBoardView> board(@PathVariable UUID projectId) {
-        return ResponseEntity.ok(creativeDirectionService.board(tenant().tenantId(), projectId));
+    public ResponseEntity<CreativeDirectionBoardView> board(@PathVariable UUID projectId,
+                                                            @RequestParam(defaultValue = "0") int page,
+                                                            @RequestParam(defaultValue = "" + CreativeDirectionService.DEFAULT_PAGE_SIZE) int size) {
+        return ResponseEntity.ok(creativeDirectionService.board(tenant().tenantId(), projectId, page, size));
     }
 
     /** 204 when no direction is approved yet. */

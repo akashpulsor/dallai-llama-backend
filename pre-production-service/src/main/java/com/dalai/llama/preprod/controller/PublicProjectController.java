@@ -54,8 +54,11 @@ public class PublicProjectController {
 
     /** The project's director's treatments, shared with the client for review. */
     @GetMapping("/v1/public/projects/{token}/creative-directions")
-    public ResponseEntity<com.dalai.llama.preprod.dto.CreativeDirectionBoardView> creativeDirections(@PathVariable String token) {
-        return ResponseEntity.ok(publicProjectService.creativeDirections(token));
+    public ResponseEntity<com.dalai.llama.preprod.dto.CreativeDirectionBoardView> creativeDirections(
+            @PathVariable String token,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "3") int size) {
+        return ResponseEntity.ok(publicProjectService.creativeDirections(token, page, size));
     }
 
     @PostMapping("/v1/public/projects/{token}/creative-directions/{directionId}/feedback")

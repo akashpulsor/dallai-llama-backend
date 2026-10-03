@@ -13,8 +13,6 @@ public record CreativeDirectionGenerationResult(
         List<Direction> directions
 ) {
 
-    static final int DIRECTION_COUNT = 3;
-
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Direction(
             String title,
@@ -40,12 +38,12 @@ public record CreativeDirectionGenerationResult(
     public record VisualLanguage(String storyPeriod, String colorTreatment, String contrast, String texture,
                                  String overallAesthetic) {}
 
-    /** Exactly three complete directions and a reason for the recommendation, or an upstream error --
-     * a partial or malformed reply is never persisted. */
-    public CreativeDirectionGenerationResult validated() {
-        if (directions == null || directions.size() != DIRECTION_COUNT) {
+    /** Exactly the requested number of complete directions and a reason for the recommendation, or
+     * an upstream error -- a partial or malformed reply is never persisted. */
+    public CreativeDirectionGenerationResult validated(int expectedCount) {
+        if (directions == null || directions.size() != expectedCount) {
             throw PreProductionException.upstream("Creative direction generation returned "
-                    + (directions == null ? 0 : directions.size()) + " directions, expected " + DIRECTION_COUNT);
+                    + (directions == null ? 0 : directions.size()) + " directions, expected " + expectedCount);
         }
         if (isBlank(recommendationReason)) {
             throw PreProductionException.upstream("Creative direction generation gave no reason for its recommendation");

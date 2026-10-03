@@ -1,6 +1,9 @@
 package com.dalai.llama.preprod.domain.entity;
 
+import com.dalai.llama.joblifecycle.JobLifecycleStatus;
 import jakarta.persistence.Column;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -16,7 +19,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /** One "generate alternatives" round for a project, with the idea and brief exactly as they were
- * sent to the model. See V73. */
+ * sent to the model -- and, since V74, the asynchronous job that writes its treatments. */
 @Getter
 @Setter
 @Builder
@@ -69,6 +72,24 @@ public class CreativeDirectionGeneration {
 
     @Column(name = "created_by")
     private UUID createdBy;
+
+    /** How many treatments this round asked for (5-10; 3 for rounds written before V74). */
+    @Column(name = "requested_count", nullable = false)
+    private int requestedCount;
+
+    /** The round is the job: PENDING until its treatments are stored, then COMPLETED or FAILED. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    private JobLifecycleStatus status;
+
+    @Column(name = "error_message", columnDefinition = "text")
+    private String errorMessage;
+
+    @Column(name = "llm_idempotency_key")
+    private String llmIdempotencyKey;
+
+    @Column(name = "completed_at")
+    private OffsetDateTime completedAt;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
