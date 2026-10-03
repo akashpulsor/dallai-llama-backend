@@ -103,6 +103,8 @@ billing:
     platform-base-inr: ${CLIENT_REVIEW_PLATFORM_BASE_INR:5299}
     default-creator-margin-percent: ${CLIENT_REVIEW_DEFAULT_CREATOR_MARGIN_PERCENT:22.6}
     currency: ${CLIENT_REVIEW_CURRENCY:INR}
+    # One review round past the project's included allowance; the creator's margin goes on top.
+    extra-review-price-inr: ${CLIENT_REVIEW_EXTRA_REVIEW_PRICE_INR:100}
   # Only used for the webhook-driven client-review-payment safety net (see
   # ClientReviewPaymentService#captureFromWebhook / PreProductionServiceClient) -- nothing else in
   # billing-service calls pre-production-service.

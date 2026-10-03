@@ -59,10 +59,10 @@ public class ClientReviewPaymentService {
 
     /** Flat base price of one extra review round (beyond a project's included allowance). The
      * creator's margin is added on top, same as the unquoted lock flow -- all configurable. */
-    @Value("${billing.client-review.extra-review-price-inr:500}")
+    @Value("${billing.client-review.extra-review-price-inr:100}")
     private BigDecimal extraReviewBase;
 
-    /** Quote for one extra review round (₹500 base by default + the creator's margin). */
+    /** Quote for one extra review round (₹100 base by default + the creator's margin). */
     public Quote extraReviewQuote(UUID tenantId, UUID projectId) {
         return marginOnTop(tenantId, extraReviewBase);
     }

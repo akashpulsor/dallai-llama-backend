@@ -68,14 +68,14 @@ class ProjectEconomicsServiceTest {
     void anExtraReviewFeeStaysWithThePlatform() {
         when(creativePlanning.getProjectQuote(tenantId, projectId)).thenReturn(Optional.empty());
         when(reviewPayments.findByTenantIdAndProjectIdAndStatus(tenantId, projectId, "SUCCESS"))
-                .thenReturn(List.of(payment("EXTRA_REVIEW", "500.00", "113.00")));
+                .thenReturn(List.of(payment("EXTRA_REVIEW", "100.00", "22.60")));
         when(usage.sumCostByProjectId(tenantId, projectId)).thenReturn(BigDecimal.ZERO);
         when(usage.sumRawCostByProjectId(tenantId, projectId)).thenReturn(BigDecimal.ZERO);
 
         ProjectEconomics economics = service.forProject(tenantId, projectId);
 
-        assertThat(economics.creator().received()).isEqualByComparingTo("113.00");
-        assertThat(economics.platform().reviewPaymentShare()).isEqualByComparingTo("500.00");
+        assertThat(economics.creator().received()).isEqualByComparingTo("22.60");
+        assertThat(economics.platform().reviewPaymentShare()).isEqualByComparingTo("100.00");
     }
 
     private ClientReviewPayment payment(String kind, String platformBase, String toCreator) {

@@ -46,7 +46,7 @@ class ClientReviewPaymentServiceTest {
         ReflectionTestUtils.setField(service, "platformBase", new BigDecimal("5299"));
         ReflectionTestUtils.setField(service, "defaultCreatorMarginPercent", new BigDecimal("22.6"));
         ReflectionTestUtils.setField(service, "currency", "INR");
-        ReflectionTestUtils.setField(service, "extraReviewBase", new BigDecimal("500"));
+        ReflectionTestUtils.setField(service, "extraReviewBase", new BigDecimal("100"));
         when(tenantServiceClient.getTenant(any())).thenReturn(null);
     }
 
@@ -109,6 +109,15 @@ class ClientReviewPaymentServiceTest {
                 "CLIENT_REVIEW_PAYMENT:" + projectId, null, "clr-credit-" + lock.getId());
         verify(walletService).credit(eq(tenantId), eq(new BigDecimal("1046.82")), eq(TransactionType.RECHARGE),
                 eq("CLIENT_PRODUCTION_FUNDING:" + projectId), isNull(), eq("clr-production-" + lock.getId()), anyString());
+    }
+
+    @Test
+    void anExtraReviewRoundIsOneHundredPlusTheCreatorsMargin() {
+        ClientReviewPaymentService.Quote quote = service.extraReviewQuote(tenantId, projectId);
+
+        assertThat(quote.platformBase()).isEqualByComparingTo("100.00");
+        assertThat(quote.creatorAmount()).isEqualByComparingTo("22.60");
+        assertThat(quote.totalAmount()).isEqualByComparingTo("122.60");
     }
 
     private void quote(ProjectQuote projectQuote) {
