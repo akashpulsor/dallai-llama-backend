@@ -4,6 +4,8 @@ import com.dalai.llama.billing.client.CreativePlanningServiceClient;
 import com.dalai.llama.billing.client.CreativePlanningServiceClient.ProjectQuote;
 import com.dalai.llama.billing.client.PreProductionServiceClient;
 import com.dalai.llama.billing.client.TenantServiceClient;
+import com.dalai.llama.billing.domain.entity.ClientReviewPayment;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.repository.ClientReviewPaymentRepository;
 import com.dalai.llama.billing.service.payment.PaymentGateway;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +19,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -28,12 +34,14 @@ class ClientReviewPaymentServiceTest {
     private final PaymentGateway paymentGateway = mock(PaymentGateway.class);
     private final TenantServiceClient tenantServiceClient = mock(TenantServiceClient.class);
     private final CreativePlanningServiceClient creativePlanning = mock(CreativePlanningServiceClient.class);
+    private final WalletService walletService = mock(WalletService.class);
+    private final ClientReviewPaymentRepository payments = mock(ClientReviewPaymentRepository.class);
     private ClientReviewPaymentService service;
 
     @BeforeEach
     void setUp() {
-        service = new ClientReviewPaymentService(paymentGateway, tenantServiceClient, mock(WalletService.class),
-                mock(ClientReviewPaymentRepository.class), mock(PreProductionServiceClient.class), creativePlanning,
+        service = new ClientReviewPaymentService(paymentGateway, tenantServiceClient, walletService,
+                payments, mock(PreProductionServiceClient.class), creativePlanning,
                 VideoPricingFixture.withDefaults());
         ReflectionTestUtils.setField(service, "platformBase", new BigDecimal("5299"));
         ReflectionTestUtils.setField(service, "defaultCreatorMarginPercent", new BigDecimal("22.6"));
@@ -85,6 +93,22 @@ class ClientReviewPaymentServiceTest {
         assertThat(quote.quotedTotalPrice()).isNull();
         assertThat(quote.paidUpfront()).isNull();
         assertThat(quote.production()).isNull();
+    }
+
+    @Test
+    void aCapturedLockPutsTheWholePaymentInTheCreatorsWallet() {
+        ClientReviewPayment lock = ClientReviewPayment.builder()
+                .id(UUID.randomUUID()).tenantId(tenantId).projectId(projectId).kind("LOCK").status("PENDING")
+                .platformBase(new BigDecimal("1046.82")).creatorAmount(new BigDecimal("252.18"))
+                .totalAmount(new BigDecimal("1299.00")).currency("INR").gatewayOrderId("order_1").build();
+        when(payments.findByGatewayOrderId("order_1")).thenReturn(Optional.of(lock));
+
+        service.verify("order_1", "pay_1", "sig");
+
+        verify(walletService).credit(tenantId, new BigDecimal("252.18"),
+                "CLIENT_REVIEW_PAYMENT:" + projectId, null, "clr-credit-" + lock.getId());
+        verify(walletService).credit(eq(tenantId), eq(new BigDecimal("1046.82")), eq(TransactionType.RECHARGE),
+                eq("CLIENT_PRODUCTION_FUNDING:" + projectId), isNull(), eq("clr-production-" + lock.getId()), anyString());
     }
 
     private void quote(ProjectQuote projectQuote) {

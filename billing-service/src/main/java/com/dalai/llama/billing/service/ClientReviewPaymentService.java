@@ -5,6 +5,7 @@ import com.dalai.llama.billing.client.CreativePlanningServiceClient.ProjectQuote
 import com.dalai.llama.billing.client.PreProductionServiceClient;
 import com.dalai.llama.billing.client.TenantServiceClient;
 import com.dalai.llama.billing.domain.entity.ClientReviewPayment;
+import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.repository.ClientReviewPaymentRepository;
 import com.dalai.llama.billing.service.payment.PaymentGateway;
 import lombok.RequiredArgsConstructor;
@@ -23,9 +24,11 @@ import java.util.UUID;
  * <b>balance</b> of that quote -- {@code quotedTotalPrice} minus whatever the client already paid
  * upfront on the brief -- so the review page charges exactly what the client was quoted, never
  * twice. A project with no quote (chat-originated) falls back to a configurable flat {@code
- * platformBase} plus the creator's own {@code Tenant.marginPercent} on top. Either way only the
- * creator's share touches a wallet; the platform's share is tracked as unsettled data. Razorpay
- * is reused via the same {@link PaymentGateway} the rest of billing already uses.
+ * platformBase} plus the creator's own {@code Tenant.marginPercent} on top. The client pays the
+ * platform; a captured lock then credits the creator's wallet with all of it -- the creator's
+ * share as earnings, the production share as a top-up for the AI usage that wallet was charged
+ * (see {@link ClientReviewPayment#walletCredit}). Razorpay is reused via the same {@link
+ * PaymentGateway} the rest of billing already uses.
  */
 @Slf4j
 @Service
@@ -198,6 +201,11 @@ public class ClientReviewPaymentService {
         if (payment.getCreatorAmount().signum() > 0) {
             walletService.credit(payment.getTenantId(), payment.getCreatorAmount(),
                     "CLIENT_REVIEW_PAYMENT:" + payment.getProjectId(), null, "clr-credit-" + payment.getId());
+        }
+        if (payment.productionFunding().signum() > 0) {
+            walletService.credit(payment.getTenantId(), payment.productionFunding(), TransactionType.RECHARGE,
+                    "CLIENT_PRODUCTION_FUNDING:" + payment.getProjectId(), null, "clr-production-" + payment.getId(),
+                    "Client payment for this project's production");
         }
     }
 

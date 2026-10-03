@@ -9,10 +9,11 @@ import java.util.UUID;
  * <ul>
  *   <li>{@code customer} -- what the client actually paid: the brief's upfront amount plus every
  *       captured payment on the review page (lock balance, extra review rounds).</li>
- *   <li>{@code creator} -- what reached the creator's wallet from those payments, what the project's
- *       AI usage was charged to that wallet, and the difference as the creator's profit.</li>
+ *   <li>{@code creator} -- what reached the creator's wallet from those payments (all of a lock;
+ *       the creator's share of an extra review), what the project's AI usage was charged to that
+ *       wallet, and the difference as the creator's profit.</li>
  *   <li>{@code platform} -- what the providers actually charged, the margin on top of it, and the
- *       platform's share of review-page payments. Ops-only: {@link #forCreator} drops it.</li>
+ *       platform's fee on extra review rounds. Ops-only: {@link #forCreator} drops it.</li>
  * </ul>
  */
 public record ProjectEconomics(

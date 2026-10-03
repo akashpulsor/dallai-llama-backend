@@ -14,10 +14,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/** A client's payment to lock a reviewed creative package. Dedicated table (not the generic
- * {@code Payment}) since this is money FROM a client, not a wallet top-up. On success the
- * {@code creatorAmount} (the creator's margin) credits the creator's wallet; {@code settled}
- * marks whether the platform's {@code platformBase} take has been paid out (not yet processed). */
+/** A client's payment on the review page -- the lock, or an extra review round. Dedicated table
+ * (not the generic {@code Payment}) since this is money FROM a client. On success {@code
+ * creatorAmount} credits the creator's wallet as earnings, and a lock's {@code platformBase} --
+ * the production share of the quote -- tops the same wallet up, since that wallet is what the
+ * project's AI production was charged to. An extra review's {@code platformBase} is the
+ * platform's fee and stays with the platform. See {@link #walletCredit()}. */
 @Getter
 @Setter
 @Builder
@@ -76,4 +78,15 @@ public class ClientReviewPayment {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /** The production share a captured lock tops the creator's wallet up with -- zero for an
+     * extra review round, whose base is the platform's own fee. */
+    public BigDecimal productionFunding() {
+        return "LOCK".equals(kind) ? platformBase : BigDecimal.ZERO;
+    }
+
+    /** Everything a captured payment puts in the creator's wallet: earnings plus production. */
+    public BigDecimal walletCredit() {
+        return creatorAmount.add(productionFunding());
+    }
 }

@@ -45,7 +45,7 @@ public class ProjectEconomicsService {
 
         BigDecimal paidUpfront = quote.map(ProjectQuote::paidUpfront).orElse(BigDecimal.ZERO);
         BigDecimal paidOnReview = sum(reviewPayments, ClientReviewPayment::getTotalAmount);
-        BigDecimal reviewToCreator = sum(reviewPayments, ClientReviewPayment::getCreatorAmount);
+        BigDecimal reviewToCreator = sum(reviewPayments, ClientReviewPayment::walletCredit);
         BigDecimal charged = usageRecordRepository.sumCostByProjectId(tenantId, projectId);
         BigDecimal providerCost = usageRecordRepository.sumRawCostByProjectId(tenantId, projectId);
 
