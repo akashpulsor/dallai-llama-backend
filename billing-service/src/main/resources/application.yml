@@ -121,7 +121,7 @@ billing:
   # deliberately reports raw provider cost only, pricing/margin is billing-service's job. 85 matches
   # the one real precedent for this exact number in this codebase (creator-service's now-dead
   # usage-markup-percent); adjust freely, this isn't derived from anything more authoritative.
-  llm-usage-margin-percent: ${LLM_USAGE_MARGIN_PERCENT:85}
+  llm-usage-margin-percent: ${LLM_USAGE_MARGIN_PERCENT:20}
   # Only used to resolve a project's quoted price for the spend cap below -- nothing else in
   # billing-service calls creative-planning-service.
   creative-planning:

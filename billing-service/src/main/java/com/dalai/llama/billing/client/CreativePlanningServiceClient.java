@@ -7,6 +7,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -14,8 +15,8 @@ import java.util.UUID;
  * quoted/sold at lives on {@code ProjectRequirement} there, not in billing-service or
  * pre-production-service -- see creative-planning-service's {@code
  * InternalProjectPricingController} for the {@code Project.id -> LockedIdea -> ProjectRequirement}
- * join this resolves. Used only by {@link com.dalai.llama.billing.service.ProjectSpendService} to
- * evaluate the per-project spend cap.
+ * join this resolves. Read by {@link com.dalai.llama.billing.service.ProjectSpendService} (spend
+ * cap) and {@link com.dalai.llama.billing.service.ClientReviewPaymentService} (lock balance).
  */
 @Component
 public class CreativePlanningServiceClient {
@@ -32,20 +33,31 @@ public class CreativePlanningServiceClient {
         this.timeoutMs = timeoutMs;
     }
 
-    /** Null if this project didn't originate from a quoted requirement -- a legitimate case
-     * (the spend cap simply doesn't apply), not an error. */
-    public BigDecimal getQuotedTotalPrice(UUID tenantId, UUID projectId) {
+    /** Empty if this project didn't originate from a quoted requirement -- a legitimate case
+     * (no spend cap, flat lock price), not an error. */
+    public Optional<ProjectQuote> getProjectQuote(UUID tenantId, UUID projectId) {
         try {
-            QuotedPriceResponse response = webClient.get()
+            return Optional.ofNullable(webClient.get()
                     .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/quoted-price", tenantId, projectId)
                     .retrieve()
-                    .bodyToMono(QuotedPriceResponse.class)
-                    .block(Duration.ofMillis(timeoutMs));
-            return response == null ? null : response.quotedTotalPrice();
+                    .bodyToMono(ProjectQuote.class)
+                    .block(Duration.ofMillis(timeoutMs)));
         } catch (WebClientResponseException.NotFound ex) {
-            return null;
+            return Optional.empty();
         }
     }
 
-    private record QuotedPriceResponse(BigDecimal quotedTotalPrice) {}
+    /** Structural mirror of creative-planning-service's {@code ProjectQuoteView}. */
+    public record ProjectQuote(
+            BigDecimal quotedTotalPrice,
+            BigDecimal quotedCreatorMarginPercent,
+            String quotedCurrency,
+            BigDecimal requiredAmount,
+            boolean funded
+    ) {
+        /** What the client already paid on the brief -- the upfront amount, only once funded. */
+        public BigDecimal paidUpfront() {
+            return funded && requiredAmount != null ? requiredAmount : BigDecimal.ZERO;
+        }
+    }
 }

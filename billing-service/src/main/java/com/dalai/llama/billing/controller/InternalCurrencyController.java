@@ -1,6 +1,7 @@
 package com.dalai.llama.billing.controller;
 
 import com.dalai.llama.billing.service.CurrencyConversionService;
+import com.dalai.llama.billing.service.LlmUsageMargin;
 import io.swagger.v3.oas.annotations.Hidden;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,26 +34,22 @@ public class InternalCurrencyController {
 
     /** The same margin {@code LlmBillingEventConsumer} applies when it debits, read from the
      * same property, so a quote built from this cannot drift from the charge that follows. */
-    private final java.math.BigDecimal llmUsageMarginPercent;
+    private final LlmUsageMargin llmUsageMargin;
 
-    public InternalCurrencyController(
-            CurrencyConversionService currencyConversionService,
-            @org.springframework.beans.factory.annotation.Value("${billing.llm-usage-margin-percent:85}")
-            java.math.BigDecimal llmUsageMarginPercent
-    ) {
+    public InternalCurrencyController(CurrencyConversionService currencyConversionService, LlmUsageMargin llmUsageMargin) {
         this.currencyConversionService = currencyConversionService;
-        this.llmUsageMarginPercent = llmUsageMarginPercent;
+        this.llmUsageMargin = llmUsageMargin;
     }
 
     /** {@code {"defaultCurrency":"INR","rates":{"INR_INR":1,"USD_INR":95},
-     * "llmUsageMarginPercent":85}} -- rate keys are {@code SOURCE_TARGET}. Multiply a converted
+     * "llmUsageMarginPercent":20}} -- rate keys are {@code SOURCE_TARGET}. Multiply a converted
      * provider cost by {@code (100 + llmUsageMarginPercent) / 100} to get what the wallet loses. */
     @GetMapping("/rates")
     public ResponseEntity<CurrencyRatesResponse> rates() {
         return ResponseEntity.ok(new CurrencyRatesResponse(
                 CurrencyConversionService.DEFAULT_CURRENCY,
                 currencyConversionService.rates(),
-                llmUsageMarginPercent));
+                llmUsageMargin.percent()));
     }
 
     public record CurrencyRatesResponse(String defaultCurrency, Map<String, BigDecimal> rates,

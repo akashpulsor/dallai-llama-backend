@@ -1,5 +1,7 @@
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.client.CreativePlanningServiceClient;
+import com.dalai.llama.billing.client.CreativePlanningServiceClient.ProjectQuote;
 import com.dalai.llama.billing.client.PreProductionServiceClient;
 import com.dalai.llama.billing.client.TenantServiceClient;
 import com.dalai.llama.billing.domain.entity.ClientReviewPayment;
@@ -17,22 +19,27 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * The client pay-to-lock flow. Pricing: a configurable flat {@code platformBase} (what the
- * platform keeps -- COGS + opex + profit, competitor-validated) plus the creator's own
- * {@code Tenant.marginPercent} on top (their earnings, credited to their wallet on success).
- * Only the creator's margin touches a wallet; the platform's base is tracked as unsettled data.
- * Razorpay is reused via the same {@link PaymentGateway} the rest of billing already uses.
+ * The client pay-to-lock flow. Pricing: a project sold through a quoted brief locks for the
+ * <b>balance</b> of that quote -- {@code quotedTotalPrice} minus whatever the client already paid
+ * upfront on the brief -- so the review page charges exactly what the client was quoted, never
+ * twice. A project with no quote (chat-originated) falls back to a configurable flat {@code
+ * platformBase} plus the creator's own {@code Tenant.marginPercent} on top. Either way only the
+ * creator's share touches a wallet; the platform's share is tracked as unsettled data. Razorpay
+ * is reused via the same {@link PaymentGateway} the rest of billing already uses.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ClientReviewPaymentService {
 
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
     private final PaymentGateway paymentGateway;
     private final TenantServiceClient tenantServiceClient;
     private final WalletService walletService;
     private final ClientReviewPaymentRepository repository;
     private final PreProductionServiceClient preProductionServiceClient;
+    private final CreativePlanningServiceClient creativePlanningServiceClient;
 
     @Value("${billing.client-review.platform-base-inr:5299}")
     private BigDecimal platformBase;
@@ -47,66 +54,72 @@ public class ClientReviewPaymentService {
     private String razorpayKeyId;
 
     /** Flat base price of one extra review round (beyond a project's included allowance). The
-     * creator's margin is added on top, same as the lock flow -- all configurable. */
+     * creator's margin is added on top, same as the unquoted lock flow -- all configurable. */
     @Value("${billing.client-review.extra-review-price-inr:500}")
     private BigDecimal extraReviewBase;
 
     /** Quote for one extra review round (₹500 base by default + the creator's margin). */
     public Quote extraReviewQuote(UUID tenantId, UUID projectId) {
-        BigDecimal marginPercent = resolveCreatorMargin(tenantId);
-        BigDecimal creatorAmount = extraReviewBase.multiply(marginPercent)
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal total = extraReviewBase.add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
-        return new Quote(extraReviewBase.setScale(2, RoundingMode.HALF_UP), creatorAmount, total, currency, marginPercent);
+        return marginOnTop(tenantId, extraReviewBase);
     }
 
     @Transactional
     public OrderResult createExtraReviewOrder(UUID tenantId, UUID projectId, String reviewToken) {
-        Quote quote = extraReviewQuote(tenantId, projectId);
-        String receipt = "rev_" + projectId.toString().replace("-", "").substring(0, 20);
-        String gatewayOrderId = paymentGateway.createOrder(quote.totalAmount(), quote.currency(), receipt);
-        Instant now = Instant.now();
-        ClientReviewPayment payment = ClientReviewPayment.builder()
-                .id(UUID.randomUUID())
-                .tenantId(tenantId)
-                .projectId(projectId)
-                .reviewToken(reviewToken)
-                .kind("EXTRA_REVIEW")
-                .platformBase(quote.platformBase())
-                .creatorAmount(quote.creatorAmount())
-                .totalAmount(quote.totalAmount())
-                .currency(quote.currency())
-                .status("PENDING")
-                .gatewayOrderId(gatewayOrderId)
-                .settled(false)
-                .createdAt(now)
-                .updatedAt(now)
-                .build();
-        repository.save(payment);
-        return new OrderResult(payment.getId(), gatewayOrderId, quote.totalAmount(), quote.currency(), razorpayKeyId);
+        return openOrder(tenantId, projectId, reviewToken, "EXTRA_REVIEW", "rev_", extraReviewQuote(tenantId, projectId));
     }
 
+    /** What the client pays to lock: the quoted balance, or the flat price when unquoted. A zero
+     * {@code totalAmount} means the brief was paid in full -- pre-production-service locks without
+     * an order in that case. */
     public Quote quote(UUID tenantId, UUID projectId) {
-        BigDecimal marginPercent = resolveCreatorMargin(tenantId);
-        BigDecimal creatorAmount = platformBase.multiply(marginPercent)
-                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal total = platformBase.add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
-        return new Quote(platformBase.setScale(2, RoundingMode.HALF_UP), creatorAmount, total, currency, marginPercent);
+        return creativePlanningServiceClient.getProjectQuote(tenantId, projectId)
+                .map(project -> balanceOf(tenantId, project))
+                .orElseGet(() -> marginOnTop(tenantId, platformBase));
     }
 
     @Transactional
     public OrderResult createOrder(UUID tenantId, UUID projectId, String reviewToken) {
         Quote quote = quote(tenantId, projectId);
-        String receipt = "clr_" + projectId.toString().replace("-", "").substring(0, 20);
-        String gatewayOrderId = paymentGateway.createOrder(quote.totalAmount(), quote.currency(), receipt);
+        if (quote.totalAmount().signum() <= 0) {
+            throw new IllegalArgumentException("Nothing left to pay for project " + projectId + " -- lock it without a payment");
+        }
+        return openOrder(tenantId, projectId, reviewToken, "LOCK", "clr_", quote);
+    }
 
+    /** The quoted total already has the creator's margin baked in ({@code platformCost x (1 +
+     * m/100)}), so the creator's share of the balance is split back out of it -- adding the margin
+     * again would charge the client more than they were quoted. */
+    private Quote balanceOf(UUID tenantId, ProjectQuote project) {
+        BigDecimal paidUpfront = project.paidUpfront();
+        BigDecimal balance = project.quotedTotalPrice().subtract(paidUpfront)
+                .max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal marginPercent = project.quotedCreatorMarginPercent() != null
+                ? project.quotedCreatorMarginPercent()
+                : resolveCreatorMargin(tenantId);
+        BigDecimal creatorAmount = balance.multiply(marginPercent)
+                .divide(HUNDRED.add(marginPercent), 2, RoundingMode.HALF_UP);
+        String quoteCurrency = project.quotedCurrency() != null ? project.quotedCurrency() : currency;
+        return new Quote(balance.subtract(creatorAmount), creatorAmount, balance, quoteCurrency, marginPercent,
+                project.quotedTotalPrice(), paidUpfront);
+    }
+
+    private Quote marginOnTop(UUID tenantId, BigDecimal base) {
+        BigDecimal marginPercent = resolveCreatorMargin(tenantId);
+        BigDecimal creatorAmount = base.multiply(marginPercent).divide(HUNDRED, 2, RoundingMode.HALF_UP);
+        BigDecimal total = base.add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
+        return new Quote(base.setScale(2, RoundingMode.HALF_UP), creatorAmount, total, currency, marginPercent, null, null);
+    }
+
+    private OrderResult openOrder(UUID tenantId, UUID projectId, String reviewToken, String kind, String receiptPrefix, Quote quote) {
+        String receipt = receiptPrefix + projectId.toString().replace("-", "").substring(0, 20);
+        String gatewayOrderId = paymentGateway.createOrder(quote.totalAmount(), quote.currency(), receipt);
         Instant now = Instant.now();
         ClientReviewPayment payment = ClientReviewPayment.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
                 .projectId(projectId)
                 .reviewToken(reviewToken)
-                .kind("LOCK")
+                .kind(kind)
                 .platformBase(quote.platformBase())
                 .creatorAmount(quote.creatorAmount())
                 .totalAmount(quote.totalAmount())
@@ -118,7 +131,6 @@ public class ClientReviewPaymentService {
                 .updatedAt(now)
                 .build();
         repository.save(payment);
-
         return new OrderResult(payment.getId(), gatewayOrderId, quote.totalAmount(), quote.currency(), razorpayKeyId);
     }
 
@@ -200,7 +212,9 @@ public class ClientReviewPaymentService {
         return defaultCreatorMarginPercent;
     }
 
-    public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency, BigDecimal creatorMarginPercent) {}
+    /** {@code quotedTotalPrice}/{@code paidUpfront} are null for an unquoted (flat-priced) project. */
+    public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency,
+                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront) {}
 
     public record OrderResult(UUID paymentId, String gatewayOrderId, BigDecimal amount, String currency, String keyId) {}
 

@@ -6,7 +6,7 @@ import com.dalai.llama.billing.domain.event.LlmBillingEvent;
 import com.dalai.llama.billing.service.BillableUsageRequest;
 import com.dalai.llama.billing.service.UsageService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import com.dalai.llama.billing.service.LlmUsageMargin;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -33,14 +33,11 @@ import java.util.UUID;
 public class LlmBillingEventConsumer {
 
     private final UsageService usageService;
-    private final BigDecimal marginPercent;
+    private final LlmUsageMargin margin;
 
-    public LlmBillingEventConsumer(
-            UsageService usageService,
-            @Value("${billing.llm-usage-margin-percent:85}") BigDecimal marginPercent
-    ) {
+    public LlmBillingEventConsumer(UsageService usageService, LlmUsageMargin margin) {
         this.usageService = usageService;
-        this.marginPercent = marginPercent;
+        this.margin = margin;
     }
 
     @KafkaListener(
@@ -65,9 +62,7 @@ public class LlmBillingEventConsumer {
             return;
         }
 
-        BigDecimal billedCost = rawCost
-                .multiply(BigDecimal.ONE.add(marginPercent.divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP)))
-                .setScale(4, RoundingMode.HALF_UP);
+        BigDecimal billedCost = margin.applyTo(rawCost);
         long totalTokens = Math.max(0, event.getInputTokens()) + Math.max(0, event.getOutputTokens());
         BigDecimal quantity = BigDecimal.valueOf(Math.max(totalTokens, 1));
         BigDecimal unitCost = billedCost.divide(quantity, 8, RoundingMode.HALF_UP);
@@ -75,7 +70,7 @@ public class LlmBillingEventConsumer {
         log.info(
                 "WALLET_DEBIT_AUDIT_REQUEST source=LLM_GATEWAY eventId={} jobId={} tenantId={} model={} inputTokens={} outputTokens={} rawCost={} marginPercent={} billedCost={} currency={}",
                 event.getEventId(), event.getJobId(), tenantId, event.getModelId(),
-                event.getInputTokens(), event.getOutputTokens(), rawCost, marginPercent, billedCost, event.getCurrency()
+                event.getInputTokens(), event.getOutputTokens(), rawCost, margin.percent(), billedCost, event.getCurrency()
         );
 
         usageService.recordBillableUsage(new BillableUsageRequest(

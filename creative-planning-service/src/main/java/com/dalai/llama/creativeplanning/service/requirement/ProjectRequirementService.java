@@ -7,6 +7,7 @@ import com.dalai.llama.creativeplanning.domain.entity.LockedIdea;
 import com.dalai.llama.creativeplanning.domain.entity.ProjectRequirement;
 import com.dalai.llama.creativeplanning.dto.CreateRequirementFromIdeaRequest;
 import com.dalai.llama.creativeplanning.dto.CreateStandaloneRequirementRequest;
+import com.dalai.llama.creativeplanning.dto.ProjectQuoteView;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementView;
 import com.dalai.llama.creativeplanning.dto.PublicProjectRequirementView;
 import com.dalai.llama.creativeplanning.dto.UpdateRequirementQuoteRequest;
@@ -24,6 +25,7 @@ import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -229,18 +231,19 @@ public class ProjectRequirementService {
      * there is no direct FK from pre-production-service's {@code Project.id} back to this
      * service's {@code ProjectRequirement}; the join is {@code Project.id == LockedIdea.projectId
      * -> LockedIdea.projectRequirementId -> ProjectRequirement}, entirely within this service's
-     * own tables (see {@link LockedIdea}'s own javadoc on the handoff). Returns null if this
-     * project didn't originate from a quoted requirement (e.g. no requirement/quote flow was
-     * used) rather than throwing -- an absent quote is a legitimate case for the caller to handle,
-     * not an error here. */
+     * own tables (see {@link LockedIdea}'s own javadoc on the handoff). Empty if this project
+     * didn't originate from a quoted requirement (e.g. a chat-originated locked idea) -- an absent
+     * quote is a legitimate case for the caller to handle, not an error here. */
     @Transactional(readOnly = true)
-    public BigDecimal findQuotedTotalPrice(UUID tenantId, UUID projectId) {
+    public Optional<ProjectQuoteView> findProjectQuote(UUID tenantId, UUID projectId) {
         return lockedIdeaRepository.findTopByProjectIdOrderByCreatedAtDesc(projectId)
                 .filter(idea -> idea.getTenantId().equals(tenantId))
                 .map(LockedIdea::getProjectRequirementId)
                 .flatMap(projectRequirementRepository::findById)
-                .map(ProjectRequirement::getQuotedTotalPrice)
-                .orElse(null);
+                .filter(requirement -> requirement.getQuotedTotalPrice() != null)
+                .map(requirement -> new ProjectQuoteView(requirement.getQuotedTotalPrice(),
+                        requirement.getQuotedCreatorMarginPercent(), requirement.getQuotedCurrency(),
+                        requirement.getRequiredAmount(), requirement.isFunded()));
     }
 
     /** Unauthenticated read -- backs {@code GET /v1/public/project-requirements/{shareToken}}.

@@ -38,7 +38,9 @@ public class ProjectSpendService {
      * evaluated at all. Only a project with a real quoted price to measure against can be capped. */
     @Transactional(readOnly = true)
     public SpendStatus checkCap(UUID tenantId, UUID projectId) {
-        BigDecimal quotedTotalPrice = creativePlanningServiceClient.getQuotedTotalPrice(tenantId, projectId);
+        BigDecimal quotedTotalPrice = creativePlanningServiceClient.getProjectQuote(tenantId, projectId)
+                .map(CreativePlanningServiceClient.ProjectQuote::quotedTotalPrice)
+                .orElse(null);
         BigDecimal spent = totalSpent(tenantId, projectId);
         if (quotedTotalPrice == null || quotedTotalPrice.signum() <= 0) {
             return new SpendStatus(spent, null, true);
