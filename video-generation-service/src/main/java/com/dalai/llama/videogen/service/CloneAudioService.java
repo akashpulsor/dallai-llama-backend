@@ -66,6 +66,7 @@ public class CloneAudioService {
                   dialogue_text = EXCLUDED.dialogue_text, mode = EXCLUDED.mode,
                   provider_voice_id = EXCLUDED.provider_voice_id, bucket = EXCLUDED.bucket,
                   object_key = EXCLUDED.object_key, duration_ms = EXCLUDED.duration_ms,
+                  rejected = false, rejected_at = NULL,
                   updated_at = CURRENT_TIMESTAMP
                 """, tenantId, projectId, beatId == null ? shotId : beatId, shotId, beatId,
                 text, mode, voiceId, bucket, key, durationMs);

@@ -29,8 +29,13 @@ class CloneAudioServiceTest {
         verify(minio, times(2)).putObject(upload.capture());
         assertThat(upload.getValue().contentType()).isEqualTo("audio/mpeg");
         assertThat(upload.getAllValues().get(0).object()).isNotEqualTo(upload.getValue().object());
-        verify(jdbc, times(2)).update(contains("ON CONFLICT"), eq(tenant), eq(project), eq(beat), eq(shot), eq(beat),
+        ArgumentCaptor<String> upsert = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, times(2)).update(upsert.capture(), eq(tenant), eq(project), eq(beat), eq(shot), eq(beat),
                 eq("Hi"), eq("cloned"), anyString(), eq("media"), anyString(), any());
+        assertThat(upsert.getValue())
+                .contains("ON CONFLICT")
+                .contains("rejected = false")
+                .contains("rejected_at = NULL");
     }
 
     @Test

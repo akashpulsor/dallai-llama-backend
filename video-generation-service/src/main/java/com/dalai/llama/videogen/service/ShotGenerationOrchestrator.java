@@ -447,15 +447,15 @@ public class ShotGenerationOrchestrator {
      */
     public VideoGenJobView approve(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
-        if (job.getStatus().isTerminal()) {
-            throw VideoGenException.conflict("Cannot approve job_id=%s, already %s".formatted(jobId, job.getStatus()));
-        }
-        if (job.getStatus().isInFlight()) {
+        //if (job.getStatus().isTerminal()) {
+        ///    throw VideoGenException.conflict("Cannot approve job_id=%s, already %s".formatted(jobId, job.getStatus()));
+        //}
+        //if (job.getStatus().isInFlight()) {
             // Already queued or already rendering. Said plainly rather than queued twice -- the
             // second render would bill the provider again for the same shot.
-            throw VideoGenException.conflict(
-                    "This shot is already being generated -- it will appear when it finishes");
-        }
+       //     throw VideoGenException.conflict(
+         //           "This shot is already being generated -- it will appear when it finishes");
+        //}
         job = jobPersistenceService.markQueued(jobId);
         try {
             generationRequestedPublisher.publish(new VideoGenerationRequestedEvent(
@@ -506,12 +506,12 @@ public class ShotGenerationOrchestrator {
             // mid-sentence -- the model speaks what fits and ends. Settle that against the beats'
             // own measured lengths before dispatching.
             List<DialogueBeat> plannedBeats = loadDialogueBeats(job.getJobId());
-            Integer effectiveDuration = durationCoveringDialogue(job, plannedBeats, fitChoice);
-            if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
-                job.setDurationSeconds(effectiveDuration);
-                videoGenJobRepository.save(job);
-            }
-            VideoDispatchParams params = new VideoDispatchParams(effectiveDuration, job.getAspectRatio(),
+            //Integer effectiveDuration = durationCoveringDialogue(job, plannedBeats, fitChoice);
+            //if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
+            //    job.setDurationSeconds(effectiveDuration);
+            //    videoGenJobRepository.save(job);
+            //}
+            VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
                     job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution(),
                     taggedReferences);
             DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
