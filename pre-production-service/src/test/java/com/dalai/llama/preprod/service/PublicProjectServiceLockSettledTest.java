@@ -24,7 +24,7 @@ class PublicProjectServiceLockSettledTest {
     private final BillingClient billingClient = mock(BillingClient.class);
     private final CreativePlanningClient creativePlanning = mock(CreativePlanningClient.class);
     private final PublicProjectService service = new PublicProjectService(projectService, projectLockService,
-            null, null, null, null, null, null, null, null, null, billingClient, null, null, null, null, null, creativePlanning);
+            null, null, null, null, null, null, null, null, null, billingClient, null, null, null, null, null, creativePlanning, null);
 
     @Test
     void refusesToLockWithoutPaymentWhileABalanceIsDue() {
@@ -53,7 +53,7 @@ class PublicProjectServiceLockSettledTest {
     }
 
     private static ProjectView project(UUID projectId, OffsetDateTime clientLockedAt) {
-        return new ProjectView(projectId, "City Professional", null, null, null, null, 2, true, false, clientLockedAt);
+        return new ProjectView(projectId, "City Professional", null, null, null, null, 2, true, false, clientLockedAt, false);
     }
 
     @Test

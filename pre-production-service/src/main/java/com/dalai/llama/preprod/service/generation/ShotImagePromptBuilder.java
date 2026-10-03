@@ -110,6 +110,17 @@ public final class ShotImagePromptBuilder {
      * the old single-primary behaviour. */
     public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
                                                 LightingPlan lightingPlan, java.util.List<CastProfile> secondaryCasts) {
+        return buildProductionPrompt(shot, castProfile, productReference, lightingPlan, secondaryCasts, null);
+    }
+
+    /** {@code creativeDirection} is the project's approved director's treatment; its visual
+     * decisions (period, colour, contrast, texture, aesthetic, photographic approach) are added as a
+     * project-level look every still shares. It enhances the shot-specific prompt above it -- the
+     * shot's own staging, lighting plan, identity locks and output rules are unchanged. Null on
+     * projects without an approved direction. */
+    public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
+                                                LightingPlan lightingPlan, java.util.List<CastProfile> secondaryCasts,
+                                                com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext creativeDirection) {
         StringBuilder sb = new StringBuilder();
         sb.append("Create one final, production-quality advertising still that will be used as an image-to-video anchor. ")
                 .append("This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.\n\n");
@@ -213,6 +224,12 @@ public final class ShotImagePromptBuilder {
             appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
         } else if (secondaryCasts != null && !secondaryCasts.isEmpty()) {
             appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
+        }
+
+        if (creativeDirection != null && !creativeDirection.visualDirectionBlock().isBlank()) {
+            sb.append("\nProject look -- the approved creative direction \"").append(creativeDirection.title())
+                    .append("\". Every still in this film shares it; render this frame in it:\n")
+                    .append(creativeDirection.visualDirectionBlock()).append('\n');
         }
 
         sb.append("\nOutput: ").append(orNotSpecified(shot.getAspectRatio())).append(" composition, clean mobile-safe framing, commercial lighting, no on-image text or labels.");

@@ -52,6 +52,25 @@ public class PublicProjectController {
         return ResponseEntity.ok(publicProjectService.startLockPayment(token));
     }
 
+    /** The project's director's treatments, shared with the client for review. */
+    @GetMapping("/v1/public/projects/{token}/creative-directions")
+    public ResponseEntity<com.dalai.llama.preprod.dto.CreativeDirectionBoardView> creativeDirections(@PathVariable String token) {
+        return ResponseEntity.ok(publicProjectService.creativeDirections(token));
+    }
+
+    @PostMapping("/v1/public/projects/{token}/creative-directions/{directionId}/feedback")
+    public ResponseEntity<com.dalai.llama.preprod.dto.CreativeDirectionView> creativeDirectionFeedback(
+            @PathVariable String token, @PathVariable java.util.UUID directionId,
+            @jakarta.validation.Valid @RequestBody com.dalai.llama.preprod.dto.CreativeDirectionFeedbackRequest request) {
+        return ResponseEntity.ok(publicProjectService.creativeDirectionFeedback(token, directionId, request));
+    }
+
+    @PostMapping("/v1/public/projects/{token}/creative-directions/{directionId}/approve")
+    public ResponseEntity<com.dalai.llama.preprod.dto.CreativeDirectionView> approveCreativeDirection(
+            @PathVariable String token, @PathVariable java.util.UUID directionId) {
+        return ResponseEntity.ok(publicProjectService.approveCreativeDirection(token, directionId));
+    }
+
     /** Opens the client's next brief once this video is locked -- the share token of its brief page. */
     @PostMapping("/v1/public/projects/{token}/next-brief")
     public ResponseEntity<com.dalai.llama.preprod.service.creativeplanning.CreativePlanningClient.NextBrief> startNextBrief(

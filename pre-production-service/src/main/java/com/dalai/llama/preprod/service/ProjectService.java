@@ -56,6 +56,7 @@ public class ProjectService {
                 .reviewAllowance(request.reviewAllowance() == null || request.reviewAllowance() < 0
                         ? 2 : request.reviewAllowance())
                 .reviewsEnabled(true)
+                .creativeDirectionRequired(true)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -243,6 +244,6 @@ public class ProjectService {
                 project.getId(), project.getName(), project.getLockedIdeaId(),
                 project.getBudgetTier(), project.getStatus(), project.getCreatedAt(),
                 project.getReviewAllowance(), project.isReviewsEnabled(),
-                project.isFinalVideoDownloadUnlocked(), project.getClientLockedAt());
+                project.isFinalVideoDownloadUnlocked(), project.getClientLockedAt(), project.isCreativeDirectionRequired());
     }
 }

@@ -1,5 +1,7 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext;
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.domain.MediaAssetType;
 import com.dalai.llama.preprod.domain.ShotImageKind;
 import com.dalai.llama.preprod.domain.entity.CameraPlan;
@@ -95,6 +97,7 @@ public class ShotImageService {
     private final String planningImageModel;
     private final String storyboardImageModel;
     private final String defaultTextModel;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public ShotImageService(
             ShotRepository shotRepository,
@@ -121,8 +124,10 @@ public class ShotImageService {
             @Value("${pre-production.llm-gateway.identity-image-model}") String identityImageModel,
             @Value("${pre-production.llm-gateway.planning-image-model:${pre-production.llm-gateway.default-image-model}}") String planningImageModel,
             @Value("${pre-production.llm-gateway.storyboard-image-model:${pre-production.llm-gateway.default-image-model}}") String storyboardImageModel,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultTextModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultTextModel,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.shotRepository = shotRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
@@ -194,7 +199,11 @@ public class ShotImageService {
         List<CastProfile> secondaryCasts = kind == ShotImageKind.PRODUCTION
                 ? resolveSecondarySceneCastProfiles(tenantId, shot, castProfile) : List.of();
 
-        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts);
+        // Production stills follow the approved creative direction's look, and -- where no identity
+        // reference is attached -- carry the client's approved reference images as style references.
+        ApprovedCreativeDirectionContext creativeDirection = kind == ShotImageKind.PRODUCTION
+                ? creativeDirectionContextService.forGeneration(tenantId, shot.getProjectId()).orElse(null) : null;
+        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts, creativeDirection);
         if (prompt == null || prompt.isBlank()) {
             throw PreProductionException.badRequest(
                     "Shot " + shotId + " has no " + kind + " prompt available yet -- generate the shot list first");
@@ -276,6 +285,12 @@ public class ShotImageService {
                 shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(images::add);
             }
             images.addAll(inspirationDataUris);
+            List<String> styleReferences = creativeDirectionStyleReferences(creativeDirection);
+            if (!styleReferences.isEmpty()) {
+                images.addAll(styleReferences);
+                prompt = prompt + "\n\nThe last " + styleReferences.size() + " attached image(s) are the client's approved style references: "
+                        + "match their colour, light and texture only -- do not copy their subjects, layout or any text in them.";
+            }
             editDataUris = images.isEmpty() ? null : images;
         }
 
@@ -518,8 +533,22 @@ public class ShotImageService {
         return shotImageRepository.findByShotId(shotId).stream().map(this::toView).collect(Collectors.toList());
     }
 
+    /** The approved direction's client reference images, as data URIs for the image model. Only
+     * on the non-identity path: identity-conditioned stills number their references by position,
+     * and an extra image there would shift every subject block. */
+    private List<String> creativeDirectionStyleReferences(ApprovedCreativeDirectionContext creativeDirection) {
+        if (creativeDirection == null) {
+            return List.of();
+        }
+        return creativeDirection.imageReferences().stream()
+                .map(reference -> toDataUri(reference.bucket(), reference.objectKey()))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
     private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile,
-                             ShotProductReference productReference, List<CastProfile> secondaryCasts) {
+                             ShotProductReference productReference, List<CastProfile> secondaryCasts,
+                             ApprovedCreativeDirectionContext creativeDirection) {
         return switch (kind) {
             case STORYBOARD -> wrapAsStoryboardSketch(shot.getSketchPrompt());
             // PRODUCTION reads the LightingPlan too (when one exists) so key/fill/rim direction
@@ -528,7 +557,7 @@ public class ShotImageService {
             case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(
                     shot, castProfile, productReference,
                     lightingPlanRepository.findByShotId(shot.getId()).orElse(null),
-                    secondaryCasts);
+                    secondaryCasts, creativeDirection);
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
             case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));

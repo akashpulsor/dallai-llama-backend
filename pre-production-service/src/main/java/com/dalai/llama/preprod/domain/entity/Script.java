@@ -46,6 +46,11 @@ public class Script {
     @Column(name = "locked_idea_id")
     private UUID lockedIdeaId;
 
+    /** The approved creative direction this script was generated from; null before Creative
+     * Direction existed. Compared with the currently approved direction to show staleness. */
+    @Column(name = "creative_direction_id")
+    private UUID creativeDirectionId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private DraftStatus status;

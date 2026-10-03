@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.preprod.domain.entity.LightingPlan;
 import com.dalai.llama.preprod.domain.entity.Shot;
@@ -48,6 +49,7 @@ public class LightingPlanService {
     private final ObjectMapper objectMapper;
     private final String defaultModel;
     private final ProductionCriticSwitch productionCriticSwitch;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public LightingPlanService(
             ShotRepository shotRepository,
@@ -56,8 +58,10 @@ public class LightingPlanService {
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
-            ProductionCriticSwitch productionCriticSwitch
+            ProductionCriticSwitch productionCriticSwitch,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.productionCriticSwitch = productionCriticSwitch;
         this.shotRepository = shotRepository;
         this.lightingPlanRepository = lightingPlanRepository;
@@ -76,6 +80,7 @@ public class LightingPlanService {
         LightingPlanGenerationResult parsed = null;
         String critiqueFeedback = "";
         List<String> critiqueNotesByAttempt = new ArrayList<>();
+        String creativeDirection = creativeDirectionContextService.promptBlock(tenantId, shot.getProjectId());
         for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -87,7 +92,8 @@ public class LightingPlanService {
                                     "location", nullSafe(shot.getLocation()),
                                     "timeOfDay", shot.getTimeOfDay() == null ? "not specified" : shot.getTimeOfDay().toString(),
                                     "action", nullSafe(shot.getAction()) + critiqueFeedback,
-                                    "referenceAnalysis", referenceAnalysis
+                                    "referenceAnalysis", referenceAnalysis,
+                                    "creativeDirection", creativeDirection
                             )).withProjectId(shot.getProjectId()));
 
             parsed = parse(response);

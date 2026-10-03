@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.preprod.domain.entity.CameraPlan;
 import com.dalai.llama.preprod.domain.entity.Shot;
@@ -48,6 +49,7 @@ public class CameraPlanService {
     private final ObjectMapper objectMapper;
     private final String defaultModel;
     private final ProductionCriticSwitch productionCriticSwitch;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public CameraPlanService(
             ShotRepository shotRepository,
@@ -56,8 +58,10 @@ public class CameraPlanService {
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
-            ProductionCriticSwitch productionCriticSwitch
+            ProductionCriticSwitch productionCriticSwitch,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.productionCriticSwitch = productionCriticSwitch;
         this.shotRepository = shotRepository;
         this.cameraPlanRepository = cameraPlanRepository;
@@ -76,6 +80,7 @@ public class CameraPlanService {
         CameraPlanGenerationResult parsed = null;
         String critiqueFeedback = "";
         List<String> critiqueNotesByAttempt = new ArrayList<>();
+        String creativeDirection = creativeDirectionContextService.promptBlock(tenantId, shot.getProjectId());
         for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -87,7 +92,8 @@ public class CameraPlanService {
                                     "cameraMovement", nullSafe(shot.getCameraMovement()),
                                     "cameraShotSize", shot.getCameraShotSize() == null ? "not specified" : shot.getCameraShotSize().toString(),
                                     "action", nullSafe(shot.getAction()) + critiqueFeedback,
-                                    "referenceAnalysis", referenceAnalysis
+                                    "referenceAnalysis", referenceAnalysis,
+                                    "creativeDirection", creativeDirection
                             )).withProjectId(shot.getProjectId()));
 
             parsed = parse(response);

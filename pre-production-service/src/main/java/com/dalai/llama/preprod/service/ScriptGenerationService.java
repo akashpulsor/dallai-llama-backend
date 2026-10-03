@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.preprod.domain.CastProfileType;
 import com.dalai.llama.preprod.domain.CharacterType;
@@ -28,6 +29,7 @@ import com.dalai.llama.preprod.service.generation.ScriptCritiqueResult;
 import com.dalai.llama.preprod.service.generation.ScriptGenerationResult;
 import com.dalai.llama.preprod.service.generation.TolerantEnumParser;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest;
+import com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatResponse;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
@@ -40,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -65,6 +68,7 @@ public class ScriptGenerationService {
     private final ProjectService projectService;
     private final String defaultModel;
     private final ProductionCriticSwitch productionCriticSwitch;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public ScriptGenerationService(
             ProjectRepository projectRepository,
@@ -78,8 +82,10 @@ public class ScriptGenerationService {
             ObjectMapper objectMapper,
             ProjectService projectService,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
-            ProductionCriticSwitch productionCriticSwitch
+            ProductionCriticSwitch productionCriticSwitch,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.productionCriticSwitch = productionCriticSwitch;
         this.projectRepository = projectRepository;
         this.scriptRepository = scriptRepository;
@@ -103,8 +109,13 @@ public class ScriptGenerationService {
         String dialogueLanguage = resolveDialogueLanguage(tenantId, projectId, request.dialogueLanguage());
         String narrativeLanguage = projectConfigService.resolveNarrativeLanguage(tenantId, projectId, request.narrativeLanguage());
         String productContext = productContextBlock(productProfiles);
+        // The idea's approved creative direction travels with the brief into hook/beat planning and
+        // the script itself; a project that requires one and has none approved is refused here.
+        Optional<ApprovedCreativeDirectionContext> creativeDirection = creativeDirectionContextService.forGeneration(tenantId, projectId);
+        String creativeDirectionBlock = creativeDirection.map(ApprovedCreativeDirectionContext::promptBlock)
+                .orElse(ApprovedCreativeDirectionContext.NONE_APPROVED);
 
-        String beatPlan = generateHookBeatPlan(tenantId, projectId, request.briefText(), durationSeconds);
+        String beatPlan = generateHookBeatPlan(tenantId, projectId, request.briefText(), durationSeconds, creativeDirectionBlock);
         String briefWithPlan = beatPlan.isBlank() ? request.briefText()
                 : request.briefText() + "\n\nAPPROVED BEAT PLAN (write prose from this structure, do not invent a different one):\n" + beatPlan;
 
@@ -117,7 +128,8 @@ public class ScriptGenerationService {
                     "durationSeconds", String.valueOf(durationSeconds),
                     "productContext", productContext,
                     "dialogueLanguage", dialogueLanguage,
-                    "narrativeLanguage", narrativeLanguage
+                    "narrativeLanguage", narrativeLanguage,
+                    "creativeDirection", creativeDirectionBlock
             );
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
@@ -149,6 +161,7 @@ public class ScriptGenerationService {
                 .createdAt(now)
                 .build());
         script.setLockedIdeaId(project.getLockedIdeaId());
+        script.setCreativeDirectionId(creativeDirection.map(ApprovedCreativeDirectionContext::directionId).orElse(null));
         script.setStatus(DraftStatus.DRAFT);
         script.setScriptText(parsed.scriptText());
         script.setPacingStyle(parsed.pacingStyle());
@@ -439,14 +452,15 @@ public class ScriptGenerationService {
      * persisted entity or an extra PRE_PROD_SCRIPT_GENERATE prompt variable. Returns "" (not an
      * exception) on any failure -- a missing beat plan degrades to "no structural pre-plan", it
      * must never block script generation entirely. */
-    private String generateHookBeatPlan(UUID tenantId, UUID projectId, String briefText, int durationSeconds) {
+    private String generateHookBeatPlan(UUID tenantId, UUID projectId, String briefText, int durationSeconds, String creativeDirection) {
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),
                     "hook-beat-plan-" + projectId,
                     new LlmGatewayChatRequest(defaultModel, List.of(new LlmGatewayMessage("user", "")),
                             JsonExtraction.JSON_MODE_PARAMS, HOOK_BEAT_PLAN_TASK_KEY,
-                            Map.of("brief", briefText, "durationSeconds", String.valueOf(durationSeconds))).withProjectId(projectId));
+                            Map.of("brief", briefText, "durationSeconds", String.valueOf(durationSeconds),
+                                    "creativeDirection", creativeDirection)).withProjectId(projectId));
             if (response == null || response.response() == null || response.response().isBlank()) {
                 return "";
             }
@@ -525,6 +539,7 @@ public class ScriptGenerationService {
         return new ScriptView(script.getId(), script.getProjectId(), script.getLockedIdeaId(), script.getStatus(), script.getScriptText(),
                 script.getPacingStyle(), script.getEmotionalArc(), script.getHookStrategy(), script.getNoHumans(),
                 script.getLogline(), script.getCentralConflict(), script.getEndingPayoff(), script.getSetting(), script.getHook(), script.getBeatPlan(),
-                script.getStorytellingType(), characterViews, latest == null ? null : latest.getVersion(), latest == null ? null : latest.getSource());
+                script.getStorytellingType(), characterViews, latest == null ? null : latest.getVersion(), latest == null ? null : latest.getSource(),
+                script.getCreativeDirectionId());
     }
 }

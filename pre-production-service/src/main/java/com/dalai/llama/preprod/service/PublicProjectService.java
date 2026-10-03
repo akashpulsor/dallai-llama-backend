@@ -4,6 +4,11 @@ import com.dalai.llama.preprod.dto.CastAssignmentView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ProjectView;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView;
+import com.dalai.llama.preprod.domain.ReviewActor;
+import com.dalai.llama.preprod.dto.CreativeDirectionBoardView;
+import com.dalai.llama.preprod.dto.CreativeDirectionFeedbackRequest;
+import com.dalai.llama.preprod.dto.CreativeDirectionView;
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionService;
 import com.dalai.llama.preprod.service.creativeplanning.CreativePlanningClient;
 import com.dalai.llama.preprod.service.revenue.BillingClient;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView.PublicCastMemberView;
@@ -55,6 +60,7 @@ public class PublicProjectService {
     private final VideoGenClient videoGenClient;
     private final com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient;
     private final CreativePlanningClient creativePlanningClient;
+    private final CreativeDirectionService creativeDirectionService;
 
     public PublicProjectService(
             ProjectService projectService,
@@ -74,9 +80,11 @@ public class PublicProjectService {
             VideoGenClient videoGenClient,
             com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient,
             ProjectConfigService projectConfigService,
-            CreativePlanningClient creativePlanningClient
+            CreativePlanningClient creativePlanningClient,
+            CreativeDirectionService creativeDirectionService
     ) {
         this.creativePlanningClient = creativePlanningClient;
+        this.creativeDirectionService = creativeDirectionService;
         this.reviewSessionService = reviewSessionService;
         this.reviewCommentService = reviewCommentService;
         this.projectService = projectService;
@@ -122,6 +130,26 @@ public class PublicProjectService {
     public BillingClient.OrderResult startLockPayment(String token) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         return billingClient.createOrder(identity.tenantId(), identity.projectId(), token);
+    }
+
+    // ---- Creative Direction, shared with the client through the review link ----
+
+    /** The project's director's treatments, as the creator sees them. */
+    public CreativeDirectionBoardView creativeDirections(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return creativeDirectionService.board(identity.tenantId(), identity.projectId());
+    }
+
+    public CreativeDirectionView creativeDirectionFeedback(String token, UUID directionId, CreativeDirectionFeedbackRequest request) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return creativeDirectionService.addFeedback(identity.tenantId(), identity.projectId(), directionId, request, ReviewActor.CLIENT, null);
+    }
+
+    /** The client approving a treatment is the same approval the creator can give -- whoever
+     * approves last sets the project's direction. */
+    public CreativeDirectionView approveCreativeDirection(String token, UUID directionId) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        return creativeDirectionService.approve(identity.tenantId(), identity.projectId(), directionId, ReviewActor.CLIENT, null);
     }
 
     /** "Start your next brief" -- only once this video is locked: paying for the current one is

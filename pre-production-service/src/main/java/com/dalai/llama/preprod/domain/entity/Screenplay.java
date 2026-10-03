@@ -47,6 +47,11 @@ public class Screenplay {
     @Column(name = "locked_idea_id")
     private UUID lockedIdeaId;
 
+    /** The approved creative direction this version was generated from (an edit carries its
+     * parent's); null before Creative Direction existed. */
+    @Column(name = "creative_direction_id")
+    private UUID creativeDirectionId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private DraftStatus status;

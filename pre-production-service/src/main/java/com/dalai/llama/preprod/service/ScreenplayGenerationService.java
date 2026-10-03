@@ -1,5 +1,7 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext;
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.domain.DraftStatus;
 import com.dalai.llama.preprod.domain.GenerationSource;
 import com.dalai.llama.preprod.domain.ProjectStatus;
@@ -40,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -69,6 +72,7 @@ public class ScreenplayGenerationService {
     private final ProjectService projectService;
     private final ProjectConfigService projectConfigService;
     private final String defaultModel;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public ScreenplayGenerationService(
             ProjectRepository projectRepository,
@@ -83,8 +87,10 @@ public class ScreenplayGenerationService {
             ObjectMapper objectMapper,
             ProjectService projectService,
             ProjectConfigService projectConfigService,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.projectRepository = projectRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
@@ -157,6 +163,7 @@ public class ScreenplayGenerationService {
         String dialogueLanguage = projectConfigService.resolveDialogueLanguage(tenantId, projectId, requestedDialogueLanguage);
         String narrativeLanguage = projectConfigService.resolveNarrativeLanguage(tenantId, projectId, requestedNarrativeLanguage);
 
+        Optional<ApprovedCreativeDirectionContext> creativeDirection = creativeDirectionContextService.forGeneration(tenantId, projectId);
         LlmGatewayChatResponse response = llmGatewayClient.chat(
                 tenantId.toString(),
                 "screenplay-generate-" + projectId,
@@ -164,14 +171,17 @@ public class ScreenplayGenerationService {
                         JsonExtraction.JSON_MODE_PARAMS, TASK_KEY,
                         Map.of("scriptText", scriptText,
                                 "dialogueLanguage", dialogueLanguage,
-                                "narrativeLanguage", narrativeLanguage)).withProjectId(projectId));
+                                "narrativeLanguage", narrativeLanguage,
+                                "creativeDirection", creativeDirection.map(ApprovedCreativeDirectionContext::promptBlock)
+                                        .orElse(ApprovedCreativeDirectionContext.NONE_APPROVED))).withProjectId(projectId));
 
         ScreenplayGenerationResult parsed = parse(response);
         if (parsed.scenes() == null || parsed.scenes().isEmpty()) {
             throw PreProductionException.upstream("PRE_PROD_SCREENPLAY_GENERATE returned no scenes");
         }
 
-        Screenplay screenplay = newVersion(tenantId, projectId, script.getId(), GenerationSource.GENERATED, null, project.getLockedIdeaId());
+        Screenplay screenplay = newVersion(tenantId, projectId, script.getId(), GenerationSource.GENERATED, null, project.getLockedIdeaId(),
+                creativeDirection.map(ApprovedCreativeDirectionContext::directionId).orElse(null));
         Map<String, ScriptCharacter> charactersByKey = scriptCharacterRepository.findByScriptId(script.getId()).stream()
                 .collect(Collectors.toMap(ScriptCharacter::getCharacterKey, c -> c, (a, b) -> a));
         List<ScreenplayScene> scenes = new java.util.ArrayList<>();
@@ -228,7 +238,8 @@ public class ScreenplayGenerationService {
                 .filter(s -> s.getTenantId().equals(tenantId))
                 .orElseThrow(() -> PreProductionException.notFound("No screenplay version " + parentVersion + " for project " + projectId));
 
-        Screenplay screenplay = newVersion(tenantId, projectId, parent.getScriptId(), GenerationSource.EDITED, parent.getId(), parent.getLockedIdeaId());
+        Screenplay screenplay = newVersion(tenantId, projectId, parent.getScriptId(), GenerationSource.EDITED, parent.getId(), parent.getLockedIdeaId(),
+                parent.getCreativeDirectionId());
         List<ScreenplayScene> scenes = request.scenes().stream()
                 .map(item -> ScreenplayScene.builder()
                         .tenantId(tenantId)
@@ -293,7 +304,8 @@ public class ScreenplayGenerationService {
         return toView(screenplay, scenes);
     }
 
-    private Screenplay newVersion(UUID tenantId, UUID projectId, UUID scriptId, GenerationSource source, UUID parentId, UUID lockedIdeaId) {
+    private Screenplay newVersion(UUID tenantId, UUID projectId, UUID scriptId, GenerationSource source, UUID parentId, UUID lockedIdeaId,
+                                  UUID creativeDirectionId) {
         int nextVersion = screenplayRepository.findTopByProjectIdOrderByVersionDesc(projectId)
                 .map(s -> s.getVersion() + 1)
                 .orElse(1);
@@ -303,6 +315,7 @@ public class ScreenplayGenerationService {
                 .projectId(projectId)
                 .scriptId(scriptId)
                 .lockedIdeaId(lockedIdeaId)
+                .creativeDirectionId(creativeDirectionId)
                 .status(DraftStatus.DRAFT)
                 .version(nextVersion)
                 .source(source)
@@ -355,7 +368,8 @@ public class ScreenplayGenerationService {
     private ScreenplayView toView(Screenplay screenplay, List<ScreenplayScene> scenes) {
         if (scenes.isEmpty()) {
             return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getLockedIdeaId(),
-                    screenplay.getStatus(), screenplay.getVersion(), screenplay.getSource(), screenplay.getParentId(), screenplay.getCreatedAt(), List.of());
+                    screenplay.getStatus(), screenplay.getVersion(), screenplay.getSource(), screenplay.getParentId(), screenplay.getCreatedAt(), List.of(),
+                    screenplay.getCreativeDirectionId());
         }
         List<UUID> sceneIds = scenes.stream().map(ScreenplayScene::getId).collect(Collectors.toList());
         Map<UUID, ScriptCharacter> charactersById = scriptCharacterRepository.findByScriptId(screenplay.getScriptId()).stream()
@@ -376,6 +390,7 @@ public class ScreenplayGenerationService {
                         charactersByScene.getOrDefault(s.getId(), List.of())))
                 .collect(Collectors.toList());
         return new ScreenplayView(screenplay.getId(), screenplay.getProjectId(), screenplay.getScriptId(), screenplay.getLockedIdeaId(),
-                screenplay.getStatus(), screenplay.getVersion(), screenplay.getSource(), screenplay.getParentId(), screenplay.getCreatedAt(), sceneViews);
+                screenplay.getStatus(), screenplay.getVersion(), screenplay.getSource(), screenplay.getParentId(), screenplay.getCreatedAt(), sceneViews,
+                screenplay.getCreativeDirectionId());
     }
 }

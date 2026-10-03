@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.domain.ShotType;
 import com.dalai.llama.preprod.domain.entity.MotionGraphicPlan;
 import com.dalai.llama.preprod.domain.entity.Shot;
@@ -36,14 +37,17 @@ public class MotionGraphicPlanService {
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public MotionGraphicPlanService(
             ShotRepository shotRepository,
             MotionGraphicPlanRepository motionGraphicPlanRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.shotRepository = shotRepository;
         this.motionGraphicPlanRepository = motionGraphicPlanRepository;
         this.llmGatewayClient = llmGatewayClient;
@@ -74,7 +78,8 @@ public class MotionGraphicPlanService {
                                 "action", nullSafe(shot.getAction()),
                                 "scriptLine", nullSafe(shot.getScriptLine()),
                                 "textOverlay", nullSafe(shot.getTextOverlay()),
-                                "durationSeconds", String.valueOf(shot.getDurationSeconds() == null ? 4 : shot.getDurationSeconds())
+                                "durationSeconds", String.valueOf(shot.getDurationSeconds() == null ? 4 : shot.getDurationSeconds()),
+                                "creativeDirection", creativeDirectionContextService.promptBlock(tenantId, shot.getProjectId())
                         )).withProjectId(shot.getProjectId()));
 
         MotionGraphicPlanGenerationResult parsed = parse(response);

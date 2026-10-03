@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.domain.AspectRatio;
 import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.ExecutionDifficulty;
@@ -94,6 +95,7 @@ public class ShotListGenerationService {
     private final com.dalai.llama.preprod.service.videogen.VideoGenClient videoGenClient;
     private final MinioClient publicMinioClient;
     private final String defaultModel;
+    private final CreativeDirectionContextService creativeDirectionContextService;
 
     public ShotListGenerationService(
             ProjectRepository projectRepository,
@@ -118,8 +120,10 @@ public class ShotListGenerationService {
             ShotImageService shotImageService,
             com.dalai.llama.preprod.service.videogen.VideoGenClient videoGenClient,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
+            CreativeDirectionContextService creativeDirectionContextService
     ) {
+        this.creativeDirectionContextService = creativeDirectionContextService;
         this.projectRepository = projectRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
@@ -281,6 +285,7 @@ public class ShotListGenerationService {
                                 || projectConfig.getDialogueLanguage().isBlank()
                                 ? "English"
                                 : projectConfig.getDialogueLanguage(),
+                        "creativeDirection", creativeDirectionContextService.promptBlock(tenantId, projectId),
                         "aspectRatio", configuredAspectRatio == null ? "no preference set -- choose what suits each shot" : configuredAspectRatio.toString(),
                         "motionGraphicsGuidance", preferMotionGraphics
                                 ? "This project prefers MOTION_GRAPHIC for any text/data/graphic-driven beat -- classify those shots as MOTION_GRAPHIC rather than ACTION or B_ROLL."

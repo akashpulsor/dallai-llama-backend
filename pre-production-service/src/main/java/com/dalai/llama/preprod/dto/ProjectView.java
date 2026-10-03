@@ -21,6 +21,9 @@ public record ProjectView(
         // see Project.finalVideoDownloadUnlocked. Preview is always allowed; this gates download.
         boolean finalVideoDownloadUnlocked,
         // When the client approved and locked the package; null = not locked. See Project.clientLockedAt.
-        OffsetDateTime clientLockedAt
+        OffsetDateTime clientLockedAt,
+        // True when script and every later stage wait for an approved creative direction (projects
+        // created with Creative Direction); false on projects created before it.
+        boolean creativeDirectionRequired
 ) {
 }

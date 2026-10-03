@@ -80,6 +80,11 @@ public class Project {
     @Column(name = "client_review_token", unique = true, length = 64)
     private String clientReviewToken;
 
+    /** True for projects created with the Creative Direction stage: their dependent stages wait
+     * for an approved direction. False for every project created before it -- see V73. */
+    @Column(name = "creative_direction_required", nullable = false)
+    private boolean creativeDirectionRequired;
+
     /** When the client approved and locked the package -- null until then. Written only by the
      * lock itself, never by a stage change, so regenerating a stage after a paid lock can't make
      * the review page ask the client to lock (and pay) again. */

@@ -17,6 +17,8 @@ public record ScreenplayView(
         GenerationSource source,
         UUID parentId,
         OffsetDateTime createdAt,
-        List<ScreenplaySceneView> scenes
+        List<ScreenplaySceneView> scenes,
+        // See ScriptView.creativeDirectionId.
+        UUID creativeDirectionId
 ) {
 }

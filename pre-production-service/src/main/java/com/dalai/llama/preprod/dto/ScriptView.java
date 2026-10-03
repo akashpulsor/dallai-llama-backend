@@ -29,6 +29,9 @@ public record ScriptView(
         String storytellingType,
         List<ScriptCharacterView> characters,
         Integer currentVersion,
-        GenerationSource currentSource
+        GenerationSource currentSource,
+        // The approved creative direction this script was generated from (null before Creative
+        // Direction). Differs from the project's approved direction -> generated from an earlier one.
+        UUID creativeDirectionId
 ) {
 }
