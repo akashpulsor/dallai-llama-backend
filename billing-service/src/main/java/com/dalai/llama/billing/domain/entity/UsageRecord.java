@@ -47,6 +47,11 @@ public class UsageRecord {
     @Column(nullable = false, precision = 15, scale = 4)
     private BigDecimal totalCost;
 
+    /** What the provider charged, before billing's margin, in the wallet's currency --
+     * {@code totalCost} is what the creator paid. Null only if a row predates V23. */
+    @Column(name = "raw_cost", precision = 15, scale = 4)
+    private BigDecimal rawCost;
+
     /** llm-gateway's prompt template key -- what this call was for. Null for calls that use no
      * template, and for rows written before it was captured. */
     @Column(name = "task_key", length = 64)

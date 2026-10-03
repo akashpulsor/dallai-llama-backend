@@ -34,6 +34,13 @@ public interface UsageRecordRepository extends JpaRepository<UsageRecord, UUID> 
             "WHERE u.tenantId = :tenantId AND u.projectId = :projectId")
     BigDecimal sumCostByProjectId(@Param("tenantId") UUID tenantId, @Param("projectId") UUID projectId);
 
+    @Query("SELECT COALESCE(SUM(COALESCE(u.rawCost, u.totalCost)), 0) FROM UsageRecord u " +
+            "WHERE u.tenantId = :tenantId AND u.projectId = :projectId")
+    BigDecimal sumRawCostByProjectId(@Param("tenantId") UUID tenantId, @Param("projectId") UUID projectId);
+
+    @Query("SELECT DISTINCT u.projectId FROM UsageRecord u WHERE u.tenantId = :tenantId AND u.projectId IS NOT NULL")
+    List<UUID> findProjectIdsByTenantId(@Param("tenantId") UUID tenantId);
+
     @Query("SELECT COALESCE(SUM(u.totalCost), 0) FROM UsageRecord u " +
             "WHERE u.tenantId = :tenantId AND u.sourceId = :sourceId " +
             "AND u.sourceType IN :sourceTypes")

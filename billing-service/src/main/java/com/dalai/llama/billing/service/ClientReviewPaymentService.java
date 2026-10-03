@@ -40,6 +40,7 @@ public class ClientReviewPaymentService {
     private final ClientReviewPaymentRepository repository;
     private final PreProductionServiceClient preProductionServiceClient;
     private final CreativePlanningServiceClient creativePlanningServiceClient;
+    private final VideoPricingService videoPricingService;
 
     @Value("${billing.client-review.platform-base-inr:5299}")
     private BigDecimal platformBase;
@@ -100,14 +101,14 @@ public class ClientReviewPaymentService {
                 .divide(HUNDRED.add(marginPercent), 2, RoundingMode.HALF_UP);
         String quoteCurrency = project.quotedCurrency() != null ? project.quotedCurrency() : currency;
         return new Quote(balance.subtract(creatorAmount), creatorAmount, balance, quoteCurrency, marginPercent,
-                project.quotedTotalPrice(), paidUpfront);
+                project.quotedTotalPrice(), paidUpfront, videoPricingService.productionCharges(project));
     }
 
     private Quote marginOnTop(UUID tenantId, BigDecimal base) {
         BigDecimal marginPercent = resolveCreatorMargin(tenantId);
         BigDecimal creatorAmount = base.multiply(marginPercent).divide(HUNDRED, 2, RoundingMode.HALF_UP);
         BigDecimal total = base.add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
-        return new Quote(base.setScale(2, RoundingMode.HALF_UP), creatorAmount, total, currency, marginPercent, null, null);
+        return new Quote(base.setScale(2, RoundingMode.HALF_UP), creatorAmount, total, currency, marginPercent, null, null, null);
     }
 
     private OrderResult openOrder(UUID tenantId, UUID projectId, String reviewToken, String kind, String receiptPrefix, Quote quote) {
@@ -212,9 +213,11 @@ public class ClientReviewPaymentService {
         return defaultCreatorMarginPercent;
     }
 
-    /** {@code quotedTotalPrice}/{@code paidUpfront} are null for an unquoted (flat-priced) project. */
+    /** {@code quotedTotalPrice}/{@code paidUpfront}/{@code production} are null for an unquoted
+     * (flat-priced) project; {@code production} is the line-by-line split the client is shown. */
     public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency,
-                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront) {}
+                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront,
+                        ProductionCharges production) {}
 
     public record OrderResult(UUID paymentId, String gatewayOrderId, BigDecimal amount, String currency, String keyId) {}
 

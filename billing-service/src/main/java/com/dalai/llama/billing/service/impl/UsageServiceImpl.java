@@ -88,6 +88,10 @@ public class UsageServiceImpl implements UsageService {
                 .unit(request.unit())
                 .unitCost(billedUnitCost)
                 .totalCost(billedTotalCost)
+                // Uncapped: a package cap lowers what the creator pays, not what the provider charged.
+                .rawCost(request.rawCost() == null
+                        ? requestedBilledTotalCost
+                        : convertCurrency(request.rawCost(), sourceCurrency, tenantCurrency, 4))
                 .taskKey(request.taskKey())
                 // Derived once, on write. A statement read months later then shows the grouping
                 // that was in force when the money was spent, rather than silently re-grouping

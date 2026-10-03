@@ -49,6 +49,8 @@ public class CreativePlanningServiceClient {
 
     /** Structural mirror of creative-planning-service's {@code ProjectQuoteView}. */
     public record ProjectQuote(
+            Integer durationSeconds,
+            BigDecimal quotedPlatformCost,
             BigDecimal quotedTotalPrice,
             BigDecimal quotedCreatorMarginPercent,
             String quotedCurrency,

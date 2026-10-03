@@ -241,7 +241,8 @@ public class ProjectRequirementService {
                 .map(LockedIdea::getProjectRequirementId)
                 .flatMap(projectRequirementRepository::findById)
                 .filter(requirement -> requirement.getQuotedTotalPrice() != null)
-                .map(requirement -> new ProjectQuoteView(requirement.getQuotedTotalPrice(),
+                .map(requirement -> new ProjectQuoteView(requirement.getDurationSeconds(),
+                        requirement.getQuotedPlatformCost(), requirement.getQuotedTotalPrice(),
                         requirement.getQuotedCreatorMarginPercent(), requirement.getQuotedCurrency(),
                         requirement.getRequiredAmount(), requirement.isFunded()));
     }

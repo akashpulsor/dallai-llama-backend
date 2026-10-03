@@ -7,6 +7,8 @@ import java.math.BigDecimal;
  * {@code requiredAmount} is what the brief asked for upfront; it was only actually paid when
  * {@code funded} is true. */
 public record ProjectQuoteView(
+        Integer durationSeconds,
+        BigDecimal quotedPlatformCost,
         BigDecimal quotedTotalPrice,
         BigDecimal quotedCreatorMarginPercent,
         String quotedCurrency,

@@ -41,6 +41,6 @@ class PublicProjectServiceLockSettledTest {
 
     private static BillingClient.Quote quote(String total) {
         return new BillingClient.Quote(BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal(total), "INR",
-                new BigDecimal("15"), new BigDecimal("3450.00"), new BigDecimal("862.50"));
+                new BigDecimal("15"), new BigDecimal("3450.00"), new BigDecimal("862.50"), null);
     }
 }

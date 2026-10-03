@@ -89,7 +89,8 @@ public class LlmBillingEventConsumer {
                 event.getCurrency() == null ? "USD" : event.getCurrency(),
                 event.getCreatedAt() == null ? Instant.now() : event.getCreatedAt().toInstant(),
                 event.getTaskKey(),
-                event.getModelType()
+                event.getModelType(),
+                rawCost
         ));
     }
 

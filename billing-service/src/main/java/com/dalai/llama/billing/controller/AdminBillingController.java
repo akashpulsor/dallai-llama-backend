@@ -6,6 +6,8 @@ import com.dalai.llama.billing.dto.AdminCreditRequest;
 import com.dalai.llama.billing.dto.AdminWalletView;
 import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.service.EmailService;
+import com.dalai.llama.billing.service.ProjectEconomics;
+import com.dalai.llama.billing.service.ProjectEconomicsService;
 import com.dalai.llama.billing.service.WalletService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -43,6 +46,14 @@ public class AdminBillingController {
     private final WalletRepository walletRepository;
     private final WalletService walletService;
     private final EmailService emailService;
+    private final ProjectEconomicsService projectEconomicsService;
+
+    /** Ops view of every project for a tenant: provider cost vs what was charged vs what the
+     * client paid, with both the creator's and the platform's profit. */
+    @GetMapping("/tenants/{tenantId}/projects/economics")
+    public ResponseEntity<List<ProjectEconomics>> projectEconomics(@PathVariable UUID tenantId) {
+        return ResponseEntity.ok(projectEconomicsService.forTenant(tenantId));
+    }
 
     @GetMapping("/wallets/{tenantId}")
     public ResponseEntity<AdminWalletView> wallet(@PathVariable UUID tenantId) {

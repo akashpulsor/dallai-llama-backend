@@ -35,5 +35,6 @@ class LlmBillingEventConsumerTest {
         ArgumentCaptor<BillableUsageRequest> captor = ArgumentCaptor.forClass(BillableUsageRequest.class);
         verify(usageService).recordBillableUsage(captor.capture());
         assertThat(captor.getValue().totalCost()).isEqualByComparingTo("0.6000");
+        assertThat(captor.getValue().rawCost()).isEqualByComparingTo("0.5000");
     }
 }

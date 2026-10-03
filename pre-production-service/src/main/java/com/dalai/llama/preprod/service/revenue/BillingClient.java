@@ -20,11 +20,19 @@ public class BillingClient {
      * paidUpfront} are null for an unquoted (flat-priced) project; a zero {@code totalAmount}
      * means the brief was paid in full and the package locks without a payment. */
     public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency,
-                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront) {
+                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront,
+                        ProductionCharges production) {
         public boolean settled() {
             return totalAmount != null && totalAmount.signum() <= 0;
         }
     }
+
+    /** Mirrors billing's {@code ProductionCharges}: the line-by-line price the client is shown --
+     * video production (scripting and screenplay, shot planning, frame generation, video
+     * generation) plus music production. Null for an unquoted project. */
+    public record ProductionCharges(BigDecimal scriptingAndScreenplay, BigDecimal shotPlanning, BigDecimal frameGeneration,
+                                    BigDecimal videoGeneration, BigDecimal videoProduction, BigDecimal musicProduction,
+                                    BigDecimal total, String currency) {}
 
     public record OrderResult(UUID paymentId, String gatewayOrderId, BigDecimal amount, String currency, String keyId) {}
 

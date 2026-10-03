@@ -33,12 +33,15 @@ class ProjectRequirementServiceProjectQuoteTest {
         lockedIdeaFor(tenantId);
         when(requirements.findById(requirementId)).thenReturn(Optional.of(ProjectRequirement.builder()
                 .id(requirementId).tenantId(tenantId)
+                .durationSeconds(30).quotedPlatformCost(new BigDecimal("3000.00"))
                 .quotedTotalPrice(new BigDecimal("3450.00")).quotedCreatorMarginPercent(new BigDecimal("15"))
                 .quotedCurrency("INR").requiredPaymentPercent(25).funded(true)
                 .build()));
 
         ProjectQuoteView quote = service.findProjectQuote(tenantId, projectId).orElseThrow();
 
+        assertThat(quote.durationSeconds()).isEqualTo(30);
+        assertThat(quote.quotedPlatformCost()).isEqualByComparingTo("3000.00");
         assertThat(quote.quotedTotalPrice()).isEqualByComparingTo("3450.00");
         assertThat(quote.requiredAmount()).isEqualByComparingTo("862.50");
         assertThat(quote.funded()).isTrue();

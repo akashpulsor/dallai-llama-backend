@@ -1,5 +1,6 @@
 package com.dalai.llama.billing.service;
 
+import com.dalai.llama.billing.client.CreativePlanningServiceClient;
 import com.dalai.llama.billing.client.TenantServiceClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,25 +88,55 @@ public class VideoPricingService {
     private BigDecimal screenplayGenerationCostInr;
 
     public Quote quote(UUID tenantId, int durationSeconds) {
-        BigDecimal videoCost = baseRatePerSecond.multiply(BigDecimal.valueOf(durationSeconds));
-        int shotCount = (int) Math.ceil(durationSeconds / (double) secondsPerShot);
-        BigDecimal imageCost = imageCostPerImageInr.multiply(BigDecimal.valueOf((long) shotCount * imagesPerShot));
-        BigDecimal visionAnalysisCost = visionAnalysisCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
-        BigDecimal critiqueCost = critiqueCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
-        BigDecimal platformCost = videoCost.add(imageCost).add(visionAnalysisCost).add(critiqueCost)
-                .add(scriptGenerationCostInr).add(screenplayGenerationCostInr)
-                .setScale(2, RoundingMode.HALF_UP);
-
+        Components cost = components(durationSeconds);
         BigDecimal marginPercent = resolveCreatorMargin(tenantId);
-        BigDecimal creatorAmount = platformCost.multiply(marginPercent)
+        BigDecimal creatorAmount = cost.platformCost().multiply(marginPercent)
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-        BigDecimal total = platformCost.add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
-        return new Quote(durationSeconds, shotCount, videoCost.setScale(2, RoundingMode.HALF_UP),
-                imageCost.setScale(2, RoundingMode.HALF_UP), visionAnalysisCost.setScale(2, RoundingMode.HALF_UP),
-                critiqueCost.setScale(2, RoundingMode.HALF_UP),
-                scriptGenerationCostInr.add(screenplayGenerationCostInr).setScale(2, RoundingMode.HALF_UP),
-                platformCost, marginPercent, creatorAmount, total, currency);
+        BigDecimal total = cost.platformCost().add(creatorAmount).setScale(2, RoundingMode.HALF_UP);
+        return new Quote(durationSeconds, cost.shotCount(), money(cost.video()), money(cost.image()),
+                money(cost.visionAnalysis()), money(cost.critique()), money(cost.scriptAndScreenplay()),
+                cost.platformCost(), marginPercent, creatorAmount, total, currency);
     }
+
+    /** Splits a project's snapshotted quote into the lines the customer is shown. The split is
+     * today's component proportions scaled onto the snapshotted platform cost, so the lines always
+     * add up to what was actually quoted even if a rate has moved since; video generation takes
+     * the rounding remainder. Music production is the rest of the quoted total. Null when the
+     * project carries no duration-priced quote. */
+    public ProductionCharges productionCharges(CreativePlanningServiceClient.ProjectQuote project) {
+        if (project.durationSeconds() == null || project.quotedPlatformCost() == null || project.quotedTotalPrice() == null) {
+            return null;
+        }
+        Components current = components(project.durationSeconds());
+        BigDecimal scale = project.quotedPlatformCost().divide(current.platformCost(), 8, RoundingMode.HALF_UP);
+        BigDecimal scripting = money(current.scriptAndScreenplay().multiply(scale));
+        BigDecimal shotPlanning = money(current.visionAnalysis().add(current.critique()).multiply(scale));
+        BigDecimal frames = money(current.image().multiply(scale));
+        BigDecimal videoProduction = money(project.quotedPlatformCost());
+        BigDecimal total = money(project.quotedTotalPrice());
+        return new ProductionCharges(scripting, shotPlanning, frames,
+                videoProduction.subtract(scripting).subtract(shotPlanning).subtract(frames),
+                videoProduction, total.subtract(videoProduction), total,
+                project.quotedCurrency() != null ? project.quotedCurrency() : currency);
+    }
+
+    private Components components(int durationSeconds) {
+        int shotCount = (int) Math.ceil(durationSeconds / (double) secondsPerShot);
+        BigDecimal video = baseRatePerSecond.multiply(BigDecimal.valueOf(durationSeconds));
+        BigDecimal image = imageCostPerImageInr.multiply(BigDecimal.valueOf((long) shotCount * imagesPerShot));
+        BigDecimal vision = visionAnalysisCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
+        BigDecimal critique = critiqueCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
+        BigDecimal script = scriptGenerationCostInr.add(screenplayGenerationCostInr);
+        return new Components(shotCount, video, image, vision, critique, script,
+                money(video.add(image).add(vision).add(critique).add(script)));
+    }
+
+    private static BigDecimal money(BigDecimal amount) {
+        return amount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private record Components(int shotCount, BigDecimal video, BigDecimal image, BigDecimal visionAnalysis,
+                              BigDecimal critique, BigDecimal scriptAndScreenplay, BigDecimal platformCost) {}
 
     private BigDecimal resolveCreatorMargin(UUID tenantId) {
         try {
