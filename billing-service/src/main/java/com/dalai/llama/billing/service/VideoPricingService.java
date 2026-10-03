@@ -2,13 +2,17 @@ package com.dalai.llama.billing.service;
 
 import com.dalai.llama.billing.client.CreativePlanningServiceClient;
 import com.dalai.llama.billing.client.TenantServiceClient;
+import com.dalai.llama.billing.domain.entity.VideoPricingConfig;
+import com.dalai.llama.billing.repository.VideoPricingConfigRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -34,7 +38,10 @@ import java.util.UUID;
 public class VideoPricingService {
 
     private final TenantServiceClient tenantServiceClient;
+    private final VideoPricingConfigRepository videoPricingConfigRepository;
 
+    /** The fallback only -- the live rate is whatever ops last saved (see {@link
+     * #currentRatePerSecond}); this applies until anyone has. */
     @Value("${billing.video-pricing.base-rate-per-second-inr:100}")
     private BigDecimal baseRatePerSecond;
 
@@ -107,22 +114,56 @@ public class VideoPricingService {
         if (project.durationSeconds() == null || project.quotedPlatformCost() == null || project.quotedTotalPrice() == null) {
             return null;
         }
-        Components current = components(project.durationSeconds());
-        BigDecimal scale = project.quotedPlatformCost().divide(current.platformCost(), 8, RoundingMode.HALF_UP);
+        return charges(project.durationSeconds(), project.quotedPlatformCost(), project.quotedTotalPrice(),
+                project.quotedCurrency() != null ? project.quotedCurrency() : currency);
+    }
+
+    /** What a client would pay for a brief of this length today, as the ops page previews it:
+     * the quote a new brief would snapshot, and the lines the client would be shown for it. */
+    public PricePreview preview(UUID tenantId, int durationSeconds) {
+        Quote quote = quote(tenantId, durationSeconds);
+        return new PricePreview(currentRatePerSecond(), quote,
+                charges(durationSeconds, quote.platformCost(), quote.totalPrice(), quote.currency()));
+    }
+
+    /** The rate ops last saved, else the configured default. */
+    public BigDecimal currentRatePerSecond() {
+        return videoPricingConfigRepository.findById(VideoPricingConfig.SINGLETON_ID)
+                .map(VideoPricingConfig::getBaseRatePerSecondInr)
+                .orElse(baseRatePerSecond);
+    }
+
+    public BigDecimal defaultRatePerSecond() {
+        return baseRatePerSecond;
+    }
+
+    /** Re-prices new briefs only: a brief snapshots its quote when it is created. */
+    @Transactional
+    public BigDecimal updateRatePerSecond(BigDecimal ratePerSecondInr) {
+        if (ratePerSecondInr == null || ratePerSecondInr.signum() <= 0) {
+            throw new IllegalArgumentException("Rate per second must be greater than zero");
+        }
+        videoPricingConfigRepository.save(
+                new VideoPricingConfig(VideoPricingConfig.SINGLETON_ID, ratePerSecondInr, Instant.now()));
+        return ratePerSecondInr;
+    }
+
+    private ProductionCharges charges(int durationSeconds, BigDecimal platformCost, BigDecimal totalPrice, String chargeCurrency) {
+        Components current = components(durationSeconds);
+        BigDecimal scale = platformCost.divide(current.platformCost(), 8, RoundingMode.HALF_UP);
         BigDecimal scripting = money(current.scriptAndScreenplay().multiply(scale));
         BigDecimal shotPlanning = money(current.visionAnalysis().add(current.critique()).multiply(scale));
         BigDecimal frames = money(current.image().multiply(scale));
-        BigDecimal videoProduction = money(project.quotedPlatformCost());
-        BigDecimal total = money(project.quotedTotalPrice());
+        BigDecimal videoProduction = money(platformCost);
+        BigDecimal total = money(totalPrice);
         return new ProductionCharges(scripting, shotPlanning, frames,
                 videoProduction.subtract(scripting).subtract(shotPlanning).subtract(frames),
-                videoProduction, total.subtract(videoProduction), total,
-                project.quotedCurrency() != null ? project.quotedCurrency() : currency);
+                videoProduction, total.subtract(videoProduction), total, chargeCurrency);
     }
 
     private Components components(int durationSeconds) {
         int shotCount = (int) Math.ceil(durationSeconds / (double) secondsPerShot);
-        BigDecimal video = baseRatePerSecond.multiply(BigDecimal.valueOf(durationSeconds));
+        BigDecimal video = currentRatePerSecond().multiply(BigDecimal.valueOf(durationSeconds));
         BigDecimal image = imageCostPerImageInr.multiply(BigDecimal.valueOf((long) shotCount * imagesPerShot));
         BigDecimal vision = visionAnalysisCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
         BigDecimal critique = critiqueCostPerShotInr.multiply(BigDecimal.valueOf(shotCount));
@@ -149,6 +190,8 @@ public class VideoPricingService {
         }
         return defaultCreatorMarginPercent;
     }
+
+    public record PricePreview(BigDecimal ratePerSecondInr, Quote quote, ProductionCharges production) {}
 
     /** {@code platformCost} is the sum of the five cost fields before it -- broken out for
      * transparency (a creator overriding {@code quotedTotalPrice} can see what's actually driving

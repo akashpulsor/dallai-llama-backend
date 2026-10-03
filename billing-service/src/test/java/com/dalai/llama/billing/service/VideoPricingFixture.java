@@ -1,6 +1,7 @@
 package com.dalai.llama.billing.service;
 
 import com.dalai.llama.billing.client.TenantServiceClient;
+import com.dalai.llama.billing.repository.VideoPricingConfigRepository;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -15,7 +16,11 @@ final class VideoPricingFixture {
     }
 
     static VideoPricingService withDefaults() {
-        VideoPricingService service = new VideoPricingService(mock(TenantServiceClient.class));
+        return withDefaults(mock(VideoPricingConfigRepository.class));
+    }
+
+    static VideoPricingService withDefaults(VideoPricingConfigRepository config) {
+        VideoPricingService service = new VideoPricingService(mock(TenantServiceClient.class), config);
         ReflectionTestUtils.setField(service, "baseRatePerSecond", new BigDecimal("100"));
         ReflectionTestUtils.setField(service, "defaultCreatorMarginPercent", new BigDecimal("12"));
         ReflectionTestUtils.setField(service, "currency", "INR");
