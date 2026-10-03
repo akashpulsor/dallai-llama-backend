@@ -80,6 +80,12 @@ public class Project {
     @Column(name = "client_review_token", unique = true, length = 64)
     private String clientReviewToken;
 
+    /** When the client approved and locked the package -- null until then. Written only by the
+     * lock itself, never by a stage change, so regenerating a stage after a paid lock can't make
+     * the review page ask the client to lock (and pay) again. */
+    @Column(name = "client_locked_at")
+    private OffsetDateTime clientLockedAt;
+
     /** chat-service session id, created once the client locks the package -- null until then. */
     @Column(name = "chat_session_id")
     private UUID chatSessionId;

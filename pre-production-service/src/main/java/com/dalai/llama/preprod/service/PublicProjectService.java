@@ -102,11 +102,12 @@ public class PublicProjectService {
         List<PublicCastMemberView> cast = script == null ? List.of() : buildCast(identity, script);
         List<PublicShotView> shots = buildShots(identity);
 
-        return new PublicProjectPackageView(project.id(), project.name(), project.status(), project.lockedIdeaId(), script, screenplay, cast, shots);
+        return new PublicProjectPackageView(project.id(), project.name(), project.status(), project.lockedIdeaId(), project.clientLockedAt(), script, screenplay, cast, shots);
     }
 
-    /** The client's price to lock this package: the platform's base + the creator's own margin.
-     * Read-only -- shown before the client pays. */
+    /** The client's price to lock this package: the balance of the brief's quote, or the flat
+     * platform base + creator margin when unquoted (billing decides). Read-only -- shown before
+     * the client pays. */
     public BillingClient.Quote quote(String token) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         return billingClient.quote(identity.tenantId(), identity.projectId());
@@ -119,10 +120,23 @@ public class PublicProjectService {
         return billingClient.createOrder(identity.tenantId(), identity.projectId(), token);
     }
 
+    /** Lock for a package whose brief was already paid in full -- there is no balance to put
+     * through Razorpay. billing's quote is re-read here rather than trusted from the client, so a
+     * package with anything still due can never reach {@code lock} through this door. */
+    public PublicProjectPackageView lockSettled(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        BillingClient.Quote quote = billingClient.quote(identity.tenantId(), identity.projectId());
+        if (!quote.settled()) {
+            throw PreProductionException.badRequest("A payment of %s %s is still due to lock this package"
+                    .formatted(quote.currency(), quote.totalAmount()));
+        }
+        projectLockService.lock(identity.tenantId(), identity.projectId());
+        return view(token);
+    }
+
     /** The pay-gate: billing verifies the Razorpay signature and credits the creator's margin to
      * their wallet; only then does the project actually lock. The bare lock endpoint was removed so
      * this is the only path to a locked package. */
-    @Transactional
     public PublicProjectPackageView verifyPaymentAndLock(String token, String gatewayOrderId, String gatewayPaymentId, String gatewaySignature) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         BillingClient.VerifyResult result = billingClient.verify(identity.tenantId(), gatewayOrderId, gatewayPaymentId, gatewaySignature);

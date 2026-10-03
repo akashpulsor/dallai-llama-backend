@@ -19,6 +19,8 @@ public record ProjectView(
         boolean reviewsEnabled,
         // Creator's manual gate for the client's ability to download the assembled final video --
         // see Project.finalVideoDownloadUnlocked. Preview is always allowed; this gates download.
-        boolean finalVideoDownloadUnlocked
+        boolean finalVideoDownloadUnlocked,
+        // When the client approved and locked the package; null = not locked. See Project.clientLockedAt.
+        OffsetDateTime clientLockedAt
 ) {
 }

@@ -12,6 +12,7 @@ import java.util.Set;
 import static com.dalai.llama.preprod.domain.ProjectStatus.CLIENT_LOCKED;
 import static com.dalai.llama.preprod.domain.ProjectStatus.DRAFT;
 import static com.dalai.llama.preprod.domain.ProjectStatus.IN_PRODUCTION;
+import static com.dalai.llama.preprod.domain.ProjectStatus.READY_FOR_REVIEW;
 import static com.dalai.llama.preprod.domain.ProjectStatus.SCREENPLAY_READY;
 import static com.dalai.llama.preprod.domain.ProjectStatus.SCRIPT_READY;
 import static com.dalai.llama.preprod.domain.ProjectStatus.SHOT_LIST_READY;
@@ -34,6 +35,10 @@ import static com.dalai.llama.preprod.domain.ProjectStatus.VIDEO_GENERATION_COMP
 public class ProjectStateMachine {
 
     private static final Map<ProjectStatus, Set<ProjectStatus>> ALLOWED_TRANSITIONS = buildTransitions();
+
+    public boolean canTransition(ProjectStatus current, ProjectStatus target) {
+        return current == target || ALLOWED_TRANSITIONS.getOrDefault(current, Set.of()).contains(target);
+    }
 
     public ProjectStatus transition(ProjectStatus current, ProjectStatus target) {
         if (current == target) {
@@ -59,15 +64,19 @@ public class ProjectStateMachine {
         transitions.put(SCRIPT_READY, EnumSet.of(SCREENPLAY_READY, DRAFT));
         transitions.put(SCREENPLAY_READY, EnumSet.of(SCRIPT_READY, SHOT_LIST_READY, DRAFT));
         transitions.put(SHOT_LIST_READY, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, IN_PRODUCTION, CLIENT_LOCKED, DRAFT));
-        transitions.put(IN_PRODUCTION, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, VIDEO_GENERATION_COMPLETE, CLIENT_LOCKED, DRAFT));
+        transitions.put(IN_PRODUCTION, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, VIDEO_GENERATION_COMPLETE, READY_FOR_REVIEW, CLIENT_LOCKED, DRAFT));
         // Every shot's video finished -- same symmetric "regenerate moves backward, forward goes
         // to CLIENT_LOCKED" shape IN_PRODUCTION's own row already has, one stage later. Backward
         // to IN_PRODUCTION too, in case more shots get added/regenerated after this point.
-        transitions.put(VIDEO_GENERATION_COMPLETE, EnumSet.of(IN_PRODUCTION, SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, CLIENT_LOCKED, DRAFT));
+        transitions.put(VIDEO_GENERATION_COMPLETE, EnumSet.of(IN_PRODUCTION, SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, READY_FOR_REVIEW, CLIENT_LOCKED, DRAFT));
+        // Published to the client's review page. Forward is the client's lock; backward is the
+        // same "regenerate moves status back" every stage has. READY_FOR_REVIEW was added to the
+        // enum without a row here, which left a published project with no way to lock at all.
+        transitions.put(READY_FOR_REVIEW, EnumSet.of(CLIENT_LOCKED, VIDEO_GENERATION_COMPLETE, IN_PRODUCTION, SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, DRAFT));
         // Regenerating any stage after the client has locked the package moves status backward,
         // same as every other stage -- the package is now stale, not un-locked (re-locking is a
         // fresh POST /v1/public/projects/{token}/lock, not an automatic state change).
-        transitions.put(CLIENT_LOCKED, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, IN_PRODUCTION, VIDEO_GENERATION_COMPLETE, DRAFT));
+        transitions.put(CLIENT_LOCKED, EnumSet.of(SCRIPT_READY, SCREENPLAY_READY, SHOT_LIST_READY, IN_PRODUCTION, VIDEO_GENERATION_COMPLETE, READY_FOR_REVIEW, DRAFT));
         return transitions;
     }
 }

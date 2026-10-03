@@ -16,7 +16,15 @@ import java.util.UUID;
 @Component
 public class BillingClient {
 
-    public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency, BigDecimal creatorMarginPercent) {}
+    /** Mirrors billing's {@code ClientReviewPaymentService.Quote}. {@code quotedTotalPrice}/{@code
+     * paidUpfront} are null for an unquoted (flat-priced) project; a zero {@code totalAmount}
+     * means the brief was paid in full and the package locks without a payment. */
+    public record Quote(BigDecimal platformBase, BigDecimal creatorAmount, BigDecimal totalAmount, String currency,
+                        BigDecimal creatorMarginPercent, BigDecimal quotedTotalPrice, BigDecimal paidUpfront) {
+        public boolean settled() {
+            return totalAmount != null && totalAmount.signum() <= 0;
+        }
+    }
 
     public record OrderResult(UUID paymentId, String gatewayOrderId, BigDecimal amount, String currency, String keyId) {}
 

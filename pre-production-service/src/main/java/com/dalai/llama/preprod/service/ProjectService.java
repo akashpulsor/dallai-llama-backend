@@ -118,6 +118,24 @@ public class ProjectService {
         projectRepository.save(project);
     }
 
+    /** Records the client's lock. The stamp is the fact and is written first-time-only, so a
+     * repeat (the webhook and the browser's verify both land) keeps the original time. Status
+     * follows only when the stage allows it -- a project mid-regeneration still gets locked, it
+     * just keeps showing the stage it is actually at. */
+    @Transactional
+    public void stampClientLocked(UUID tenantId, UUID projectId) {
+        Project project = requireProject(tenantId, projectId);
+        OffsetDateTime now = OffsetDateTime.now();
+        if (project.getClientLockedAt() == null) {
+            project.setClientLockedAt(now);
+        }
+        if (stateMachine.canTransition(project.getStatus(), ProjectStatus.CLIENT_LOCKED)) {
+            project.setStatus(ProjectStatus.CLIENT_LOCKED);
+        }
+        project.setUpdatedAt(now);
+        projectRepository.save(project);
+    }
+
     /** Called by creative-planning-service after it creates a new LockedIdea for this project (a
      * creator picking a different idea) -- see ProjectIdeaService#switchToOption there. Just a
      * pointer update: repoints which idea is "current" for this project. Script/Screenplay/Shot
@@ -225,6 +243,6 @@ public class ProjectService {
                 project.getId(), project.getName(), project.getLockedIdeaId(),
                 project.getBudgetTier(), project.getStatus(), project.getCreatedAt(),
                 project.getReviewAllowance(), project.isReviewsEnabled(),
-                project.isFinalVideoDownloadUnlocked());
+                project.isFinalVideoDownloadUnlocked(), project.getClientLockedAt());
     }
 }

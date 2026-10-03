@@ -13,6 +13,7 @@ import com.dalai.llama.preprod.dto.ShotImageView;
 import com.dalai.llama.preprod.dto.ShotView;
 import com.dalai.llama.preprod.repository.ShotImageRepository;
 import com.dalai.llama.preprod.service.chat.ChatServiceClient;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
  * still locks with whatever exists, same "regenerating an earlier stage doesn't block later ones"
  * philosophy {@link com.dalai.llama.preprod.service.lifecycle.ProjectStateMachine} already has.
  */
+@Slf4j
 @Service
 public class ProjectLockService {
 
@@ -73,9 +75,16 @@ public class ProjectLockService {
      * method in one transaction held a single DB connection for the entire sequential run of
      * per-shot LLM calls, which starved the connection pool badly enough to fail the pod's own
      * DB health check and get it killed mid-lock under load. */
+    /** Stamps the lock first -- the client has paid by the time this runs, so nothing after it
+     * may stop the lock from being recorded. Chat ingestion is slow (one vision call per shot) and
+     * best-effort: a failure is logged and the creator's chat panel re-syncs on its next open. */
     public void lock(UUID tenantId, UUID projectId) {
-        syncChatContext(tenantId, projectId);
-        projectService.advanceStatus(tenantId, projectId, ProjectStatus.CLIENT_LOCKED);
+        projectService.stampClientLocked(tenantId, projectId);
+        try {
+            syncChatContext(tenantId, projectId);
+        } catch (RuntimeException ex) {
+            log.warn("Project {} locked, but chat context sync failed: {}", projectId, ex.getMessage(), ex);
+        }
     }
 
     /** The same ingestion {@link #lock} does, callable on its own, independent of the client

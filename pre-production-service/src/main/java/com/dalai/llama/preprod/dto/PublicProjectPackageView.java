@@ -2,6 +2,7 @@ package com.dalai.llama.preprod.dto;
 
 import com.dalai.llama.preprod.domain.ProjectStatus;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,6 +18,9 @@ public record PublicProjectPackageView(
          * a client double-checking the deliverable can see what they briefed for without a round
          * trip through the creator. Null for projects locked from a chat session. */
         UUID lockedIdeaId,
+        /** When the client approved and locked the package; null = not locked yet. What the
+         * review page reads to hide "Approve & lock" -- status alone moves with every stage. */
+        OffsetDateTime clientLockedAt,
         ScriptView script,
         ScreenplayView screenplay,
         List<PublicCastMemberView> cast,

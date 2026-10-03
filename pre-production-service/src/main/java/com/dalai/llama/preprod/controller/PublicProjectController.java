@@ -39,8 +39,8 @@ public class PublicProjectController {
         return ResponseEntity.ok(publicProjectService.view(token));
     }
 
-    /** The client's price to lock this package -- platform base + the creator's margin -- shown
-     * before paying. */
+    /** The client's price to lock this package -- the balance of the brief's quote (or the flat
+     * platform base + creator margin when unquoted) -- shown before paying. */
     @PostMapping("/v1/public/projects/{token}/lock/quote")
     public ResponseEntity<com.dalai.llama.preprod.service.revenue.BillingClient.Quote> lockQuote(@PathVariable String token) {
         return ResponseEntity.ok(publicProjectService.quote(token));
@@ -50,6 +50,12 @@ public class PublicProjectController {
     @PostMapping("/v1/public/projects/{token}/lock/payment")
     public ResponseEntity<com.dalai.llama.preprod.service.revenue.BillingClient.OrderResult> startLockPayment(@PathVariable String token) {
         return ResponseEntity.ok(publicProjectService.startLockPayment(token));
+    }
+
+    /** Lock with nothing left to pay (brief paid in full). Refused while any balance is due. */
+    @PostMapping("/v1/public/projects/{token}/lock/settled")
+    public ResponseEntity<PublicProjectPackageView> lockSettled(@PathVariable String token) {
+        return ResponseEntity.ok(publicProjectService.lockSettled(token));
     }
 
     /** The pay-gate: verifies the client's payment, credits the creator, then locks. The old bare
