@@ -1,9 +1,12 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.dto.ProjectView;
+import com.dalai.llama.preprod.service.creativeplanning.CreativePlanningClient;
 import com.dalai.llama.preprod.service.revenue.BillingClient;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,8 +22,9 @@ class PublicProjectServiceLockSettledTest {
     private final ProjectService projectService = mock(ProjectService.class);
     private final ProjectLockService projectLockService = mock(ProjectLockService.class);
     private final BillingClient billingClient = mock(BillingClient.class);
+    private final CreativePlanningClient creativePlanning = mock(CreativePlanningClient.class);
     private final PublicProjectService service = new PublicProjectService(projectService, projectLockService,
-            null, null, null, null, null, null, null, null, null, billingClient, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, billingClient, null, null, null, null, null, creativePlanning);
 
     @Test
     void refusesToLockWithoutPaymentWhileABalanceIsDue() {
@@ -31,6 +35,25 @@ class PublicProjectServiceLockSettledTest {
 
         assertThatThrownBy(() -> service.lockSettled("tok")).isInstanceOf(PreProductionException.class);
         verify(projectLockService, never()).lock(any(), any());
+    }
+
+    @Test
+    void theNextBriefOpensOnlyAfterThisVideoIsLocked() {
+        UUID tenantId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        when(projectService.resolveByClientReviewToken("tok")).thenReturn(new ProjectService.ProjectIdentity(tenantId, projectId));
+        when(projectService.get(tenantId, projectId)).thenReturn(project(projectId, null));
+
+        assertThatThrownBy(() -> service.startNextBrief("tok")).isInstanceOf(PreProductionException.class);
+        verify(creativePlanning, never()).startNextBrief(any(), any());
+
+        when(projectService.get(tenantId, projectId)).thenReturn(project(projectId, OffsetDateTime.now()));
+        when(creativePlanning.startNextBrief(tenantId, projectId)).thenReturn(new CreativePlanningClient.NextBrief("next"));
+        assertThat(service.startNextBrief("tok").shareToken()).isEqualTo("next");
+    }
+
+    private static ProjectView project(UUID projectId, OffsetDateTime clientLockedAt) {
+        return new ProjectView(projectId, "City Professional", null, null, null, null, 2, true, false, clientLockedAt);
     }
 
     @Test

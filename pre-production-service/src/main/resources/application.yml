@@ -113,6 +113,10 @@ management:
       application: ${spring.application.name}
 
 pre-production:
+  # Only for "Start your next brief" on a locked review page (see CreativePlanningClient).
+  creative-planning:
+    base-url: ${CREATIVE_PLANNING_BASE_URL:http://creative-planning-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${CREATIVE_PLANNING_TIMEOUT_MS:15000}
   llm-gateway:
     base-url: ${LLM_GATEWAY_BASE_URL:http://llm-gateway.apps.svc.cluster.local:8080}
     timeout-ms: ${LLM_GATEWAY_TIMEOUT_MS:120000}

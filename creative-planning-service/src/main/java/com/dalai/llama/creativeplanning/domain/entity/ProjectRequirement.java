@@ -150,6 +150,11 @@ public class ProjectRequirement {
     @Column(name = "client_updated_at")
     private OffsetDateTime clientUpdatedAt;
 
+    /** The brief this one was started from on a locked video's review page -- null for a brief
+     * the creator started. One next brief per brief (see V19). */
+    @Column(name = "previous_requirement_id")
+    private UUID previousRequirementId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

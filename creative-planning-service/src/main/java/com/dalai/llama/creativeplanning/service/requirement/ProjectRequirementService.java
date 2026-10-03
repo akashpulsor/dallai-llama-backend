@@ -7,6 +7,7 @@ import com.dalai.llama.creativeplanning.domain.entity.LockedIdea;
 import com.dalai.llama.creativeplanning.domain.entity.ProjectRequirement;
 import com.dalai.llama.creativeplanning.dto.CreateRequirementFromIdeaRequest;
 import com.dalai.llama.creativeplanning.dto.CreateStandaloneRequirementRequest;
+import com.dalai.llama.creativeplanning.dto.NextBriefView;
 import com.dalai.llama.creativeplanning.dto.ProjectQuoteView;
 import com.dalai.llama.creativeplanning.dto.ProjectRequirementView;
 import com.dalai.llama.creativeplanning.dto.PublicProjectRequirementView;
@@ -189,12 +190,52 @@ public class ProjectRequirementService {
      * stops working. Same brief, same requirement, just a fresh door into it. */
     @Transactional
     public ProjectRequirementView refreshShareToken(UUID tenantId, UUID requirementId) {
-        ProjectRequirement requirement = requireRequirement(tenantId, requirementId);
+        return toView(renewShareToken(requireRequirement(tenantId, requirementId)));
+    }
+
+    /** "Start your next brief" from a locked video's review page: a new, unfunded brief for the
+     * same creator, pre-filled from the one this project was made from (brand, audience,
+     * direction, duration, languages) and quoted afresh at today's rate. The client edits it on
+     * the public brief page like any other. One per brief: a repeat returns the brief already
+     * started, with a fresh link if the old one has expired. Pre-production gates this on the
+     * video actually being locked; this side only resolves and creates. */
+    @Transactional
+    public NextBriefView startNextBrief(UUID tenantId, UUID projectId) {
+        ProjectRequirement previous = findSourceRequirement(tenantId, projectId)
+                .orElseThrow(() -> CreativePlanningException.notFound("Project " + projectId + " was not made from a brief"));
+        ProjectRequirement next = projectRequirementRepository.findByPreviousRequirementId(previous.getId())
+                .map(existing -> existing.getShareTokenExpiresAt().isBefore(OffsetDateTime.now()) ? renewShareToken(existing) : existing)
+                .orElseGet(() -> projectRequirementRepository.save(nextOf(previous)));
+        return new NextBriefView(next.getShareToken());
+    }
+
+    private ProjectRequirement nextOf(ProjectRequirement previous) {
+        Integer duration = previous.getDurationSeconds();
+        ProjectRequirement next = build(previous.getTenantId(), previous.getCreatedBy(), previous.getTenantType(), null,
+                previous.getBrandContextId(), previous.getBriefText(), previous.getTargetAudience(),
+                previous.getCampaignDirection(),
+                duration == null ? previous.getBudgetTier() : deriveLegacyBudgetTier(duration),
+                duration, previous.getLanguages(),
+                duration == null ? null : billingServiceClient.quoteVideoPrice(previous.getTenantId(), duration));
+        next.setPreviousRequirementId(previous.getId());
+        return next;
+    }
+
+    /** The brief a pre-production project was made from: Project.id == LockedIdea.projectId ->
+     * LockedIdea.projectRequirementId -> ProjectRequirement, scoped to the tenant. */
+    private Optional<ProjectRequirement> findSourceRequirement(UUID tenantId, UUID projectId) {
+        return lockedIdeaRepository.findTopByProjectIdOrderByCreatedAtDesc(projectId)
+                .filter(idea -> idea.getTenantId().equals(tenantId))
+                .map(LockedIdea::getProjectRequirementId)
+                .flatMap(projectRequirementRepository::findById);
+    }
+
+    private ProjectRequirement renewShareToken(ProjectRequirement requirement) {
         OffsetDateTime now = OffsetDateTime.now();
         requirement.setShareToken(generateToken());
         requirement.setShareTokenExpiresAt(now.plusDays(shareTokenTtlDays));
         requirement.setUpdatedAt(now);
-        return toView(projectRequirementRepository.save(requirement));
+        return projectRequirementRepository.save(requirement);
     }
 
     /** A creator overriding their own auto-computed quote and/or asking for only a partial
@@ -236,10 +277,7 @@ public class ProjectRequirementService {
      * quote is a legitimate case for the caller to handle, not an error here. */
     @Transactional(readOnly = true)
     public Optional<ProjectQuoteView> findProjectQuote(UUID tenantId, UUID projectId) {
-        return lockedIdeaRepository.findTopByProjectIdOrderByCreatedAtDesc(projectId)
-                .filter(idea -> idea.getTenantId().equals(tenantId))
-                .map(LockedIdea::getProjectRequirementId)
-                .flatMap(projectRequirementRepository::findById)
+        return findSourceRequirement(tenantId, projectId)
                 .filter(requirement -> requirement.getQuotedTotalPrice() != null)
                 .map(requirement -> new ProjectQuoteView(requirement.getDurationSeconds(),
                         requirement.getQuotedPlatformCost(), requirement.getQuotedTotalPrice(),

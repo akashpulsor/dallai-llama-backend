@@ -4,6 +4,7 @@ import com.dalai.llama.preprod.dto.CastAssignmentView;
 import com.dalai.llama.preprod.dto.CastProfileView;
 import com.dalai.llama.preprod.dto.ProjectView;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView;
+import com.dalai.llama.preprod.service.creativeplanning.CreativePlanningClient;
 import com.dalai.llama.preprod.service.revenue.BillingClient;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView.PublicCastMemberView;
 import com.dalai.llama.preprod.dto.PublicProjectPackageView.PublicShotView;
@@ -53,6 +54,7 @@ public class PublicProjectService {
     private final ReviewCommentService reviewCommentService;
     private final VideoGenClient videoGenClient;
     private final com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient;
+    private final CreativePlanningClient creativePlanningClient;
 
     public PublicProjectService(
             ProjectService projectService,
@@ -71,8 +73,10 @@ public class PublicProjectService {
             ReviewCommentService reviewCommentService,
             VideoGenClient videoGenClient,
             com.dalai.llama.preprod.service.postproduction.PostProductionFilmClient postProductionFilmClient,
-            ProjectConfigService projectConfigService
+            ProjectConfigService projectConfigService,
+            CreativePlanningClient creativePlanningClient
     ) {
+        this.creativePlanningClient = creativePlanningClient;
         this.reviewSessionService = reviewSessionService;
         this.reviewCommentService = reviewCommentService;
         this.projectService = projectService;
@@ -118,6 +122,16 @@ public class PublicProjectService {
     public BillingClient.OrderResult startLockPayment(String token) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         return billingClient.createOrder(identity.tenantId(), identity.projectId(), token);
+    }
+
+    /** "Start your next brief" -- only once this video is locked: paying for the current one is
+     * what opens the next. Returns the share token of the client's next brief page. */
+    public CreativePlanningClient.NextBrief startNextBrief(String token) {
+        ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        if (projectService.get(identity.tenantId(), identity.projectId()).clientLockedAt() == null) {
+            throw PreProductionException.badRequest("Approve and lock this video before starting your next brief");
+        }
+        return creativePlanningClient.startNextBrief(identity.tenantId(), identity.projectId());
     }
 
     /** Lock for a package whose brief was already paid in full -- there is no balance to put

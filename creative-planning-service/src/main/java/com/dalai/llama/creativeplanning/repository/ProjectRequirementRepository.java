@@ -13,6 +13,8 @@ public interface ProjectRequirementRepository extends JpaRepository<ProjectRequi
 
     Optional<ProjectRequirement> findByShareToken(String shareToken);
 
+    Optional<ProjectRequirement> findByPreviousRequirementId(UUID previousRequirementId);
+
     List<ProjectRequirement> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
     /** Every brief/project created for one specific brand -- the Brands tab's "projects" list. */

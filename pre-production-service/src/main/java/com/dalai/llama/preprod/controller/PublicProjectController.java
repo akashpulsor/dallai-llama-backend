@@ -52,6 +52,13 @@ public class PublicProjectController {
         return ResponseEntity.ok(publicProjectService.startLockPayment(token));
     }
 
+    /** Opens the client's next brief once this video is locked -- the share token of its brief page. */
+    @PostMapping("/v1/public/projects/{token}/next-brief")
+    public ResponseEntity<com.dalai.llama.preprod.service.creativeplanning.CreativePlanningClient.NextBrief> startNextBrief(
+            @PathVariable String token) {
+        return ResponseEntity.ok(publicProjectService.startNextBrief(token));
+    }
+
     /** Lock with nothing left to pay (brief paid in full). Refused while any balance is due. */
     @PostMapping("/v1/public/projects/{token}/lock/settled")
     public ResponseEntity<PublicProjectPackageView> lockSettled(@PathVariable String token) {
