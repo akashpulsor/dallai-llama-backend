@@ -1,5 +1,8 @@
 package com.dalai.llama.postprod.service.preproduction;
 
+import com.dalai.llama.postprod.dto.SaveShotFramesRequest;
+import com.dalai.llama.postprod.dto.ShotView;
+
 import java.util.UUID;
 
 /** The one and only way DialogueSyncCoordinator learns what a shot's dialogue actually is --
@@ -36,4 +39,11 @@ public interface PreProductionClient {
     /** Presigned URL of the project's whole-video score, or null when none has been generated.
      * Null rather than an exception: a film without a score is ordinary and assembles dry. */
     String getProjectScoreUrl(UUID tenantId, UUID projectId);
+
+    ShotView getShot(UUID tenantId, UUID shotId);
+
+    void saveShotFrames(
+            UUID tenantId,
+            UUID shotId,
+            SaveShotFramesRequest request);
 }

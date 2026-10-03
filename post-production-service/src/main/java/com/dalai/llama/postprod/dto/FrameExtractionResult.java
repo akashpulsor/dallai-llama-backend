@@ -1,4 +1,10 @@
 package com.dalai.llama.postprod.dto;
 
-public record FrameExtractionResult() {
+
+import java.util.List;
+
+public record FrameExtractionResult(
+        int frameCount,
+        List<ExtractedFrame> frames
+) {
 }

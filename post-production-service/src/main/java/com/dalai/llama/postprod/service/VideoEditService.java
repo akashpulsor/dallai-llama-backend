@@ -1,5 +1,7 @@
 package com.dalai.llama.postprod.service;
 
+import com.dalai.llama.postprod.dto.ShotFrameExtractionResult;
+
 import java.util.UUID;
 
 /** "User uploads a clip or a generated shot, selects a portion (or the whole thing), asks for a
@@ -21,4 +23,6 @@ public interface VideoEditService {
             Integer startSeconds, Integer endSeconds,
             String editInstruction, String referenceImageUrl, String modelOverride
     );
+
+    ShotFrameExtractionResult extractFrames(UUID tenantId, UUID shotId);
 }

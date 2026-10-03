@@ -1,4 +1,11 @@
 package com.dalai.llama.postprod.dto;
 
-public record ShotView() {
+import java.util.UUID;
+
+public record ShotView(
+        UUID id,
+        String shotRef,
+        String videoUrl,
+        int fps
+) {
 }

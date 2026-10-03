@@ -22,4 +22,11 @@ public class PostProductionTopicConfig {
             @Value("${post-production.film.requested-topic}") String topic) {
         return new NewTopic(topic, 3, (short) 1);
     }
+
+    @Bean
+    public NewTopic frameExtractionRequestedTopic(
+            @Value("${post-production.frame-extraction.requested-topic}") String topic) {
+
+        return new NewTopic(topic, 3, (short) 1);
+    }
 }
