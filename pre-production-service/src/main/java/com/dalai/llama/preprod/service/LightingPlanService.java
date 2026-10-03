@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.preprod.domain.entity.LightingPlan;
 import com.dalai.llama.preprod.domain.entity.Shot;
 import com.dalai.llama.preprod.domain.entity.ShotProductReference;
@@ -46,6 +47,7 @@ public class LightingPlanService {
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
     private final String defaultModel;
+    private final ProductionCriticSwitch productionCriticSwitch;
 
     public LightingPlanService(
             ShotRepository shotRepository,
@@ -53,8 +55,10 @@ public class LightingPlanService {
             ShotProductReferenceRepository shotProductReferenceRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
+            ProductionCriticSwitch productionCriticSwitch
     ) {
+        this.productionCriticSwitch = productionCriticSwitch;
         this.shotRepository = shotRepository;
         this.lightingPlanRepository = lightingPlanRepository;
         this.shotProductReferenceRepository = shotProductReferenceRepository;
@@ -192,6 +196,9 @@ public class LightingPlanService {
     /** One critique call per attempt. Never blocks generation on a parse failure: an unparseable
      * critique is treated as a pass (no feedback to act on), not a hard failure. */
     private PlanCritiqueResult critique(UUID tenantId, UUID projectId, UUID shotId, LightingPlanGenerationResult parsed) {
+        if (!productionCriticSwitch.enabled()) {
+            return PlanCritiqueResult.PASS;
+        }
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),

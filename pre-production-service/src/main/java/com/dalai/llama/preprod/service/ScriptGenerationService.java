@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.preprod.domain.CastProfileType;
 import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.DraftStatus;
@@ -63,6 +64,7 @@ public class ScriptGenerationService {
     private final ObjectMapper objectMapper;
     private final ProjectService projectService;
     private final String defaultModel;
+    private final ProductionCriticSwitch productionCriticSwitch;
 
     public ScriptGenerationService(
             ProjectRepository projectRepository,
@@ -75,8 +77,10 @@ public class ScriptGenerationService {
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
             ProjectService projectService,
-            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel
+            @Value("${pre-production.llm-gateway.default-text-model}") String defaultModel,
+            ProductionCriticSwitch productionCriticSwitch
     ) {
+        this.productionCriticSwitch = productionCriticSwitch;
         this.projectRepository = projectRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
@@ -475,6 +479,9 @@ public class ScriptGenerationService {
      * Never blocks generation on a parse failure: an unparseable critique is treated as a pass
      * (no feedback to act on), not a hard failure of the whole generate() call. */
     private ScriptCritiqueResult critiqueScript(UUID tenantId, UUID projectId, String briefText, ScriptGenerationResult parsed) {
+        if (!productionCriticSwitch.enabled()) {
+            return new ScriptCritiqueResult("PASS", null, null, null, null, List.of());
+        }
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
                     tenantId.toString(),

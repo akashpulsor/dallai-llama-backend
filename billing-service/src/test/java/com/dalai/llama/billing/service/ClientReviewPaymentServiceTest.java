@@ -67,6 +67,19 @@ class ClientReviewPaymentServiceTest {
     }
 
     @Test
+    void aQuoteOverriddenBelowCostNeverSplitsIntoMoreThanTheClientPays() {
+        // The Verified Difference: quoted 1300 against a 7586 platform cost (margin -82.85), 1% upfront.
+        quote(new ProjectQuote(60, new BigDecimal("1300.00"), new BigDecimal("1300.00"), new BigDecimal("-82.85"), "INR",
+                new BigDecimal("13.00"), true));
+
+        ClientReviewPaymentService.Quote quote = service.quote(tenantId, projectId);
+
+        assertThat(quote.totalAmount()).isEqualByComparingTo("1287.00");
+        assertThat(quote.creatorAmount()).isEqualByComparingTo("0.00");
+        assertThat(quote.platformBase()).isEqualByComparingTo("1287.00");
+    }
+
+    @Test
     void unfundedBriefChargesTheFullQuoteAtLock() {
         quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("862.50"), false));
 

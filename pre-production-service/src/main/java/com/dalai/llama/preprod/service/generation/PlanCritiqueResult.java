@@ -12,6 +12,9 @@ public record PlanCritiqueResult(
         String status,
         List<String> issues
 ) {
+    /** What a critic step returns when production's critics are switched off. */
+    public static final PlanCritiqueResult PASS = new PlanCritiqueResult("PASS", java.util.List.of());
+
     public boolean isFail() {
         return "FAIL".equalsIgnoreCase(status);
     }

@@ -100,7 +100,10 @@ public class ClientReviewPaymentService {
         BigDecimal marginPercent = project.quotedCreatorMarginPercent() != null
                 ? project.quotedCreatorMarginPercent()
                 : resolveCreatorMargin(tenantId);
-        BigDecimal creatorAmount = balance.multiply(marginPercent)
+        // A quote overridden below its platform cost carries a negative margin; the creator's
+        // share then floors at zero rather than going negative, which would push the
+        // production share -- credited to the wallet at capture -- above what the client pays.
+        BigDecimal creatorAmount = marginPercent.signum() <= 0 ? BigDecimal.ZERO.setScale(2) : balance.multiply(marginPercent)
                 .divide(HUNDRED.add(marginPercent), 2, RoundingMode.HALF_UP);
         String quoteCurrency = project.quotedCurrency() != null ? project.quotedCurrency() : currency;
         return new Quote(balance.subtract(creatorAmount), creatorAmount, balance, quoteCurrency, marginPercent,

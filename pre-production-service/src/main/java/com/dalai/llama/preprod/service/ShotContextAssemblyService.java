@@ -1,5 +1,6 @@
 package com.dalai.llama.preprod.service;
 
+import com.dalai.llama.preprod.service.critic.ProductionCriticSwitch;
 import com.dalai.llama.joblifecycle.JobLifecycleStatus;
 import com.dalai.llama.preprod.domain.CharacterType;
 import com.dalai.llama.preprod.domain.EmotionalArcPosition;
@@ -86,6 +87,7 @@ public class ShotContextAssemblyService {
     private final MinioClient publicMinioClient;
     private final com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository;
     private final com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository;
+    private final ProductionCriticSwitch productionCriticSwitch;
 
     public ShotContextAssemblyService(
             ShotRepository shotRepository,
@@ -106,8 +108,10 @@ public class ShotContextAssemblyService {
             ContinuityBibleService continuityBibleService,
             @Qualifier("publicMinioClient") MinioClient publicMinioClient,
             com.dalai.llama.preprod.repository.ShotReferenceImageRepository shotReferenceImageRepository,
-            com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository
+            com.dalai.llama.preprod.repository.ScreenplaySceneCharacterRepository screenplaySceneCharacterRepository,
+            ProductionCriticSwitch productionCriticSwitch
     ) {
+        this.productionCriticSwitch = productionCriticSwitch;
         this.shotRepository = shotRepository;
         this.projectRepository = projectRepository;
         this.projectConfigRepository = projectConfigRepository;
@@ -129,8 +133,19 @@ public class ShotContextAssemblyService {
         this.screenplaySceneCharacterRepository = screenplaySceneCharacterRepository;
     }
 
+    /** The pre-flight critique, or -- with production's critics switched off by ops -- the
+     * assembled plan passed through as-is without calling critic-service. */
+    private CritiqueResult preflight(UUID tenantId, Shot shot, ShotContext shotContext) {
+        if (!productionCriticSwitch.enabled()) {
+            generationThoughtService.log(tenantId, shot.getId(), "CRITIQUE_SKIPPED", "Production critics are switched off -- dispatching the assembled plan");
+            return new CritiqueResult(null, CritiqueVerdict.PASS, List.of(), null, false, null, null);
+        }
+        generationThoughtService.log(tenantId, shot.getId(), "CRITIQUE_STARTED", "Running pre-flight critique on the assembled shot plan");
+        return criticServiceClient.critique(tenantId.toString(), new CritiqueRequest(shot.getProjectId(), shot.getId(), shotContext));
+    }
+
     /**
-     * Assemble -> pre-flight critique (mandatory, no bypass) -> dispatch. On {@code
+     * Assemble -> pre-flight critique (mandatory unless ops has switched production's critics off) -> dispatch. On {@code
      * NEEDS_HUMAN_REVIEW} the shot is left in {@link ShotStatus#NEEDS_REVIEW} and nothing is sent
      * to video-generation-service -- see critic-service's {@code CritiqueOrchestrator} for why
      * this is a bounded one-revision gate, not a retry loop.
@@ -153,9 +168,7 @@ public class ShotContextAssemblyService {
         ShotContextAssemblyStrategy strategy = strategyResolver.resolve(shot.getShotType());
         ShotContext shotContext = withDialogueBeats(strategy.assemble(assemblyContext), tenantId, shot, assemblyContext);
 
-        generationThoughtService.log(tenantId, shotId, "CRITIQUE_STARTED", "Running pre-flight critique on the assembled shot plan");
-        CritiqueResult critique = criticServiceClient.critique(tenantId.toString(),
-                new CritiqueRequest(shot.getProjectId(), shot.getId(), shotContext));
+        CritiqueResult critique = preflight(tenantId, shot, shotContext);
 
         if (critique.verdict() == CritiqueVerdict.NEEDS_HUMAN_REVIEW) {
             generationThoughtService.log(tenantId, shotId, "CRITIQUE_BLOCKED",
