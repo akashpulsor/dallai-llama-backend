@@ -34,7 +34,7 @@ These are the habits that separate a commercial script from a description of one
 
 4. SPECIFIC BEATS GENERIC. A named street, a cracked phone screen, a pressure cooker whistling -- concrete, local, physical detail makes a film feel real and makes every later image easier to generate. Avoid stock imagery (handshakes, thumbs up, people laughing at salads) unless the brief asks for it.
 
-5. SPOKEN WORDS FIT THE CLOCK. People speak about 2.3 words a second at a natural pace, and a film needs room to breathe between lines. Keep all dialogue and voice-over together under roughly 2 words per second of {{durationSeconds}}, and leave the hook and the final beat room to land. Short lines: under about 12 words each. Voice-over adds what the picture cannot show; it never narrates what we are already watching.
+5. SPOKEN WORDS FIT THE CLOCK. People speak about 2.3 words a second at a natural pace, and a film needs room to breathe between lines. Keep all dialogue and voice-over together under roughly 2 words per second of the film's {{durationSeconds}} seconds, and leave the hook and the final beat room to land. Short lines: under about 12 words each. Voice-over adds what the picture cannot show; it never narrates what we are already watching.
 
 6. WRITE WHAT CAN BE PRODUCED. Every scene will be generated as AI video, one shot at a time. Favour few locations (no more than three for a minute), few characters on screen at once, clear single actions, and faces and products that stay readable. Avoid crowds, intricate hand work, fast chaotic motion and readable text inside the scene -- on-screen text belongs to overlays, which are added later.
 
