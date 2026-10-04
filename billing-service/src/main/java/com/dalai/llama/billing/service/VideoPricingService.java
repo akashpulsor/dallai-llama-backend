@@ -161,6 +161,13 @@ public class VideoPricingService {
                 videoProduction, total.subtract(videoProduction), total, chargeCurrency);
     }
 
+    /** Every call a video of this length takes except rendering the video itself: writing, and
+     * per shot its frames, analysis and critique. */
+    public BigDecimal callCostsExceptVideo(int durationSeconds) {
+        Components cost = components(durationSeconds);
+        return money(cost.image().add(cost.visionAnalysis()).add(cost.critique()).add(cost.scriptAndScreenplay()));
+    }
+
     private Components components(int durationSeconds) {
         int shotCount = (int) Math.ceil(durationSeconds / (double) secondsPerShot);
         BigDecimal video = currentRatePerSecond().multiply(BigDecimal.valueOf(durationSeconds));

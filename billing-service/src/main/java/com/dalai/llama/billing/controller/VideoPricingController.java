@@ -27,6 +27,16 @@ import java.util.UUID;
 public class VideoPricingController {
 
     private final VideoPricingService videoPricingService;
+    private final com.dalai.llama.billing.service.ProductionCostEstimateService productionCostEstimateService;
+
+    /** Tentative production cost as a range, priced at the models' real rates -- shown to the
+     * creator on the new brief form; the client never sees it. */
+    @GetMapping("/estimate")
+    @Operation(summary = "Tentative production cost range for a given video duration")
+    public ResponseEntity<com.dalai.llama.billing.service.ProductionCostEstimateService.Estimate> estimate(
+            @PathVariable UUID tenantId, @RequestParam @Positive int durationSeconds) {
+        return ResponseEntity.ok(productionCostEstimateService.estimate(durationSeconds));
+    }
 
     @GetMapping("/quote")
     @Operation(summary = "Estimate the price for a given video duration")
