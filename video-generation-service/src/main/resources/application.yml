@@ -122,6 +122,14 @@ video-gen:
   pre-production:
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}
     timeout-ms: ${PRE_PRODUCTION_SERVICE_TIMEOUT_MS:15000}
+  # The previous shot's last frame comes from post-production, which knows which cut of that shot
+  # the film actually uses. Extraction downloads the clip and runs ffmpeg, hence the long timeout.
+  post-production:
+    base-url: ${POST_PRODUCTION_SERVICE_BASE_URL:http://post-production-service.apps.svc.cluster.local:8080}
+    timeout-ms: ${POST_PRODUCTION_SERVICE_TIMEOUT_MS:120000}
+  # The video studio's analysis, timeline and prompt-review calls (ShotGenerationPlanService).
+  generation-plan:
+    model: ${VIDEO_GEN_GENERATION_PLAN_MODEL:gemini-2.5-flash}
   # The clip lengths the video models will actually produce. Both are bounds on what can be ASKED
   # for: a request outside them comes back clamped, which would silently be a different duration
   # than the one the fit maths reasoned about.

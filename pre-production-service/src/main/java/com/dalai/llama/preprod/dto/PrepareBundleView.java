@@ -22,6 +22,17 @@ public record PrepareBundleView(
         ScriptView script,
         List<CastAssignmentView> castAssignments,
         List<CastProfileView> castProfiles,
-        List<ShotBundleView> shots
+        List<ShotBundleView> shots,
+        /** The approved creative direction as the downstream prompts read it, or the "none
+         * approved" sentence. Carried here so the shot's video prompt is written in the same voice
+         * as its script, screenplay and frames. */
+        String approvedCreativeDirection
 ) {
+    /** Pre-creative-direction arity. */
+    public PrepareBundleView(ContinuityBibleView continuityBible, ProjectConfigView projectConfig, ScriptView script,
+                             List<CastAssignmentView> castAssignments, List<CastProfileView> castProfiles,
+                             List<ShotBundleView> shots) {
+        this(continuityBible, projectConfig, script, castAssignments, castProfiles, shots,
+                ApprovedCreativeDirectionContext.NONE_APPROVED);
+    }
 }

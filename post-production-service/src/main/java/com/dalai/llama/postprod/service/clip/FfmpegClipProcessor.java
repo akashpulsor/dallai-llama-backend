@@ -4,7 +4,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -14,9 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 /**
  * Every ffmpeg operation this service performs on a clip, in one place.
@@ -53,19 +50,6 @@ public class FfmpegClipProcessor {
         this.joinFrameRate = joinFrameRate;
     }
 
-    public void extractFrames(String videoUrl, int fps,Consumer<InputStream> frameStreamConsumer) {
-
-        List<String> command = new ArrayList<>(List.of("ffmpeg", "-y"));
-
-        command.addAll(reconnectOptionsFor(videoUrl));
-
-        command.addAll(List.of("-i", videoUrl, "-map", "0:v:0","-vf", "fps=" + fps,"-f", "image2pipe",
-                "-c:v", "mjpeg",
-                "-q:v", "2",
-                "pipe:1"
-        ));
-        run(command, frameStreamConsumer);
-    }
     /**
      * The picture untouched, carrying {@code audio} instead of whatever it came with.
      *
@@ -542,6 +526,68 @@ public class FfmpegClipProcessor {
     }
 
     /**
+     * One frame of {@code clip} as a JPEG: the first, or the last.
+     *
+     * <p>The last frame is read by seeking to one second before the end and letting {@code -update}
+     * overwrite the output with every frame decoded from there, so what remains is the final frame
+     * the decoder produced -- the one the clip really ends on, not one computed from a duration
+     * that may be rounded.
+     */
+    public void extractFrame(Path clip, boolean last, Path output) {
+        List<String> command = new java.util.ArrayList<>(List.of("ffmpeg", "-y"));
+        if (last) {
+            command.addAll(List.of("-sseof", "-1"));
+        }
+        command.addAll(List.of("-i", clip.toString(), "-map", "0:v:0"));
+        command.addAll(last ? List.of("-update", "1", "-q:v", "2") : List.of("-frames:v", "1", "-q:v", "2"));
+        command.add(output.toString());
+        run(command);
+        if (!Files.exists(output)) {
+            throw new ClipProcessingException("ffmpeg produced no frame for " + clip.getFileName());
+        }
+    }
+
+    /**
+     * The clip as JPEG frames in {@code directory}, in order: {@code sampleFps} per second, or every
+     * frame when it is null. Returns the files sorted by frame order.
+     */
+    public List<Path> extractFrames(Path clip, Integer sampleFps, Path directory) {
+        List<String> command = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", clip.toString(), "-map", "0:v:0"));
+        if (sampleFps != null) {
+            command.addAll(List.of("-vf", "fps=" + sampleFps));
+        } else {
+            command.addAll(List.of("-vsync", "0"));
+        }
+        command.addAll(List.of("-q:v", "2", directory.resolve("frame_%05d.jpg").toString()));
+        run(command);
+        try (var files = Files.list(directory)) {
+            return files.filter(path -> path.getFileName().toString().startsWith("frame_")).sorted().toList();
+        } catch (Exception ex) {
+            throw new ClipProcessingException("Could not read the extracted frames", ex);
+        }
+    }
+
+    /** The clip's native frame rate, or 0 when ffprobe cannot say. */
+    public double frameRate(Path clip) {
+        String output = capture(List.of("ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1", clip.toString()));
+        return parseFrameRate(output.lines().findFirst().orElse("").trim());
+    }
+
+    /** "30000/1001" -> 29.97; anything unreadable -> 0. */
+    static double parseFrameRate(String value) {
+        try {
+            String[] parts = value.split("/");
+            double rate = parts.length == 2
+                    ? Double.parseDouble(parts[0]) / Double.parseDouble(parts[1])
+                    : Double.parseDouble(value);
+            return Double.isFinite(rate) && rate > 0 ? rate : 0;
+        } catch (RuntimeException ex) {
+            return 0;
+        }
+    }
+
+    /**
      * What the file actually is, measured.
      *
      * <p>Never throws for an unreadable file: an unplayable probe is an answer, and the caller
@@ -628,41 +674,6 @@ public class FfmpegClipProcessor {
             return "";
         }
     }
-
-    private void run(List<String> command, Consumer<InputStream> consumer) {
-        log.debug("ffmpeg {}", String.join(" ", command));
-        try {
-            Process process = new ProcessBuilder(command).start();
-            CompletableFuture<String> errorOutput = CompletableFuture.supplyAsync(() -> {
-                try (var in = process.getErrorStream()) {
-                    return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                } catch (Exception ex) {
-                    return "";
-                }
-            });
-            try (var in = process.getInputStream()) {
-                consumer.accept(in);
-            }
-            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                throw new ClipProcessingException("ffmpeg timed out after " + timeoutSeconds + "s");
-            }
-            String output = errorOutput.join();
-            if (process.exitValue() != 0) {
-                log.warn("ffmpeg failed exit={} command={} output={}",
-                        process.exitValue(), String.join(" ", command), output);
-                throw new ClipProcessingException("ffmpeg failed: " + reason(output));
-            }
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new ClipProcessingException("Interrupted while running ffmpeg");
-        } catch (ClipProcessingException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            throw new ClipProcessingException("Could not run ffmpeg: " + ex.getMessage(), ex);
-        }
-    }
-
 
     private void run(List<String> command) {
         log.debug("ffmpeg {}", String.join(" ", command));

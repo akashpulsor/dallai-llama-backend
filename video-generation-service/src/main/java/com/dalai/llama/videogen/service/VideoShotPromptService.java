@@ -82,10 +82,16 @@ public class VideoShotPromptService {
      */
     public String writePrompt(UUID tenantId, UUID projectId, ShotContext shotContext,
                               String composedPrompt, int maxChars) {
+        return writePrompt(tenantId, projectId, shotContext, composedPrompt, maxChars, null);
+    }
+
+    /** As above, with the project's approved creative direction (null = none approved). */
+    public String writePrompt(UUID tenantId, UUID projectId, ShotContext shotContext,
+                              String composedPrompt, int maxChars, String approvedCreativeDirection) {
         if (!enabled || shotContext == null || composedPrompt == null || composedPrompt.isBlank()) {
             return null;
         }
-        Integer duration = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
+        SourceExecution execution = SourceExecution.asPlanned(shotContext, approvedCreativeDirection);
 
         try {
             LlmGatewayChatResponse response = llmGatewayClient.chat(
@@ -96,7 +102,7 @@ public class VideoShotPromptService {
                             List.of(new LlmGatewayMessage("user", "")),
                             Map.of(),
                             shotContext.isPlannedMotionGraphic() ? MOTION_GRAPHIC_TASK_KEY : TASK_KEY,
-                            templateVariables(shotContext, composedPrompt, maxChars, duration),
+                            templateVariables(shotContext, composedPrompt, maxChars, execution),
                             projectId));
 
             String written = response == null || response.response() == null
@@ -125,21 +131,99 @@ public class VideoShotPromptService {
     }
 
     /**
+     * What the source clip is actually generated as. The ordinary prepare path generates the shot
+     * at its planned length with no approved timeline, and says so; the video studio passes the
+     * creator's chosen settings and the timeline they approved.
+     *
+     * @param sourceActionTimeline      the timeline as the template reads it, or a sentence saying none was approved
+     * @param continuesFromPreviousShot reference image 1 is the previous shot's last frame
+     */
+    public record SourceExecution(Integer generationDurationSeconds, Integer generationFps,
+                                  String sourceActionTimeline, String approvedCreativeDirection,
+                                  boolean continuesFromPreviousShot) {
+
+        public static final String NO_TIMELINE = "No second-by-second timeline was approved for this shot."
+                + " Lay the planned action across the full generation duration in the order the plan gives it.";
+        public static final String NO_CREATIVE_DIRECTION = "No creative direction was approved for this project.";
+
+        static SourceExecution asPlanned(ShotContext shotContext, String approvedCreativeDirection) {
+            return new SourceExecution(
+                    shotContext.technical() == null ? null : shotContext.technical().durationSeconds(),
+                    shotContext.technical() == null ? null : shotContext.technical().fps(),
+                    NO_TIMELINE, approvedCreativeDirection, false);
+        }
+    }
+
+    /**
+     * The video studio's prompt: written for the creator's chosen duration and frame rate from the
+     * timeline they approved, as a recommendation they will read and may edit before anything is
+     * generated.
+     *
+     * <p>Not best-effort, unlike {@link #writePrompt}. The creator asked for this recommendation, so
+     * a failure is reported for them to retry -- quietly handing back the composed spec sheet would
+     * look like the recommendation and be something else.
+     */
+    public String composeSourcePrompt(UUID tenantId, UUID projectId, ShotContext shotContext,
+                                      String composedPrompt, int maxChars, SourceExecution execution) {
+        LlmGatewayChatResponse response;
+        try {
+            response = llmGatewayClient.chat(
+                    tenantId.toString(),
+                    "video-source-prompt-" + UUID.randomUUID(),
+                    new LlmGatewayChatRequest(
+                            model,
+                            List.of(new LlmGatewayMessage("user", "")),
+                            Map.of(),
+                            shotContext.isPlannedMotionGraphic() ? MOTION_GRAPHIC_TASK_KEY : TASK_KEY,
+                            templateVariables(shotContext, composedPrompt, maxChars, execution),
+                            projectId));
+        } catch (RuntimeException ex) {
+            throw VideoGenException.upstream("Could not write the video prompt -- try again. (" + ex.getMessage() + ")");
+        }
+        String written = response == null || response.response() == null ? null : stripFence(response.response());
+        if (written == null || written.isBlank()) {
+            throw VideoGenException.upstream("The video prompt came back empty -- try again.");
+        }
+        if (written.length() > maxChars) {
+            throw VideoGenException.upstream("The video prompt came back at %d characters, over the model's %d -- try again."
+                    .formatted(written.length(), maxChars));
+        }
+        return written;
+    }
+
+    /** The attached images as the prompt templates describe them, in dispatch order. */
+    public String describeReferences(ShotContext shotContext, boolean continuesFromPreviousShot) {
+        return referenceLines(shotContext, continuesFromPreviousShot ? 1 : 0);
+    }
+
+    /**
      * Everything both templates can read. The task key decides which of them is used, and a
      * template simply ignores the variables it does not mention -- so one payload serves both and
      * neither has to be special-cased at the call site.
      */
     private Map<String, String> templateVariables(ShotContext shotContext, String composedPrompt,
-                                                  int maxChars, Integer duration) {
+                                                  int maxChars, SourceExecution execution) {
+        Integer duration = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
         Map<String, String> variables = new LinkedHashMap<>();
         variables.put("composedPrompt", composedPrompt);
         variables.put("shotJson", shotJson(shotContext));
-        variables.put("references", describeReferences(shotContext));
+        variables.put("references", describeReferences(shotContext, execution.continuesFromPreviousShot()));
         variables.put("maxChars", String.valueOf(maxChars));
         variables.put("durationSeconds", duration == null ? "unspecified" : String.valueOf(duration));
         variables.put("fps", shotContext.technical() == null || shotContext.technical().fps() == null
                 ? "unspecified" : String.valueOf(shotContext.technical().fps()));
         variables.put("shotType", orUnstated(shotContext.sceneType()));
+        // VIDEO_SHOT_PROMPT v5. Filled on every path: a template placeholder with no value is a 400
+        // from llm-gateway, and the ordinary prepare would stop working.
+        variables.put("generationDurationSeconds", execution.generationDurationSeconds() == null
+                ? variables.get("durationSeconds") : String.valueOf(execution.generationDurationSeconds()));
+        variables.put("generationFps", execution.generationFps() == null
+                ? "the model's native frame rate" : String.valueOf(execution.generationFps()));
+        variables.put("sourceActionTimeline", execution.sourceActionTimeline() == null
+                ? SourceExecution.NO_TIMELINE : execution.sourceActionTimeline());
+        variables.put("approvedCreativeDirection", execution.approvedCreativeDirection() == null
+                || execution.approvedCreativeDirection().isBlank()
+                ? SourceExecution.NO_CREATIVE_DIRECTION : execution.approvedCreativeDirection());
 
         // The motion-graphic plan. Sent whether or not the shot has one: the shot template never
         // mentions these, so the cost of always filling them is nothing, and the alternative is a
@@ -166,9 +250,18 @@ public class VideoShotPromptService {
      * face, build, hair. Wardrobe, location, lighting and action come from the plan, which is the
      * one place they were decided.
      */
-    private String describeReferences(ShotContext shotContext) {
+    private String referenceLines(ShotContext shotContext, int leadingContinuationFrames) {
         List<String> lines = new ArrayList<>();
         int position = 1;
+
+        // 0. the previous shot's last frame, when the creator attached one. It goes FIRST at
+        // dispatch (ShotGenerationOrchestrator.saveReferences), because an image-to-video model
+        // starts from its first image -- which is exactly what continuing from that shot means.
+        for (int i = 0; i < leadingContinuationFrames; i++) {
+            lines.add("  - reference image " + position++ + " = the LAST FRAME OF THE PREVIOUS SHOT. This clip"
+                    + " opens on exactly this frame and continues from it: first complete the movement in"
+                    + " progress there, then carry out this shot's planned action. Do not cut away from it.");
+        }
 
         // ORDER IS NOT COSMETIC. These numbers must match the order the provider actually receives
         // the images in, which is ShotGenerationOrchestrator.saveReferences' slotIndex sequence,
@@ -240,7 +333,7 @@ public class VideoShotPromptService {
     /** The whole shot context as JSON, so the model reads named fields rather than a flattened
      * string. The composed prompt says "85mm"; this says it was lensFocalLength, which is the
      * difference between a number the model can honour deliberately and one it may drop. */
-    private String shotJson(ShotContext shotContext) {
+    public String shotJson(ShotContext shotContext) {
         try {
             return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(shotContext);
         } catch (Exception ex) {

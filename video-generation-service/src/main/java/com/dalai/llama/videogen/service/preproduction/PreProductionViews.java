@@ -386,8 +386,18 @@ public final class PreProductionViews {
             ScriptView script,
             List<CastAssignmentView> castAssignments,
             List<CastProfileView> castProfiles,
-            List<ShotBundleView> shots
-    ) {}
+            List<ShotBundleView> shots,
+            /** The approved creative direction as prompts read it; null from a pre-production
+             * build that predates it. */
+            String approvedCreativeDirection
+    ) {
+        /** Pre-creative-direction arity. */
+        public PrepareBundleView(ContinuityBibleView continuityBible, ProjectConfigView projectConfig, ScriptView script,
+                                 List<CastAssignmentView> castAssignments, List<CastProfileView> castProfiles,
+                                 List<ShotBundleView> shots) {
+            this(continuityBible, projectConfig, script, castAssignments, castProfiles, shots, null);
+        }
+    }
 
     public record ShotBundleView(
             ShotView shot,

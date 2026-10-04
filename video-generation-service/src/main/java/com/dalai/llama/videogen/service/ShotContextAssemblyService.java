@@ -148,7 +148,8 @@ public class ShotContextAssemblyService {
                 shotBundle.productReference() == null ? null : shotBundle.productReference().id(),
                 shotBundle.backgroundMusic() == null ? null : shotBundle.backgroundMusic().id(),
                 OffsetDateTime.now(),
-                shotBundle.foleyCues() == null ? List.of() : shotBundle.foleyCues()
+                shotBundle.foleyCues() == null ? List.of() : shotBundle.foleyCues(),
+                bundle.approvedCreativeDirection()
         );
         return new AssembledShot(shotContext, flagsOverride, overrides == null ? null : overrides.modelPin(), sources);
     }
@@ -783,13 +784,24 @@ public class ShotContextAssemblyService {
              * Carried here rather than on ShotContext because cues are not prompt content -- they
              * are saved against the prompt row and read at dispatch; the prompt text itself never
              * mentions them. Empty for a shot pre-production has not derived cues for yet. */
-            List<PreProductionViews.ShotFoleyCueView> foleyCues
+            List<PreProductionViews.ShotFoleyCueView> foleyCues,
+            /** The project's approved creative direction as the video prompt reads it; null when
+             * none was approved or pre-production did not send one. Prompt input, carried here
+             * beside the source ids because it comes from the same bundle. */
+            String approvedCreativeDirection
     ) {
 
         /** Pre-foleyCues arity, for callers that have no bundle to read cues from. */
         public ShotPromptSources(UUID shotId, UUID cameraPlanId, UUID lightingPlanId, UUID productReferenceId,
                                  UUID backgroundMusicId, OffsetDateTime bundleSnapshotAt) {
-            this(shotId, cameraPlanId, lightingPlanId, productReferenceId, backgroundMusicId, bundleSnapshotAt, List.of());
+            this(shotId, cameraPlanId, lightingPlanId, productReferenceId, backgroundMusicId, bundleSnapshotAt, List.of(), null);
+        }
+
+        /** Pre-creative-direction arity. */
+        public ShotPromptSources(UUID shotId, UUID cameraPlanId, UUID lightingPlanId, UUID productReferenceId,
+                                 UUID backgroundMusicId, OffsetDateTime bundleSnapshotAt,
+                                 List<PreProductionViews.ShotFoleyCueView> foleyCues) {
+            this(shotId, cameraPlanId, lightingPlanId, productReferenceId, backgroundMusicId, bundleSnapshotAt, foleyCues, null);
         }
     }
 

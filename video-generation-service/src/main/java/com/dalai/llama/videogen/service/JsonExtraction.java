@@ -10,14 +10,14 @@ import java.util.Map;
  * <p>Both were missing here: foley-cue and model-recommendation sent empty params and parsed the
  * raw response, so a ```json fence made Jackson fail on the leading backtick -- the call was paid
  * for and the result thrown away. Mirrors critic-service's helper of the same name. */
-final class JsonExtraction {
+public final class JsonExtraction {
 
     private JsonExtraction() {
     }
 
-    static final Map<String, Object> JSON_MODE_PARAMS = Map.of("response_format", "json", "temperature", 0.2);
+    public static final Map<String, Object> JSON_MODE_PARAMS = Map.of("response_format", "json", "temperature", 0.2);
 
-    static String stripCodeFence(String raw) {
+    public static String stripCodeFence(String raw) {
         if (raw == null) {
             return null;
         }

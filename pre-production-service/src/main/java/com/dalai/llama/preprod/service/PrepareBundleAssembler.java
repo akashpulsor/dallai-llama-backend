@@ -63,6 +63,7 @@ public class PrepareBundleAssembler {
     private final ShotProductReferenceService shotProductReferenceService;
     private final ShotFoleyCueService shotFoleyCueService;
     private final ShotReferenceImageService shotReferenceImageService;
+    private final com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService creativeDirectionContextService;
 
 
     public PrepareBundleView assemble(UUID tenantId, UUID projectId) {
@@ -74,10 +75,15 @@ public class PrepareBundleAssembler {
         List<CastAssignmentView> castAssignments = softList(() -> castAssignmentService.list(projectId), "cast-assignments", projectId);
         List<CastProfileView> castProfiles = softList(() -> castProfileService.list(tenantId, projectId, null), "cast-profiles", projectId);
         List<ShotView> shots = softList(() -> shotListGenerationService.list(tenantId, projectId), "shots", projectId);
+        // Read, never enforced: preparing a shot is not where a missing approval should stop anyone,
+        // and the script those shots came from already passed that gate.
+        String creativeDirection = creativeDirectionContextService.findApproved(projectId)
+                .map(com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext::promptBlock)
+                .orElse(com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext.NONE_APPROVED);
 
         if (shots.isEmpty()) {
             log.warn("prepare-bundle: no shots found for tenantId={} projectId={}", tenantId, projectId);
-            return new PrepareBundleView(bible,config,script,castAssignments,castProfiles,List.of());
+            return new PrepareBundleView(bible, config, script, castAssignments, castProfiles, List.of(), creativeDirection);
         }
         List<UUID> shotIds = shots.stream().map(ShotView::id).toList();
 
@@ -119,7 +125,7 @@ public class PrepareBundleAssembler {
                 script == null || script.characters() == null ? 0 : script.characters().size(),
                 System.currentTimeMillis() - startMs);
 
-        return new PrepareBundleView(bible, config, script, castAssignments, castProfiles, shotBundles);
+        return new PrepareBundleView(bible, config, script, castAssignments, castProfiles, shotBundles, creativeDirection);
     }
     private ShotBundleView assembleShot(UUID tenantId, ShotView shot) {
         UUID shotId = shot.id();

@@ -231,7 +231,8 @@ public class ShotGenerationOrchestrator {
         // gateway could not answer or came back over budget, and the composed prompt stands
         // exactly as it did before.
         String writtenPrompt = videoShotPromptService.writePrompt(
-                tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength);
+                tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength,
+                sources == null ? null : sources.approvedCreativeDirection());
         if (writtenPrompt != null) {
             builtPrompt = new BuiltPrompt(writtenPrompt, builtPrompt.negative());
         }
@@ -242,54 +243,10 @@ public class ShotGenerationOrchestrator {
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId,
                 shotContext.technical() == null ? null : shotContext.technical().durationSeconds());
 
-        // Two separate reasons to tell the model not to make audio, and they had been conflated.
-        //
-        // The first is that we are going to dub the shot ourselves, which is what this flag always
-        // meant. The second is that the shot has NOTHING TO SAY: no beats, no voice-over, no line.
-        // Left to itself the provider's default is to generate audio anyway, so a motion graphic
-        // with no dialogue planned came back with a voice inventing words over it -- speech nobody
-        // wrote, in a shot nobody intended to speak. Silence is the correct output there, and any
-        // sound that shot wants (a music bed, foley) is laid on afterwards from its own plan.
-        boolean willDub = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
-        boolean hasSomethingToSay = (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty())
-                || (shotContext.narrative() != null && shotContext.narrative().dialogue() != null
-                        && !shotContext.narrative().dialogue().isBlank());
-        boolean muteAudio = willDub || !hasSomethingToSay;
-        if (!willDub && !hasSomethingToSay) {
-            log.info("Shot has no dialogue planned -- generating it silent shotRef={}", shotContext.shotRef());
-        }
-
-        VideoGenJob job = VideoGenJob.builder()
-                .jobId(UUID.randomUUID())
-                .tenantId(tenantId)
-                .projectId(projectId)
-                .createdBy(tenantContext.userId())
-                .shotRef(shotContext.shotRef())
-                .providerId(resolveProviderId(modelId))
-                .modelId(modelId)
-                .durationSeconds(shotContext.technical() != null ? shotContext.technical().durationSeconds() : null)
-                .fps(shotContext.technical() != null ? shotContext.technical().fps() : null)
-                .aspectRatio(shotContext.technical() != null && shotContext.technical().aspectRatio() != null
-                        ? shotContext.technical().aspectRatio().wireValue() : null)
-                .resolution(shotContext.technical() != null && shotContext.technical().resolution() != null
-                        ? shotContext.technical().resolution().wireValue() : null)
-                .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
-                .ttsModel(shotContext.technical() != null ? shotContext.technical().ttsModel() : null)
-                .muteAudio(muteAudio)
-                .status(JobStatus.PENDING_APPROVAL)
-                .approvalStatus(ApprovalStatus.PENDING)
-                .estimatedCost(estimate.estimatedCost())
-                .costCurrency(estimate.currency())
-                .createdAt(OffsetDateTime.now())
-                .build();
-        videoGenJobRepository.save(job);
-        // Snapshotted whenever the shot has beats, not only when auto-dub will run. They used to be
-        // saved only on the muted path because only the dub read them back -- but the approve-time
-        // check on whether the line fits the clip needs them on both paths, and a shot generating
-        // its own native audio can overrun its duration just as easily.
-        if (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty()) {
-            saveDialogueBeats(job.getJobId(), shotContext.dialogueBeats());
-        }
+        VideoGenJob job = createJob(tenantContext, projectId, shotContext, modelId,
+                shotContext.technical() != null ? shotContext.technical().durationSeconds() : null,
+                shotContext.technical() != null ? shotContext.technical().fps() : null,
+                estimate);
 
         ShotPrompt prompt = ShotPrompt.builder()
                 .promptId(UUID.randomUUID())
@@ -318,7 +275,7 @@ public class ShotGenerationOrchestrator {
                 .build();
         shotPromptRepository.save(prompt);
 
-        saveReferences(prompt.getPromptId(), shotContext);
+        saveReferences(prompt.getPromptId(), shotContext, null);
         saveFoleyCues(prompt.getPromptId(), cues);
 
         return new PreparedShot(
@@ -342,6 +299,138 @@ public class ShotGenerationOrchestrator {
             String recommendedModel,
             String recommendationReasoning
     ) {}
+
+    /**
+     * What the video studio submits: the creator's settings and the exact prompt they approved.
+     *
+     * @param continuationFrame the previous shot's last frame, or null when none was attached
+     */
+    public record ReviewedSubmission(
+            String modelId,
+            int generationDurationSeconds,
+            Integer generationFps,
+            String prompt,
+            ReferenceFrame continuationFrame
+    ) {}
+
+    /**
+     * Generates a shot from a prompt the creator reviewed in the video studio, and queues it.
+     *
+     * <p>Shares every persistence and dispatch step with {@link #prepareShot} and differs only where
+     * the creator has already decided: the prompt is submitted EXACTLY as approved -- no rewrite, no
+     * compression pass, which is a lossy rewrite by another name -- and the job runs at the chosen
+     * generation duration and frame rate rather than the planned ones. Fitting the shot to its
+     * dialogue is the creator's decision in the studio, so the job is queued KEEP_PLANNED.
+     *
+     * <p>A continuation frame takes reference slot 0, ahead of the shot's own frame: an
+     * image-to-video model starts from its first image, and starting from where the previous shot
+     * ended is what the creator asked for.
+     */
+    public PreparedShot submitReviewedPrompt(TenantContext tenantContext, UUID projectId,
+                                             ShotContextAssemblyService.AssembledShot assembled,
+                                             ReviewedSubmission submission) {
+        UUID tenantId = tenantContext.tenantId();
+        ShotContext shotContext = assembled.shotContext();
+        ShotContextAssemblyService.ShotPromptSources sources = assembled.sources();
+        FeatureFlags effectiveFlags = projectConfigService.getEffectiveFlags(tenantId, projectId)
+                .withOverride(assembled.featureFlagOverrides());
+        String modelId = submission.modelId();
+
+        // Built only for its negative prompt, which is about what the model must avoid and does not
+        // change with the wording of the positive one.
+        BuiltPrompt built = promptBuilderService.buildPrompt(shotContext, effectiveFlags, modelId);
+        List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
+        CostEstimate estimate = costEstimationService.estimate(
+                submission.prompt(), modelId, submission.generationDurationSeconds());
+
+        VideoGenJob job = createJob(tenantContext, projectId, shotContext, modelId,
+                submission.generationDurationSeconds(), submission.generationFps(), estimate);
+
+        ShotPrompt prompt = ShotPrompt.builder()
+                .promptId(UUID.randomUUID())
+                .jobId(job.getJobId())
+                .tenantId(tenantId)
+                .projectId(projectId)
+                .createdBy(tenantContext.userId())
+                .variantLabel("studio-reviewed")
+                .promptOriginal(submission.prompt())
+                .compressionApplied(false)
+                .originalLength(submission.prompt().length())
+                .negativePrompt(built.negative())
+                .dialogueFlag(effectiveFlags.dialogue())
+                .captionsFlag(effectiveFlags.captions())
+                .shipped(false)
+                .shotId(sources == null ? null : sources.shotId())
+                .cameraPlanId(sources == null ? null : sources.cameraPlanId())
+                .lightingPlanId(sources == null ? null : sources.lightingPlanId())
+                .productReferenceId(sources == null ? null : sources.productReferenceId())
+                .backgroundMusicId(sources == null ? null : sources.backgroundMusicId())
+                .promptBundleSnapshotAt(sources == null ? null : sources.bundleSnapshotAt())
+                .createdAt(OffsetDateTime.now())
+                .build();
+        shotPromptRepository.save(prompt);
+        saveReferences(prompt.getPromptId(), shotContext, submission.continuationFrame());
+        saveFoleyCues(prompt.getPromptId(), cues);
+
+        approve(tenantContext, job.getJobId(), DialogueFitChoice.KEEP_PLANNED);
+        VideoGenJob queued = requireJob(tenantId, job.getJobId());
+        return new PreparedShot(queued, prompt, effectiveFlags, estimate.estimatedCost(), cues, modelId, null);
+    }
+
+    /**
+     * A new job at PENDING_APPROVAL for one shot, with its dialogue beats snapshotted.
+     *
+     * <p>Two separate reasons to tell the model not to make audio, and they had been conflated.
+     * The first is that we are going to dub the shot ourselves, which is what this flag always
+     * meant. The second is that the shot has NOTHING TO SAY: no beats, no voice-over, no line. Left
+     * to itself the provider's default is to generate audio anyway, so a motion graphic with no
+     * dialogue planned came back with a voice inventing words over it -- speech nobody wrote, in a
+     * shot nobody intended to speak. Silence is the correct output there, and any sound that shot
+     * wants (a music bed, foley) is laid on afterwards from its own plan.
+     *
+     * <p>Beats are snapshotted whenever the shot has them, not only when auto-dub will run. They
+     * used to be saved only on the muted path because only the dub read them back -- but the
+     * approve-time check on whether the line fits the clip needs them on both paths, and a shot
+     * generating its own native audio can overrun its duration just as easily.
+     */
+    private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, ShotContext shotContext,
+                                  String modelId, Integer durationSeconds, Integer fps, CostEstimate estimate) {
+        boolean willDub = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
+        boolean hasSomethingToSay = (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty())
+                || (shotContext.narrative() != null && shotContext.narrative().dialogue() != null
+                        && !shotContext.narrative().dialogue().isBlank());
+        if (!willDub && !hasSomethingToSay) {
+            log.info("Shot has no dialogue planned -- generating it silent shotRef={}", shotContext.shotRef());
+        }
+        VideoGenJob job = VideoGenJob.builder()
+                .jobId(UUID.randomUUID())
+                .tenantId(tenantContext.tenantId())
+                .projectId(projectId)
+                .createdBy(tenantContext.userId())
+                .shotRef(shotContext.shotRef())
+                .providerId(resolveProviderId(modelId))
+                .modelId(modelId)
+                .durationSeconds(durationSeconds)
+                .fps(fps)
+                .aspectRatio(shotContext.technical() != null && shotContext.technical().aspectRatio() != null
+                        ? shotContext.technical().aspectRatio().wireValue() : null)
+                .resolution(shotContext.technical() != null && shotContext.technical().resolution() != null
+                        ? shotContext.technical().resolution().wireValue() : null)
+                .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
+                .ttsModel(shotContext.technical() != null ? shotContext.technical().ttsModel() : null)
+                .muteAudio(willDub || !hasSomethingToSay)
+                .status(JobStatus.PENDING_APPROVAL)
+                .approvalStatus(ApprovalStatus.PENDING)
+                .estimatedCost(estimate.estimatedCost())
+                .costCurrency(estimate.currency())
+                .createdAt(OffsetDateTime.now())
+                .build();
+        videoGenJobRepository.save(job);
+        if (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty()) {
+            saveDialogueBeats(job.getJobId(), shotContext.dialogueBeats());
+        }
+        return job;
+    }
 
     /** User edited a prepared prompt -- save a NEW ShotPrompt row with parent_prompt_id pointing
      * back at {@code promptId}, everything else copied. Uses ShotPrompt's existing versioning
@@ -747,9 +836,19 @@ public class ShotGenerationOrchestrator {
                 .orElseThrow(() -> VideoGenException.notFound("Unknown job_id: " + jobId));
     }
 
-    private void saveReferences(UUID promptId, ShotContext shotContext) {
+    /** @param continuationFrame the previous shot's last frame, saved ahead of everything else; null for none */
+    private void saveReferences(UUID promptId, ShotContext shotContext, ReferenceFrame continuationFrame) {
         List<ShotPromptReference> references = new ArrayList<>();
         int slot = 0;
+        if (continuationFrame != null && continuationFrame.bucket() != null && continuationFrame.objectKey() != null) {
+            references.add(ShotPromptReference.builder()
+                    .promptId(promptId)
+                    .refKind(ReferenceKind.PRIOR_SHOT_LAST_FRAME)
+                    .bucket(continuationFrame.bucket())
+                    .objectKey(continuationFrame.objectKey())
+                    .slotIndex(slot++)
+                    .build());
+        }
         // The shot's own frame goes in slot 0, ahead of the character/product references. For an
         // image-to-video model the first reference slot is the frame it actually conditions on,
         // so the picture of this exact shot has to lead -- a face crop in slot 0 with the

@@ -1,14 +1,12 @@
 package com.dalai.llama.postprod.controller;
 
 import com.dalai.llama.postprod.dto.EditVideoRequest;
-import com.dalai.llama.postprod.dto.ShotFrameExtractionResult;
 import com.dalai.llama.postprod.dto.VideoEditView;
 import com.dalai.llama.postprod.service.VideoEditResult;
 import com.dalai.llama.postprod.service.VideoEditService;
 import com.dalai.llama.postprod.web.TenantContextHolder;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,18 +34,4 @@ public class VideoEditController {
                 request.editInstruction(), request.referenceImageUrl(), request.model());
         return ResponseEntity.ok(new VideoEditView(request.model(), result.editedVideoUrl()));
     }
-
-    @PostMapping("/v1/post-production/shots/{shotId}/frames")
-    public ResponseEntity<ShotFrameExtractionResult> extractFrames(
-            @PathVariable UUID shotId) {
-
-        UUID tenantId = TenantContextHolder.get().tenantId();
-
-        return ResponseEntity.ok(videoEditService.extractFrames(
-                        tenantId,
-                        shotId
-                )
-        );
-    }
-
 }

@@ -1,0 +1,164 @@
+package com.dalai.llama.videogen.service;
+
+import com.dalai.llama.videogen.domain.FlagState;
+import com.dalai.llama.videogen.domain.JobStatus;
+import com.dalai.llama.videogen.domain.ReferenceKind;
+import com.dalai.llama.videogen.domain.entity.ShotPrompt;
+import com.dalai.llama.videogen.domain.entity.ShotPromptReference;
+import com.dalai.llama.videogen.domain.entity.VideoGenJob;
+import com.dalai.llama.videogen.dto.FeatureFlags;
+import com.dalai.llama.videogen.dto.shotcontext.Character;
+import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
+import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
+import com.dalai.llama.videogen.kafka.VideoGenerationRequestedEvent;
+import com.dalai.llama.videogen.kafka.VideoGenerationRequestedPublisher;
+import com.dalai.llama.videogen.repository.FoleyCueRepository;
+import com.dalai.llama.videogen.repository.ShotPromptReferenceRepository;
+import com.dalai.llama.videogen.repository.ShotPromptRepository;
+import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
+import com.dalai.llama.videogen.repository.VideoGenJobRepository;
+import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
+import com.dalai.llama.videogen.web.TenantContext;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+/**
+ * Generate Video from the studio goes through the same job lifecycle as every other render, and
+ * differs only where the creator has already decided: their text is what is sent, and their
+ * duration is what is rendered.
+ */
+class ReviewedPromptSubmissionTest {
+
+    private final PromptBuilderService promptBuilder = mock(PromptBuilderService.class);
+    private final PromptCompressionService compression = mock(PromptCompressionService.class);
+    private final CostEstimationService costs = mock(CostEstimationService.class);
+    private final ProjectConfigService projectConfig = mock(ProjectConfigService.class);
+    private final VideoGenJobRepository jobs = mock(VideoGenJobRepository.class);
+    private final ShotPromptRepository prompts = mock(ShotPromptRepository.class);
+    private final ShotPromptReferenceRepository references = mock(ShotPromptReferenceRepository.class);
+    private final FoleyCueService foley = mock(FoleyCueService.class);
+    private final VideoGenJobPersistenceService jobPersistence = mock(VideoGenJobPersistenceService.class);
+    private final BeatDubbingService dubbing = mock(BeatDubbingService.class);
+    private final VideoShotPromptService promptWriter = mock(VideoShotPromptService.class);
+    private final VideoGenerationRequestedPublisher publisher = mock(VideoGenerationRequestedPublisher.class);
+
+    private final UUID tenant = UUID.randomUUID();
+    private final UUID project = UUID.randomUUID();
+    private final UUID shotId = UUID.randomUUID();
+    private final AtomicReference<VideoGenJob> savedJob = new AtomicReference<>();
+
+    private ShotGenerationOrchestrator orchestrator;
+
+    @BeforeEach
+    void setUp() {
+        orchestrator = new ShotGenerationOrchestrator(mock(ModelRecommendationService.class), promptBuilder,
+                mock(DialogueFitService.class), compression, foley, costs, mock(VideoGenDispatchService.class),
+                projectConfig, jobs, prompts, references, mock(VideoGenJobDialogueBeatRepository.class),
+                mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence, dubbing,
+                mock(BackgroundMusicMixService.class), promptWriter, publisher, "bytedance/seedance-2.0/fast");
+
+        when(projectConfig.getEffectiveFlags(tenant, project)).thenReturn(new FeatureFlags(FlagState.OFF, FlagState.OFF));
+        when(promptBuilder.buildPrompt(any(), any(), anyString())).thenReturn(new BuiltPrompt("composed", "no blur"));
+        when(costs.estimate(anyString(), anyString(), any())).thenReturn(new CostEstimate(new BigDecimal("40"), "INR"));
+        when(foley.deriveCues(any(), any())).thenReturn(List.of());
+        when(jobs.save(any())).thenAnswer(call -> {
+            savedJob.set(call.getArgument(0));
+            return call.getArgument(0);
+        });
+        when(jobs.findById(any())).thenAnswer(call -> Optional.ofNullable(savedJob.get()));
+        when(jobPersistence.markQueued(any())).thenAnswer(call -> {
+            savedJob.get().setStatus(JobStatus.QUEUED);
+            return savedJob.get();
+        });
+    }
+
+    private ShotContextAssemblyService.AssembledShot shot() {
+        ShotContext context = mock(ShotContext.class);
+        when(context.shotRef()).thenReturn("shot-02-001");
+        when(context.referenceFrames()).thenReturn(List.of(
+                new ReferenceFrame(ReferenceKind.STORYBOARD, "preprod", "frames/shot-02-001.png")));
+        Character ravi = mock(Character.class);
+        when(ravi.faceRefBucket()).thenReturn("cast");
+        when(ravi.faceRefObjectKey()).thenReturn("faces/ravi.png");
+        when(context.characters()).thenReturn(List.of(ravi));
+        return new ShotContextAssemblyService.AssembledShot(context, null, null,
+                new ShotContextAssemblyService.ShotPromptSources(shotId, null, null, null, null, OffsetDateTime.now()));
+    }
+
+    private ShotGenerationOrchestrator.PreparedShot submit(String prompt, ReferenceFrame continuation) {
+        return orchestrator.submitReviewedPrompt(new TenantContext(tenant, UUID.randomUUID()), project, shot(),
+                new ShotGenerationOrchestrator.ReviewedSubmission("bytedance/seedance-2.0/fast", 6, 24, prompt, continuation));
+    }
+
+    @Test
+    void theApprovedTextIsStoredAndSentUnchangedWithNoRewriteOrCompression() {
+        String exact = "0-1s Ravi kneels.  1-6s he tightens the valve; the drip stops.";
+
+        submit(exact, null);
+
+        ArgumentCaptor<ShotPrompt> saved = ArgumentCaptor.forClass(ShotPrompt.class);
+        verify(prompts).save(saved.capture());
+        assertThat(saved.getValue().getPromptOriginal()).isEqualTo(exact);
+        assertThat(saved.getValue().getCompressionApplied()).isFalse();
+        assertThat(saved.getValue().getPromptCompressed()).isNull();
+        assertThat(saved.getValue().getShotId()).isEqualTo(shotId);
+        assertThat(saved.getValue().getNegativePrompt()).isEqualTo("no blur");
+        verifyNoInteractions(compression);
+        verify(promptWriter, never()).writePrompt(any(), any(), any(), anyString(), anyInt(), any());
+    }
+
+    @Test
+    void theJobRunsAtTheChosenSettingsAndIsQueuedThroughTheUsualLifecycle() {
+        ShotGenerationOrchestrator.PreparedShot submitted = submit("0-6s he stands.", null);
+
+        assertThat(savedJob.get().getDurationSeconds()).isEqualTo(6);
+        assertThat(savedJob.get().getFps()).isEqualTo(24);
+        assertThat(submitted.job().getStatus()).isEqualTo(JobStatus.QUEUED);
+        verify(costs).estimate("0-6s he stands.", "bytedance/seedance-2.0/fast", 6);
+        ArgumentCaptor<VideoGenerationRequestedEvent> event = ArgumentCaptor.forClass(VideoGenerationRequestedEvent.class);
+        verify(publisher).publish(event.capture());
+        // The creator settled the length in the studio; the render must not resize it afterwards.
+        assertThat(event.getValue().fitChoice()).isEqualTo(DialogueFitChoice.KEEP_PLANNED);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void thePreviousShotsLastFrameLeadsAndEveryOtherReferenceKeepsItsOrder() {
+        submit("0-6s he stands.", new ReferenceFrame(ReferenceKind.PRIOR_SHOT_LAST_FRAME, "postprod", "shot-frames/prev/last.jpg"));
+
+        ArgumentCaptor<List<ShotPromptReference>> saved = ArgumentCaptor.forClass(List.class);
+        verify(references).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(ShotPromptReference::getRefKind).containsExactly(
+                ReferenceKind.PRIOR_SHOT_LAST_FRAME, ReferenceKind.STORYBOARD, ReferenceKind.CHARACTER_FACE);
+        assertThat(saved.getValue()).extracting(ShotPromptReference::getSlotIndex).containsExactly(0, 1, 2);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void withoutAContinuationFrameTheShotsOwnFrameStillLeads() {
+        submit("0-6s he stands.", null);
+
+        ArgumentCaptor<List<ShotPromptReference>> saved = ArgumentCaptor.forClass(List.class);
+        verify(references).saveAll(saved.capture());
+        assertThat(saved.getValue()).extracting(ShotPromptReference::getRefKind)
+                .containsExactly(ReferenceKind.STORYBOARD, ReferenceKind.CHARACTER_FACE);
+    }
+}

@@ -198,4 +198,78 @@ class VideoShotPromptServiceTest {
         assertThat(service(true).writePrompt(tenant, project, shot(), "  ", 20000)).isNull();
         verifyNoInteractions(gateway);
     }
+
+    // ---------------------------------------------------------------- VIDEO_SHOT_PROMPT v5
+
+    @Test
+    void theOrdinaryPrepareFillsEverySourceExecutionVariableSoTheTemplateStillRenders() {
+        // An unfilled placeholder is a 400 from llm-gateway; prepare would stop working the day v5 shipped.
+        gatewayAnswers("A courier.");
+        ShotContext context = shot();
+        when(context.technical()).thenReturn(new com.dalai.llama.videogen.dto.shotcontext.Technical(
+                6, null, null, null, null, null, null, null, 24));
+
+        service(true).writePrompt(tenant, project, context, "the plan", 20000, "APPROVED: warm, handheld");
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().templateVariables())
+                .containsEntry("durationSeconds", "6")
+                .containsEntry("generationDurationSeconds", "6")
+                .containsEntry("generationFps", "24")
+                .containsEntry("sourceActionTimeline", VideoShotPromptService.SourceExecution.NO_TIMELINE)
+                .containsEntry("approvedCreativeDirection", "APPROVED: warm, handheld");
+    }
+
+    @Test
+    void withNoApprovedDirectionThePromptIsToldSoInsteadOfLeftBlank() {
+        gatewayAnswers("A courier.");
+
+        service(true).writePrompt(tenant, project, shot(), "the plan", 20000);
+
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().templateVariables())
+                .containsEntry("approvedCreativeDirection", VideoShotPromptService.SourceExecution.NO_CREATIVE_DIRECTION);
+    }
+
+    @Test
+    void theStudioPromptIsWrittenForTheChosenSettingsAndTimeline() {
+        gatewayAnswers("0-1s: Ravi kneels. 1-4s: he tightens the valve.");
+
+        String written = service(true).composeSourcePrompt(tenant, project, shot(), "the plan", 20000,
+                new VideoShotPromptService.SourceExecution(4, 24, "0.0-1.0s [OPEN] kneels", "APPROVED", false));
+
+        assertThat(written).startsWith("0-1s");
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().taskKey()).isEqualTo("VIDEO_SHOT_PROMPT");
+        assertThat(sent.getValue().templateVariables())
+                .containsEntry("generationDurationSeconds", "4")
+                .containsEntry("generationFps", "24")
+                .containsEntry("sourceActionTimeline", "0.0-1.0s [OPEN] kneels");
+    }
+
+    @Test
+    void aStudioPromptThatFailsIsReportedNotSwappedForTheComposedOne() {
+        gatewayAnswers("  ");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(true).composeSourcePrompt(tenant, project, shot(),
+                        "the plan", 20000, new VideoShotPromptService.SourceExecution(4, 24, null, null, false)))
+                .isInstanceOf(VideoGenException.class)
+                .hasMessageContaining("try again");
+    }
+
+    @Test
+    void anAttachedLastFrameIsReferenceImageOneAndEverythingElseMovesDownOne() {
+        ShotContext context = shot();
+        when(context.referenceFrames()).thenReturn(List.of(new com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame(
+                com.dalai.llama.videogen.domain.ReferenceKind.STORYBOARD, "b", "frame.png")));
+
+        String described = service(true).describeReferences(context, true);
+
+        assertThat(described.lines().toList()).hasSize(2);
+        assertThat(described.lines().toList().get(0)).contains("reference image 1 = the LAST FRAME OF THE PREVIOUS SHOT");
+        assertThat(described.lines().toList().get(1)).contains("reference image 2 = this shot's own frame");
+    }
 }

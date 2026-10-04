@@ -78,12 +78,22 @@ public class ClipObjectStore {
         }
     }
 
+    /** Where one extracted frame of a cut lives: keyed by the cut, so a new cut never reuses a
+     * frame taken from the clip it replaced. */
+    public String frameKeyFor(java.util.UUID shotId, java.util.UUID versionId, String mode, String fileName) {
+        return "shot-frames/%s/%s/%s/%s".formatted(shotId, versionId, mode.toLowerCase(java.util.Locale.ROOT), fileName);
+    }
+
     public void upload(String objectKey, Path source) {
+        upload(objectKey, source, "video/mp4");
+    }
+
+    public void upload(String objectKey, Path source, String contentType) {
         try {
             minioClient.uploadObject(UploadObjectArgs.builder()
                     .bucket(bucket).object(objectKey)
                     .filename(source.toAbsolutePath().toString())
-                    .contentType("video/mp4")
+                    .contentType(contentType)
                     .build());
         } catch (Exception ex) {
             throw new ClipProcessingException(

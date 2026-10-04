@@ -1,6 +1,5 @@
 package com.dalai.llama.postprod.service;
 
-import com.dalai.llama.postprod.dto.ShotFrameExtractionResult;
 import com.dalai.llama.postprod.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.postprod.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
 import com.dalai.llama.postprod.service.llmgateway.LlmGatewayChatResponse;
@@ -21,16 +20,13 @@ public class LlmGatewayVideoEditService implements VideoEditService {
 
     private final LlmGatewayClient llmGatewayClient;
     private final String defaultModel;
-    private final ShotFrameService shotFrameService;
 
     public LlmGatewayVideoEditService(
             LlmGatewayClient llmGatewayClient,
-            @Value("${post-production.llm-gateway.default-video-edit-model}") String defaultModel,
-            ShotFrameService shotFrameService
+            @Value("${post-production.llm-gateway.default-video-edit-model}") String defaultModel
     ) {
         this.llmGatewayClient = llmGatewayClient;
         this.defaultModel = defaultModel;
-        this.shotFrameService = shotFrameService;
     }
 
     @Override
@@ -71,9 +67,5 @@ public class LlmGatewayVideoEditService implements VideoEditService {
         }
         BigDecimal cost = response.usage() == null ? BigDecimal.ZERO : response.usage().cost();
         return new VideoEditResult(response.jobId(), response.response(), cost);
-    }
-
-    public ShotFrameExtractionResult extractFrames(UUID tenantId, UUID shotId) {
-        return shotFrameService.extractFrames(tenantId, shotId);
     }
 }
