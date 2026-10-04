@@ -35,6 +35,10 @@ public record PublicProjectRequirementView(
          * answers. When true, {@link #videoShotsIntent} carries the free-text description of
          * what those shots should convey. */
         Boolean includeVideoShots,
-        String videoShotsIntent
+        String videoShotsIntent,
+        /** The budget the client gave. quotedTotalPrice stays null until the creator sets a price,
+         * and the brief cannot be funded until then. */
+        BigDecimal clientBudget,
+        String clientBudgetCurrency
 ) {
 }

@@ -137,7 +137,8 @@ public class PublicProjectRequirementController {
                 data == null ? null : data.campaignDirection(),
                 data == null ? null : data.includeVideoShots(),
                 data == null ? null : data.videoShotsIntent(),
-                data == null ? null : data.durationSeconds());
+                data == null ? null : data.durationSeconds(),
+                data == null ? null : data.clientBudget());
 
         ProjectRequirementService.RequirementIdentity id = projectRequirementService.identifyByShareToken(shareToken);
         UUID brandContextId = id.brandContextId();
@@ -201,7 +202,9 @@ public class PublicProjectRequirementController {
             /** Client-side duration edit. When non-null AND different from current, triggers a
              * fresh billing quote and updates duration + budget-tier + all quoted* fields.
              * Refused (like every other mutation on this share-token endpoint) once funded. */
-            Integer durationSeconds
+            Integer durationSeconds,
+            /** What the client wants to spend on the video. The creator sets the price from it. */
+            java.math.BigDecimal clientBudget
     ) {
         public record BrandFields(String brandName, String industry, String brandVoice, String targetAudience, String brandValues) {}
         public record ProductFields(String name, String description, String category) {}
@@ -224,7 +227,7 @@ public class PublicProjectRequirementController {
                 brandContextService.findBrandView(id.tenantId(), id.brandContextId()), product, productImages,
                 projectReferenceImageService.list(id.requirementId()),
                 projectReferenceVideoService.list(id.requirementId()),
-                base.includeVideoShots(), base.videoShotsIntent());
+                base.includeVideoShots(), base.videoShotsIntent(), base.clientBudget(), base.clientBudgetCurrency());
     }
 
     /** Records a payment confirmation -- see {@code ProjectRequirementService}'s class javadoc.

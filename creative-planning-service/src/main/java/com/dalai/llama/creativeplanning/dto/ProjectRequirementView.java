@@ -46,6 +46,9 @@ public record ProjectRequirementView(
         OffsetDateTime clientUpdatedAt,
         // Ad-hoc video-shot capture on the brief -- see ProjectRequirement#getVideoShotsIntent.
         Boolean includeVideoShots,
-        String videoShotsIntent
+        String videoShotsIntent,
+        /** What the client said they want to spend, null until they say. The creator prices from it. */
+        BigDecimal clientBudget,
+        String clientBudgetCurrency
 ) {
 }

@@ -104,10 +104,11 @@ public class ProjectRequirementService {
     @Transactional
     public ProjectRequirementView createStandalone(UUID tenantId, UUID userId, CreateStandaloneRequirementRequest request) {
         UUID brandContextId = resolveOrCreateBrand(tenantId, request.brandId(), request.brandContext());
-        BillingServiceClient.VideoPriceQuote quote = billingServiceClient.quoteVideoPrice(tenantId, request.durationSeconds());
+        // Not priced here. The client is asked for their budget and the creator sets the price; a
+        // number computed from the per-second rate shown to the client read as the creator's offer.
         ProjectRequirement requirement = build(tenantId, userId, request.tenantType(), null, brandContextId, request.briefText(),
                 request.targetAudience(), request.campaignDirection(), deriveLegacyBudgetTier(request.durationSeconds()),
-                request.durationSeconds(), String.join(",", request.languages()), quote);
+                request.durationSeconds(), String.join(",", request.languages()), null);
         return toView(projectRequirementRepository.save(requirement));
     }
 
@@ -215,8 +216,7 @@ public class ProjectRequirementService {
                 previous.getBrandContextId(), previous.getBriefText(), previous.getTargetAudience(),
                 previous.getCampaignDirection(),
                 duration == null ? previous.getBudgetTier() : deriveLegacyBudgetTier(duration),
-                duration, previous.getLanguages(),
-                duration == null ? null : billingServiceClient.quoteVideoPrice(previous.getTenantId(), duration));
+                duration, previous.getLanguages(), null);
         next.setPreviousRequirementId(previous.getId());
         return next;
     }
@@ -257,6 +257,10 @@ public class ProjectRequirementService {
         }
         requirement.setQuotedTotalPrice(request.totalPrice());
         requirement.setRequiredPaymentPercent(request.requiredPaymentPercent());
+        if (requirement.getQuotedCurrency() == null) {
+            // A brief is no longer auto-quoted, so the creator's price is the first one it has.
+            requirement.setQuotedCurrency(requirement.getClientBudgetCurrency() != null ? requirement.getClientBudgetCurrency() : "INR");
+        }
         BigDecimal platformCost = requirement.getQuotedPlatformCost();
         if (platformCost != null && platformCost.signum() > 0 && request.totalPrice() != null) {
             BigDecimal impliedMargin = request.totalPrice().subtract(platformCost)
@@ -343,7 +347,8 @@ public class ProjectRequirementService {
     @Transactional
     public PublicProjectRequirementView updateFromClient(String shareToken, String briefText, String targetAudience,
                                                          String campaignDirection, Boolean includeVideoShots,
-                                                         String videoShotsIntent, Integer newDurationSeconds) {
+                                                         String videoShotsIntent, Integer newDurationSeconds,
+                                                         BigDecimal clientBudget) {
         ProjectRequirement requirement = requireLiveByShareToken(shareToken);
         if (requirement.isFunded()) {
             throw CreativePlanningException.badRequest("This brief is already funded and can no longer be edited");
@@ -370,18 +375,18 @@ public class ProjectRequirementService {
         // creator margin, total, currency) plus the derived legacy tier are all refreshed
         // together -- keeping any subset stale would leave downstream tier-keyed consumers
         // (idea prompt, pre-prod Project.budgetTier) disagreeing with the visible price.
+        // A length change no longer re-prices: the creator sets the price, from the client's budget.
         if (newDurationSeconds != null && newDurationSeconds > 0
                 && !newDurationSeconds.equals(requirement.getDurationSeconds())) {
-            BillingServiceClient.VideoPriceQuote quote = billingServiceClient.quoteVideoPrice(
-                    requirement.getTenantId(), newDurationSeconds);
             requirement.setDurationSeconds(newDurationSeconds);
             requirement.setBudgetTier(deriveLegacyBudgetTier(newDurationSeconds));
-            if (quote != null) {
-                requirement.setQuotedPlatformCost(quote.platformCost());
-                requirement.setQuotedCreatorMarginPercent(quote.creatorMarginPercent());
-                requirement.setQuotedTotalPrice(quote.totalPrice());
-                requirement.setQuotedCurrency(quote.currency());
+        }
+        if (clientBudget != null) {
+            if (clientBudget.signum() <= 0) {
+                throw CreativePlanningException.badRequest("A budget has to be more than zero");
             }
+            requirement.setClientBudget(clientBudget.setScale(2, java.math.RoundingMode.HALF_UP));
+            requirement.setClientBudgetCurrency(requirement.getQuotedCurrency() != null ? requirement.getQuotedCurrency() : "INR");
         }
         requirement.setClientUpdatedAt(OffsetDateTime.now());
         requirement.setUpdatedAt(OffsetDateTime.now());
@@ -443,7 +448,7 @@ public class ProjectRequirementService {
             throw CreativePlanningException.badRequest("This brief is already funded");
         }
         if (requirement.getQuotedTotalPrice() == null) {
-            throw CreativePlanningException.badRequest("This brief has no price to pay");
+            throw CreativePlanningException.badRequest("Your creator has not set the price for this brief yet -- they will, from the budget you gave.");
         }
         RequirementFundingBillingClient.OrderResult order = requirementFundingBillingClient.createOrder(
                 requirement.getTenantId(), requirement.getId(), requirement.getRequiredAmount(),
@@ -551,7 +556,8 @@ public class ProjectRequirementService {
                 requirement.getRequiredPaymentPercent(), requirement.getRequiredAmount(),
                 requirement.getShareToken(), requirement.getShareTokenExpiresAt(),
                 requirement.isFunded(), requirement.getFundedBy(), lockedProjectId, requirement.getCreatedAt(),
-                requirement.getClientUpdatedAt(), requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent());
+                requirement.getClientUpdatedAt(), requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent(),
+                requirement.getClientBudget(), requirement.getClientBudgetCurrency());
     }
 
     /** The base fields only -- brand/product/reference-images are assembled by {@code
@@ -563,7 +569,8 @@ public class ProjectRequirementService {
                 requirement.getQuotedTotalPrice(), requirement.getQuotedCurrency(),
                 requirement.getRequiredPaymentPercent(), requirement.getRequiredAmount(), requirement.isFunded(),
                 null, null, List.of(), List.of(), List.of(),
-                requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent());
+                requirement.getIncludeVideoShots(), requirement.getVideoShotsIntent(),
+                requirement.getClientBudget(), requirement.getClientBudgetCurrency());
     }
 
     private static List<String> splitLanguages(String languages) {

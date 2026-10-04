@@ -106,6 +106,13 @@ public class ProjectRequirement {
     @Column(name = "quoted_currency", length = 3)
     private String quotedCurrency;
 
+    /** What the client said they want to spend; the creator sets quotedTotalPrice from it. */
+    @Column(name = "client_budget", precision = 12, scale = 2)
+    private BigDecimal clientBudget;
+
+    @Column(name = "client_budget_currency", length = 3)
+    private String clientBudgetCurrency;
+
     /** What percentage of {@code quotedTotalPrice} the client must actually pay to unlock the
      * project -- default 100 (full payment). A creator may lower this to accept a partial/"token"
      * payment upfront; the remainder is a business matter collected outside the app, never a

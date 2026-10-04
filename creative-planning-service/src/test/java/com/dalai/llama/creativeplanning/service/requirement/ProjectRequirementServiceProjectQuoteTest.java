@@ -68,7 +68,7 @@ class ProjectRequirementServiceProjectQuoteTest {
     }
 
     @Test
-    void theNextBriefIsPrefilledFromTheLockedOneAndQuotedAfresh() {
+    void theNextBriefIsPrefilledFromTheLockedOneAndLeftForTheCreatorToPrice() {
         lockedIdeaFor(tenantId);
         UUID brand = UUID.randomUUID();
         when(requirements.findById(requirementId)).thenReturn(Optional.of(ProjectRequirement.builder()
@@ -76,9 +76,6 @@ class ProjectRequirementServiceProjectQuoteTest {
                 .briefText("City Professional launch film").targetAudience("Young professionals")
                 .durationSeconds(60).languages("English,Hindi").budgetTier(BudgetTier.PREMIUM).build()));
         when(requirements.findByPreviousRequirementId(requirementId)).thenReturn(Optional.empty());
-        when(billing.quoteVideoPrice(tenantId, 60)).thenReturn(new BillingServiceClient.VideoPriceQuote(60, 15,
-                null, null, null, null, null, new BigDecimal("1047.00"), new BigDecimal("24.09"), null,
-                new BigDecimal("1299.00"), "INR"));
         when(requirements.save(any(ProjectRequirement.class))).thenAnswer(call -> call.getArgument(0));
 
         assertThat(service.startNextBrief(tenantId, projectId).shareToken()).isNotBlank();
@@ -89,7 +86,8 @@ class ProjectRequirementServiceProjectQuoteTest {
         assertThat(next.getPreviousRequirementId()).isEqualTo(requirementId);
         assertThat(next.getBrandContextId()).isEqualTo(brand);
         assertThat(next.getLanguages()).isEqualTo("English,Hindi");
-        assertThat(next.getQuotedTotalPrice()).isEqualByComparingTo("1299.00");
+        assertThat(next.getQuotedTotalPrice()).isNull();
+        verify(billing, never()).quoteVideoPrice(any(), any(Integer.class));
         assertThat(next.isFunded()).isFalse();
     }
 
