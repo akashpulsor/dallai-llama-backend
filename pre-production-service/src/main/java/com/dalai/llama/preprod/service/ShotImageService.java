@@ -420,8 +420,7 @@ public class ShotImageService {
 
     private String toDataUri(MultipartFile file) {
         try {
-            String contentType = file.getContentType() != null ? file.getContentType() : "image/jpeg";
-            return "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(file.getBytes());
+            return ModelImage.dataUri(file.getBytes());
         } catch (Exception ex) {
             return null;
         }
@@ -847,9 +846,8 @@ public class ShotImageService {
         try (InputStream in = minioClient.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build())) {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             in.transferTo(buffer);
-            String lower = objectKey.toLowerCase();
-            String mimeType = lower.endsWith(".png") ? "image/png" : lower.endsWith(".webp") ? "image/webp" : "image/jpeg";
-            return "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(buffer.toByteArray());
+            // Sized and typed for the model: several of these go out in one request.
+            return ModelImage.dataUri(buffer.toByteArray());
         } catch (Exception ex) {
             return null;
         }
