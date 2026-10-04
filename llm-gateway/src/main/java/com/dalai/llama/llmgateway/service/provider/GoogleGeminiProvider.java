@@ -207,7 +207,7 @@ public class GoogleGeminiProvider implements LlmProvider {
 
     @SuppressWarnings("unchecked")
     Map<String, Object> toGeminiRequestBody(CanonicalRequest request) {
-        String systemText = request.messages().stream()
+        String instructionText = request.messages().stream()
                 .filter(m -> "system".equalsIgnoreCase(m.role()))
                 .map(ChatMessage::content)
                 .collect(Collectors.joining("\n"));
@@ -229,14 +229,28 @@ public class GoogleGeminiProvider implements LlmProvider {
                 continue;
             }
             String geminiRole = "assistant".equalsIgnoreCase(message.role()) ? "model" : "user";
+            // Gemini refuses a request carrying an empty text part (400 "empty text parameter" /
+            // "Request has empty input"). Templated callers send their instructions as the system
+            // message and an empty user message, so blank text is left out, not sent.
             List<Map<String, Object>> parts = new ArrayList<>();
-            parts.add(Map.of("text", message.content()));
+            if (message.content() != null && !message.content().isBlank()) {
+                parts.add(Map.of("text", message.content()));
+            }
             if (message.imageDataUris() != null) {
                 for (String dataUri : message.imageDataUris()) {
                     parts.add(Map.of("inlineData", toInlineData(dataUri)));
                 }
             }
-            contents.add(Map.of("role", geminiRole, "parts", parts));
+            if (!parts.isEmpty()) {
+                contents.add(Map.of("role", geminiRole, "parts", parts));
+            }
+        }
+        // Nothing left for the user turn: the instructions are the whole request, so they are sent
+        // as it -- Gemini needs at least one content turn.
+        String systemText = instructionText;
+        if (contents.isEmpty() && !instructionText.isBlank()) {
+            contents.add(Map.of("role", "user", "parts", List.of(Map.of("text", instructionText))));
+            systemText = "";
         }
 
         Map<String, Object> generationConfig = new LinkedHashMap<>();

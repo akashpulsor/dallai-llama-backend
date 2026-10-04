@@ -45,6 +45,34 @@ class GoogleGeminiProviderTest {
         assertThat(body.get("systemInstruction").toString()).doesNotContain("valid JSON");
     }
 
+    /** Templated calls send the rendered template as the system message and an empty user
+     * message; Gemini answered those with 400 "Request has empty input". */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aTemplatedCallWithAnEmptyUserMessageSendsTheTemplateAsTheRequest() {
+        Map<String, Object> body = provider.toGeminiRequestBody(new CanonicalRequest("gemini-2.5-flash", "text",
+                List.of(new ChatMessage("system", "Plan the score"), new ChatMessage("user", "")),
+                Map.of("response_format", "json"), 1000, List.of()));
+
+        List<Map<String, Object>> contents = (List<Map<String, Object>>) body.get("contents");
+        assertThat(contents).hasSize(1);
+        assertThat(contents.get(0)).isEqualTo(Map.of("role", "user", "parts", List.of(Map.of("text", "Plan the score"))));
+        assertThat(body).doesNotContainKey("systemInstruction");
+        assertThat(body.toString()).doesNotContain("text=,").doesNotContain("text=}");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void anEmptyTextBesideImagesIsLeftOutAndTheInstructionsStaySystem() {
+        Map<String, Object> body = provider.toGeminiRequestBody(new CanonicalRequest("gemini-2.5-flash", "text",
+                List.of(new ChatMessage("system", "Describe"), new ChatMessage("user", " ", null, null, List.of("data:image/png;base64,AAAA"))),
+                Map.of(), 1000, List.of()));
+
+        List<Map<String, Object>> parts = (List<Map<String, Object>>) ((List<Map<String, Object>>) body.get("contents")).get(0).get("parts");
+        assertThat(parts).hasSize(1).allSatisfy(part -> assertThat(part).containsKey("inlineData"));
+        assertThat(body.get("systemInstruction").toString()).contains("Describe");
+    }
+
     private Map<String, Object> body(Map<String, Object> params, List<ToolDefinition> tools) {
         return provider.toGeminiRequestBody(new CanonicalRequest("gemini-2.5-flash", "text",
                 List.of(new ChatMessage("system", "Original instructions"), new ChatMessage("user", "Generate ideas")),
