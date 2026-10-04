@@ -61,6 +61,8 @@ class ReviewedPromptSubmissionTest {
     private final VideoShotPromptService promptWriter = mock(VideoShotPromptService.class);
     private final VideoGenerationRequestedPublisher publisher = mock(VideoGenerationRequestedPublisher.class);
     private final GenerationControlsService controls = mock(GenerationControlsService.class);
+    private final com.dalai.llama.videogen.service.render.RenderDurationPolicy durationPolicy =
+            mock(com.dalai.llama.videogen.service.render.RenderDurationPolicy.class);
 
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
@@ -75,7 +77,10 @@ class ReviewedPromptSubmissionTest {
                 mock(DialogueFitService.class), compression, foley, costs, mock(VideoGenDispatchService.class),
                 projectConfig, jobs, prompts, references, mock(VideoGenJobDialogueBeatRepository.class),
                 mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence, dubbing,
-                mock(BackgroundMusicMixService.class), promptWriter, publisher, controls, "bytedance/seedance-2.0/fast");
+                durationPolicy, new com.dalai.llama.videogen.service.render.ClipFinishing(dubbing,
+                        mock(BackgroundMusicMixService.class), jobs, mock(com.dalai.llama.videogen.service.postproduction.PostProductionClient.class)),
+                promptWriter, publisher, controls, "bytedance/seedance-2.0/fast");
+        when(durationPolicy.clamp(anyString(), any())).thenAnswer(call -> call.getArgument(1));
 
         when(projectConfig.getEffectiveFlags(tenant, project)).thenReturn(new FeatureFlags(FlagState.OFF, FlagState.OFF));
         when(controls.forProject(any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
@@ -197,7 +202,7 @@ class ReviewedPromptSubmissionTest {
 
     @Test
     void withDuplicateProtectionOffTheCreatorDecides() {
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false));
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
 
         approve(existingJob(JobStatus.COMPLETED));
 
@@ -206,7 +211,7 @@ class ReviewedPromptSubmissionTest {
 
     @Test
     void withAutoDubOffTheModelPerformsTheLineItself() {
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false));
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false, true, true));
         when(dubbing.canAutoDub(any())).thenReturn(true);
         ShotContextAssemblyService.AssembledShot assembled = shot();
         when(assembled.shotContext().dialogueBeats()).thenReturn(List.of(new com.dalai.llama.videogen.dto.shotcontext.DialogueBeat(

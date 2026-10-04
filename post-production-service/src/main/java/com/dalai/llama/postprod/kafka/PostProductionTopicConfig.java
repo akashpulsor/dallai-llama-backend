@@ -29,4 +29,9 @@ public class PostProductionTopicConfig {
 
         return new NewTopic(topic, 3, (short) 1);
     }
+
+    @Bean
+    public NewTopic conformRequestedTopic(@Value("${post-production.conform.requested-topic}") String topic) {
+        return new NewTopic(topic, 3, (short) 1);
+    }
 }

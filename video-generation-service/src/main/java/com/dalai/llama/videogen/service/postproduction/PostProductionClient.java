@@ -13,7 +13,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Asks post-production-service for the last frame of a shot's current clip.
+ * video-generation-service's calls to post-production-service: the last frame of a shot's current
+ * clip, and conforming a finished clip to its planned length.
  *
  * <p>Post-production, not this service, because it knows which cut of a shot the film actually
  * uses. It takes frames off the request thread: asking returns the frame at once when it is already
@@ -22,12 +23,12 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-public class PostProductionFrameClient {
+public class PostProductionClient {
 
     private final WebClient webClient;
     private final int timeoutMs;
 
-    public PostProductionFrameClient(
+    public PostProductionClient(
             WebClient.Builder webClientBuilder,
             @Value("${video-gen.post-production.base-url}") String baseUrl,
             @Value("${video-gen.post-production.timeout-ms}") int timeoutMs) {
@@ -73,6 +74,33 @@ public class PostProductionFrameClient {
                 .retrieve()
                 .bodyToMono(FrameRequest.class)
                 .block(Duration.ofMillis(timeoutMs)));
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ConformRequest(UUID requestId, String status) {
+    }
+
+    /** Queues a conform of the shot's newest clip to {@code targetSeconds}; returns the request id. */
+    public UUID requestConform(UUID tenantId, UUID projectId, UUID shotId, int targetSeconds, boolean interpolate) {
+        try {
+            ConformRequest answer = webClient.post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotId}/conform",
+                            tenantId, projectId, shotId)
+                    .bodyValue(java.util.Map.of("targetSeconds", targetSeconds, "interpolate", interpolate))
+                    .retrieve()
+                    .bodyToMono(ConformRequest.class)
+                    .block(Duration.ofMillis(timeoutMs));
+            if (answer == null || answer.requestId() == null) {
+                throw VideoGenException.upstream("post-production-service did not queue the conform");
+            }
+            return answer.requestId();
+        } catch (WebClientResponseException ex) {
+            throw VideoGenException.upstream("Could not queue the conform: " + ex.getStatusCode() + " " + ex.getResponseBodyAsString());
+        } catch (VideoGenException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            throw VideoGenException.upstream("Could not queue the conform: " + ex.getMessage());
+        }
     }
 
     private FrameRequest call(java.util.function.Supplier<FrameRequest> request) {

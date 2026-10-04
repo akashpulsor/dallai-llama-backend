@@ -51,6 +51,14 @@ public class VideoGenJob {
 
     /** Captured from {@code ShotContext.technical()} at generate() time so approve()'s later
      * dispatch call can actually forward them to the provider -- previously dropped entirely. */
+    /** The shot's planned length; durationSeconds is what was asked of the model. */
+    @Column(name = "planned_duration_seconds")
+    private Integer plannedDurationSeconds;
+
+    /** Post-production's request to conform this clip to plannedDurationSeconds, when one was made. */
+    @Column(name = "conform_request_id")
+    private UUID conformRequestId;
+
     @Column(name = "duration_seconds")
     private Integer durationSeconds;
 

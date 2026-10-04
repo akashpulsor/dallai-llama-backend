@@ -427,36 +427,59 @@ public class ShotClipVersionService {
                 throw new ClipProcessingException(
                         "That produced a file with no usable video in it -- the shot is unchanged");
             }
-            int nextVersion = repository.highestVersionNumber(context.shotId()) + 1;
-            String objectKey = objectStore.objectKeyFor(context.shotId(), nextVersion);
-            objectStore.upload(objectKey, output);
-
-            ShotClipVersion saved = repository.save(ShotClipVersion.builder()
-                    .versionId(UUID.randomUUID())
-                    .tenantId(context.tenantId())
-                    .projectId(context.projectId())
-                    .shotId(context.shotId())
-                    .shotRef(context.shotRef())
-                    .sourceJobId(source.jobId())
-                    .versionNumber(nextVersion)
-                    .origin(origin)
-                    // A preview, not the shot's clip. Accepting is a separate, deliberate step.
-                    .status(ClipVersionStatus.PREVIEW)
-                    .bucket(objectStore.bucket())
-                    .objectKey(objectKey)
-                    .durationSeconds(probe.durationSeconds())
-                    .width(probe.width())
-                    .height(probe.height())
-                    .hasAudio(probe.hasAudio())
-                    .createdBy(context.userId())
-                    .createdAt(OffsetDateTime.now())
-                    .build());
-            log.info("Made a cut shotId={} version={} origin={} seconds={}",
-                    context.shotId(), nextVersion, origin, probe.durationSeconds());
-            return saved;
+            // A preview, not the shot's clip. Accepting is a separate, deliberate step.
+            return addVersion(context, source.jobId(), origin, output, probe);
         } finally {
             ffmpeg.deleteQuietly(workDir);
         }
+    }
+
+    /**
+     * Stores a conform: the clip as generated, then the cut brought to the planned length, which
+     * becomes the shot's active cut. Both are kept, so the conform can be undone from the version
+     * list like any other cut. The ffmpeg work happened before this is called, so the lock below is
+     * held only for the row writes.
+     */
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
+    })
+    @Transactional
+    public ShotClipVersion storeConformed(Context context, UUID sourceJobId, Path generated, ClipProbe generatedProbe,
+                                          Path conformed, ClipProbe conformedProbe) {
+        repository.lockByShotId(context.shotId());
+        addVersion(context, sourceJobId, ClipOrigin.GENERATED, generated, generatedProbe);
+        ShotClipVersion cut = addVersion(context, sourceJobId, ClipOrigin.CONFORMED, conformed, conformedProbe);
+        return accept(context.tenantId(), context.shotId(), cut.getVersionId());
+    }
+
+    /** Uploads {@code file} as the shot's next version, a PREVIEW until accepted. Callers hold the shot lock. */
+    private ShotClipVersion addVersion(Context context, UUID sourceJobId, ClipOrigin origin, Path file, ClipProbe probe) {
+        int nextVersion = repository.highestVersionNumber(context.shotId()) + 1;
+        String objectKey = objectStore.objectKeyFor(context.shotId(), nextVersion);
+        objectStore.upload(objectKey, file);
+        ShotClipVersion saved = repository.save(ShotClipVersion.builder()
+                .versionId(UUID.randomUUID())
+                .tenantId(context.tenantId())
+                .projectId(context.projectId())
+                .shotId(context.shotId())
+                .shotRef(context.shotRef())
+                .sourceJobId(sourceJobId)
+                .versionNumber(nextVersion)
+                .origin(origin)
+                .status(ClipVersionStatus.PREVIEW)
+                .bucket(objectStore.bucket())
+                .objectKey(objectKey)
+                .durationSeconds(probe.durationSeconds())
+                .width(probe.width())
+                .height(probe.height())
+                .hasAudio(probe.hasAudio())
+                .createdBy(context.userId())
+                .createdAt(OffsetDateTime.now())
+                .build());
+        log.info("Made a cut shotId={} version={} origin={} seconds={}",
+                context.shotId(), nextVersion, origin, probe.durationSeconds());
+        return saved;
     }
 
     /**
@@ -510,13 +533,14 @@ public class ShotClipVersionService {
         }
     }
 
-    private ShotClipSource clipSource(Context context) {
+    /** The shot's newest generated clip, as video-generation-service reports it. */
+    public ShotClipSource clipSource(Context context) {
         return videoGenerationClient.getClipSource(context.tenantId(), context.projectId(), context.shotId());
     }
 
     /** Fetches a presigned URL to a file, and refuses anything too small to be media -- an expired
      * link returns a short error body that lands on disk as a real file that is not a video. */
-    private void fetch(String url, Path target) {
+    void fetch(String url, Path target) {
         try {
             HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
             connection.setConnectTimeout(30_000);

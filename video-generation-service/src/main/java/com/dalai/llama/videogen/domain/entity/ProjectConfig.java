@@ -74,6 +74,14 @@ public class ProjectConfig {
     @Column(name = "attach_previous_last_frame", nullable = false)
     private Boolean attachPreviousLastFrame = false;
 
+    @Builder.Default
+    @Column(name = "conform_to_planned_duration", nullable = false)
+    private Boolean conformToPlannedDuration = true;
+
+    @Builder.Default
+    @Column(name = "interpolate_when_slowing", nullable = false)
+    private Boolean interpolateWhenSlowing = true;
+
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 }

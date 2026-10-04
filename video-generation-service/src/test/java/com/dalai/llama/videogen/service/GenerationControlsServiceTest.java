@@ -42,9 +42,9 @@ class GenerationControlsServiceTest {
         when(repository.findById(project)).thenReturn(Optional.of(row));
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 
-        GenerationControlsView saved = service.update(tenant, project, new GenerationControlsView(true, false, false, false, true));
+        GenerationControlsView saved = service.update(tenant, project, new GenerationControlsView(true, false, false, false, true, true, true));
 
-        assertThat(saved).isEqualTo(new GenerationControlsView(true, false, false, false, true));
+        assertThat(saved).isEqualTo(new GenerationControlsView(true, false, false, false, true, true, true));
         assertThat(row.getPreferredVoiceCloneModel()).isEqualTo("fal-ai/minimax/voice-clone");
         assertThat(row.getAutoApprove()).isTrue();
     }

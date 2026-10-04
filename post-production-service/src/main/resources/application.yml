@@ -142,6 +142,11 @@ post-production:
   frame-extraction:
     requested-topic: ${POST_PROD_FRAME_EXTRACTION_REQUESTED_TOPIC:postprod.frame-extraction.requested}
     requested-consumer-group: ${POST_PROD_FRAME_EXTRACTION_REQUESTED_GROUP:post-production-service-frame-extraction}
+  # Slowing/interpolating/trimming a clip to its planned length (ShotConformConsumer). CPU work:
+  # one clip at a time per consumer.
+  conform:
+    requested-topic: ${POST_PROD_CONFORM_REQUESTED_TOPIC:postprod.conform.requested}
+    requested-consumer-group: ${POST_PROD_CONFORM_REQUESTED_GROUP:post-production-service-conform}
   # Joining the film and re-dubbing both run on this service's own Kafka worker side rather than
   # the request thread. The consumer group IS the concurrency control -- tune parallelism by
   # partition count, not by a thread pool nobody can see or change without a redeploy.

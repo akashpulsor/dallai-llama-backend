@@ -30,7 +30,7 @@ import com.dalai.llama.videogen.service.ShotGenerationOrchestrator;
 import com.dalai.llama.videogen.service.VideoAssetPersistenceService;
 import com.dalai.llama.videogen.service.VideoGenException;
 import com.dalai.llama.videogen.service.VideoShotPromptService;
-import com.dalai.llama.videogen.service.postproduction.PostProductionFrameClient;
+import com.dalai.llama.videogen.service.postproduction.PostProductionClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionViews;
 import com.dalai.llama.videogen.web.TenantContext;
@@ -78,7 +78,7 @@ public class ShotGenerationPlanService {
     private final VideoModelCapabilityService capabilityService;
     private final GenerationPlanLlm llm;
     private final ShotGenerationPlanStore store;
-    private final PostProductionFrameClient postProductionFrameClient;
+    private final PostProductionClient postProductionFrameClient;
     private final VideoAssetPersistenceService assetPersistenceService;
     private final ShotGenerationOrchestrator orchestrator;
     private final GenerationControlsService generationControls;
@@ -94,7 +94,7 @@ public class ShotGenerationPlanService {
             VideoModelCapabilityService capabilityService,
             GenerationPlanLlm llm,
             ShotGenerationPlanStore store,
-            PostProductionFrameClient postProductionFrameClient,
+            PostProductionClient postProductionFrameClient,
             VideoAssetPersistenceService assetPersistenceService,
             ShotGenerationOrchestrator orchestrator,
             GenerationControlsService generationControls,
@@ -428,7 +428,7 @@ public class ShotGenerationPlanService {
      * when it was already stored, otherwise the request to resolve later. */
     private ShotGenerationPlanStore.PlanState requestContinuation(UUID tenantId, UUID projectId,
                                                                  ShotGenerationPlanStore.PlanState state, UUID source) {
-        PostProductionFrameClient.FrameRequest request = postProductionFrameClient.requestLastFrame(tenantId, projectId, source);
+        PostProductionClient.FrameRequest request = postProductionFrameClient.requestLastFrame(tenantId, projectId, source);
         return store.update(state.plan().getPlanId(), plan -> {
             plan.setContinuationSourceShotId(source);
             applyFrameRequest(plan, request);
@@ -441,7 +441,7 @@ public class ShotGenerationPlanService {
         if (requestId == null) {
             return state;
         }
-        PostProductionFrameClient.FrameRequest request;
+        PostProductionClient.FrameRequest request;
         try {
             request = postProductionFrameClient.status(tenantId, requestId);
         } catch (VideoGenException ex) {
@@ -454,8 +454,8 @@ public class ShotGenerationPlanService {
         return store.update(state.plan().getPlanId(), plan -> applyFrameRequest(plan, request));
     }
 
-    private static void applyFrameRequest(ShotGenerationPlan plan, PostProductionFrameClient.FrameRequest request) {
-        PostProductionFrameClient.Frame frame = request.frame();
+    private static void applyFrameRequest(ShotGenerationPlan plan, PostProductionClient.FrameRequest request) {
+        PostProductionClient.Frame frame = request.frame();
         plan.setContinuationFrameBucket(frame == null ? null : frame.bucket());
         plan.setContinuationFrameObjectKey(frame == null ? null : frame.objectKey());
         plan.setContinuationFrameTimestampMs(frame == null ? null : frame.timestampMs());

@@ -120,21 +120,7 @@ public class FfmpegClipProcessor {
      */
     public void mix(Path clip, Path dubAudio, Path musicAudio, Integer targetSeconds, Path output) {
         List<String> cmd = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", clip.toString()));
-        List<String> audioLabels = new java.util.ArrayList<>();
-        int nextInput = 1;
-
-        if (dubAudio != null) {
-            cmd.addAll(List.of("-i", dubAudio.toString()));
-            audioLabels.add(nextInput++ + ":a");
-        }
-        if (musicAudio != null) {
-            cmd.addAll(List.of("-i", musicAudio.toString()));
-            audioLabels.add(nextInput++ + ":a");
-        }
-        if (audioLabels.isEmpty()) {
-            cmd.addAll(List.of("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"));
-            audioLabels.add(nextInput + ":a");
-        }
+        List<String> audioLabels = addAudioInputs(cmd, dubAudio, musicAudio);
 
         StringBuilder filter = new StringBuilder();
         String videoOut = "0:v";
@@ -155,25 +141,105 @@ public class FfmpegClipProcessor {
             videoOut = "v";
         }
 
-        String audioOut;
-        if (audioLabels.size() == 2) {
-            // Dub first, music second -- the order they were appended above.
-            filter.append("[").append(audioLabels.get(0)).append("]apad[dub];")
-                  .append("[").append(audioLabels.get(1)).append("]volume=0.25,apad[bed];")
-                  .append("[dub][bed]amix=inputs=2:duration=longest:dropout_transition=0[a]");
-            audioOut = "a";
-        } else {
-            double volume = musicAudio != null && dubAudio == null ? 0.6 : 1.0;
-            filter.append("[").append(audioLabels.get(0)).append("]volume=")
-                  .append(String.format(java.util.Locale.ROOT, "%.2f", volume)).append(",apad[a]");
-            audioOut = "a";
-        }
+        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio);
 
         cmd.addAll(List.of("-filter_complex", filter.toString(),
                 "-map", "[" + videoOut + "]", "-map", "[" + audioOut + "]",
                 "-c:v", targetSeconds != null ? "libx264" : "copy",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", output.toString()));
         run(cmd);
+    }
+
+    /**
+     * Brings a clip to {@code targetSeconds}: slowed down when it is shorter, trimmed when it is
+     * longer, with the dubbed line and the music bed laid on at normal speed.
+     *
+     * <p>Slowing is what makes a cheaper, shorter generation usable: a 3s render played over 6s.
+     * Played naively, the same frames are held twice as long and motion judders. With
+     * {@code interpolate}, ffmpeg's motion-compensated interpolation ({@code minterpolate}, mci with
+     * bidirectional motion estimation) synthesises the in-between frames, so the result plays at the
+     * clip's own frame rate with smooth motion. It is CPU work, which is why it only ever runs on the
+     * conform consumer, never on a request thread.
+     *
+     * <p>The picture's own audio is always dropped: speech slowed down is unusable, and the dub is
+     * the line at its real speed. With neither dub nor music the clip carries silence, because the
+     * film's concat needs an audio stream on every input.
+     *
+     * @param frameRate the rate to deliver at -- the clip's own, so the film's frame rate is unchanged
+     */
+    public void conform(Path clip, Path dubAudio, Path musicAudio, double targetSeconds, boolean interpolate,
+                        double frameRate, Path output) {
+        ClipProbe source = probe(clip);
+        if (source.durationSeconds() == null || source.durationSeconds().signum() <= 0) {
+            throw new ClipProcessingException("Could not measure the clip's length, so it cannot be conformed");
+        }
+        List<String> cmd = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", clip.toString()));
+        List<String> audioLabels = addAudioInputs(cmd, dubAudio, musicAudio);
+        StringBuilder filter = new StringBuilder("[0:v]")
+                .append(conformVideoFilter(source.durationSeconds().doubleValue(), targetSeconds, interpolate, frameRate))
+                .append("[v];");
+        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio);
+        cmd.addAll(List.of("-filter_complex", filter.toString(),
+                "-map", "[v]", "-map", "[" + audioOut + "]",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                "-t", String.format(Locale.ROOT, "%.3f", targetSeconds), output.toString()));
+        run(cmd);
+    }
+
+    /**
+     * The video half of {@link #conform}. Package-private and static so the choice of filter can be
+     * tested without running ffmpeg.
+     */
+    static String conformVideoFilter(double sourceSeconds, double targetSeconds, boolean interpolate, double frameRate) {
+        double rate = frameRate > 0 ? frameRate : 30;
+        String fps = String.format(Locale.ROOT, "%.3f", rate);
+        double factor = targetSeconds / sourceSeconds;
+        if (factor < 0.999) {
+            // Longer than planned (a model's minimum length, say): cut, never speed up -- sped-up
+            // performance reads as wrong in a way a trimmed tail does not.
+            return "trim=duration=" + String.format(Locale.ROOT, "%.3f", targetSeconds) + ",setpts=PTS-STARTPTS";
+        }
+        if (factor <= 1.001) {
+            return "fps=" + fps;
+        }
+        String slowed = "setpts=" + String.format(Locale.ROOT, "%.6f", factor) + "*PTS";
+        return interpolate
+                ? slowed + ",minterpolate=fps=" + fps + ":mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+                : slowed + ",fps=" + fps;
+    }
+
+    /** Adds the dub and music as inputs 1 and 2 (or a silent track when there is neither). */
+    private static List<String> addAudioInputs(List<String> cmd, Path dubAudio, Path musicAudio) {
+        List<String> audioLabels = new java.util.ArrayList<>();
+        int nextInput = 1;
+        if (dubAudio != null) {
+            cmd.addAll(List.of("-i", dubAudio.toString()));
+            audioLabels.add(nextInput++ + ":a");
+        }
+        if (musicAudio != null) {
+            cmd.addAll(List.of("-i", musicAudio.toString()));
+            audioLabels.add(nextInput++ + ":a");
+        }
+        if (audioLabels.isEmpty()) {
+            cmd.addAll(List.of("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"));
+            audioLabels.add(nextInput + ":a");
+        }
+        return audioLabels;
+    }
+
+    /** Dub over music (music ducked to 0.25 under a dub, 0.6 alone), padded so -shortest ends at the picture. */
+    private static String appendAudioMix(StringBuilder filter, List<String> audioLabels, Path dubAudio, Path musicAudio) {
+        if (audioLabels.size() == 2) {
+            // Dub first, music second -- the order addAudioInputs appended them.
+            filter.append("[").append(audioLabels.get(0)).append("]apad[dub];")
+                  .append("[").append(audioLabels.get(1)).append("]volume=0.25,apad[bed];")
+                  .append("[dub][bed]amix=inputs=2:duration=longest:dropout_transition=0[a]");
+        } else {
+            double volume = musicAudio != null && dubAudio == null ? 0.6 : 1.0;
+            filter.append("[").append(audioLabels.get(0)).append("]volume=")
+                  .append(String.format(java.util.Locale.ROOT, "%.2f", volume)).append(",apad[a]");
+        }
+        return "a";
     }
 
     /**

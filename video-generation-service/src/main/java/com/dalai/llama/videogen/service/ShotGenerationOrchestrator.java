@@ -30,7 +30,6 @@ import com.dalai.llama.videogen.repository.ShotPromptRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
 import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
-import com.dalai.llama.videogen.service.dialoguefit.DialogueFitMath;
 import com.dalai.llama.videogen.web.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,33 +47,6 @@ import java.util.UUID;
 @Service
 public class ShotGenerationOrchestrator {
 
-    /** A breath after the last word, so rounding does not clip it.
-     *
-     * <p>Read from the same property {@code DialogueFitReportService} reads. It was a constant here
-     * and a property there, which is two sources for one number: the report shown to the creator
-     * before generating would have computed the fit against 0.4s while a tuned deployment dispatched
-     * against something else, and the shot would come back a second longer than the page said. */
-    @Value("${video-gen.dialogue-fit.tail-seconds:0.4}")
-    private double dialogueTailSeconds;
-
-    /** How many seconds a shot may gain to hold its own line. Clips are billed by the second, so
-     * this is the difference between a tweak and a bill nobody agreed to: a 5s shot given the 13s
-     * its narration needs costs 2.6x and lengthens a running time the client signed off. Past this,
-     * rewriting the line is the remedy and the creator is asked. */
-    @Value("${video-gen.dialogue-fit.max-extension-seconds:2}")
-    private double maxExtensionSeconds;
-
-    /** The longest single clip the video model will produce. A shot cannot be stretched past this
-     * to fit its dialogue, however long the line is -- asking for more comes back clamped, which
-     * would cut the line anyway while looking like it had been handled. */
-    @Value("${video-gen.max-shot-duration-seconds:10}")
-    private int maxShotSeconds;
-
-    /** The shortest clip the model will produce. A shot is never trimmed below this to shed dead
-     * air -- asking for less comes back clamped, so it would not be the length we asked for. */
-    @Value("${video-gen.min-shot-duration-seconds:3}")
-    private int minShotSeconds;
-
     private final ModelRecommendationService modelRecommendationService;
     private final PromptBuilderService promptBuilderService;
     private final DialogueFitService dialogueFitService;
@@ -91,7 +63,8 @@ public class ShotGenerationOrchestrator {
     private final VideoAssetPersistenceService videoAssetPersistenceService;
     private final VideoGenJobPersistenceService jobPersistenceService;
     private final BeatDubbingService beatDubbingService;
-    private final BackgroundMusicMixService backgroundMusicMixService;
+    private final com.dalai.llama.videogen.service.render.RenderDurationPolicy durationPolicy;
+    private final com.dalai.llama.videogen.service.render.ClipFinishing clipFinishing;
     private final VideoShotPromptService videoShotPromptService;
     private final VideoGenerationRequestedPublisher generationRequestedPublisher;
     private final GenerationControlsService generationControls;
@@ -114,7 +87,8 @@ public class ShotGenerationOrchestrator {
             VideoAssetPersistenceService videoAssetPersistenceService,
             VideoGenJobPersistenceService jobPersistenceService,
             BeatDubbingService beatDubbingService,
-            BackgroundMusicMixService backgroundMusicMixService,
+            com.dalai.llama.videogen.service.render.RenderDurationPolicy durationPolicy,
+            com.dalai.llama.videogen.service.render.ClipFinishing clipFinishing,
             VideoShotPromptService videoShotPromptService,
             VideoGenerationRequestedPublisher generationRequestedPublisher,
             GenerationControlsService generationControls,
@@ -136,7 +110,8 @@ public class ShotGenerationOrchestrator {
         this.videoAssetPersistenceService = videoAssetPersistenceService;
         this.jobPersistenceService = jobPersistenceService;
         this.beatDubbingService = beatDubbingService;
-        this.backgroundMusicMixService = backgroundMusicMixService;
+        this.durationPolicy = durationPolicy;
+        this.clipFinishing = clipFinishing;
         this.videoShotPromptService = videoShotPromptService;
         this.generationRequestedPublisher = generationRequestedPublisher;
         this.generationControls = generationControls;
@@ -381,32 +356,15 @@ public class ShotGenerationOrchestrator {
     }
 
     /**
-     * A new job at PENDING_APPROVAL for one shot, with its dialogue beats snapshotted.
-     *
-     * <p>Two separate reasons to tell the model not to make audio, and they had been conflated.
-     * The first is that we are going to dub the shot ourselves, which is what this flag always
-     * meant. The second is that the shot has NOTHING TO SAY: no beats, no voice-over, no line. Left
-     * to itself the provider's default is to generate audio anyway, so a motion graphic with no
-     * dialogue planned came back with a voice inventing words over it -- speech nobody wrote, in a
-     * shot nobody intended to speak. Silence is the correct output there, and any sound that shot
-     * wants (a music bed, foley) is laid on afterwards from its own plan.
-     *
-     * <p>Beats are snapshotted whenever the shot has them, not only when auto-dub will run. They
-     * used to be saved only on the muted path because only the dub read them back -- but the
-     * approve-time check on whether the line fits the clip needs them on both paths, and a shot
-     * generating its own native audio can overrun its duration just as easily.
+     * A new job at PENDING_APPROVAL for one shot, with its dialogue beats snapshotted. The length
+     * asked of the model is always one it accepts; the planned length is kept beside it so the clip
+     * can be conformed afterwards. Whether the model makes its own audio is ClipFinishing's call.
      */
     private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, ShotContext shotContext,
                                   String modelId, Integer durationSeconds, Integer fps, CostEstimate estimate) {
-        // Auto-dub is a generation control: off, the model performs the line itself.
-        boolean willDub = generationControls.forProject(tenantContext.tenantId(), projectId).autoDubDialogue()
-                && beatDubbingService.canAutoDub(shotContext.dialogueBeats());
-        boolean hasSomethingToSay = (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty())
-                || (shotContext.narrative() != null && shotContext.narrative().dialogue() != null
-                        && !shotContext.narrative().dialogue().isBlank());
-        if (!willDub && !hasSomethingToSay) {
-            log.info("Shot has no dialogue planned -- generating it silent shotRef={}", shotContext.shotRef());
-        }
+        Integer planned = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
+        int seconds = durationPolicy.clamp(modelId, durationSeconds);
+        var controls = generationControls.forProject(tenantContext.tenantId(), projectId);
         VideoGenJob job = VideoGenJob.builder()
                 .jobId(UUID.randomUUID())
                 .tenantId(tenantContext.tenantId())
@@ -415,7 +373,8 @@ public class ShotGenerationOrchestrator {
                 .shotRef(shotContext.shotRef())
                 .providerId(resolveProviderId(modelId))
                 .modelId(modelId)
-                .durationSeconds(durationSeconds)
+                .durationSeconds(seconds)
+                .plannedDurationSeconds(planned)
                 .fps(fps)
                 .aspectRatio(shotContext.technical() != null && shotContext.technical().aspectRatio() != null
                         ? shotContext.technical().aspectRatio().wireValue() : null)
@@ -423,7 +382,7 @@ public class ShotGenerationOrchestrator {
                         ? shotContext.technical().resolution().wireValue() : null)
                 .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
                 .ttsModel(shotContext.technical() != null ? shotContext.technical().ttsModel() : null)
-                .muteAudio(willDub || !hasSomethingToSay)
+                .muteAudio(clipFinishing.muteAudio(shotContext, seconds, planned, controls))
                 .status(JobStatus.PENDING_APPROVAL)
                 .approvalStatus(ApprovalStatus.PENDING)
                 .estimatedCost(estimate.estimatedCost())
@@ -520,7 +479,7 @@ public class ShotGenerationOrchestrator {
 
     /** {@code fitChoice}: what to do if the shot's line does not fit the clip it was planned for --
      * give it the seconds it needs, or generate as planned and accept the line being hurried or cut.
-     * See {@link DialogueFitChoice} and {@link #durationCoveringDialogue}. */
+     * See {@link DialogueFitChoice} and RenderDurationPolicy. */
     /**
      * Accepts the cost and queues the render. Returns as soon as it is queued, not when it is done.
      *
@@ -541,19 +500,7 @@ public class ShotGenerationOrchestrator {
      */
     public VideoGenJobView approve(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
-        // "Prevent duplicate renders" is a generation control. On, a job already rendering or
-        // already finished is not queued again -- either would bill the provider a second time for a
-        // clip that exists or is about to. A FAILED, REJECTED, CANCELLED or TIMED_OUT job can always
-        // be tried again: there is no clip, so there is nothing to bill twice. Off, the creator
-        // approves whatever they choose.
-        if (generationControls.forProject(tenantContext.tenantId(), job.getProjectId()).preventDuplicateRenders()) {
-            if (job.getStatus() == JobStatus.COMPLETED) {
-                throw VideoGenException.conflict("This shot was already generated from this prompt. Generate it again from the video studio for a new take.");
-            }
-            if (job.getStatus().isInFlight()) {
-                throw VideoGenException.conflict("This shot is already being generated -- it will appear when it finishes");
-            }
-        }
+        refuseDuplicateRender(job);
         job = jobPersistenceService.markQueued(jobId);
         try {
             generationRequestedPublisher.publish(new VideoGenerationRequestedEvent(
@@ -577,101 +524,64 @@ public class ShotGenerationOrchestrator {
      * state invisible to the page polling for it. Each transition commits on its own.
      */
     public VideoGenJobView runGeneration(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
-        VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
-        // QUEUED becomes PROCESSING here, where the render genuinely begins -- which is also what
-        // starts the clock the stale-job reaper measures against.
-        job = jobPersistenceService.markProcessing(jobId);
-
-        ShotPrompt prompt = shotPromptRepository.findByJobIdOrderByCreatedAtDesc(jobId).stream()
-                .findFirst()
-                .orElseThrow(() -> VideoGenException.notFound("No shot_prompt for job_id=" + jobId));
-
+        requireJob(tenantContext.tenantId(), jobId);
+        VideoGenJob job = jobPersistenceService.markProcessing(jobId);
+        ShotPrompt prompt = latestPrompt(jobId);
         try {
-            String positive = prompt.getCompressionApplied() ? prompt.getPromptCompressed() : prompt.getPromptOriginal();
-            List<String> referenceImageUrls = resolveReferenceImageUrls(prompt.getPromptId());
-            long seed = deriveSeed(job.getProjectId());
-            job.setSeedUsed(seed);
+            var controls = generationControls.forProject(job.getTenantId(), job.getProjectId());
+            List<DialogueBeat> beats = loadDialogueBeats(jobId);
+            job.setDurationSeconds(durationPolicy.secondsToRender(job.getModelId(), job.getDurationSeconds(), beats, fitChoice, controls));
+            job.setSeedUsed(deriveSeed(job.getProjectId()));
             videoGenJobRepository.save(job);
-            // Tagged alongside the flat list: same attachments, but each still saying what it is,
-            // so a provider builder can route the shot frame, the face crops, the product still
-            // and the audio to the right slots instead of taking a bare array in order.
-            List<VideoDispatchParams.TaggedReference> taggedReferences = resolveReferences(prompt.getPromptId()).stream()
-                    .map(ref -> new VideoDispatchParams.TaggedReference(
-                            ref.kind(), ref.url(), ref.slotIndex(), ref.audio()))
-                    .toList();
-            // The shot's planned duration is written before anyone knows how long the line takes
-            // to say, so a shot shorter than its own dialogue gets a performance that stops
-            // mid-sentence -- the model speaks what fits and ends. Settle that against the beats'
-            // own measured lengths before dispatching.
-            List<DialogueBeat> plannedBeats = loadDialogueBeats(job.getJobId());
-            com.dalai.llama.videogen.dto.generationplan.GenerationControlsView controls =
-                    generationControls.forProject(job.getTenantId(), job.getProjectId());
-            // "Fit duration to dialogue" is a generation control, off by default: when on, the clip
-            // is resized to its measured line and a line that cannot fit is refused; off, the clip
-            // is generated at exactly the duration that was chosen.
-            Integer effectiveDuration = controls.fitDurationToDialogue()
-                    ? durationCoveringDialogue(job, plannedBeats, fitChoice)
-                    : job.getDurationSeconds();
-            if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
-                job.setDurationSeconds(effectiveDuration);
-                videoGenJobRepository.save(job);
-            }
-            VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
-                    job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution(),
-                    taggedReferences);
-            DispatchResult result = videoGenDispatchService.dispatch(job, positive, prompt.getNegativePrompt(), params);
 
-            String outputUri = result.outputUri();
-            BigDecimal actualCost = result.actualCost();
-            if (job.isMuteAudio() && beatDubbingService.canAutoDub(plannedBeats)) {
-                // Auto-dub: mux a beat-matched cloned-voice track onto the silent video Seedance
-                // just returned -- see BeatDubbingService's class comment for why this is a
-                // best-effort bet, not a guarantee, and what the fallback is when it misses.
-                List<DialogueBeat> beats = plannedBeats;
-                boolean dubSucceeded;
-                try {
-                    BeatDubbingService.DubResult dub = beatDubbingService.dub(
-                            job.getTenantId().toString(), job.getJobId(), job.getProjectId(), beats, outputUri,
-                            job.getVoiceCloneModel(), job.getTtsModel(), job.getDurationSeconds(), job.getFps());
-                    outputUri = dub.finalVideoUrl();
-                    actualCost = actualCost.add(dub.cost());
-                    dubSucceeded = true;
-                } catch (RuntimeException dubEx) {
-                    // Silent video still exists and is still usable -- a failed auto-dub degrades
-                    // to "no dialogue audio" rather than failing the whole job. Post-production's
-                    // fallback path is for sync QUALITY, not for recovering a failed dub call.
-                    log.warn("Auto-dub failed jobId={} errorMessage={} -- keeping the silent video", jobId, dubEx.getMessage());
-                    dubSucceeded = false;
-                }
-                // Direct save, not through jobPersistenceService -- finishSuccess() below re-fetches
-                // the job fresh by id rather than reusing this instance, so dubSucceeded has to be
-                // committed before that call for it to still be there afterward.
-                job.setDubSucceeded(dubSucceeded);
-                videoGenJobRepository.save(job);
-            }
-
-            // Lay the shot's background music bed under whatever audio it now has. After the dub,
-            // deliberately: the bed goes under the dialogue, not the other way round. A shot with
-            // no bed comes back unchanged, and a failed mix keeps the unmixed video -- same
-            // best-effort contract as auto-dub above, since losing a finished render over a
-            // background track would be the wrong trade.
-            if (controls.mixBackgroundMusic()) {
-                outputUri = backgroundMusicMixService.mixIfPresent(
-                        job.getTenantId(), job.getJobId(), prompt.getPromptId(), prompt.getShotId(), outputUri);
-            }
-
-            // Copy the provider's own hosted result into our MinIO -- durable, and this is what
-            // GET /v1/jobs/{id}/video (the UI-facing endpoint) actually serves.
-            VideoAssetPersistenceService.PersistedAsset asset = videoAssetPersistenceService.persist(job.getJobId(), outputUri);
-            job = jobPersistenceService.finishSuccess(
-                    jobId,
+            DispatchResult result = videoGenDispatchService.dispatch(job, sentPrompt(prompt), prompt.getNegativePrompt(), dispatchParams(job, prompt));
+            var finished = clipFinishing.finish(job, prompt, beats, result, controls);
+            var asset = videoAssetPersistenceService.persist(jobId, finished.outputUri());
+            job = jobPersistenceService.finishSuccess(jobId,
                     result.llmGatewayJobId() == null ? null : result.llmGatewayJobId().toString(),
-                    outputUri, actualCost, asset.bucket(), asset.objectKey());
+                    finished.outputUri(), finished.cost(), asset.bucket(), asset.objectKey());
+            clipFinishing.requestConform(job, prompt, controls);
         } catch (RuntimeException ex) {
-            log.warn("Dispatch failed jobId={} errorMessage={}", jobId, ex.getMessage());
+            log.warn("Generation failed jobId={}: {}", jobId, ex.getMessage());
             job = jobPersistenceService.finishFailure(jobId, ex.getMessage());
         }
-        return toJobView(job);
+        return toJobView(requireJob(tenantContext.tenantId(), jobId));
+    }
+
+    /**
+     * The "prevent duplicate renders" control. A job rendering or already rendered is not queued
+     * again -- either would bill the same clip twice. A job with no clip (failed, rejected, cancelled,
+     * timed out) can always be tried again.
+     */
+    private void refuseDuplicateRender(VideoGenJob job) {
+        if (!generationControls.forProject(job.getTenantId(), job.getProjectId()).preventDuplicateRenders()) {
+            return;
+        }
+        if (job.getStatus() == JobStatus.COMPLETED || job.getStatus().isInFlight()) {
+            throw VideoGenException.conflict(job.getStatus() == JobStatus.COMPLETED
+                    ? "This shot was already generated from this prompt. Generate it again from the video studio for a new take."
+                    : "This shot is already being generated -- it will appear when it finishes");
+        }
+    }
+
+    private ShotPrompt latestPrompt(UUID jobId) {
+        return shotPromptRepository.findByJobIdOrderByCreatedAtDesc(jobId).stream().findFirst()
+                .orElseThrow(() -> VideoGenException.notFound("No shot_prompt for job_id=" + jobId));
+    }
+
+    /** The text the model receives: the compressed version only where compression ran. */
+    private static String sentPrompt(ShotPrompt prompt) {
+        return Boolean.TRUE.equals(prompt.getCompressionApplied()) ? prompt.getPromptCompressed() : prompt.getPromptOriginal();
+    }
+
+    /** The references go both as a flat ordered list and tagged by kind, so a provider can route the
+     * shot frame, faces and product to the right slots. */
+    private VideoDispatchParams dispatchParams(VideoGenJob job, ShotPrompt prompt) {
+        List<VideoDispatchParams.TaggedReference> tagged = resolveReferences(prompt.getPromptId()).stream()
+                .map(ref -> new VideoDispatchParams.TaggedReference(ref.kind(), ref.url(), ref.slotIndex(), ref.audio()))
+                .toList();
+        return new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(), job.isMuteAudio() ? Boolean.FALSE : null,
+                resolveReferenceImageUrls(prompt.getPromptId()), job.getSeedUsed(), job.getResolution(), tagged);
     }
 
     public VideoGenJobView reject(TenantContext tenantContext, UUID jobId, RejectRequest request) {
@@ -1072,139 +982,6 @@ public class ShotGenerationOrchestrator {
      * are included so the creator can hear the voice sample and the music bed that this prompt
      * pulled in, not just see the pictures. */
 
-    /**
-     * The duration this shot has to run for its dialogue to be heard in full.
-     *
-     * <p>Shot durations are planned in pre-production, before anyone knows how long the line
-     * actually takes to say, so the planned length and the spoken length routinely disagree. A shot
-     * shorter than its own dialogue produces a performance that stops mid-sentence, and nothing
-     * downstream can recover it: with native audio the speech is baked into the generated video, and
-     * with auto-dub the mux pins the track to the video's length and severs the rest.
-     *
-     * <p>Judged from the beats' own measured lengths -- what the synthesized take actually runs --
-     * falling back to the plan's guess for a beat that has not been synthesized yet. It used to be
-     * judged from the longest AUDIO REFERENCE attached to the prompt, which was the wrong number
-     * entirely: the only audio references a shot carries are the actor's uploaded voice SAMPLE and
-     * the background music bed. Neither is the dialogue. A thirty-second voice sample -- an
-     * ordinary thing for an actor to upload -- therefore demanded a thirty-second shot, was clamped
-     * to the ten-second cap, and logged that the dialogue was too long to generate, for a line that
-     * might have been two seconds long. Every shot in a project with a long sample got the same
-     * treatment.
-     *
-     * <p>Rounded up to a whole second because that is the unit providers accept, which is also a
-     * frame boundary at any integer frame rate -- see {@link DialogueFitMath} for why the comparison
-     * is made in frames rather than against a slack in seconds.
-     *
-     * <p>Never shortens a shot. A planned duration longer than the dialogue may be a deliberate
-     * choice about pacing -- a held beat, an action that needs the time -- and this is not the place
-     * to overrule it; the creator is shown the dead air before generating and decides. Returns the
-     * planned duration unchanged when there are no beats or nothing could be judged: generating at
-     * the planned length is better than not generating.
-     */
-    private Integer durationCoveringDialogue(VideoGenJob job, List<DialogueBeat> beats,
-                                             DialogueFitChoice fitChoice) {
-        Integer plannedSeconds = job.getDurationSeconds();
-        if (beats == null || beats.isEmpty()) {
-            return plannedSeconds;
-        }
-        List<DialogueFitMath.BeatSpan> spans = new ArrayList<>();
-        for (int i = 0; i < beats.size(); i++) {
-            DialogueBeat beat = beats.get(i);
-            BigDecimal spoken = beat.effectiveSeconds();
-            if (spoken == null || spoken.signum() <= 0) {
-                continue;
-            }
-            spans.add(new DialogueFitMath.BeatSpan(i,
-                    beat.startSeconds() == null ? 0 : beat.startSeconds().doubleValue(),
-                    spoken.doubleValue(),
-                    beat.measuredSeconds() != null && beat.measuredSeconds().signum() > 0));
-        }
-        if (spans.isEmpty()) {
-            return plannedSeconds;
-        }
-
-        DialogueFitMath.Report fit = DialogueFitMath.evaluate(
-                plannedSeconds, job.getFps(), spans, dialogueTailSeconds, minShotSeconds, maxShotSeconds,
-                maxExtensionSeconds);
-
-        if (fit.hasOverlaps()) {
-            log.warn("Dialogue beats overlap jobId={} overlaps={} -- the later line starts before the"
-                            + " earlier one has finished speaking, so the delivery will run late against"
-                            + " the picture.",
-                    job.getJobId(), fit.overlaps());
-        }
-
-        boolean keepPlanned = fitChoice == DialogueFitChoice.KEEP_PLANNED;
-        switch (fit.verdict()) {
-            case NEEDS_REWRITE -> {
-                // The line fits in a clip this model can make, but not in one this shot is allowed
-                // to grow into. Extending anyway would quietly bill for seconds nobody agreed to --
-                // which is the objection to "just make it longer" and the reason this stops here.
-                String detail = ("Shot %s needs %.1fs to say its line but may only grow to %ds"
-                        + " (planned %ds). Rewrite the line to about %.1fs, or generate it as planned.")
-                        .formatted(job.getShotRef(), fit.requiredSeconds(), fit.allowedDurationSeconds(),
-                                plannedSeconds,
-                                fit.suggestedTargetAudioSeconds() == null ? 0 : fit.suggestedTargetAudioSeconds());
-                if (!keepPlanned) {
-                    throw VideoGenException.conflict(detail
-                            + " Approve with dialogueFit=KEEP_PLANNED to generate it as planned anyway.");
-                }
-                log.info("Generating at the planned length by choice jobId={} {}", job.getJobId(), detail);
-                return plannedSeconds;
-            }
-            case UNFITTABLE -> {
-                // Past what the model will generate, so no duration holds this line -- extending
-                // cannot deliver what it promises here. This used to generate at the cap anyway and
-                // log about it: a paid render with dialogue severed mid-word, which is the most
-                // expensive way to find out. Refuse unless the creator has read the numbers and asked
-                // to go ahead with the original.
-                String detail = ("Shot %s needs %.1fs to say its line but this model generates at most"
-                        + " %ds. Shorten the line to about %.1fs, or split it across shots.")
-                        .formatted(job.getShotRef(), fit.requiredSeconds(), maxShotSeconds,
-                                fit.suggestedTargetAudioSeconds() == null ? 0 : fit.suggestedTargetAudioSeconds());
-                if (!keepPlanned) {
-                    throw VideoGenException.conflict(detail
-                            + " Approve with dialogueFit=KEEP_PLANNED to generate it cut off anyway.");
-                }
-                log.warn("Generating a shot whose line will be cut off, as explicitly chosen jobId={} {}",
-                        job.getJobId(), detail);
-                return maxShotSeconds;
-            }
-            case AUDIO_LONGER -> {
-                // Within the allowance, so this is a couple of seconds to keep the whole line
-                // audible rather than a different shot. Cheap enough to be the default.
-                if (keepPlanned) {
-                    // The creator chose the shot as planned over the whole line. Their call -- but
-                    // said plainly in the log, because the result will have a hurried or clipped tail
-                    // and nobody should have to rediscover why.
-                    log.info("Generating shot at its planned length by choice jobId={} planned={}s"
-                                    + " dialogue needs {}s -- the line will be hurried or cut to fit.",
-                            job.getJobId(), plannedSeconds,
-                            String.format(java.util.Locale.ROOT, "%.2f", fit.requiredSeconds()));
-                    return plannedSeconds;
-                }
-                log.info("Extending shot to fit its dialogue jobId={} planned={}s dialogue={}s generating={}s measured={}",
-                        job.getJobId(), plannedSeconds,
-                        String.format(java.util.Locale.ROOT, "%.2f", fit.audioSpanSeconds()),
-                        fit.suggestedDurationSeconds(), fit.measured());
-                return fit.suggestedDurationSeconds();
-            }
-            case AUDIO_SHORTER -> {
-                // Always left as planned, whatever was chosen. Not a fault: every word is heard and
-                // the shot simply runs on afterwards, which is ordinary filmmaking and frequently the
-                // intent. Trimming is offered on the page as a way to spend less, never applied here.
-                log.info("Shot runs on after its line jobId={} planned={}s dialogue ends at {}s"
-                                + " ({} frames of silence) -- generating as planned.",
-                        job.getJobId(), plannedSeconds,
-                        String.format(java.util.Locale.ROOT, "%.2f", fit.audioSpanSeconds()), fit.slackFrames());
-                return plannedSeconds;
-            }
-            default -> {
-                return plannedSeconds;
-            }
-        }
-    }
-
     private List<PromptReferenceView> resolveReferences(UUID promptId) {
         return shotPromptReferenceRepository.findByPromptId(promptId).stream()
                 .sorted(java.util.Comparator.comparing(ShotPromptReference::getSlotIndex))
@@ -1339,7 +1116,10 @@ public class ShotGenerationOrchestrator {
                 job.getActualCost(),
                 job.isMuteAudio(),
                 job.getDubSucceeded(),
-                job.getLastError()
+                job.getLastError(),
+                job.getDurationSeconds(),
+                job.getPlannedDurationSeconds(),
+                job.getConformRequestId()
         );
     }
 }

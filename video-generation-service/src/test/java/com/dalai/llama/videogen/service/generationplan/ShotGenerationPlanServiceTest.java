@@ -24,7 +24,7 @@ import com.dalai.llama.videogen.service.ShotGenerationOrchestrator;
 import com.dalai.llama.videogen.service.VideoAssetPersistenceService;
 import com.dalai.llama.videogen.service.VideoGenException;
 import com.dalai.llama.videogen.service.VideoShotPromptService;
-import com.dalai.llama.videogen.service.postproduction.PostProductionFrameClient;
+import com.dalai.llama.videogen.service.postproduction.PostProductionClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionServiceClient;
 import com.dalai.llama.videogen.service.preproduction.PreProductionViews;
 import com.dalai.llama.videogen.web.TenantContext;
@@ -69,7 +69,7 @@ class ShotGenerationPlanServiceTest {
     private final VideoModelCapabilityService capabilities = mock(VideoModelCapabilityService.class);
     private final GenerationPlanLlm llm = mock(GenerationPlanLlm.class);
     private final ShotGenerationPlanStore store = mock(ShotGenerationPlanStore.class);
-    private final PostProductionFrameClient postProduction = mock(PostProductionFrameClient.class);
+    private final PostProductionClient postProduction = mock(PostProductionClient.class);
     private final VideoAssetPersistenceService assets = mock(VideoAssetPersistenceService.class);
     private final ShotGenerationOrchestrator orchestrator = mock(ShotGenerationOrchestrator.class);
     private final GenerationControlsService controls = mock(GenerationControlsService.class);
@@ -137,7 +137,7 @@ class ShotGenerationPlanServiceTest {
     }
 
     private static VideoGenJobView jobView(String status) {
-        return new VideoGenJobView(UUID.randomUUID(), "shot-01-002", status, "APPROVED", null, null, null, false, null, null);
+        return new VideoGenJobView(UUID.randomUUID(), "shot-01-002", status, "APPROVED", null, null, null, false, null, null, 6, 6, null);
     }
 
     // ---------------------------------------------------------------- generate
@@ -301,9 +301,9 @@ class ShotGenerationPlanServiceTest {
 
     // ---------------------------------------------------------------- continuation
 
-    private static PostProductionFrameClient.FrameRequest ready(UUID shot) {
-        return new PostProductionFrameClient.FrameRequest(null, "COMPLETED", null,
-                List.of(new PostProductionFrameClient.Frame(shot, "postprod", "shot-frames/p/last.jpg", 143L, 4767L)));
+    private static PostProductionClient.FrameRequest ready(UUID shot) {
+        return new PostProductionClient.FrameRequest(null, "COMPLETED", null,
+                List.of(new PostProductionClient.Frame(shot, "postprod", "shot-frames/p/last.jpg", 143L, 4767L)));
     }
 
     @Test
@@ -326,7 +326,7 @@ class ShotGenerationPlanServiceTest {
         UUID previous = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
         when(postProduction.requestLastFrame(tenant, project, previous))
-                .thenReturn(new PostProductionFrameClient.FrameRequest(requestId, "QUEUED", null, List.of()));
+                .thenReturn(new PostProductionClient.FrameRequest(requestId, "QUEUED", null, List.of()));
 
         service.attachContinuationFrame(tenant, project, shotId, previous);
 
@@ -344,7 +344,7 @@ class ShotGenerationPlanServiceTest {
     void aPreviousShotWithNoVideoFailsTheFrameWithItsReason() {
         UUID previous = UUID.randomUUID();
         when(postProduction.requestLastFrame(tenant, project, previous))
-                .thenReturn(new PostProductionFrameClient.FrameRequest(UUID.randomUUID(), "FAILED", "This shot has no video yet", List.of()));
+                .thenReturn(new PostProductionClient.FrameRequest(UUID.randomUUID(), "FAILED", "This shot has no video yet", List.of()));
 
         service.attachContinuationFrame(tenant, project, shotId, previous);
 
@@ -356,7 +356,7 @@ class ShotGenerationPlanServiceTest {
     void generatingWhileTheChosenFrameIsStillBeingTakenWaitsRatherThanDroppingIt() {
         plan.setContinuationRequestId(UUID.randomUUID());
         when(postProduction.status(tenant, plan.getContinuationRequestId()))
-                .thenReturn(new PostProductionFrameClient.FrameRequest(plan.getContinuationRequestId(), "PROCESSING", null, List.of()));
+                .thenReturn(new PostProductionClient.FrameRequest(plan.getContinuationRequestId(), "PROCESSING", null, List.of()));
 
         assertThatThrownBy(() -> service.generate(context, project, shotId, "0-6s he stands."))
                 .hasMessageContaining("still being taken");
@@ -366,7 +366,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnTheFirstShotStillGeneratesWithoutAFrame() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true));
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
         PreProductionViews.PrepareBundleView bundle = bundle(shotId, UUID.randomUUID());
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
 
@@ -379,7 +379,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnAReadyFrameFromThePreviousShotIsSentWithTheRender() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true));
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
         UUID previous = UUID.randomUUID();
         PreProductionViews.PrepareBundleView bundle = bundle(previous, shotId);
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
@@ -396,7 +396,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withDuplicateProtectionSwitchedOffTheCreatorMayQueueAgain() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false));
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
         plan.setSubmittedJobId(UUID.randomUUID());
         when(orchestrator.getJob(tenant, plan.getSubmittedJobId())).thenReturn(jobView("PROCESSING"));
 

@@ -27,5 +27,7 @@ public enum ClipOrigin {
 
     /** A file the creator cut themselves and brought back. The escape hatch that stops any of this
      * being a dead end when no automatic cut is worth shipping. */
-    UPLOADED
+    UPLOADED,
+    /** Brought to the shot's planned length -- slowed (optionally interpolated) or trimmed. */
+    CONFORMED
 }

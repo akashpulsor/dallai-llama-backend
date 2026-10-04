@@ -48,6 +48,8 @@ public class GenerationControlsService {
         config.setMixBackgroundMusic(controls.mixBackgroundMusic());
         config.setPreventDuplicateRenders(controls.preventDuplicateRenders());
         config.setAttachPreviousLastFrame(controls.attachPreviousLastFrame());
+        config.setConformToPlannedDuration(controls.conformToPlannedDuration());
+        config.setInterpolateWhenSlowing(controls.interpolateWhenSlowing());
         config.setUpdatedAt(OffsetDateTime.now());
         return view(projectConfigRepository.save(config));
     }
@@ -58,6 +60,8 @@ public class GenerationControlsService {
                 !Boolean.FALSE.equals(config.getAutoDubDialogue()),
                 !Boolean.FALSE.equals(config.getMixBackgroundMusic()),
                 !Boolean.FALSE.equals(config.getPreventDuplicateRenders()),
-                Boolean.TRUE.equals(config.getAttachPreviousLastFrame()));
+                Boolean.TRUE.equals(config.getAttachPreviousLastFrame()),
+                !Boolean.FALSE.equals(config.getConformToPlannedDuration()),
+                !Boolean.FALSE.equals(config.getInterpolateWhenSlowing()));
     }
 }
