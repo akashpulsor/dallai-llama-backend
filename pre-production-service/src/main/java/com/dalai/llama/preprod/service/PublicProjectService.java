@@ -293,22 +293,22 @@ public class PublicProjectService {
         var film = postProductionFilmClient.getPublishedFilm(identity.tenantId(), identity.projectId());
         if (film.isPresent()) {
             return new PublicFinalVideoView(true, "COMPLETED", film.get().videoUrl(), true,
-                    film.get().completedAt(), aspectRatio);
+                    film.get().completedAt(), aspectRatio,
+                    FinalVideoDownload.url(project.clientLockedAt(), project.finalVideoDownloadUnlocked(), film.get().videoUrl()));
         }
 
         // Projects assembled before assembling moved. Their film still lives in
-        // video-generation-service and is gated by the creator's own flag on the project row, so
-        // that path is kept exactly as it was rather than breaking films already in front of
-        // clients.
+        // video-generation-service and is gated by the creator's own flag on the project row -- or,
+        // now, by the client having paid, which opens it the same way.
         var maybe = videoGenClient.getLatestFinalVideo(identity.tenantId(), identity.projectId());
         boolean published = project.finalVideoDownloadUnlocked();
         if (maybe.isEmpty()) {
-            return new PublicFinalVideoView(false, null, null, published, null, aspectRatio);
+            return new PublicFinalVideoView(false, null, null, published, null, aspectRatio, null);
         }
         VideoGenClient.LatestFinalVideoView view = maybe.get();
-        String url = published ? view.videoUrl() : null;
+        String url = FinalVideoDownload.url(project.clientLockedAt(), published, view.videoUrl());
         return new PublicFinalVideoView(
-                view.videoUrl() != null, view.status(), url, published, view.completedAt(), aspectRatio);
+                view.videoUrl() != null, view.status(), url, published, view.completedAt(), aspectRatio, url);
     }
 
     /** The shots the creator has chosen to show this client on their own, ahead of any film.
@@ -343,7 +343,10 @@ public class PublicProjectService {
             String videoUrl,
             boolean published,
             java.time.OffsetDateTime completedAt,
-            String aspectRatio
+            String aspectRatio,
+            /** Present once the client has paid (or the creator opened downloads); null while the
+             * film may only be watched. */
+            String downloadUrl
     ) {}
 
     @Transactional(readOnly = true)
