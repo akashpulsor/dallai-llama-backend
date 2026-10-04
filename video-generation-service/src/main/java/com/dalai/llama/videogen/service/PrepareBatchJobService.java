@@ -136,9 +136,19 @@ public class PrepareBatchJobService {
         prepareBatchJobRepository.save(job);
     }
 
+    /**
+     * The project's latest batch, as the page polls it. A live batch that stopped making progress
+     * is released here too, not only when the next batch is submitted: a batch whose event was
+     * lost sat PENDING for days, and the page polling it showed "Preparing…" the whole time
+     * because nothing ever asked it to submit again.
+     */
     public Optional<PrepareBatchJob> latestForProject(UUID tenantId, UUID projectId) {
-        return prepareBatchJobRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
+        Optional<PrepareBatchJob> latest = prepareBatchJobRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
                 .filter(job -> job.getTenantId().equals(tenantId));
+        latest.filter(job -> (job.getStatus() == PrepareBatchJobStatus.PENDING || job.getStatus() == PrepareBatchJobStatus.RUNNING)
+                        && isAbandoned(job))
+                .ifPresent(this::releaseAbandoned);
+        return latest;
     }
 
     private String flagName(ShotContextAssemblyService.PrepareShotOverrides overrides, boolean dialogue) {
