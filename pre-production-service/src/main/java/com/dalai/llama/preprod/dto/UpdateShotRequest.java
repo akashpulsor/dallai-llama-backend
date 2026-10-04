@@ -37,7 +37,9 @@ public record UpdateShotRequest(
         ShotSize cameraShotSize,
         String cameraAngle,
         String cameraMovement,
-        String cameraNote
+        String cameraNote,
+        /** Cast profile id of the character who reads this shot's line; an empty string clears it. */
+        String dubCastProfileId
 ) {
 
     /** Only the spoken line, every other field null so updateShot's PATCH semantics leave the
@@ -45,6 +47,6 @@ public record UpdateShotRequest(
      * not be said in the shot's duration and writes the result back. */
     public static UpdateShotRequest ofVoiceOver(String voiceOver) {
         return new UpdateShotRequest(null, null, null, voiceOver, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 }

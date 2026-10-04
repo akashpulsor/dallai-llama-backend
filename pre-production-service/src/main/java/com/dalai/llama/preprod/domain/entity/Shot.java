@@ -141,6 +141,10 @@ public class Shot {
     @Column(name = "dub_voice_id", length = 128)
     private String dubVoiceId;
 
+    /** The cast character who reads this shot's line, overriding the shot's own character. */
+    @Column(name = "dub_cast_profile_id")
+    private java.util.UUID dubCastProfileId;
+
     @Column(name = "text_overlay", columnDefinition = "text")
     private String textOverlay;
 

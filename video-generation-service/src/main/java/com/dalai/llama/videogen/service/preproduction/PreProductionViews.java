@@ -161,7 +161,9 @@ public final class PreProductionViews {
             String multiImageLabel,
             /** IDENTITY / MOTION_GRAPHIC / LIVE_ACTION / PRODUCT_HERO / GENERIC, inherited from
              * the scene. Wire-string, no shared enum. Null reads as GENERIC. */
-            String sceneType
+            String sceneType,
+            /** The cast character chosen to read this shot's line. Null: the shot's own character. */
+            UUID dubCastProfileId
     ) {
     }
 

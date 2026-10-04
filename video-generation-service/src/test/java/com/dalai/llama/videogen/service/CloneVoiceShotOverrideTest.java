@@ -75,6 +75,37 @@ class CloneVoiceShotOverrideTest {
     }
 
     @Test
+    void aCharacterChosenToReadTheShotIsHeardInTheirOwnClonedVoice() {
+        // Neha is in the picture; the creator chose Ravi to read the line over it.
+        UUID ravi = UUID.randomUUID();
+        CastProfileView raviProfile = mock(CastProfileView.class);
+        when(raviProfile.id()).thenReturn(ravi);
+        when(raviProfile.clonedVoiceId()).thenReturn("voice-ravi-clone");
+        when(raviProfile.clonedVoiceProviderId()).thenReturn("elevenlabs");
+        when(raviProfile.voiceIdentityType()).thenReturn("HUMAN");
+        ShotView shot = mock(ShotView.class);
+        when(shot.id()).thenReturn(shotId);
+        when(shot.shotRef()).thenReturn("shot-02-003");
+        when(shot.voiceOver()).thenReturn("Sab theek ho gaya.");
+        when(shot.primaryCharacterKey()).thenReturn("neha");
+        when(shot.dubCastProfileId()).thenReturn(ravi);
+        ShotBundleView shotBundle = new ShotBundleView(shot, List.of(), null, null, List.of(), null, null);
+        when(preprod.getPrepareBundle(tenant, project)).thenReturn(Optional.of(
+                new PrepareBundleView(null, null, null, List.of(), List.of(raviProfile), List.of(shotBundle))));
+        when(gateway.chat(anyString(), anyString(), any(LlmGatewayChatRequest.class)))
+                .thenReturn(new LlmGatewayChatResponse(UUID.randomUUID(), "tts-model", "data:audio/mpeg;base64,AAAA", null, 12L));
+        when(audio.save(any(), any(), any(), any(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn("https://media/take.mp3");
+
+        CloneVoiceService.CloneVoiceResult result = service.cloneVoice(tenant, project, shotId, "Sab theek ho gaya.");
+
+        assertThat(result.providerVoiceId()).isEqualTo("voice-ravi-clone");
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getValue().params()).containsEntry("voice_id", "voice-ravi-clone");
+    }
+
+    @Test
     void blankOverrideIsNotAnOverrideAndTheCastStillDecides() {
         // Whitespace is what a cleared input posts. It must hand the shot back to the cast, which
         // here has nobody -- so the usual refusal, not a TTS call against an empty voice id.

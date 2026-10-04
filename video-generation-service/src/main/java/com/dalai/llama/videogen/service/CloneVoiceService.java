@@ -163,6 +163,14 @@ public class CloneVoiceService {
         return results;
     }
 
+    /** The cast profile chosen to read a shot, when one was chosen and is still in the cast. */
+    private static PreProductionViews.CastProfileView chosenReader(PreProductionViews.PrepareBundleView bundle, UUID castProfileId) {
+        if (castProfileId == null || bundle.castProfiles() == null) {
+            return null;
+        }
+        return bundle.castProfiles().stream().filter(p -> castProfileId.equals(p.id())).findFirst().orElse(null);
+    }
+
     /** The project's own assigned voice -- the one the rest of the film is narrated in. Matches the
      * fallback {@code ShotContextAssemblyService} already applies when it assembles a beat, so the
      * dub and the generation agree about who is speaking. */
@@ -201,7 +209,15 @@ public class CloneVoiceService {
         // without appearing in the first: shot-01-010 has no primary character because nobody is in
         // it, which is a description of the picture and says nothing about the voice. Refusing to
         // dub it left a shot with a written line and no way to record it.
-        PreProductionViews.CastProfileView profile = named ? resolveCastProfile(bundle, characterKey) : null;
+        // A character chosen to read this shot outranks the shot's own: "who is in the picture" and
+        // "whose voice is heard" are different questions, and this is the creator answering the second.
+        PreProductionViews.CastProfileView profile = chosenReader(bundle, shot.dubCastProfileId());
+        if (profile != null) {
+            log.info("clone-voice using the character chosen for this shot projectId={} shotId={} castProfileId={}",
+                    projectId, shot.id(), profile.id());
+        } else if (named) {
+            profile = resolveCastProfile(bundle, characterKey);
+        }
 
         if (profile == null) {
             // Not every primary character is a person who speaks either. A motion graphic's primary

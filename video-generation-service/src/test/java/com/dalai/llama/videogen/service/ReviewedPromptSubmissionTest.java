@@ -83,7 +83,7 @@ class ReviewedPromptSubmissionTest {
         when(durationPolicy.clamp(anyString(), any())).thenAnswer(call -> call.getArgument(1));
 
         when(projectConfig.getEffectiveFlags(tenant, project)).thenReturn(new FeatureFlags(FlagState.OFF, FlagState.OFF));
-        when(controls.forProject(any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
+        when(controls.forShot(any(), any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
         when(promptBuilder.buildPrompt(any(), any(), anyString())).thenReturn(new BuiltPrompt("composed", "no blur"));
         when(costs.estimate(anyString(), anyString(), any())).thenReturn(new CostEstimate(new BigDecimal("40"), "INR"));
         when(foley.deriveCues(any(), any())).thenReturn(List.of());
@@ -202,7 +202,7 @@ class ReviewedPromptSubmissionTest {
 
     @Test
     void withDuplicateProtectionOffTheCreatorDecides() {
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
 
         approve(existingJob(JobStatus.COMPLETED));
 
@@ -211,7 +211,7 @@ class ReviewedPromptSubmissionTest {
 
     @Test
     void withAutoDubOffTheModelPerformsTheLineItself() {
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false, true, true));
         when(dubbing.canAutoDub(any())).thenReturn(true);
         ShotContextAssemblyService.AssembledShot assembled = shot();
         when(assembled.shotContext().dialogueBeats()).thenReturn(List.of(new com.dalai.llama.videogen.dto.shotcontext.DialogueBeat(

@@ -221,7 +221,7 @@ public class ShotGenerationOrchestrator {
                 compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId,
                 shotContext.technical() == null ? null : shotContext.technical().durationSeconds());
 
-        VideoGenJob job = createJob(tenantContext, projectId, shotContext, modelId,
+        VideoGenJob job = createJob(tenantContext, projectId, sources == null ? null : sources.shotId(), shotContext, modelId,
                 shotContext.technical() != null ? shotContext.technical().durationSeconds() : null,
                 shotContext.technical() != null ? shotContext.technical().fps() : null,
                 estimate);
@@ -321,7 +321,7 @@ public class ShotGenerationOrchestrator {
         CostEstimate estimate = costEstimationService.estimate(
                 submission.prompt(), modelId, submission.generationDurationSeconds());
 
-        VideoGenJob job = createJob(tenantContext, projectId, shotContext, modelId,
+        VideoGenJob job = createJob(tenantContext, projectId, sources == null ? null : sources.shotId(), shotContext, modelId,
                 submission.generationDurationSeconds(), submission.generationFps(), estimate);
 
         ShotPrompt prompt = ShotPrompt.builder()
@@ -360,11 +360,11 @@ public class ShotGenerationOrchestrator {
      * asked of the model is always one it accepts; the planned length is kept beside it so the clip
      * can be conformed afterwards. Whether the model makes its own audio is ClipFinishing's call.
      */
-    private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, ShotContext shotContext,
+    private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, UUID shotId, ShotContext shotContext,
                                   String modelId, Integer durationSeconds, Integer fps, CostEstimate estimate) {
         Integer planned = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
         int seconds = durationPolicy.clamp(modelId, durationSeconds);
-        var controls = generationControls.forProject(tenantContext.tenantId(), projectId);
+        var controls = generationControls.forShot(tenantContext.tenantId(), projectId, shotId);
         VideoGenJob job = VideoGenJob.builder()
                 .jobId(UUID.randomUUID())
                 .tenantId(tenantContext.tenantId())
@@ -528,7 +528,7 @@ public class ShotGenerationOrchestrator {
         VideoGenJob job = jobPersistenceService.markProcessing(jobId);
         ShotPrompt prompt = latestPrompt(jobId);
         try {
-            var controls = generationControls.forProject(job.getTenantId(), job.getProjectId());
+            var controls = generationControls.forShot(job.getTenantId(), job.getProjectId(), prompt.getShotId());
             List<DialogueBeat> beats = loadDialogueBeats(jobId);
             job.setDurationSeconds(durationPolicy.secondsToRender(job.getModelId(), job.getDurationSeconds(), beats, fitChoice, controls));
             job.setSeedUsed(deriveSeed(job.getProjectId()));
@@ -554,7 +554,7 @@ public class ShotGenerationOrchestrator {
      * timed out) can always be tried again.
      */
     private void refuseDuplicateRender(VideoGenJob job) {
-        if (!generationControls.forProject(job.getTenantId(), job.getProjectId()).preventDuplicateRenders()) {
+        if (!generationControls.forShot(job.getTenantId(), job.getProjectId(), shotIdForJob(job.getJobId())).preventDuplicateRenders()) {
             return;
         }
         if (job.getStatus() == JobStatus.COMPLETED || job.getStatus().isInFlight()) {

@@ -527,6 +527,17 @@ public class ShotListGenerationService {
         if (request.dubVoiceId() != null) {
             shot.setDubVoiceId(request.dubVoiceId().isBlank() ? null : request.dubVoiceId().trim());
         }
+        // Same PATCH rule: absent leaves it, blank clears it, a UUID sets it. Choosing a character
+        // and choosing a built-in voice are alternatives, so setting one clears the other.
+        if (request.dubCastProfileId() != null) {
+            UUID character = request.dubCastProfileId().isBlank() ? null : UUID.fromString(request.dubCastProfileId().trim());
+            shot.setDubCastProfileId(character);
+            if (character != null) {
+                shot.setDubVoiceId(null);
+            }
+        } else if (request.dubVoiceId() != null && !request.dubVoiceId().isBlank()) {
+            shot.setDubCastProfileId(null);
+        }
         if (request.emotion() != null) shot.setEmotion(request.emotion());
         if (request.textOverlay() != null) shot.setTextOverlay(request.textOverlay());
         if (request.soundDesign() != null) shot.setSoundDesign(request.soundDesign());
@@ -738,7 +749,8 @@ public class ShotListGenerationService {
                 shot.getCulturalReferences(), shot.getProductShotType(), shot.getShootDay(), shot.getShootBlock(),
                 shot.getDirectorNote(), CinematographyMapper.toView(shot), cast,
                 Boolean.TRUE.equals(shot.getNeedsMultiImage()), shot.getMultiImageLabel(),
-                shot.getSceneType() == null ? null : shot.getSceneType().name());
+                shot.getSceneType() == null ? null : shot.getSceneType().name(),
+                shot.getDubCastProfileId());
     }
 
     /** No one on screen but there's still a line to speak (voiceOver, no primaryCharacterKey) --

@@ -70,6 +70,8 @@ public record ShotView(
         /** Structural intent inherited from the parent scene (IDENTITY / MOTION_GRAPHIC /
          * LIVE_ACTION / PRODUCT_HERO / GENERIC). Wire-string so video-gen needs no shared enum;
          * null reads as GENERIC downstream. */
-        String sceneType
+        String sceneType,
+        /** The cast character chosen to read this shot's line. Null: the shot's own character. */
+        UUID dubCastProfileId
 ) {
 }

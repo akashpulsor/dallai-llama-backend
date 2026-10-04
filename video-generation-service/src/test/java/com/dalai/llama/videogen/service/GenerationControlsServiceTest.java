@@ -4,7 +4,10 @@ import com.dalai.llama.videogen.domain.FlagState;
 import com.dalai.llama.videogen.domain.entity.ProjectConfig;
 import com.dalai.llama.videogen.dto.FeatureFlags;
 import com.dalai.llama.videogen.dto.generationplan.GenerationControlsView;
+import com.dalai.llama.videogen.domain.entity.ShotGenerationControls;
+import com.dalai.llama.videogen.dto.generationplan.ShotGenerationControlsView;
 import com.dalai.llama.videogen.repository.ProjectConfigRepository;
+import com.dalai.llama.videogen.repository.ShotGenerationControlsRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -19,7 +22,9 @@ import static org.mockito.Mockito.when;
 class GenerationControlsServiceTest {
 
     private final ProjectConfigRepository repository = mock(ProjectConfigRepository.class);
-    private final GenerationControlsService service = new GenerationControlsService(repository);
+    private final ShotGenerationControlsRepository shotRepository = mock(ShotGenerationControlsRepository.class);
+    private final GenerationControlsService service = new GenerationControlsService(repository, shotRepository);
+    private final UUID shot = UUID.randomUUID();
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
 
@@ -63,5 +68,44 @@ class GenerationControlsServiceTest {
         assertThat(row.getDefaultCaptionsFlag()).isEqualTo(FlagState.ON);
         assertThat(row.getAttachPreviousLastFrame()).isTrue();
         assertThat(row.getPreferredVoiceCloneModel()).isEqualTo("fal-ai/minimax/voice-clone");
+    }
+
+    // ---------------------------------------------------------------- per shot
+
+    @Test
+    void aShotWithoutItsOwnSetFollowsTheProjectDefaults() {
+        when(shotRepository.findByShotIdAndTenantId(shot, tenant)).thenReturn(Optional.empty());
+        when(repository.findById(project)).thenReturn(Optional.of(ProjectConfig.builder().projectId(project).tenantId(tenant)
+                .mixBackgroundMusic(false).build()));
+
+        ShotGenerationControlsView view = service.shotView(tenant, project, shot);
+
+        assertThat(view.custom()).isFalse();
+        assertThat(view.controls().mixBackgroundMusic()).isFalse();
+    }
+
+    @Test
+    void aShotsOwnSetReplacesTheDefaultsForThatShotOnly() {
+        when(shotRepository.findByShotIdAndTenantId(shot, tenant)).thenReturn(Optional.of(ShotGenerationControls.builder()
+                .shotId(shot).tenantId(tenant).projectId(project).mixBackgroundMusic(true).conformToPlannedDuration(false).build()));
+        when(repository.findById(project)).thenReturn(Optional.empty());
+
+        assertThat(service.forShot(tenant, project, shot).conformToPlannedDuration()).isFalse();
+        assertThat(service.shotView(tenant, project, shot).custom()).isTrue();
+        // Another shot in the same project still gets the defaults.
+        assertThat(service.forShot(tenant, project, UUID.randomUUID())).isEqualTo(GenerationControlsView.DEFAULTS);
+    }
+
+    @Test
+    void resettingAShotDropsItsSetAndHandsItBackToTheDefaults() {
+        ShotGenerationControls own = ShotGenerationControls.builder().shotId(shot).tenantId(tenant).projectId(project).build();
+        when(shotRepository.findByShotIdAndTenantId(shot, tenant)).thenReturn(Optional.of(own));
+        when(repository.findById(project)).thenReturn(Optional.empty());
+
+        ShotGenerationControlsView view = service.resetShot(tenant, project, shot);
+
+        org.mockito.Mockito.verify(shotRepository).delete(own);
+        assertThat(view.custom()).isFalse();
+        assertThat(view.controls()).isEqualTo(GenerationControlsView.DEFAULTS);
     }
 }

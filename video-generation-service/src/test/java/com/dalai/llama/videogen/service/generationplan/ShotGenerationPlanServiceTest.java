@@ -86,7 +86,7 @@ class ShotGenerationPlanServiceTest {
     void setUp() {
         service = new ShotGenerationPlanService(assembly, preProduction, promptBuilder, projectConfig, promptWriter,
                 new RequiredActionExtractor(), capabilities, llm, store, postProduction, assets, orchestrator, controls, MODEL);
-        when(controls.forProject(any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
+        when(controls.forShot(any(), any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
 
         ShotContext shot = mock(ShotContext.class);
         when(shot.shotRef()).thenReturn("shot-01-002");
@@ -366,7 +366,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnTheFirstShotStillGeneratesWithoutAFrame() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
         PreProductionViews.PrepareBundleView bundle = bundle(shotId, UUID.randomUUID());
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
 
@@ -379,7 +379,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnAReadyFrameFromThePreviousShotIsSentWithTheRender() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
         UUID previous = UUID.randomUUID();
         PreProductionViews.PrepareBundleView bundle = bundle(previous, shotId);
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
@@ -396,7 +396,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withDuplicateProtectionSwitchedOffTheCreatorMayQueueAgain() {
         orchestratorAccepts();
-        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
         plan.setSubmittedJobId(UUID.randomUUID());
         when(orchestrator.getJob(tenant, plan.getSubmittedJobId())).thenReturn(jobView("PROCESSING"));
 

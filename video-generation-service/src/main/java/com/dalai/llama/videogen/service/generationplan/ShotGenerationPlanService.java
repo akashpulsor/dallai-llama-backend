@@ -316,7 +316,7 @@ public class ShotGenerationPlanService {
     public PlanGenerationView generate(TenantContext tenant, UUID projectId, UUID shotId, String prompt) {
         UUID tenantId = tenant.tenantId();
         com.dalai.llama.videogen.dto.generationplan.GenerationControlsView controls =
-                generationControls.forProject(tenantId, projectId);
+                generationControls.forShot(tenantId, projectId, shotId);
         ShotGenerationPlanStore.PlanState state = resolvePendingContinuation(tenantId, ensureFromPlan(tenantId, projectId, shotId));
         if (controls.attachPreviousLastFrame()) {
             state = autoAttachContinuation(tenantId, projectId, shotId, state);
@@ -475,7 +475,7 @@ public class ShotGenerationPlanService {
                                                                     ShotGenerationPlanStore.PlanState state) {
         ShotGenerationPlan plan = state.plan();
         boolean untouched = plan.getContinuationSourceShotId() == null && plan.getContinuationError() == null;
-        if (!untouched || !generationControls.forProject(tenantId, projectId).attachPreviousLastFrame()) {
+        if (!untouched || !generationControls.forShot(tenantId, projectId, shotId).attachPreviousLastFrame()) {
             return state;
         }
         try {
