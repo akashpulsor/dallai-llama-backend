@@ -6,6 +6,7 @@ import com.dalai.llama.preprod.dto.music.MusicSection;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,7 +20,8 @@ class MasterMusicPromptComposerTest {
             "modern Indian cinematic", null, "warm and trustworthy", 90, "D major", "4/4",
             List.of("piano", "bansuri"), List.of("warm strings"), null,
             "rising three-note motif", "represents trust and resolution", null, null,
-            "minimal commercial film score", new GlobalMusicIdentity.EnergyRange(0.2, 0.7));
+            "minimal commercial film score", new GlobalMusicIdentity.EnergyRange(0.2, 0.7),
+            "Raag Yaman", "ascending Ni Re Ga, resolving to Sa", "Keherwa, 8 beats");
 
     private static MusicSection section(double start, double end, String mood, String transition, String dialogue) {
         return new MusicSection(start, end, "beat", mood, 0.4, 0.3, "sparse piano",
@@ -97,5 +99,39 @@ class MasterMusicPromptComposerTest {
                 section(9, 30, "confident", "Continue seamlessly", null)), 30);
 
         assertThat(prompt).contains("sections may change how it is treated, never replace it");
+    }
+
+    @Test
+    void buildsTheMelodyOnTheRagaAndItsTaal() {
+        assertThat(compose(List.of(section(0, 30, "warm", "Opening section", null)), 30))
+                .contains("Base the melody on Raag Yaman (ascending Ni Re Ga, resolving to Sa)")
+                .contains("over Keherwa, 8 beats");
+    }
+
+    @Test
+    void neverExceedsTheMusicModelsPromptLimitAndKeepsTheEnding() {
+        // A 60s film planned as many wordy sections composed to ~6,000 characters, which
+        // ElevenLabs refuses outright.
+        String wordy = "layered strings, tabla, santoor and bansuri weaving around the motif while the pads swell ".repeat(3);
+        List<MusicSection> sections = IntStream.range(0, 12)
+                .mapToObj(i -> new MusicSection(i * 5.0, i * 5.0 + 5, "beat", "mood " + i, 0.4, 0.3, wordy,
+                        List.of("piano"), wordy, wordy, "minimal", wordy, wordy, List.of()))
+                .toList();
+
+        String prompt = compose(sections, 60);
+
+        assertThat(prompt.length()).isLessThanOrEqualTo(MasterMusicPromptComposer.MAX_PROMPT_CHARS);
+        assertThat(prompt)
+                .contains("Base the melody on Raag Yaman")
+                .contains("55-60 seconds")
+                .endsWith("resolved ending exactly at 60 seconds.");
+        assertThat(prompt.split("Do not restart the music", -1)).hasSize(12);
+    }
+
+    @Test
+    void aPromptThatFitsIsLeftWhole() {
+        String prompt = compose(List.of(section(0, 30, "warm", "Opening section", "Sparse under the line")), 30);
+
+        assertThat(prompt).contains("neutral harmony").contains("Sparse under the line").doesNotContain("…");
     }
 }

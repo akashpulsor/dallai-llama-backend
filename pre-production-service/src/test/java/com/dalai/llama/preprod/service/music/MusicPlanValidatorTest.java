@@ -23,7 +23,7 @@ class MusicPlanValidatorTest {
             "modern Indian cinematic", null, "warm", 90, "D major", "4/4",
             List.of("piano", "bansuri"), List.of("warm strings"), null,
             "rising three-note melody", "trust and resolution", null, null, null,
-            new GlobalMusicIdentity.EnergyRange(0.2, 0.7));
+            new GlobalMusicIdentity.EnergyRange(0.2, 0.7), null, null, null);
 
     private static MusicSection section(double start, double end) {
         return new MusicSection(start, end, "beat", "mood", 0.4, 0.3, "arrangement",

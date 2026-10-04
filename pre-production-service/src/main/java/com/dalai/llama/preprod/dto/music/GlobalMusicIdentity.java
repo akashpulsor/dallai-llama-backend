@@ -30,7 +30,14 @@ public record GlobalMusicIdentity(
         String rhythmicCharacter,
         String culturalInfluence,
         String productionStyle,
-        EnergyRange overallEnergyRange
+        EnergyRange overallEnergyRange,
+        /** The raga the melody is built on (e.g. "Raag Yaman"), so the score has an inherent melody
+         * rather than a mood bed. Null on plans made before ragas were asked for. */
+        String raga,
+        /** The raga's characteristic phrase or aroha/avaroha the motif should come from. */
+        String ragaPhrase,
+        /** The rhythmic cycle (e.g. "Keherwa, 8 beats"). */
+        String taal
 ) {
     /** 0..1 at both ends. The floor and ceiling the arrangement moves between -- a section's own
      * energy is expected to sit inside this, which is what stops one beat blowing out the mix. */

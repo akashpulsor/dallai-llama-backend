@@ -15,6 +15,7 @@ import com.dalai.llama.preprod.repository.ScriptRepository;
 import com.dalai.llama.preprod.repository.ShotDialogueBeatRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
 import com.dalai.llama.preprod.service.PreProductionException;
+import com.dalai.llama.preprod.service.ProjectConfigService;
 import com.dalai.llama.preprod.service.generation.JsonExtraction;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayChatRequest.LlmGatewayMessage;
@@ -64,6 +65,7 @@ public class MusicDirectorPlannerService {
     private final ShotDialogueBeatRepository shotDialogueBeatRepository;
     private final LlmGatewayClient llmGatewayClient;
     private final ObjectMapper objectMapper;
+    private final ProjectConfigService projectConfigService;
     private final String planningModel;
 
     public MusicDirectorPlannerService(
@@ -75,6 +77,7 @@ public class MusicDirectorPlannerService {
             ShotDialogueBeatRepository shotDialogueBeatRepository,
             LlmGatewayClient llmGatewayClient,
             ObjectMapper objectMapper,
+            ProjectConfigService projectConfigService,
             @Value("${pre-production.llm-gateway.default-text-model}") String planningModel
     ) {
         this.musicPlanRepository = musicPlanRepository;
@@ -85,14 +88,17 @@ public class MusicDirectorPlannerService {
         this.shotDialogueBeatRepository = shotDialogueBeatRepository;
         this.llmGatewayClient = llmGatewayClient;
         this.objectMapper = objectMapper;
+        this.projectConfigService = projectConfigService;
         this.planningModel = planningModel;
     }
 
     /**
      * Builds (or rebuilds) the project's score plan.
      *
-     * <p>Total duration comes from the shot timeline, not from anything the model chooses -- the
-     * score has to fit the film that exists. The plan is validated as a timeline before being
+     * <p>Total duration is the film's target length, or the shot timeline when that is longer --
+     * never anything the model chooses. Shots planned shorter than the film are slowed to fill it
+     * (a 30s render conformed to 60s), so the timeline is stretched to the target and the score is
+     * composed for the film as it will play. The plan is validated as a timeline before being
      * stored, so a plan with a hole in it never reaches a paid generation.
      */
     @Transactional
@@ -108,7 +114,7 @@ public class MusicDirectorPlannerService {
         }
         List<ScreenplayScene> scenes = screenplaySceneRepository.findByScreenplayIdOrderBySceneNumberAsc(screenplay.getId());
 
-        Timeline timeline = buildTimeline(shots);
+        Timeline timeline = buildTimeline(shots).stretchedTo(targetSeconds(projectId));
         String context = describeForPlanner(script, scenes, timeline);
 
         LlmGatewayChatResponse response = llmGatewayClient.chat(
@@ -148,7 +154,7 @@ public class MusicDirectorPlannerService {
         MusicPlanRecord record = require(tenantId, projectId);
         MusicPlan plan = toPlan(record);
         double planned = record.getTotalDurationSeconds().doubleValue();
-        double current = currentTimelineSeconds(projectId);
+        double current = Math.max(currentTimelineSeconds(projectId), targetSeconds(projectId));
         // Same tolerance the validator uses: sub-frame drift is not a changed edit.
         boolean stale = Math.abs(current - planned) > 0.05;
         return new MusicPlanView(plan, stale, current);
@@ -159,8 +165,13 @@ public class MusicDirectorPlannerService {
         return toPlan(require(tenantId, projectId));
     }
 
-    /** The film's length as the shots currently stand -- the number a fresh plan would be built
-     * against. */
+    /** The length the film is meant to be, 0 when none was set. */
+    private double targetSeconds(UUID projectId) {
+        var config = projectConfigService.getEntityOrDefault(projectId);
+        return config == null || config.getTargetDurationSeconds() == null ? 0 : config.getTargetDurationSeconds();
+    }
+
+    /** The film's length as the shots currently stand. */
     private double currentTimelineSeconds(UUID projectId) {
         return shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
                 .mapToDouble(shot -> shot.getDurationSeconds() == null ? 0 : shot.getDurationSeconds())
@@ -188,6 +199,10 @@ public class MusicDirectorPlannerService {
     public MusicPlan updateMasterPrompt(UUID tenantId, UUID projectId, String masterPrompt) {
         if (masterPrompt == null || masterPrompt.isBlank()) {
             throw PreProductionException.badRequest("Master music prompt cannot be empty");
+        }
+        if (masterPrompt.trim().length() > MasterMusicPromptComposer.MAX_PROMPT_CHARS) {
+            throw PreProductionException.badRequest("The music prompt is " + masterPrompt.trim().length()
+                    + " characters; the music model takes at most " + MasterMusicPromptComposer.MAX_PROMPT_CHARS + ".");
         }
         MusicPlanRecord record = require(tenantId, projectId);
         record.setMasterPrompt(masterPrompt.trim());
@@ -303,7 +318,21 @@ public class MusicDirectorPlannerService {
         return out.toString();
     }
 
-    private record ShotWindow(Shot shot, double start, double end, boolean spoken) {}
+    record ShotWindow(Shot shot, double start, double end, boolean spoken) {}
 
-    private record Timeline(List<ShotWindow> windows, double totalSeconds) {}
+    record Timeline(List<ShotWindow> windows, double totalSeconds) {
+
+        /** The same shots spread evenly over a longer film: a shot planned at 0-5s of a 30s
+         * timeline sits at 0-10s of a 60s film. A target no longer than the timeline changes nothing. */
+        Timeline stretchedTo(double targetSeconds) {
+            if (targetSeconds <= totalSeconds) {
+                return this;
+            }
+            double factor = targetSeconds / totalSeconds;
+            List<ShotWindow> stretched = windows.stream()
+                    .map(w -> new ShotWindow(w.shot(), w.start() * factor, w.end() * factor, w.spoken()))
+                    .toList();
+            return new Timeline(stretched, targetSeconds);
+        }
+    }
 }
