@@ -32,14 +32,16 @@ public class DefaultProjectConfigService implements ProjectConfigService {
 
     @Override
     public ProjectConfig updateDefaults(UUID tenantId, UUID projectId, FeatureFlags defaultFlags, boolean autoApprove) {
-        ProjectConfig config = ProjectConfig.builder()
+        // Updates the row rather than replacing it: a fresh row would reset every column this call
+        // knows nothing about -- the voice-clone model and the generation controls among them.
+        ProjectConfig config = findForTenant(tenantId, projectId).orElseGet(() -> ProjectConfig.builder()
                 .projectId(projectId)
                 .tenantId(tenantId)
-                .defaultDialogueFlag(defaultFlags.dialogue())
-                .defaultCaptionsFlag(defaultFlags.captions())
-                .autoApprove(autoApprove)
-                .updatedAt(OffsetDateTime.now())
-                .build();
+                .build());
+        config.setDefaultDialogueFlag(defaultFlags.dialogue());
+        config.setDefaultCaptionsFlag(defaultFlags.captions());
+        config.setAutoApprove(autoApprove);
+        config.setUpdatedAt(OffsetDateTime.now());
         return projectConfigRepository.save(config);
     }
 

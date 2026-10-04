@@ -7,6 +7,7 @@ import com.dalai.llama.videogen.domain.entity.ShotPrompt;
 import com.dalai.llama.videogen.domain.entity.ShotPromptReference;
 import com.dalai.llama.videogen.domain.entity.VideoGenJob;
 import com.dalai.llama.videogen.dto.FeatureFlags;
+import com.dalai.llama.videogen.dto.generationplan.GenerationControlsView;
 import com.dalai.llama.videogen.dto.shotcontext.Character;
 import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
@@ -59,6 +60,7 @@ class ReviewedPromptSubmissionTest {
     private final BeatDubbingService dubbing = mock(BeatDubbingService.class);
     private final VideoShotPromptService promptWriter = mock(VideoShotPromptService.class);
     private final VideoGenerationRequestedPublisher publisher = mock(VideoGenerationRequestedPublisher.class);
+    private final GenerationControlsService controls = mock(GenerationControlsService.class);
 
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
@@ -73,9 +75,10 @@ class ReviewedPromptSubmissionTest {
                 mock(DialogueFitService.class), compression, foley, costs, mock(VideoGenDispatchService.class),
                 projectConfig, jobs, prompts, references, mock(VideoGenJobDialogueBeatRepository.class),
                 mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence, dubbing,
-                mock(BackgroundMusicMixService.class), promptWriter, publisher, "bytedance/seedance-2.0/fast");
+                mock(BackgroundMusicMixService.class), promptWriter, publisher, controls, "bytedance/seedance-2.0/fast");
 
         when(projectConfig.getEffectiveFlags(tenant, project)).thenReturn(new FeatureFlags(FlagState.OFF, FlagState.OFF));
+        when(controls.forProject(any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
         when(promptBuilder.buildPrompt(any(), any(), anyString())).thenReturn(new BuiltPrompt("composed", "no blur"));
         when(costs.estimate(anyString(), anyString(), any())).thenReturn(new CostEstimate(new BigDecimal("40"), "INR"));
         when(foley.deriveCues(any(), any())).thenReturn(List.of());
@@ -160,5 +163,59 @@ class ReviewedPromptSubmissionTest {
         verify(references).saveAll(saved.capture());
         assertThat(saved.getValue()).extracting(ShotPromptReference::getRefKind)
                 .containsExactly(ReferenceKind.STORYBOARD, ReferenceKind.CHARACTER_FACE);
+    }
+
+    // ---------------------------------------------------------------- generation controls
+
+    private VideoGenJob existingJob(JobStatus status) {
+        VideoGenJob job = VideoGenJob.builder().jobId(UUID.randomUUID()).tenantId(tenant).projectId(project)
+                .shotRef("shot-02-001").status(status)
+                .approvalStatus(com.dalai.llama.videogen.domain.ApprovalStatus.PENDING).build();
+        savedJob.set(job);
+        return job;
+    }
+
+    private void approve(VideoGenJob job) {
+        orchestrator.approve(new TenantContext(tenant, UUID.randomUUID()), job.getJobId(), DialogueFitChoice.KEEP_PLANNED);
+    }
+
+    @Test
+    void withDuplicateProtectionOnAFinishedOrRenderingShotIsNotQueuedAgain() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> approve(existingJob(JobStatus.COMPLETED)))
+                .hasMessageContaining("already generated");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> approve(existingJob(JobStatus.PROCESSING)))
+                .hasMessageContaining("already being generated");
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void aFailedRenderCanAlwaysBeTriedAgain() {
+        approve(existingJob(JobStatus.FAILED));
+
+        verify(publisher).publish(any());
+    }
+
+    @Test
+    void withDuplicateProtectionOffTheCreatorDecides() {
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false));
+
+        approve(existingJob(JobStatus.COMPLETED));
+
+        verify(publisher).publish(any());
+    }
+
+    @Test
+    void withAutoDubOffTheModelPerformsTheLineItself() {
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false));
+        when(dubbing.canAutoDub(any())).thenReturn(true);
+        ShotContextAssemblyService.AssembledShot assembled = shot();
+        when(assembled.shotContext().dialogueBeats()).thenReturn(List.of(new com.dalai.llama.videogen.dto.shotcontext.DialogueBeat(
+                BigDecimal.ZERO, BigDecimal.ONE, "Ho gaya.", "ravi", null, "voice-1", "elevenlabs", null, null, "hi")));
+
+        orchestrator.submitReviewedPrompt(new TenantContext(tenant, UUID.randomUUID()), project, assembled,
+                new ShotGenerationOrchestrator.ReviewedSubmission("bytedance/seedance-2.0/fast", 6, 24, "0-6s.", null));
+
+        // Not muted: with auto-dub off there is no cloned voice coming, so the clip carries its own.
+        assertThat(savedJob.get().isMuteAudio()).isFalse();
     }
 }

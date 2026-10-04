@@ -22,6 +22,7 @@ import com.dalai.llama.videogen.dto.generationplan.VideoModelCapabilitiesView;
 import com.dalai.llama.videogen.dto.generationplan.VideoPromptDraftView;
 import com.dalai.llama.videogen.dto.shotcontext.ReferenceFrame;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
+import com.dalai.llama.videogen.service.GenerationControlsService;
 import com.dalai.llama.videogen.service.ProjectConfigService;
 import com.dalai.llama.videogen.service.PromptBuilderService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
@@ -80,6 +81,7 @@ public class ShotGenerationPlanService {
     private final PostProductionFrameClient postProductionFrameClient;
     private final VideoAssetPersistenceService assetPersistenceService;
     private final ShotGenerationOrchestrator orchestrator;
+    private final GenerationControlsService generationControls;
     private final String defaultModel;
 
     public ShotGenerationPlanService(
@@ -95,6 +97,7 @@ public class ShotGenerationPlanService {
             PostProductionFrameClient postProductionFrameClient,
             VideoAssetPersistenceService assetPersistenceService,
             ShotGenerationOrchestrator orchestrator,
+            GenerationControlsService generationControls,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel) {
         this.assemblyService = assemblyService;
         this.preProductionClient = preProductionClient;
@@ -108,6 +111,7 @@ public class ShotGenerationPlanService {
         this.postProductionFrameClient = postProductionFrameClient;
         this.assetPersistenceService = assetPersistenceService;
         this.orchestrator = orchestrator;
+        this.generationControls = generationControls;
         this.defaultModel = defaultModel;
     }
 
@@ -120,12 +124,19 @@ public class ShotGenerationPlanService {
      */
     public ShotGenerationPlanView get(UUID tenantId, UUID projectId, UUID shotId) {
         return store.find(tenantId, shotId)
-                .map(this::view)
+                .map(state -> view(resolvePendingContinuation(tenantId, state)))
                 .orElseGet(() -> {
                     ShotContext shot = assemble(tenantId, projectId, shotId).shotContext();
                     String model = modelFor(shot);
                     return unsavedView(projectId, shotId, shot, model, actionExtractor.extract(shot));
                 });
+    }
+
+    /** What this shot's video prompt is built from, item by item, as the model will receive it. */
+    public List<com.dalai.llama.videogen.dto.generationplan.PromptInputView> promptInputs(UUID tenantId, UUID projectId, UUID shotId) {
+        ShotContextAssemblyService.AssembledShot assembled = assemble(tenantId, projectId, shotId);
+        ShotGenerationPlan plan = store.find(tenantId, shotId).map(ShotGenerationPlanStore.PlanState::plan).orElse(null);
+        return PromptInputs.of(assembled, plan);
     }
 
     // ------------------------------------------------------------------ steps
@@ -148,7 +159,8 @@ public class ShotGenerationPlanService {
         GenerationPlanLlm.AssessmentAnswer answer = llm.assess(tenantId, projectId, variables);
 
         ShotGenerationPlanStore.PlanState state = ensure(tenantId, projectId, shotId, shot, model, actions);
-        return view(store.saveAssessment(state.plan().getPlanId(), shot.shotRef(), model, planned(shot), actions, answer));
+        state = store.saveAssessment(state.plan().getPlanId(), shot.shotRef(), model, planned(shot), actions, answer);
+        return view(autoAttachContinuation(tenantId, projectId, shotId, state));
     }
 
     /**
@@ -281,13 +293,7 @@ public class ShotGenerationPlanService {
             throw VideoGenException.badRequest("A shot cannot continue from its own last frame.");
         }
         ShotGenerationPlanStore.PlanState state = ensureFromPlan(tenantId, projectId, shotId);
-        PostProductionFrameClient.Frame frame = postProductionFrameClient.lastFrame(tenantId, projectId, source);
-        return view(store.update(state.plan().getPlanId(), plan -> {
-            plan.setContinuationSourceShotId(source);
-            plan.setContinuationFrameBucket(frame.bucket());
-            plan.setContinuationFrameObjectKey(frame.objectKey());
-            plan.setContinuationFrameTimestampMs(frame.timestampMs());
-        }));
+        return view(requestContinuation(tenantId, projectId, state, source));
     }
 
     public ShotGenerationPlanView detachContinuationFrame(UUID tenantId, UUID shotId) {
@@ -297,6 +303,8 @@ public class ShotGenerationPlanService {
             plan.setContinuationFrameBucket(null);
             plan.setContinuationFrameObjectKey(null);
             plan.setContinuationFrameTimestampMs(null);
+            plan.setContinuationRequestId(null);
+            plan.setContinuationError(null);
         }));
     }
 
@@ -307,9 +315,18 @@ public class ShotGenerationPlanService {
      */
     public PlanGenerationView generate(TenantContext tenant, UUID projectId, UUID shotId, String prompt) {
         UUID tenantId = tenant.tenantId();
-        ShotGenerationPlanStore.PlanState state = ensureFromPlan(tenantId, projectId, shotId);
+        com.dalai.llama.videogen.dto.generationplan.GenerationControlsView controls =
+                generationControls.forProject(tenantId, projectId);
+        ShotGenerationPlanStore.PlanState state = resolvePendingContinuation(tenantId, ensureFromPlan(tenantId, projectId, shotId));
+        if (controls.attachPreviousLastFrame()) {
+            state = autoAttachContinuation(tenantId, projectId, shotId, state);
+        }
         ShotGenerationPlan plan = state.plan();
-        if (plan.getSubmittedJobId() != null) {
+        if (plan.getContinuationRequestId() != null) {
+            // Asked for, and on its way: generating now would quietly drop a frame the creator chose.
+            throw VideoGenException.conflict("The previous shot's last frame is still being taken -- generate again in a few seconds.");
+        }
+        if (controls.preventDuplicateRenders() && plan.getSubmittedJobId() != null) {
             VideoGenJobView previous = orchestrator.getJob(tenantId, plan.getSubmittedJobId());
             if (JobStatus.valueOf(previous.status()).isInFlight()) {
                 throw VideoGenException.conflict("This shot is already being generated -- it will appear when it finishes.");
@@ -407,6 +424,68 @@ public class ShotGenerationPlanService {
         throw VideoGenException.notFound("No shot " + shotId + " in project " + projectId);
     }
 
+    /** Asks post-production for {@code source}'s last frame and records the answer -- the frame
+     * when it was already stored, otherwise the request to resolve later. */
+    private ShotGenerationPlanStore.PlanState requestContinuation(UUID tenantId, UUID projectId,
+                                                                 ShotGenerationPlanStore.PlanState state, UUID source) {
+        PostProductionFrameClient.FrameRequest request = postProductionFrameClient.requestLastFrame(tenantId, projectId, source);
+        return store.update(state.plan().getPlanId(), plan -> {
+            plan.setContinuationSourceShotId(source);
+            applyFrameRequest(plan, request);
+        });
+    }
+
+    /** A frame still being taken is checked once more; the plan records whatever has happened. */
+    private ShotGenerationPlanStore.PlanState resolvePendingContinuation(UUID tenantId, ShotGenerationPlanStore.PlanState state) {
+        UUID requestId = state.plan().getContinuationRequestId();
+        if (requestId == null) {
+            return state;
+        }
+        PostProductionFrameClient.FrameRequest request;
+        try {
+            request = postProductionFrameClient.status(tenantId, requestId);
+        } catch (VideoGenException ex) {
+            log.warn("Could not check the last-frame request requestId={}: {}", requestId, ex.getMessage());
+            return state;
+        }
+        if (!request.completed() && !request.failed()) {
+            return state;
+        }
+        return store.update(state.plan().getPlanId(), plan -> applyFrameRequest(plan, request));
+    }
+
+    private static void applyFrameRequest(ShotGenerationPlan plan, PostProductionFrameClient.FrameRequest request) {
+        PostProductionFrameClient.Frame frame = request.frame();
+        plan.setContinuationFrameBucket(frame == null ? null : frame.bucket());
+        plan.setContinuationFrameObjectKey(frame == null ? null : frame.objectKey());
+        plan.setContinuationFrameTimestampMs(frame == null ? null : frame.timestampMs());
+        boolean pending = frame == null && !request.failed();
+        plan.setContinuationRequestId(pending ? request.requestId() : null);
+        plan.setContinuationError(request.failed()
+                ? (request.error() == null ? "Post-production returned no frame for that shot." : request.error())
+                : null);
+    }
+
+    /**
+     * The "attach previous shot's last frame" generation control. Best effort by design: the first
+     * shot has nothing before it, and a previous shot with no video yet fails its request -- neither
+     * stops this shot being generated. A frame the creator already attached or removed is left alone.
+     */
+    private ShotGenerationPlanStore.PlanState autoAttachContinuation(UUID tenantId, UUID projectId, UUID shotId,
+                                                                    ShotGenerationPlanStore.PlanState state) {
+        ShotGenerationPlan plan = state.plan();
+        boolean untouched = plan.getContinuationSourceShotId() == null && plan.getContinuationError() == null;
+        if (!untouched || !generationControls.forProject(tenantId, projectId).attachPreviousLastFrame()) {
+            return state;
+        }
+        try {
+            return requestContinuation(tenantId, projectId, state, previousShotId(tenantId, projectId, shotId));
+        } catch (VideoGenException ex) {
+            log.info("Not attaching a previous last frame shotId={}: {}", shotId, ex.getMessage());
+            return state;
+        }
+    }
+
     static String actionsText(List<RequiredActionView> actions) {
         StringBuilder text = new StringBuilder();
         for (RequiredActionView action : actions) {
@@ -479,10 +558,7 @@ public class ShotGenerationPlanService {
                 i.getStartSeconds(), i.getEndSeconds(), i.getActionId(), i.getAction(), i.getSubjectState(),
                 i.getCameraBehavior(), Boolean.TRUE.equals(i.getHoldRequired()))).toList();
 
-        ContinuationFrameView continuation = plan.getContinuationFrameObjectKey() == null ? null
-                : new ContinuationFrameView(plan.getContinuationSourceShotId(), plan.getContinuationFrameObjectKey(),
-                        plan.getContinuationFrameTimestampMs(),
-                        assetPersistenceService.presignedUrl(plan.getContinuationFrameBucket(), plan.getContinuationFrameObjectKey()));
+        ContinuationFrameView continuation = continuationView(plan);
 
         return new ShotGenerationPlanView(
                 plan.getPlanId(), plan.getProjectId(), plan.getShotId(), plan.getShotRef(), plan.getModelId(),
@@ -496,6 +572,22 @@ public class ShotGenerationPlanService {
                         plan.getPromptComposedAt(), plan.getDraftSavedAt(),
                         promptBuilderService.maxPromptLengthFor(plan.getModelId())),
                 continuation, plan.getSubmittedJobId(), plan.getSubmittedAt());
+    }
+
+    private ContinuationFrameView continuationView(ShotGenerationPlan plan) {
+        if (plan.getContinuationFrameObjectKey() != null) {
+            return new ContinuationFrameView(plan.getContinuationSourceShotId(), "READY", plan.getContinuationFrameObjectKey(),
+                    plan.getContinuationFrameTimestampMs(),
+                    assetPersistenceService.presignedUrl(plan.getContinuationFrameBucket(), plan.getContinuationFrameObjectKey()),
+                    null);
+        }
+        if (plan.getContinuationRequestId() != null) {
+            return new ContinuationFrameView(plan.getContinuationSourceShotId(), "EXTRACTING", null, null, null, null);
+        }
+        if (plan.getContinuationError() != null) {
+            return new ContinuationFrameView(plan.getContinuationSourceShotId(), "FAILED", null, null, null, plan.getContinuationError());
+        }
+        return null;
     }
 
     private ShotGenerationPlanView unsavedView(UUID projectId, UUID shotId, ShotContext shot, String model,

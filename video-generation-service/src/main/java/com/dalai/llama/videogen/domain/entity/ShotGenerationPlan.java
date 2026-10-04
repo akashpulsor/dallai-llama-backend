@@ -122,6 +122,13 @@ public class ShotGenerationPlan {
     @Column(name = "continuation_frame_timestamp_ms")
     private Long continuationFrameTimestampMs;
 
+    /** Post-production's request for the frame, while it is still being taken. */
+    @Column(name = "continuation_request_id")
+    private UUID continuationRequestId;
+
+    @Column(name = "continuation_error", columnDefinition = "TEXT")
+    private String continuationError;
+
     @Column(name = "submitted_job_id")
     private UUID submittedJobId;
 

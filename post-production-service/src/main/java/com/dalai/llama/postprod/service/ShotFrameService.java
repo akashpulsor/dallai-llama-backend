@@ -1,10 +1,15 @@
 package com.dalai.llama.postprod.service;
 
 import com.dalai.llama.postprod.domain.FrameExtractionMode;
+import com.dalai.llama.postprod.domain.FrameExtractionStatus;
 import com.dalai.llama.postprod.domain.entity.ShotClipVersion;
 import com.dalai.llama.postprod.domain.entity.ShotFrame;
+import com.dalai.llama.postprod.domain.entity.ShotFrameExtraction;
+import com.dalai.llama.postprod.dto.FrameExtractionRequestedEvent;
 import com.dalai.llama.postprod.dto.ShotFrameExtractionResult;
 import com.dalai.llama.postprod.dto.ShotFrameView;
+import com.dalai.llama.postprod.kafka.FrameExtractionRequestedPublisher;
+import com.dalai.llama.postprod.repository.ShotFrameExtractionRepository;
 import com.dalai.llama.postprod.repository.ShotFrameRepository;
 import com.dalai.llama.postprod.service.clip.ClipObjectStore;
 import com.dalai.llama.postprod.service.clip.ClipProbe;
@@ -22,20 +27,24 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Frames taken from the cut a shot currently uses: its first or last frame, a sample, or all of
  * them.
  *
+ * <p>The work -- download the clip, run ffmpeg, upload every frame -- never runs on a request
+ * thread. {@link #request} records what was asked and queues it; FrameExtractionConsumer calls
+ * {@link #process}, one request at a time per consumer, so ten people asking at once queue instead
+ * of running ten downloads and ten ffmpeg processes in one pod; and the caller polls
+ * {@link #status}. The one exception costs nothing: a first or last frame already stored for the
+ * shot's current cut is answered straight from the database.
+ *
  * <p>The source is the shot's ACTIVE cut, not the clip as generated. A shot's clip is replaced
  * whenever a cut is accepted -- retimed, dubbed, uploaded -- and the next shot has to continue from
  * the frame the audience actually sees. A shot never cut has its generated clip imported as its
  * first version, the same way every other cutting operation starts.
- *
- * <p>Frames are stored per cut. Asking again for a cut already extracted in that mode returns the
- * stored frames without running ffmpeg, so taking the previous shot's last frame for several shots
- * costs one extraction.
  */
 @Slf4j
 @Service
@@ -46,33 +55,99 @@ public class ShotFrameService {
     private final FfmpegClipProcessor ffmpeg;
     private final ClipObjectStore objectStore;
     private final ShotFrameRepository frameRepository;
+    private final ShotFrameExtractionRepository extractionRepository;
+    private final FrameExtractionRequestedPublisher publisher;
     private final TransactionTemplate transactionTemplate;
 
     /** Every frame of a long clip is a lot of objects; past this, sample instead. */
     @Value("${post-production.frame-extraction.max-frames:900}")
     private int maxFrames;
 
-    public ShotFrameExtractionResult extract(UUID tenantId, UUID projectId, UUID shotId,
+    /**
+     * Asks for frames. Answers COMPLETED at once when a first or last frame is already stored for
+     * the shot's current cut; otherwise queues the work and answers QUEUED with a request id to poll.
+     */
+    public ShotFrameExtractionResult request(UUID tenantId, UUID projectId, UUID shotId,
                                              FrameExtractionMode mode, Integer sampleFps) {
         if (mode == FrameExtractionMode.SAMPLE && (sampleFps == null || sampleFps <= 0)) {
             throw PostProductionException.badRequest("SAMPLE needs sampleFps, the number of frames per second to take");
         }
-        ShotClipVersion cut = currentCut(tenantId, projectId, shotId);
-        List<ShotFrame> stored = frameRepository.findByTenantIdAndShotIdAndClipVersionIdAndModeOrderByTimestampMsAsc(
-                tenantId, shotId, cut.getVersionId(), mode);
-        // A sample may have been taken at another rate, so it is always taken again; every other
-        // mode is fixed by the cut.
-        if (!stored.isEmpty() && mode != FrameExtractionMode.SAMPLE) {
-            return result(shotId, cut, mode, stored);
+        // A sample may have been taken at another rate, so it is always taken again.
+        if (mode != FrameExtractionMode.SAMPLE) {
+            Optional<ShotClipVersion> cut = clipVersionService.active(shotId).filter(v -> tenantId.equals(v.getTenantId()));
+            if (cut.isPresent()) {
+                List<ShotFrame> stored = frameRepository.findByTenantIdAndShotIdAndClipVersionIdAndModeOrderByTimestampMsAsc(
+                        tenantId, shotId, cut.get().getVersionId(), mode);
+                if (!stored.isEmpty()) {
+                    return result(null, shotId, mode, FrameExtractionStatus.COMPLETED, cut.get().getVersionId(), null, stored);
+                }
+            }
         }
-        List<ShotFrame> frames = extractFromCut(tenantId, projectId, shotId, cut, mode, sampleFps);
-        transactionTemplate.executeWithoutResult(status -> {
-            frameRepository.deleteExtraction(shotId, cut.getVersionId(), mode);
-            frameRepository.saveAll(frames);
-        });
-        log.info("Extracted frames shotId={} clipVersionId={} mode={} count={}",
-                shotId, cut.getVersionId(), mode, frames.size());
-        return result(shotId, cut, mode, frames);
+        ShotFrameExtraction extraction = extractionRepository.save(ShotFrameExtraction.builder()
+                .requestId(UUID.randomUUID())
+                .tenantId(tenantId)
+                .projectId(projectId)
+                .shotId(shotId)
+                .mode(mode)
+                .sampleFps(sampleFps)
+                .status(FrameExtractionStatus.QUEUED)
+                .createdAt(OffsetDateTime.now())
+                .build());
+        try {
+            publisher.publish(new FrameExtractionRequestedEvent(extraction.getRequestId(), tenantId, shotId));
+        } catch (PostProductionException ex) {
+            finish(extraction, FrameExtractionStatus.FAILED, null, ex.getMessage());
+            throw ex;
+        }
+        return result(extraction.getRequestId(), shotId, mode, FrameExtractionStatus.QUEUED, null, null, List.of());
+    }
+
+    /** Where a request stands; its frames once it has completed. */
+    public ShotFrameExtractionResult status(UUID tenantId, UUID requestId) {
+        ShotFrameExtraction extraction = extractionRepository.findByRequestIdAndTenantId(requestId, tenantId)
+                .orElseThrow(() -> PostProductionException.notFound("No frame extraction " + requestId));
+        List<ShotFrame> frames = extraction.getStatus() == FrameExtractionStatus.COMPLETED && extraction.getClipVersionId() != null
+                ? frameRepository.findByTenantIdAndShotIdAndClipVersionIdAndModeOrderByTimestampMsAsc(
+                        tenantId, extraction.getShotId(), extraction.getClipVersionId(), extraction.getMode())
+                : List.of();
+        return result(extraction.getRequestId(), extraction.getShotId(), extraction.getMode(), extraction.getStatus(),
+                extraction.getClipVersionId(), extraction.getError(), frames);
+    }
+
+    /**
+     * Does the work for one request. Called by FrameExtractionConsumer, never on a request thread.
+     * A request already finished is a redelivery and is left alone. Failures are recorded on the
+     * request for the caller to read, not thrown: the frames are a derivative of a clip that is
+     * still there, and asking again is cheap.
+     */
+    public void process(UUID requestId) {
+        Optional<ShotFrameExtraction> found = extractionRepository.findById(requestId);
+        if (found.isEmpty()) {
+            log.warn("Dropping frame extraction for unknown requestId={}", requestId);
+            return;
+        }
+        ShotFrameExtraction extraction = found.get();
+        if (extraction.getStatus().isFinished()) {
+            log.info("Ignoring redelivered frame extraction requestId={} already {}", requestId, extraction.getStatus());
+            return;
+        }
+        extraction.setStatus(FrameExtractionStatus.PROCESSING);
+        extractionRepository.save(extraction);
+        try {
+            ShotClipVersion cut = currentCut(extraction.getTenantId(), extraction.getProjectId(), extraction.getShotId());
+            List<ShotFrame> frames = extractFromCut(extraction.getTenantId(), extraction.getProjectId(),
+                    extraction.getShotId(), cut, extraction.getMode(), extraction.getSampleFps());
+            transactionTemplate.executeWithoutResult(status -> {
+                frameRepository.deleteExtraction(extraction.getShotId(), cut.getVersionId(), extraction.getMode());
+                frameRepository.saveAll(frames);
+            });
+            finish(extraction, FrameExtractionStatus.COMPLETED, cut.getVersionId(), null);
+            log.info("Extracted frames requestId={} shotId={} clipVersionId={} mode={} count={}",
+                    requestId, extraction.getShotId(), cut.getVersionId(), extraction.getMode(), frames.size());
+        } catch (RuntimeException ex) {
+            log.warn("Frame extraction failed requestId={} shotId={}: {}", requestId, extraction.getShotId(), ex.getMessage());
+            finish(extraction, FrameExtractionStatus.FAILED, null, ex.getMessage());
+        }
     }
 
     /** Every frame stored for a shot, newest extraction first. */
@@ -80,6 +155,14 @@ public class ShotFrameService {
         return frameRepository.findByTenantIdAndShotIdOrderByCreatedAtDescTimestampMsAsc(tenantId, shotId).stream()
                 .map(this::view)
                 .toList();
+    }
+
+    private void finish(ShotFrameExtraction extraction, FrameExtractionStatus status, UUID clipVersionId, String error) {
+        extraction.setStatus(status);
+        extraction.setClipVersionId(clipVersionId);
+        extraction.setError(error);
+        extraction.setCompletedAt(OffsetDateTime.now());
+        extractionRepository.save(extraction);
     }
 
     private ShotClipVersion currentCut(UUID tenantId, UUID projectId, UUID shotId) {
@@ -172,9 +255,11 @@ public class ShotFrameService {
         return new long[]{lastFrame, Math.round(lastFrame * 1000.0 / nativeFps)};
     }
 
-    private ShotFrameExtractionResult result(UUID shotId, ShotClipVersion cut, FrameExtractionMode mode, List<ShotFrame> frames) {
-        return new ShotFrameExtractionResult(shotId, cut.getVersionId(), mode.name(), frames.size(),
-                frames.stream().map(this::view).toList());
+    private ShotFrameExtractionResult result(UUID requestId, UUID shotId, FrameExtractionMode mode,
+                                             FrameExtractionStatus status, UUID clipVersionId, String error,
+                                             List<ShotFrame> frames) {
+        return new ShotFrameExtractionResult(requestId, shotId, mode.name(), status.name(), clipVersionId, error,
+                frames.size(), frames.stream().map(this::view).toList());
     }
 
     private ShotFrameView view(ShotFrame frame) {

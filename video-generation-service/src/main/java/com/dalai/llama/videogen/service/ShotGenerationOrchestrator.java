@@ -94,6 +94,7 @@ public class ShotGenerationOrchestrator {
     private final BackgroundMusicMixService backgroundMusicMixService;
     private final VideoShotPromptService videoShotPromptService;
     private final VideoGenerationRequestedPublisher generationRequestedPublisher;
+    private final GenerationControlsService generationControls;
     private final String defaultModel;
 
     public ShotGenerationOrchestrator(
@@ -116,6 +117,7 @@ public class ShotGenerationOrchestrator {
             BackgroundMusicMixService backgroundMusicMixService,
             VideoShotPromptService videoShotPromptService,
             VideoGenerationRequestedPublisher generationRequestedPublisher,
+            GenerationControlsService generationControls,
             @Value("${video-gen.llm-gateway.default-video-model}") String defaultModel
     ) {
         this.modelRecommendationService = modelRecommendationService;
@@ -137,6 +139,7 @@ public class ShotGenerationOrchestrator {
         this.backgroundMusicMixService = backgroundMusicMixService;
         this.videoShotPromptService = videoShotPromptService;
         this.generationRequestedPublisher = generationRequestedPublisher;
+        this.generationControls = generationControls;
         this.defaultModel = defaultModel;
     }
 
@@ -395,7 +398,9 @@ public class ShotGenerationOrchestrator {
      */
     private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, ShotContext shotContext,
                                   String modelId, Integer durationSeconds, Integer fps, CostEstimate estimate) {
-        boolean willDub = beatDubbingService.canAutoDub(shotContext.dialogueBeats());
+        // Auto-dub is a generation control: off, the model performs the line itself.
+        boolean willDub = generationControls.forProject(tenantContext.tenantId(), projectId).autoDubDialogue()
+                && beatDubbingService.canAutoDub(shotContext.dialogueBeats());
         boolean hasSomethingToSay = (shotContext.dialogueBeats() != null && !shotContext.dialogueBeats().isEmpty())
                 || (shotContext.narrative() != null && shotContext.narrative().dialogue() != null
                         && !shotContext.narrative().dialogue().isBlank());
@@ -536,15 +541,19 @@ public class ShotGenerationOrchestrator {
      */
     public VideoGenJobView approve(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
-        //if (job.getStatus().isTerminal()) {
-        ///    throw VideoGenException.conflict("Cannot approve job_id=%s, already %s".formatted(jobId, job.getStatus()));
-        //}
-        //if (job.getStatus().isInFlight()) {
-            // Already queued or already rendering. Said plainly rather than queued twice -- the
-            // second render would bill the provider again for the same shot.
-       //     throw VideoGenException.conflict(
-         //           "This shot is already being generated -- it will appear when it finishes");
-        //}
+        // "Prevent duplicate renders" is a generation control. On, a job already rendering or
+        // already finished is not queued again -- either would bill the provider a second time for a
+        // clip that exists or is about to. A FAILED, REJECTED, CANCELLED or TIMED_OUT job can always
+        // be tried again: there is no clip, so there is nothing to bill twice. Off, the creator
+        // approves whatever they choose.
+        if (generationControls.forProject(tenantContext.tenantId(), job.getProjectId()).preventDuplicateRenders()) {
+            if (job.getStatus() == JobStatus.COMPLETED) {
+                throw VideoGenException.conflict("This shot was already generated from this prompt. Generate it again from the video studio for a new take.");
+            }
+            if (job.getStatus().isInFlight()) {
+                throw VideoGenException.conflict("This shot is already being generated -- it will appear when it finishes");
+            }
+        }
         job = jobPersistenceService.markQueued(jobId);
         try {
             generationRequestedPublisher.publish(new VideoGenerationRequestedEvent(
@@ -595,11 +604,18 @@ public class ShotGenerationOrchestrator {
             // mid-sentence -- the model speaks what fits and ends. Settle that against the beats'
             // own measured lengths before dispatching.
             List<DialogueBeat> plannedBeats = loadDialogueBeats(job.getJobId());
-            //Integer effectiveDuration = durationCoveringDialogue(job, plannedBeats, fitChoice);
-            //if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
-            //    job.setDurationSeconds(effectiveDuration);
-            //    videoGenJobRepository.save(job);
-            //}
+            com.dalai.llama.videogen.dto.generationplan.GenerationControlsView controls =
+                    generationControls.forProject(job.getTenantId(), job.getProjectId());
+            // "Fit duration to dialogue" is a generation control, off by default: when on, the clip
+            // is resized to its measured line and a line that cannot fit is refused; off, the clip
+            // is generated at exactly the duration that was chosen.
+            Integer effectiveDuration = controls.fitDurationToDialogue()
+                    ? durationCoveringDialogue(job, plannedBeats, fitChoice)
+                    : job.getDurationSeconds();
+            if (!java.util.Objects.equals(effectiveDuration, job.getDurationSeconds())) {
+                job.setDurationSeconds(effectiveDuration);
+                videoGenJobRepository.save(job);
+            }
             VideoDispatchParams params = new VideoDispatchParams(job.getDurationSeconds(), job.getAspectRatio(),
                     job.isMuteAudio() ? Boolean.FALSE : null, referenceImageUrls, seed, job.getResolution(),
                     taggedReferences);
@@ -639,8 +655,10 @@ public class ShotGenerationOrchestrator {
             // no bed comes back unchanged, and a failed mix keeps the unmixed video -- same
             // best-effort contract as auto-dub above, since losing a finished render over a
             // background track would be the wrong trade.
-            outputUri = backgroundMusicMixService.mixIfPresent(
-                    job.getTenantId(), job.getJobId(), prompt.getPromptId(), prompt.getShotId(), outputUri);
+            if (controls.mixBackgroundMusic()) {
+                outputUri = backgroundMusicMixService.mixIfPresent(
+                        job.getTenantId(), job.getJobId(), prompt.getPromptId(), prompt.getShotId(), outputUri);
+            }
 
             // Copy the provider's own hosted result into our MinIO -- durable, and this is what
             // GET /v1/jobs/{id}/video (the UI-facing endpoint) actually serves.

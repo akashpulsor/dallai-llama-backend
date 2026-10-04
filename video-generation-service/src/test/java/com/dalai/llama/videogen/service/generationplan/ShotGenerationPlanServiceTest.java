@@ -14,7 +14,9 @@ import com.dalai.llama.videogen.dto.generationplan.PromptValidationView;
 import com.dalai.llama.videogen.dto.generationplan.VideoModelCapabilitiesView;
 import com.dalai.llama.videogen.dto.shotcontext.Narrative;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
+import com.dalai.llama.videogen.dto.generationplan.GenerationControlsView;
 import com.dalai.llama.videogen.service.BuiltPrompt;
+import com.dalai.llama.videogen.service.GenerationControlsService;
 import com.dalai.llama.videogen.service.ProjectConfigService;
 import com.dalai.llama.videogen.service.PromptBuilderService;
 import com.dalai.llama.videogen.service.ShotContextAssemblyService;
@@ -70,6 +72,7 @@ class ShotGenerationPlanServiceTest {
     private final PostProductionFrameClient postProduction = mock(PostProductionFrameClient.class);
     private final VideoAssetPersistenceService assets = mock(VideoAssetPersistenceService.class);
     private final ShotGenerationOrchestrator orchestrator = mock(ShotGenerationOrchestrator.class);
+    private final GenerationControlsService controls = mock(GenerationControlsService.class);
 
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
@@ -82,7 +85,8 @@ class ShotGenerationPlanServiceTest {
     @BeforeEach
     void setUp() {
         service = new ShotGenerationPlanService(assembly, preProduction, promptBuilder, projectConfig, promptWriter,
-                new RequiredActionExtractor(), capabilities, llm, store, postProduction, assets, orchestrator, MODEL);
+                new RequiredActionExtractor(), capabilities, llm, store, postProduction, assets, orchestrator, controls, MODEL);
+        when(controls.forProject(any(), any())).thenReturn(GenerationControlsView.DEFAULTS);
 
         ShotContext shot = mock(ShotContext.class);
         when(shot.shotRef()).thenReturn("shot-01-002");
@@ -297,19 +301,108 @@ class ShotGenerationPlanServiceTest {
 
     // ---------------------------------------------------------------- continuation
 
+    private static PostProductionFrameClient.FrameRequest ready(UUID shot) {
+        return new PostProductionFrameClient.FrameRequest(null, "COMPLETED", null,
+                List.of(new PostProductionFrameClient.Frame(shot, "postprod", "shot-frames/p/last.jpg", 143L, 4767L)));
+    }
+
     @Test
     void theLastFrameComesFromTheShotBeforeThisOneInTheFilm() {
         UUID previous = UUID.randomUUID();
         PreProductionViews.PrepareBundleView bundle = bundle(previous, shotId);
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
-        when(postProduction.lastFrame(tenant, project, previous))
-                .thenReturn(new PostProductionFrameClient.Frame(previous, "postprod", "shot-frames/p/last.jpg", 143L, 4767L));
+        when(postProduction.requestLastFrame(tenant, project, previous)).thenReturn(ready(previous));
 
         service.attachContinuationFrame(tenant, project, shotId, null);
 
         assertThat(plan.getContinuationSourceShotId()).isEqualTo(previous);
         assertThat(plan.getContinuationFrameObjectKey()).isEqualTo("shot-frames/p/last.jpg");
         assertThat(plan.getContinuationFrameTimestampMs()).isEqualTo(4767L);
+        assertThat(plan.getContinuationRequestId()).isNull();
+    }
+
+    @Test
+    void aFrameStillBeingTakenIsRecordedAsPendingAndResolvedWhenThePlanIsRead() {
+        UUID previous = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        when(postProduction.requestLastFrame(tenant, project, previous))
+                .thenReturn(new PostProductionFrameClient.FrameRequest(requestId, "QUEUED", null, List.of()));
+
+        service.attachContinuationFrame(tenant, project, shotId, previous);
+
+        assertThat(plan.getContinuationRequestId()).isEqualTo(requestId);
+        assertThat(plan.getContinuationFrameObjectKey()).isNull();
+
+        when(postProduction.status(tenant, requestId)).thenReturn(ready(previous));
+        service.get(tenant, project, shotId);
+
+        assertThat(plan.getContinuationFrameObjectKey()).isEqualTo("shot-frames/p/last.jpg");
+        assertThat(plan.getContinuationRequestId()).isNull();
+    }
+
+    @Test
+    void aPreviousShotWithNoVideoFailsTheFrameWithItsReason() {
+        UUID previous = UUID.randomUUID();
+        when(postProduction.requestLastFrame(tenant, project, previous))
+                .thenReturn(new PostProductionFrameClient.FrameRequest(UUID.randomUUID(), "FAILED", "This shot has no video yet", List.of()));
+
+        service.attachContinuationFrame(tenant, project, shotId, previous);
+
+        assertThat(plan.getContinuationError()).contains("no video yet");
+        assertThat(plan.getContinuationRequestId()).isNull();
+    }
+
+    @Test
+    void generatingWhileTheChosenFrameIsStillBeingTakenWaitsRatherThanDroppingIt() {
+        plan.setContinuationRequestId(UUID.randomUUID());
+        when(postProduction.status(tenant, plan.getContinuationRequestId()))
+                .thenReturn(new PostProductionFrameClient.FrameRequest(plan.getContinuationRequestId(), "PROCESSING", null, List.of()));
+
+        assertThatThrownBy(() -> service.generate(context, project, shotId, "0-6s he stands."))
+                .hasMessageContaining("still being taken");
+        verify(orchestrator, never()).submitReviewedPrompt(any(), any(), any(), any());
+    }
+
+    @Test
+    void withAutoAttachOnTheFirstShotStillGeneratesWithoutAFrame() {
+        orchestratorAccepts();
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true));
+        PreProductionViews.PrepareBundleView bundle = bundle(shotId, UUID.randomUUID());
+        when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
+
+        service.generate(context, project, shotId, "0-6s he stands.");
+
+        verify(orchestrator).submitReviewedPrompt(any(), any(), any(), any());
+        verify(postProduction, never()).requestLastFrame(any(), any(), any());
+    }
+
+    @Test
+    void withAutoAttachOnAReadyFrameFromThePreviousShotIsSentWithTheRender() {
+        orchestratorAccepts();
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true));
+        UUID previous = UUID.randomUUID();
+        PreProductionViews.PrepareBundleView bundle = bundle(previous, shotId);
+        when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
+        when(postProduction.requestLastFrame(tenant, project, previous)).thenReturn(ready(previous));
+
+        service.generate(context, project, shotId, "0-6s he stands.");
+
+        ArgumentCaptor<ShotGenerationOrchestrator.ReviewedSubmission> sent =
+                ArgumentCaptor.forClass(ShotGenerationOrchestrator.ReviewedSubmission.class);
+        verify(orchestrator).submitReviewedPrompt(any(), any(), any(), sent.capture());
+        assertThat(sent.getValue().continuationFrame().objectKey()).isEqualTo("shot-frames/p/last.jpg");
+    }
+
+    @Test
+    void withDuplicateProtectionSwitchedOffTheCreatorMayQueueAgain() {
+        orchestratorAccepts();
+        when(controls.forProject(any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false));
+        plan.setSubmittedJobId(UUID.randomUUID());
+        when(orchestrator.getJob(tenant, plan.getSubmittedJobId())).thenReturn(jobView("PROCESSING"));
+
+        service.generate(context, project, shotId, "0-6s he stands.");
+
+        verify(orchestrator).submitReviewedPrompt(any(), any(), any(), any());
     }
 
     @Test
@@ -319,7 +412,7 @@ class ShotGenerationPlanServiceTest {
 
         assertThatThrownBy(() -> service.attachContinuationFrame(tenant, project, shotId, null))
                 .hasMessageContaining("first shot");
-        verify(postProduction, never()).lastFrame(any(), any(), any());
+        verify(postProduction, never()).requestLastFrame(any(), any(), any());
     }
 
     private static PreProductionViews.PrepareBundleView bundle(UUID... shotIds) {

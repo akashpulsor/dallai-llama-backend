@@ -1,9 +1,14 @@
 package com.dalai.llama.postprod.service;
 
 import com.dalai.llama.postprod.domain.FrameExtractionMode;
+import com.dalai.llama.postprod.domain.FrameExtractionStatus;
 import com.dalai.llama.postprod.domain.entity.ShotClipVersion;
 import com.dalai.llama.postprod.domain.entity.ShotFrame;
+import com.dalai.llama.postprod.domain.entity.ShotFrameExtraction;
+import com.dalai.llama.postprod.dto.FrameExtractionRequestedEvent;
 import com.dalai.llama.postprod.dto.ShotFrameExtractionResult;
+import com.dalai.llama.postprod.kafka.FrameExtractionRequestedPublisher;
+import com.dalai.llama.postprod.repository.ShotFrameExtractionRepository;
 import com.dalai.llama.postprod.repository.ShotFrameRepository;
 import com.dalai.llama.postprod.service.clip.ClipObjectStore;
 import com.dalai.llama.postprod.service.clip.ClipProbe;
@@ -14,7 +19,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
-import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -31,14 +35,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Frames are taken from the cut the film actually uses, so the next shot continues from what the
- * audience sees -- and taking the same frame twice costs one extraction.
+ * Frame extraction never runs on a request thread: asking queues it, the consumer works it one at a
+ * time, the caller polls. Frames come from the cut the film actually uses, and a frame already taken
+ * from that cut is answered without queueing anything.
  */
 class ShotFrameServiceTest {
 
@@ -46,7 +52,9 @@ class ShotFrameServiceTest {
     private final FfmpegClipProcessor ffmpeg = mock(FfmpegClipProcessor.class);
     private final ClipObjectStore store = mock(ClipObjectStore.class);
     private final ShotFrameRepository frames = mock(ShotFrameRepository.class);
-    private final ShotFrameService service = new ShotFrameService(clipVersions, ffmpeg, store, frames,
+    private final ShotFrameExtractionRepository requests = mock(ShotFrameExtractionRepository.class);
+    private final FrameExtractionRequestedPublisher publisher = mock(FrameExtractionRequestedPublisher.class);
+    private final ShotFrameService service = new ShotFrameService(clipVersions, ffmpeg, store, frames, requests, publisher,
             new TransactionTemplate(mock(PlatformTransactionManager.class)));
 
     private final UUID tenant = UUID.randomUUID();
@@ -71,34 +79,36 @@ class ShotFrameServiceTest {
                         call.<String>getArgument(2).toLowerCase(), call.getArgument(3)));
         when(frames.findByTenantIdAndShotIdAndClipVersionIdAndModeOrderByTimestampMsAsc(any(), any(), any(), any()))
                 .thenReturn(List.of());
+        when(requests.save(any())).thenAnswer(call -> call.getArgument(0));
     }
 
+    private ShotFrameExtraction queued(FrameExtractionMode mode) {
+        ShotFrameExtraction row = ShotFrameExtraction.builder().requestId(UUID.randomUUID()).tenantId(tenant)
+                .projectId(project).shotId(shot).mode(mode).status(FrameExtractionStatus.QUEUED)
+                .createdAt(OffsetDateTime.now()).build();
+        when(requests.findById(row.getRequestId())).thenReturn(Optional.of(row));
+        return row;
+    }
+
+    // ---------------------------------------------------------------- request
+
     @Test
-    @SuppressWarnings("unchecked")
-    void theLastFrameIsTakenFromTheActiveCutAndStoredUnderThatCut() {
+    void askingQueuesTheWorkAndRunsNoFfmpegOnTheRequestThread() {
         when(clipVersions.active(shot)).thenReturn(Optional.of(activeCut));
 
-        ShotFrameExtractionResult result = service.extract(tenant, project, shot, FrameExtractionMode.LAST_FRAME, null);
+        ShotFrameExtractionResult result = service.request(tenant, project, shot, FrameExtractionMode.LAST_FRAME, null);
 
-        verify(store).download(eq("postprod"), eq("shot-clip-versions/x/v3.mp4"), any());
-        verify(ffmpeg).extractFrame(any(), eq(true), any());
-        String key = "shot-frames/%s/%s/last_frame/last.jpg".formatted(shot, activeCut.getVersionId());
-        verify(store).upload(eq(key), any(), eq("image/jpeg"));
-
-        ArgumentCaptor<List<ShotFrame>> saved = ArgumentCaptor.forClass(List.class);
-        verify(frames).saveAll(saved.capture());
-        // 4.767s at 30fps is 143 frames; the last is index 142, which starts at 4.733s.
-        assertThat(saved.getValue()).singleElement().satisfies(frame -> {
-            assertThat(frame.getFrameNumber()).isEqualTo(142L);
-            assertThat(frame.getTimestampMs()).isEqualTo(4733L);
-            assertThat(frame.getClipVersionId()).isEqualTo(activeCut.getVersionId());
-        });
-        assertThat(result.frameCount()).isEqualTo(1);
-        assertThat(result.clipVersionId()).isEqualTo(activeCut.getVersionId());
+        assertThat(result.status()).isEqualTo("QUEUED");
+        assertThat(result.requestId()).isNotNull();
+        ArgumentCaptor<FrameExtractionRequestedEvent> event = ArgumentCaptor.forClass(FrameExtractionRequestedEvent.class);
+        verify(publisher).publish(event.capture());
+        assertThat(event.getValue().requestId()).isEqualTo(result.requestId());
+        verify(store, never()).download(any(), any(), any());
+        verify(ffmpeg, never()).extractFrame(any(), any(Boolean.class), any());
     }
 
     @Test
-    void askingAgainForTheSameCutReusesTheStoredFrameWithoutRunningFfmpeg() {
+    void aLastFrameAlreadyTakenFromTheCurrentCutIsAnsweredWithoutQueueing() {
         when(clipVersions.active(shot)).thenReturn(Optional.of(activeCut));
         when(frames.findByTenantIdAndShotIdAndClipVersionIdAndModeOrderByTimestampMsAsc(
                 tenant, shot, activeCut.getVersionId(), FrameExtractionMode.LAST_FRAME))
@@ -106,39 +116,89 @@ class ShotFrameServiceTest {
                         .clipVersionId(activeCut.getVersionId()).mode(FrameExtractionMode.LAST_FRAME)
                         .frameNumber(142L).timestampMs(4733L).bucket("postprod").objectKey("k").createdAt(OffsetDateTime.now()).build()));
 
-        ShotFrameExtractionResult result = service.extract(tenant, project, shot, FrameExtractionMode.LAST_FRAME, null);
+        ShotFrameExtractionResult result = service.request(tenant, project, shot, FrameExtractionMode.LAST_FRAME, null);
 
+        assertThat(result.status()).isEqualTo("COMPLETED");
+        assertThat(result.requestId()).isNull();
         assertThat(result.frames()).singleElement().satisfies(frame -> assertThat(frame.objectKey()).isEqualTo("k"));
-        verify(ffmpeg, never()).extractFrame(any(), any(Boolean.class), any());
-        verify(store, never()).download(any(), any(), any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void aRequestThatCannotBeQueuedIsRecordedAsFailed() {
+        doThrow(PostProductionException.upstream("kafka down")).when(publisher).publish(any());
+
+        assertThatThrownBy(() -> service.request(tenant, project, shot, FrameExtractionMode.ALL, null))
+                .isInstanceOf(PostProductionException.class);
+        ArgumentCaptor<ShotFrameExtraction> saved = ArgumentCaptor.forClass(ShotFrameExtraction.class);
+        verify(requests, org.mockito.Mockito.atLeast(2)).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(FrameExtractionStatus.FAILED);
+    }
+
+    @Test
+    void aSampleNeedsARate() {
+        assertThatThrownBy(() -> service.request(tenant, project, shot, FrameExtractionMode.SAMPLE, null))
+                .isInstanceOf(PostProductionException.class)
+                .hasMessageContaining("sampleFps");
+    }
+
+    // ---------------------------------------------------------------- process (the consumer)
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theConsumerTakesTheLastFrameOfTheActiveCutAndStoresItUnderThatCut() {
+        when(clipVersions.active(shot)).thenReturn(Optional.of(activeCut));
+        ShotFrameExtraction row = queued(FrameExtractionMode.LAST_FRAME);
+
+        service.process(row.getRequestId());
+
+        verify(store).download(eq("postprod"), eq("shot-clip-versions/x/v3.mp4"), any());
+        verify(ffmpeg).extractFrame(any(), eq(true), any());
+        verify(store).upload(eq("shot-frames/%s/%s/last_frame/last.jpg".formatted(shot, activeCut.getVersionId())),
+                any(), eq("image/jpeg"));
+        ArgumentCaptor<List<ShotFrame>> saved = ArgumentCaptor.forClass(List.class);
+        verify(frames).saveAll(saved.capture());
+        // 4.767s at 30fps is 143 frames; the last is index 142, which starts at 4.733s.
+        assertThat(saved.getValue()).singleElement().satisfies(frame -> {
+            assertThat(frame.getFrameNumber()).isEqualTo(142L);
+            assertThat(frame.getTimestampMs()).isEqualTo(4733L);
+        });
+        assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
+        assertThat(row.getClipVersionId()).isEqualTo(activeCut.getVersionId());
     }
 
     @Test
     void aShotNeverCutHasItsGeneratedClipImportedFirst() {
         when(clipVersions.active(shot)).thenReturn(Optional.empty());
         when(clipVersions.importGeneratedBaseline(any())).thenReturn(activeCut);
+        ShotFrameExtraction row = queued(FrameExtractionMode.FIRST_FRAME);
 
-        service.extract(tenant, project, shot, FrameExtractionMode.FIRST_FRAME, null);
+        service.process(row.getRequestId());
 
         verify(clipVersions).importGeneratedBaseline(new ShotClipVersionService.Context(tenant, project, shot, null, null));
         verify(ffmpeg).extractFrame(any(), eq(false), any());
     }
 
     @Test
-    void aShotWithNoVideoIsAConflictTheCreatorCanActOn() {
+    void aShotWithNoVideoFailsTheRequestWithAReasonInsteadOfThrowingIntoKafka() {
         when(clipVersions.active(shot)).thenReturn(Optional.empty());
         when(clipVersions.importGeneratedBaseline(any())).thenThrow(new ClipProcessingException("This shot has not been generated yet"));
+        ShotFrameExtraction row = queued(FrameExtractionMode.LAST_FRAME);
 
-        assertThatThrownBy(() -> service.extract(tenant, project, shot, FrameExtractionMode.LAST_FRAME, null))
-                .isInstanceOf(PostProductionException.class)
-                .satisfies(ex -> assertThat(((PostProductionException) ex).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        service.process(row.getRequestId());
+
+        assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.FAILED);
+        assertThat(row.getError()).contains("no video yet");
     }
 
     @Test
-    void aSampleNeedsARate() {
-        assertThatThrownBy(() -> service.extract(tenant, project, shot, FrameExtractionMode.SAMPLE, null))
-                .isInstanceOf(PostProductionException.class)
-                .hasMessageContaining("sampleFps");
+    void aRedeliveredRequestThatAlreadyFinishedIsNotWorkedAgain() {
+        ShotFrameExtraction row = queued(FrameExtractionMode.LAST_FRAME);
+        row.setStatus(FrameExtractionStatus.COMPLETED);
+
+        service.process(row.getRequestId());
+
+        verify(store, never()).download(any(), any(), any());
     }
 
     @Test

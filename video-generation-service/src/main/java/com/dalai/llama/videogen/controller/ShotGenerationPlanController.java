@@ -38,6 +38,14 @@ public class ShotGenerationPlanController {
         return ResponseEntity.ok(service.get(tenant().tenantId(), projectId, shotId));
     }
 
+    /** The prompt-inputs checklist: creative direction, script, story frame, frames, cast, lighting,
+     * camera and the rest -- each present or not, with what it says. */
+    @GetMapping("/inputs")
+    public ResponseEntity<java.util.List<com.dalai.llama.videogen.dto.generationplan.PromptInputView>> inputs(
+            @PathVariable UUID projectId, @PathVariable UUID shotId) {
+        return ResponseEntity.ok(service.promptInputs(tenant().tenantId(), projectId, shotId));
+    }
+
     @PostMapping("/analyze")
     public ResponseEntity<ShotGenerationPlanView> analyze(@PathVariable UUID projectId, @PathVariable UUID shotId) {
         return ResponseEntity.ok(service.analyze(tenant().tenantId(), projectId, shotId));

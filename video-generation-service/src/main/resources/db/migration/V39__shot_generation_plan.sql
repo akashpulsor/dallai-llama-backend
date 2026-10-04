@@ -78,6 +78,10 @@ CREATE TABLE shot_generation_plan (
     continuation_frame_bucket        VARCHAR(128),
     continuation_frame_object_key    VARCHAR(1024),
     continuation_frame_timestamp_ms  BIGINT,
+    -- The frame is taken by post-production off the request thread. While it is being taken the
+    -- request id is set and the frame columns are empty; a failure leaves its reason here.
+    continuation_request_id          UUID,
+    continuation_error               TEXT,
 
     submitted_job_id                 UUID,
     submitted_at                     TIMESTAMPTZ,
@@ -140,3 +144,20 @@ CREATE INDEX idx_shot_generation_plan_action_plan ON shot_generation_plan_action
 CREATE INDEX idx_shot_generation_plan_coverage_plan ON shot_generation_plan_coverage (plan_id, ordinal);
 CREATE INDEX idx_shot_generation_plan_risk_plan ON shot_generation_plan_risk (plan_id, ordinal);
 CREATE INDEX idx_shot_generation_plan_interval_plan ON shot_generation_plan_interval (plan_id, ordinal);
+
+-- Generation controls: every step of the render path that can stop or reshape a shot is a
+-- per-project switch, and the defaults are the path that lets a shot be generated.
+--   fit_duration_to_dialogue   resize the clip to its measured dialogue, and refuse a line that cannot
+--                              fit (the refusals that failed jobs in production). Off: the clip is
+--                              generated at exactly the duration chosen.
+--   auto_dub_dialogue          generate silent and lay the cloned voice on afterwards. Off: the model
+--                              performs the line itself.
+--   mix_background_music       lay the shot's music bed under the finished clip.
+--   prevent_duplicate_renders  refuse to queue a shot that is already rendering, which would bill it twice.
+--   attach_previous_last_frame start every shot from the previous shot's last frame when it exists.
+ALTER TABLE project_config
+    ADD COLUMN fit_duration_to_dialogue   BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN auto_dub_dialogue          BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN mix_background_music       BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN prevent_duplicate_renders  BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN attach_previous_last_frame BOOLEAN NOT NULL DEFAULT false;
