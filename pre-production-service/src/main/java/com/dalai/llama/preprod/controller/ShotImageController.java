@@ -38,6 +38,15 @@ public class ShotImageController extends BaseController {
         return ResponseEntity.ok(shotImageService.generateWithInspiration(tenant().tenantId(), shotId, kind, note, files));
     }
 
+    /** "Step shot": make this shot's image as the next moment of an earlier shot, by editing that
+     * shot's image -- characters who stay keep their exact look, the others leave the frame. */
+    @PostMapping("/v1/shots/{shotId}/images/{kind}/step-from/{sourceShotId}")
+    public ResponseEntity<ShotImageView> stepFrom(
+            @PathVariable UUID shotId, @PathVariable ShotImageKind kind, @PathVariable UUID sourceShotId,
+            @RequestParam(required = false) String note) {
+        return ResponseEntity.ok(shotImageService.generateStepFrom(tenant().tenantId(), shotId, kind, sourceShotId, note));
+    }
+
     /** "Same" upload flow -- creator downloaded the image, hand-corrected the typos (Gemini's
      * text rendering is unreliable, especially in Hindi/Hinglish), and is uploading the fixed
      * version. No LLM call: the uploaded bytes ARE the new image, stored as-is. Sibling of

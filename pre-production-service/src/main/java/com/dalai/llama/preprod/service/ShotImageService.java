@@ -188,6 +188,30 @@ public class ShotImageService {
      * (fal.ai reference_image_urls, a different mechanism entirely) ignores inspiration images. */
     @Transactional
     public ShotImageView generate(UUID tenantId, UUID shotId, ShotImageKind kind, String note, List<String> inspirationDataUris) {
+        return generate(tenantId, shotId, kind, note, inspirationDataUris, null);
+    }
+
+    /** A step shot (see {@link StepShot}): this shot's {@code kind} image made by editing an
+     * earlier shot's image into this shot's moment, keeping the characters who stay and the look. */
+    @Transactional
+    public ShotImageView generateStepFrom(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        Shot source = shotRepository.findByIdAndTenantId(sourceShotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + sourceShotId));
+        ShotImage sourceImage = shotImageRepository.findByShotIdAndKind(sourceShotId, kind).orElse(null);
+        StepShot.requireUsableSource(shot, source, sourceImage != null);
+        String sourceUri = toDataUri(sourceImage);
+        if (sourceUri == null) {
+            throw PreProductionException.upstream("Could not read shot " + sourceShotId + "'s image to step from");
+        }
+        return generate(tenantId, shotId, kind, StepShot.instruction(source, note), List.of(), sourceUri);
+    }
+
+    /** {@code editSourceUri}, when given, is the image edited into this shot instead of the shot's
+     * own current image (a step shot's earlier frame). */
+    private ShotImageView generate(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
+                                   List<String> inspirationDataUris, String editSourceUri) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         CastProfile castProfile = kind == ShotImageKind.PRODUCTION ? resolveCastProfile(tenantId, shot) : null;
@@ -236,7 +260,8 @@ public class ShotImageService {
                 // combination). Order within an attempt stays current-image -> primary ->
                 // secondaries -> product so the numbered subject blocks in the prompt still map
                 // to the numbered reference image by position.
-                final String currentImageUri = (note != null && !note.isBlank())
+                final String currentImageUri = editSourceUri != null ? editSourceUri
+                        : (note != null && !note.isBlank())
                         ? shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).orElse(null)
                         : null;
                 final String primaryUri = castProfile == null ? null
@@ -281,7 +306,9 @@ public class ShotImageService {
             // an image-out call here instead of a text-out one). Current image first (what's being
             // edited), then any inspiration image(s) (what to match/borrow from).
             List<String> images = new java.util.ArrayList<>();
-            if (note != null && !note.isBlank()) {
+            if (editSourceUri != null) {
+                images.add(editSourceUri);
+            } else if (note != null && !note.isBlank()) {
                 shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(images::add);
             }
             images.addAll(inspirationDataUris);
