@@ -121,6 +121,21 @@ public final class ShotImagePromptBuilder {
     public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
                                                 LightingPlan lightingPlan, java.util.List<CastProfile> secondaryCasts,
                                                 com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext creativeDirection) {
+        return buildProductionPrompt(shot, castProfile, productReference, lightingPlan, secondaryCasts, creativeDirection, PromptInputs.RAW);
+    }
+
+    /** {@code inputs} is how every environment value (place, time, light, look -- see {@link PromptInput})
+     * is read: as stored, or as a step shot's continuity resolution decided. Nothing environmental is
+     * read from the shot, plan or direction directly, so a resolved prompt can't contradict itself. */
+    public static String buildProductionPrompt(Shot shot, CastProfile castProfile, ShotProductReference productReference,
+                                                LightingPlan lightingPlan, java.util.List<CastProfile> secondaryCasts,
+                                                com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext creativeDirection,
+                                                PromptInputs inputs) {
+        PromptInput.Context context = new PromptInput.Context(shot, lightingPlan, creativeDirection);
+        java.util.function.Function<PromptInput, String> in = input -> {
+            String value = inputs.resolve(input, input.raw(context));
+            return isEmpty(value) ? null : value;
+        };
         StringBuilder sb = new StringBuilder();
         sb.append("Create one final, production-quality advertising still that will be used as an image-to-video anchor. ")
                 .append("This must look like a finished cinematic commercial frame, never a storyboard, sketch, diagram, or frame with production labels.\n\n");
@@ -141,8 +156,9 @@ public final class ShotImagePromptBuilder {
                 .append(orNotSpecified(shot.getCameraAngle())).append(" angle, ")
                 .append(orNotSpecified(shot.getLensSuggestion())).append(" lens.\n");
         sb.append("Composition: ").append(orNotSpecified(shot.getComposition())).append("\n");
-        sb.append("Location: ").append(orNotSpecified(shot.getLocation())).append(", ").append(orNotSpecified(shot.getTimeOfDay())).append("\n");
-        sb.append("Lighting mood: ").append(orNotSpecified(shot.getLightingMood())).append("\n");
+        sb.append("Location: ").append(orNotSpecified(in.apply(PromptInput.SHOT_LOCATION))).append(", ")
+                .append(orNotSpecified(in.apply(PromptInput.SHOT_TIME_OF_DAY))).append("\n");
+        sb.append("Lighting mood: ").append(orNotSpecified(in.apply(PromptInput.SHOT_LIGHTING_MOOD))).append("\n");
 
         // Rich cinematography taxonomy -- each block is skipped whole when all its fields are
         // null, so a shot without geometry data doesn't get "Geometry: ." or "Geometry: not
@@ -175,13 +191,13 @@ public final class ShotImagePromptBuilder {
                 {"depth of field", shot.getCineDepthOfField()},
         });
         appendSection(sb, "Image character", new String[][]{
-                {"contrast", shot.getCineContrast()},
-                {"color response", shot.getCineColorResponse()},
+                {"contrast", in.apply(PromptInput.SHOT_CONTRAST)},
+                {"color response", in.apply(PromptInput.SHOT_COLOR_RESPONSE)},
                 {"grain", shot.getCineGrain()},
-                {"halation", shot.getCineHalation()},
-                {"bloom", shot.getCineBloom()},
+                {"halation", in.apply(PromptInput.SHOT_HALATION)},
+                {"bloom", in.apply(PromptInput.SHOT_BLOOM)},
                 {"sharpness", shot.getCineSharpness()},
-                {"flare", shot.getCineFlare()},
+                {"flare", in.apply(PromptInput.SHOT_FLARE)},
         });
 
         // Performance direction -- surface whether or not there's a cast profile. Previously
@@ -196,7 +212,7 @@ public final class ShotImagePromptBuilder {
         // Lighting plan as light sources -- never the numbered build steps (those belong on the
         // lighting sheet, not the finished frame). Absent or all-empty plan -> block omitted.
         if (lightingPlan != null) {
-            appendLightSources(sb, lightingPlan);
+            appendLightSources(sb, in, context);
         }
 
         // Identity reference. When BOTH cast and product are present, cast leads with the
@@ -218,10 +234,13 @@ public final class ShotImagePromptBuilder {
             appendSecondaryCastIdentityBlocks(sb, secondaryCasts);
         }
 
-        if (creativeDirection != null && !creativeDirection.visualDirectionBlock().isBlank()) {
+        String look = in.apply(PromptInput.PROJECT_LOOK);
+        if (creativeDirection != null && look != null) {
+            boolean adapted = !look.equals(PromptInput.PROJECT_LOOK.raw(context));
             sb.append("\nProject look -- the approved creative direction \"").append(creativeDirection.title())
-                    .append("\". Every still in this film shares it; render this frame in it:\n")
-                    .append(creativeDirection.visualDirectionBlock()).append('\n');
+                    .append(adapted ? "\", adapted to the scene the previous shot establishes:\n"
+                            : "\". Every still in this film shares it; render this frame in it:\n")
+                    .append(look).append('\n');
         }
 
         sb.append("\nOutput: ").append(orNotSpecified(shot.getAspectRatio())).append(" composition, clean mobile-safe framing, commercial lighting, no on-image text or labels.");
@@ -264,24 +283,31 @@ public final class ShotImagePromptBuilder {
     /** The plan's gear written as where each light comes from and where it sits. Listed as bare
      * gear ("LED desk lamp, foam board, smartphone flashlight") the model drew the props or read the
      * scene as a tabletop set; as light sources it renders the light they cast on the real scene. */
-    private static void appendLightSources(StringBuilder sb, LightingPlan plan) {
-        String[][] sources = {
-                {"Key light comes from", plan.getKeyLightGear()},
-                {"Fill light comes from", plan.getFillLightGear()},
-                {"Rim light comes from", plan.getRimLightGear()},
-                {"Shadows are deepened by", plan.getNegFillGear()},
-                {"Light is softened by", plan.getDiffuserGear()},
+    private static void appendLightSources(StringBuilder sb, java.util.function.Function<PromptInput, String> resolved,
+                                           PromptInput.Context context) {
+        Object[][] sources = {
+                {PromptInput.LIGHTING_KEY, "Key light comes from", "Key light"},
+                {PromptInput.LIGHTING_FILL, "Fill light comes from", "Fill light"},
+                {PromptInput.LIGHTING_RIM, "Rim light comes from", "Rim light"},
+                {PromptInput.LIGHTING_NEG_FILL, "Shadows are deepened by", "Shadows"},
+                {PromptInput.LIGHTING_DIFFUSER, "Light is softened by", "Softening"},
         };
         StringBuilder lines = new StringBuilder();
-        for (String[] source : sources) {
-            if (isEmpty(source[1])) continue;
-            lines.append("- ").append(source[0]).append(' ').append(lowerFirst(source[1].trim())).append('\n');
+        for (Object[] source : sources) {
+            PromptInput input = (PromptInput) source[0];
+            String value = resolved.apply(input);
+            if (isEmpty(value)) continue;
+            // A gear line restated by continuity no longer names gear -- it says how the light already
+            // in the scene does the same job -- so it is labelled by its role instead.
+            boolean restated = !value.trim().equals(input.raw(context));
+            lines.append("- ").append(restated ? source[2] + ": " + value.trim() : source[1] + " " + lowerFirst(value.trim())).append('\n');
         }
-        boolean hasIntent = !isEmpty(plan.getCinematicIntent());
+        String intent = resolved.apply(PromptInput.LIGHTING_INTENT);
+        boolean hasIntent = !isEmpty(intent);
         if (lines.isEmpty() && !hasIntent) return;
         sb.append("Lighting plan -- the light sources and where they sit. Render the light they cast on the scene at its real scale; ")
                 .append("the equipment itself stays out of frame:\n");
-        if (hasIntent) sb.append("- Intent: ").append(plan.getCinematicIntent().trim()).append('\n');
+        if (hasIntent) sb.append("- Intent: ").append(intent.trim()).append('\n');
         sb.append(lines);
     }
 
@@ -296,9 +322,7 @@ public final class ShotImagePromptBuilder {
     /** Blank, or a placeholder the plan generator writes for "nothing" -- printing those gave the
      * model lines like "expression null, body language null". */
     private static boolean isEmpty(String value) {
-        if (value == null || value.isBlank()) return true;
-        String text = value.trim().toLowerCase();
-        return text.equals("null") || text.equals("none") || text.equals("n/a");
+        return PromptInput.isEmpty(value);
     }
 
     /** Emits "Section: k1 v1, k2 v2, ..." only for non-null/non-blank values. When every value

@@ -14,6 +14,8 @@ import com.dalai.llama.preprod.repository.ScriptRepository;
 import com.dalai.llama.preprod.repository.ShotImageRepository;
 import com.dalai.llama.preprod.repository.ShotProductReferenceRepository;
 import com.dalai.llama.preprod.repository.ShotRepository;
+import com.dalai.llama.preprod.service.continuity.ContinuityResolution;
+import com.dalai.llama.preprod.service.continuity.StepContinuityService;
 import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
 import com.dalai.llama.preprod.service.llmgateway.LlmGatewayClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,6 +55,7 @@ class ShotImageServiceStepTest {
     private final ShotImageRepository shotImageRepository = mock(ShotImageRepository.class);
     private final MinioClient minioClient = mock(MinioClient.class);
     private final LlmGatewayClient llmGatewayClient = mock(LlmGatewayClient.class);
+    private final StepContinuityService stepContinuity = mock(StepContinuityService.class);
     private final ShotImageService service = new ShotImageService(
             shotRepository, mock(ScriptRepository.class), mock(ScriptCharacterRepository.class),
             mock(ScreenplaySceneCharacterRepository.class), mock(CastAssignmentRepository.class),
@@ -61,7 +64,13 @@ class ShotImageServiceStepTest {
             llmGatewayClient, mock(MediaAssetService.class), mock(GenerationThoughtService.class),
             mock(ShotImageDescriptionService.class), minioClient, mock(MinioClient.class), new ObjectMapper(),
             "storyboards", "shots", "gemini-image", "gemini-image", "flux-schnell", "gemini-image-lite", "gemini-text",
-            mock(CreativeDirectionContextService.class));
+            mock(CreativeDirectionContextService.class), stepContinuity);
+
+    {
+        // Continuity has its own tests (ContinuityResolverTest, StepContinuityEndToEndTest); here a
+        // step with nothing resolved keeps the generic step instruction.
+        given(stepContinuity.resolve(any(), any(), any(), any(), any(), any(), any())).willReturn(ContinuityResolution.NONE);
+    }
 
     @Test
     void stepBundleZipsTheStepPromptAndTheEarlierShotsImageWithoutGenerating() throws Exception {

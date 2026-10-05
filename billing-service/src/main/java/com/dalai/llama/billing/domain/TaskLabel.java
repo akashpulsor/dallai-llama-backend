@@ -45,6 +45,7 @@ public final class TaskLabel {
             Map.entry("PRE_PROD_LIGHTING_PLAN_CRITIC", "Reviewed a lighting plan"),
             Map.entry("PRE_PROD_MOTION_GRAPHIC_PLAN_GENERATE", "Planned a motion graphic"),
             Map.entry("PRE_PROD_INSPIRATION_ANALYZE", "Analysed an inspiration reference"),
+            Map.entry("PRE_PROD_STEP_CONTINUITY", "Checked a step shot's continuity"),
             Map.entry("PRE_PROD_PRODUCT_REFERENCE_CAST_DESCRIBE", "Described a product reference"),
             Map.entry("PRE_PROD_PRODUCT_REFERENCE_INSPIRATION_ANALYZE", "Analysed a product reference"),
             Map.entry("CRITIC_DIRECTOR_REVIEW", "Director's review of a shot"),

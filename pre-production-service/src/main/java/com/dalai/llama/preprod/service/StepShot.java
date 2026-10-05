@@ -1,6 +1,8 @@
 package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.domain.entity.Shot;
+import com.dalai.llama.preprod.service.continuity.ContinuityPromptBlock;
+import com.dalai.llama.preprod.service.continuity.ContinuityResolution;
 
 /**
  * A "step shot": this shot's image made as the next moment of an earlier shot, by editing that
@@ -28,15 +30,23 @@ final class StepShot {
      * an edit of the first attached image, not a new frame. Character names come from each shot's
      * primary character; null when the shot has none. The creator's own note is added separately. */
     static String instruction(Shot source, String sourceCharacter, Shot target, String targetCharacter) {
-        return "STEP SHOT -- EDIT THE ATTACHED IMAGE. The first attached image is " + shotName(source)
+        return instruction(source, sourceCharacter, target, targetCharacter, ContinuityResolution.NONE);
+    }
+
+    /** With a continuity resolution, the CRITICAL VISUAL CONTINUITY block (built from the resolved
+     * state) replaces the generic keep/change lines; without one, those lines stand on their own. */
+    static String instruction(Shot source, String sourceCharacter, Shot target, String targetCharacter,
+                              ContinuityResolution continuity) {
+        String header = "STEP SHOT -- EDIT THE ATTACHED IMAGE. The first attached image is " + shotName(source)
                 + " of this film, the moment just before this one. Mould that image into the shot described below: "
                 + "the description decides what changes, the image supplies everything else.\n"
-                + "Who is in this frame: " + whoIsInFrame(sourceCharacter, targetCharacter, target.getPeopleInFrame()) + "\n"
-                + "Keep from the image: the location, the light, the colour grade, and every person who stays -- "
-                + "identical in face, hair, skin tone, build and wardrobe.\n"
-                + "Change to match the description: the action, poses, expressions, camera position, lens and framing. "
-                + "Add no one the description does not include.\n\n"
-                + "Shot to produce:";
+                + "Who is in this frame: " + whoIsInFrame(sourceCharacter, targetCharacter, target.getPeopleInFrame()) + "\n";
+        String body = continuity.resolvedVisualState().isEmpty() && continuity.changesForThisShot().isEmpty()
+                ? "Keep from the image: the location, the light, the colour grade, and every person who stays -- "
+                        + "identical in face, hair, skin tone, build and wardrobe.\n"
+                        + "Change to match the description: the action, poses, expressions, camera position, lens and framing.\n"
+                : ContinuityPromptBlock.render(continuity);
+        return header + body + "Add no one the description does not include.\n\n" + "Shot to produce:";
     }
 
     static String whoIsInFrame(String sourceCharacter, String targetCharacter, Integer peopleInFrame) {

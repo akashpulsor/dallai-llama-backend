@@ -1,7 +1,13 @@
 package com.dalai.llama.preprod.service;
 
 import com.dalai.llama.preprod.dto.ApprovedCreativeDirectionContext;
+import com.dalai.llama.preprod.service.continuity.ContinuityResolution;
+import com.dalai.llama.preprod.service.continuity.ContinuityValidator;
+import com.dalai.llama.preprod.service.continuity.StepContinuityService;
 import com.dalai.llama.preprod.service.creativedirection.CreativeDirectionContextService;
+import com.dalai.llama.preprod.service.generation.PromptInput;
+import com.dalai.llama.preprod.service.generation.PromptInputs;
+import com.dalai.llama.preprod.dto.StepContinuityView;
 import com.dalai.llama.preprod.domain.MediaAssetType;
 import com.dalai.llama.preprod.domain.ShotImageKind;
 import com.dalai.llama.preprod.domain.entity.CameraPlan;
@@ -98,6 +104,7 @@ public class ShotImageService {
     private final String storyboardImageModel;
     private final String defaultTextModel;
     private final CreativeDirectionContextService creativeDirectionContextService;
+    private final StepContinuityService stepContinuityService;
 
     public ShotImageService(
             ShotRepository shotRepository,
@@ -125,9 +132,11 @@ public class ShotImageService {
             @Value("${pre-production.llm-gateway.planning-image-model:${pre-production.llm-gateway.default-image-model}}") String planningImageModel,
             @Value("${pre-production.llm-gateway.storyboard-image-model:${pre-production.llm-gateway.default-image-model}}") String storyboardImageModel,
             @Value("${pre-production.llm-gateway.default-text-model}") String defaultTextModel,
-            CreativeDirectionContextService creativeDirectionContextService
+            CreativeDirectionContextService creativeDirectionContextService,
+            StepContinuityService stepContinuityService
     ) {
         this.creativeDirectionContextService = creativeDirectionContextService;
+        this.stepContinuityService = stepContinuityService;
         this.shotRepository = shotRepository;
         this.scriptRepository = scriptRepository;
         this.scriptCharacterRepository = scriptCharacterRepository;
@@ -203,12 +212,24 @@ public class ShotImageService {
      * {@link #generateStepFrom} would send, for running the same step in an outside tool and
      * uploading the result back ("Same" replace). Makes no image, but on an identity-conditioned
      * still the prompt passes through the same reliability rewrite (one small text call). */
-    @Transactional(readOnly = true)
+    @Transactional
     public ShotImageBundle stepBundle(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
         StepSource source = stepSource(tenantId, shotId, kind, sourceShotId);
         PreparedImageRequest request = prepare(tenantId, shotId, kind, note, List.of(), source);
         return ShotImageBundle.of(request.shot(), source.shot(), kind, request.modelId(), request.prompt(),
                 request.refsForAttempt().apply(1), request.attachmentLabels(), request.params());
+    }
+
+    /** What a step would do before doing it: the resolved continuity (what is kept from the earlier
+     * shot, what this shot changes, every automatic override and its reason) and the exact prompt that
+     * would be sent. Makes no image; the continuity analysis is cached, so re-previewing after the
+     * user changes an override costs no vision call. */
+    @Transactional
+    public StepContinuityView previewStep(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
+        PreparedImageRequest request = prepare(tenantId, shotId, kind, note, List.of(), stepSource(tenantId, shotId, kind, sourceShotId));
+        ContinuityResolution continuity = request.continuity();
+        return new StepContinuityView(continuity.resolvedVisualState(), continuity.overrides(), request.continuityWarnings(),
+                continuity.preserved(), continuity.changesForThisShot(), request.prompt());
     }
 
     /** Removes this shot's {@code kind} image so it can be made again from scratch (or uploaded).
@@ -223,8 +244,8 @@ public class ShotImageService {
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_DELETED", kind + " image removed");
     }
 
-    /** The earlier shot, its image (attached first) and the instruction that leads the prompt. */
-    private record StepSource(Shot shot, String imageUri, String instruction) {}
+    /** The earlier shot, its image (attached first) and the primary characters of both shots. */
+    private record StepSource(Shot shot, ShotImage image, String imageUri, String sourceCharacter, String targetCharacter) {}
 
     private StepSource stepSource(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
@@ -237,8 +258,7 @@ public class ShotImageService {
         if (sourceUri == null) {
             throw PreProductionException.upstream("Could not read shot " + sourceShotId + "'s image to step from");
         }
-        return new StepSource(source, sourceUri,
-                StepShot.instruction(source, primaryCharacterName(source), shot, primaryCharacterName(shot)));
+        return new StepSource(source, sourceImage, sourceUri, primaryCharacterName(source), primaryCharacterName(shot));
     }
 
     /** {@code step}, when given, is a step shot: its earlier frame is edited into this shot instead
@@ -250,6 +270,9 @@ public class ShotImageService {
         CastProfile castProfile = request.castProfile();
         String prompt = request.prompt();
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_STARTED", "Generating " + kind + " image");
+        if (!request.continuityWarnings().isEmpty()) {
+            generationThoughtService.log(tenantId, shotId, kind + "_STEP_CONTINUITY_WARNING", String.join(" | ", request.continuityWarnings()));
+        }
         DecodedImage decoded = generateWithRetry(tenantId, shotId, kind, shot, request.modelId(), prompt,
                 request.params(), request.refsForAttempt());
         String objectKey = "%s/%s/%s/%s.%s".formatted(storyboardPrefix, kind.name().toLowerCase(), shotId, UUID.randomUUID(), decoded.extension());
@@ -288,12 +311,30 @@ public class ShotImageService {
      * bundle uses it so an outside run sees the same numbered images the prompt refers to. */
     record PreparedImageRequest(Shot shot, CastProfile castProfile, String modelId, String prompt,
                                 Map<String, Object> params, java.util.function.IntFunction<List<String>> refsForAttempt,
-                                List<String> attachmentLabels) {}
+                                List<String> attachmentLabels, ContinuityResolution continuity, List<String> continuityWarnings) {
+
+        PreparedImageRequest withContinuityWarnings(List<String> warnings) {
+            return new PreparedImageRequest(shot, castProfile, modelId, prompt, params, refsForAttempt, attachmentLabels, continuity, warnings);
+        }
+    }
+
+    /** Builds the request and, for a step, checks the finished prompt against its continuity
+     * resolution -- any superseded value that still reached the prompt becomes a visible warning. */
+    private PreparedImageRequest prepare(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
+                                         List<String> inspirationDataUris, StepSource step) {
+        PreparedImageRequest request = buildRequest(tenantId, shotId, kind, note, inspirationDataUris, step);
+        if (step == null) {
+            return request;
+        }
+        List<String> warnings = new java.util.ArrayList<>(request.continuity().warnings());
+        warnings.addAll(ContinuityValidator.validate(request.prompt(), request.continuity()));
+        return request.withContinuityWarnings(List.copyOf(warnings));
+    }
 
     /** Builds the request {@link #generate} sends, without sending it. Shared with
      * {@link #stepBundle} so a downloaded bundle is exactly what the app would have generated from. */
-    private PreparedImageRequest prepare(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
-                                         List<String> inspirationDataUris, StepSource step) {
+    private PreparedImageRequest buildRequest(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
+                                              List<String> inspirationDataUris, StepSource step) {
         String editSourceUri = step == null ? null : step.imageUri();
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
@@ -310,7 +351,13 @@ public class ShotImageService {
         // reference is attached -- carry the client's approved reference images as style references.
         ApprovedCreativeDirectionContext creativeDirection = kind == ShotImageKind.PRODUCTION
                 ? creativeDirectionContextService.forGeneration(tenantId, shot.getProjectId()).orElse(null) : null;
-        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts, creativeDirection);
+        LightingPlan lightingPlan = kind == ShotImageKind.PRODUCTION ? lightingPlanRepository.findByShotId(shot.getId()).orElse(null) : null;
+        // A step resolves its visual state against the earlier image first; every environment value
+        // in the prompt below is then read through that resolution, never raw.
+        ContinuityResolution continuity = step == null ? ContinuityResolution.NONE
+                : stepContinuityService.resolve(tenantId, shot, step.shot(), step.image(), step.imageUri(), kind,
+                        new PromptInput.Context(shot, lightingPlan, creativeDirection));
+        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts, creativeDirection, lightingPlan, continuity.inputs());
         if (prompt == null || prompt.isBlank()) {
             throw PreProductionException.badRequest(
                     "Shot " + shotId + " has no " + kind + " prompt available yet -- generate the shot list first");
@@ -321,7 +368,7 @@ public class ShotImageService {
         // A step leads with its edit instruction, so the model reads the shot description that
         // follows as the frame to mould the attached image into, not a frame to invent.
         if (step != null) {
-            prompt = step.instruction() + "\n" + prompt;
+            prompt = StepShot.instruction(step.shot(), step.sourceCharacter(), shot, step.targetCharacter(), continuity) + "\n" + prompt;
         }
         String editLabel = editSourceUri != null ? "earlier shot (step source)" : "this shot's current image";
 
@@ -351,7 +398,7 @@ public class ShotImageService {
                     labels.add("product");
                 }
                 return new PreparedImageRequest(shot, castProfile, modelId, prompt,
-                        Map.of("reference_image_urls", refUrls), attempt -> null, labels);
+                        Map.of("reference_image_urls", refUrls), attempt -> null, labels, continuity, List.of());
             }
             // Gemini has no separate "reference image" request param the way fal.ai's FLUX_PULID
             // does -- it conditions on whatever images ride along inline with the prompt. Each ref
@@ -386,7 +433,7 @@ public class ShotImageService {
             prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
             return new PreparedImageRequest(shot, castProfile, modelId, prompt, imageParams(shot),
                     attempt -> identityRefsForAttempt(attempt, currentImageUri, keepEditSource, primaryUri, secondaryUris, productUri),
-                    labels);
+                    labels, continuity, List.of());
         }
 
         // Three tiers of image model routing, by kind:
@@ -423,7 +470,7 @@ public class ShotImageService {
         }
         List<String> editDataUris = images.isEmpty() ? null : images;
         return new PreparedImageRequest(shot, null, modelId, prompt, imageParams(shot, modelId),
-                attempt -> editDataUris, labels);
+                attempt -> editDataUris, labels, continuity, List.of());
     }
 
     /** Runs the vision-analysis call immediately after producing a new/replaced image, so the
@@ -645,16 +692,14 @@ public class ShotImageService {
 
     private String promptFor(Shot shot, ShotImageKind kind, CastProfile castProfile,
                              ShotProductReference productReference, List<CastProfile> secondaryCasts,
-                             ApprovedCreativeDirectionContext creativeDirection) {
+                             ApprovedCreativeDirectionContext creativeDirection, LightingPlan lightingPlan, PromptInputs inputs) {
         return switch (kind) {
             case STORYBOARD -> wrapAsStoryboardSketch(shot.getSketchPrompt());
             // PRODUCTION reads the LightingPlan too (when one exists) so key/fill/rim direction
             // reaches the still. Selective -- ShotImagePromptBuilder skips numbered build steps
             // and gear part numbers, which belong on the lighting sheet, not the finished frame.
             case PRODUCTION -> ShotImagePromptBuilder.buildProductionPrompt(
-                    shot, castProfile, productReference,
-                    lightingPlanRepository.findByShotId(shot.getId()).orElse(null),
-                    secondaryCasts, creativeDirection);
+                    shot, castProfile, productReference, lightingPlan, secondaryCasts, creativeDirection, inputs);
             case LIGHTING -> ShotImagePromptBuilder.buildLightingSheetPrompt(shot, lightingPlanRepository.findByShotId(shot.getId()).orElse(null));
             case CAMERA_PLAN -> ShotImagePromptBuilder.buildCameraPlanSheetPrompt(shot, cameraPlanRepository.findByShotId(shot.getId()).orElse(null));
             case MOTION_GRAPHIC -> ShotImagePromptBuilder.buildMotionGraphicPreviewPrompt(shot, motionGraphicPlanRepository.findByShotId(shot.getId()).orElse(null));

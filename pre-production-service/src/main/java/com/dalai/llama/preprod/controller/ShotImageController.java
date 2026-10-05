@@ -1,9 +1,14 @@
 package com.dalai.llama.preprod.controller;
 
 import com.dalai.llama.preprod.domain.ShotImageKind;
+import com.dalai.llama.preprod.dto.SetContinuityOverrideRequest;
 import com.dalai.llama.preprod.dto.ShotImageView;
+import com.dalai.llama.preprod.dto.StepContinuityView;
 import com.dalai.llama.preprod.service.ShotImageBundle;
 import com.dalai.llama.preprod.service.ShotImageService;
+import com.dalai.llama.preprod.service.continuity.StepContinuityService;
+import com.dalai.llama.preprod.service.continuity.VisualField;
+import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -12,6 +17,8 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,9 +30,11 @@ import java.util.UUID;
 public class ShotImageController extends BaseController {
 
     private final ShotImageService shotImageService;
+    private final StepContinuityService stepContinuityService;
 
-    public ShotImageController(ShotImageService shotImageService) {
+    public ShotImageController(ShotImageService shotImageService, StepContinuityService stepContinuityService) {
         this.shotImageService = shotImageService;
+        this.stepContinuityService = stepContinuityService;
     }
 
     @PostMapping("/v1/shots/{shotId}/images/{kind}")
@@ -64,6 +73,31 @@ public class ShotImageController extends BaseController {
                 .contentType(MediaType.parseMediaType("application/zip"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(bundle.fileName()).build().toString())
                 .body(bundle.zip());
+    }
+
+    /** The step's continuity resolution and final prompt, before generating: what is kept from the
+     * earlier shot, what this shot changes, and every automatic override with its reason. */
+    @PostMapping("/v1/shots/{shotId}/images/{kind}/step-from/{sourceShotId}/continuity")
+    public ResponseEntity<StepContinuityView> stepContinuity(
+            @PathVariable UUID shotId, @PathVariable ShotImageKind kind, @PathVariable UUID sourceShotId,
+            @RequestParam(required = false) String note) {
+        return ResponseEntity.ok(shotImageService.previewStep(tenant().tenantId(), shotId, kind, sourceShotId, note));
+    }
+
+    /** The user's own value for one visual field, deliberately winning over continuity. The caller
+     * re-requests {@link #stepContinuity} to get the recomputed state and prompt. */
+    @PutMapping("/v1/shots/{shotId}/continuity-overrides/{field}")
+    public ResponseEntity<Void> setContinuityOverride(@PathVariable UUID shotId, @PathVariable VisualField field,
+                                                      @Valid @RequestBody SetContinuityOverrideRequest request) {
+        stepContinuityService.setOverride(tenant().tenantId(), shotId, field, request.value());
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Back to the automatic continuity decision for that field. */
+    @DeleteMapping("/v1/shots/{shotId}/continuity-overrides/{field}")
+    public ResponseEntity<Void> clearContinuityOverride(@PathVariable UUID shotId, @PathVariable VisualField field) {
+        stepContinuityService.clearOverride(tenant().tenantId(), shotId, field);
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/v1/shots/{shotId}/images/{kind}")
