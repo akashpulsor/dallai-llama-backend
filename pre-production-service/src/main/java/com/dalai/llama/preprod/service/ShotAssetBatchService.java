@@ -98,19 +98,22 @@ public class ShotAssetBatchService {
     /** Drives the shots list's per-shot green check -- true only when every one of the 6 assets
      * this shot needs (lighting plan, camera plan, all 4 image kinds) actually exists, regardless
      * of how it got there (batch, manual "Plan"/"Generate", or a dead-letter retry -- this checks
-     * real ground truth, not batch/dead-letter bookkeeping). MOTION_GRAPHIC shots are excluded,
-     * same eligibility filter as {@link ShotAssetBatchExecutor#planSteps} -- they never need these
-     * assets at all, so they'd otherwise always show as incomplete. */
+     * real ground truth, not batch/dead-letter bookkeeping). MOTION_GRAPHIC shots never need these
+     * assets (same rule as {@link ShotAssetBatchExecutor#planSteps}); for them the motion-graphic
+     * image is the whole of it. */
     @Transactional(readOnly = true)
     public List<ShotAssetCompletionView> completion(UUID tenantId, UUID projectId) {
-        List<Shot> eligibleShots = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
-                .filter(s -> s.getShotType() != ShotType.MOTION_GRAPHIC)
-                .toList();
-        return eligibleShots.stream()
+        return shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
                 .map(shot -> {
                     Set<ShotImageKind> presentKinds = shotImageRepository.findByShotId(shot.getId()).stream()
                             .map(ShotImage::getKind)
                             .collect(Collectors.toSet());
+                    // A motion-graphic shot's one and only asset is its motion-graphic image: it has no
+                    // plans and no live-action stills, so that image is both its final frame and "done".
+                    if (shot.getShotType() == ShotType.MOTION_GRAPHIC) {
+                        boolean hasGraphic = presentKinds.contains(ShotImageKind.MOTION_GRAPHIC);
+                        return new ShotAssetCompletionView(shot.getId(), hasGraphic, hasGraphic);
+                    }
                     return new ShotAssetCompletionView(shot.getId(), isComplete(shot.getId(), presentKinds),
                             presentKinds.contains(ShotImageKind.PRODUCTION));
                 })

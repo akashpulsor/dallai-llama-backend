@@ -55,6 +55,17 @@ class ShotAssetCompletionTest {
                 new ShotAssetCompletionView(sketchOnly.getId(), false, false));
     }
 
+    @Test
+    void aMotionGraphicShotIsFramedAndDoneOnceItsGraphicExists() {
+        Shot withGraphic = shot(ShotType.MOTION_GRAPHIC, false, ShotImageKind.MOTION_GRAPHIC);
+        Shot withoutGraphic = shot(ShotType.MOTION_GRAPHIC, false);
+        given(shotRepository.findByProjectIdOrderByShotNumberAsc(projectId)).willReturn(List.of(withGraphic, withoutGraphic));
+
+        assertThat(service.completion(UUID.randomUUID(), projectId)).containsExactly(
+                new ShotAssetCompletionView(withGraphic.getId(), true, true),
+                new ShotAssetCompletionView(withoutGraphic.getId(), false, false));
+    }
+
     private Shot shot(ShotType type, boolean plans, ShotImageKind... kinds) {
         Shot shot = Shot.builder().id(UUID.randomUUID()).projectId(projectId).shotType(type).build();
         given(lightingPlanRepository.findByShotId(shot.getId())).willReturn(plans ? Optional.of(new LightingPlan()) : Optional.empty());
