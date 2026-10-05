@@ -148,8 +148,8 @@ class ShotImageServiceStepTest {
                 "llm-gateway did not return an image for PRODUCTION shot image generation (finishReason=IMAGE_OTHER)",
                 List.of("face: Uma Dixit", "product"));
 
-        assertThat(explained).startsWith("The image model declined every attempt with Uma Dixit's reference photo attached")
-                .contains("tight head-and-shoulders photo of just that person");
+        assertThat(explained).startsWith("The image model withheld the image on every attempt for this shot with Uma Dixit attached")
+                .contains("Remove any real names from the shot");
         // Any other failure, or a refusal with no face attached, keeps its own message.
         assertThat(ShotImageService.refusalExplanation("timeout", List.of("face: Uma Dixit"))).isNull();
         assertThat(ShotImageService.refusalExplanation("finishReason=IMAGE_OTHER", List.of("earlier shot (step source)"))).isNull();

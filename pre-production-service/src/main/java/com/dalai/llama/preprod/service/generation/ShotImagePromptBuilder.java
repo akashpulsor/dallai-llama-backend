@@ -257,8 +257,8 @@ public final class ShotImagePromptBuilder {
         for (CastProfile secondary : secondaryCasts) {
             if (secondary == null) continue;
             index++;
-            sb.append("\nAdditional subject ").append(index).append(": ")
-                    .append(secondary.getDisplayName() == null ? "unnamed subject" : secondary.getDisplayName());
+            // Never the actor's name -- see appendCastIdentityBlock.
+            sb.append("\nAdditional subject ").append(index).append(": the person in the next attached reference photo");
             if (secondary.getDescription() != null && !secondary.getDescription().isBlank()) {
                 sb.append(" -- ").append(secondary.getDescription());
             }
@@ -272,7 +272,12 @@ public final class ShotImagePromptBuilder {
      * dedicated "Performance" section higher up so they land regardless of whether a cast
      * profile is attached. */
     private static void appendCastIdentityBlock(StringBuilder sb, CastProfile castProfile) {
-        sb.append("\nPrimary subject: ").append(castProfile.getDisplayName());
+        // The actor's name never reaches the image model. "Generate a photorealistic image ...
+        // depict Uma Dixit" reads to Gemini as a realistic picture of a named real person, which it
+        // withholds (IMAGE_OTHER) -- replayed live: the identical prompt with only the name swapped
+        // for the character's returned the image 2/2, with or without the photo. The shot's action
+        // already names the character; the photo carries the identity.
+        sb.append("\nPrimary subject: the person in the attached reference photo");
         if (castProfile.getDescription() != null && !castProfile.getDescription().isBlank()) {
             sb.append(" -- ").append(castProfile.getDescription());
         }

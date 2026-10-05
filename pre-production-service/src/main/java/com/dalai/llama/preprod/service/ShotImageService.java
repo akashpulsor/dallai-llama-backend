@@ -313,10 +313,10 @@ public class ShotImageService {
         return toView(image);
     }
 
-    /** When the image model refuses every attempt (IMAGE_OTHER) with an actor's face attached, the
-     * usual cause is the reference photo itself: Gemini treats every face in it as an identity to
-     * keep, so a photo with a crowd, a second person or no clear face is refused however the prompt
-     * is worded. Says which reference and what to use instead; null for any other failure. */
+    /** When the image model withholds every attempt (IMAGE_OTHER) for a shot with an actor attached.
+     * Gemini's output filter does this when it judges the frame would show a real, identifiable
+     * person. Actor names are no longer sent (ShotImagePromptBuilder), which was the cause on shot 9;
+     * what can remain is a real person's name in the shot's own text. Null for any other failure. */
     static String refusalExplanation(String failure, List<String> attachmentLabels) {
         if (failure == null || !failure.contains("IMAGE_OTHER") || attachmentLabels == null) return null;
         List<String> faces = attachmentLabels.stream()
@@ -324,10 +324,10 @@ public class ShotImageService {
                 .map(label -> label.substring("face: ".length()))
                 .toList();
         if (faces.isEmpty()) return null;
-        return "The image model declined every attempt with " + String.join(", ", faces) + "'s reference photo attached (IMAGE_OTHER). "
-                + "This usually means the photo is not a clear picture of one person -- other people in the background, a busy scene "
-                + "or an unclear face. Replace it with a tight head-and-shoulders photo of just that person (Cast Library -> Edit: "
-                + "upload one, or use AI face), then generate again.";
+        return "The image model withheld the image on every attempt for this shot with " + String.join(", ", faces)
+                + " attached (IMAGE_OTHER). Gemini does this when it judges the frame would show a real, identifiable person -- "
+                + "usually a real person's full name in the shot's action or description. Remove any real names from the shot "
+                + "and generate again.";
     }
 
     /** Everything one image call sends: model, final prompt, params, and the attached images per

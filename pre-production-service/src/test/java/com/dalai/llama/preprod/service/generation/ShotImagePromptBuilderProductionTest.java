@@ -196,7 +196,7 @@ class ShotImagePromptBuilderProductionTest {
         // order in ShotImageService).
         Shot shot = minimalShot();
         CastProfile cast = new CastProfile();
-        cast.setDisplayName("Anjali");
+        cast.setDisplayName("Priya Menon");
         cast.setDescription("early-30s working mother");
         cast.setGender("female");
 
@@ -204,13 +204,14 @@ class ShotImagePromptBuilderProductionTest {
         product.setClassification(ProductReferenceClassification.CAST);
 
         String out = ShotImagePromptBuilder.buildProductionPrompt(shot, cast, product);
-        int castAt = out.indexOf("Primary subject: Anjali");
+        int castAt = out.indexOf("Primary subject: the person in the attached reference photo");
         int productAt = out.indexOf("PRIMARY IDENTITY REFERENCE", castAt + 1);
         assertThat(castAt).as("cast identity block present").isGreaterThanOrEqualTo(0);
         assertThat(productAt).as("product identity block present after cast").isGreaterThan(castAt);
         // Gendered pronoun should propagate through (empirical Gemini finding -- see class doc
         // on personIdentityLockInstruction).
         assertThat(out).contains("keep her face");
+        assertThat(out).doesNotContain("Priya Menon");
     }
 
     @Test
@@ -227,13 +228,32 @@ class ShotImagePromptBuilderProductionTest {
     void castOnlyEmitsCastBlockAndNoProductBlock() {
         Shot shot = minimalShot();
         CastProfile cast = new CastProfile();
-        cast.setDisplayName("Anjali");
+        cast.setDisplayName("Priya Menon");
         cast.setGender("female");
         String out = ShotImagePromptBuilder.buildProductionPrompt(shot, cast, null);
-        assertThat(out).contains("Primary subject: Anjali");
+        assertThat(out).contains("Primary subject: the person in the attached reference photo");
         assertThat(out).contains("PRIMARY IDENTITY REFERENCE for this subject");
+        // The actor's name never reaches the image model: a named person plus "photorealistic"
+        // is what Gemini withholds as IMAGE_OTHER (shot 9, "Uma Dixit", replayed live).
+        assertThat(out).doesNotContain("Priya Menon");
         // Should not double-print an unrelated product reference block.
         assertThat(out).doesNotContain("A style reference photo is attached");
+    }
+
+    @Test
+    void secondaryActorsAreNumberedReferencesNeverNames() {
+        Shot shot = minimalShot();
+        CastProfile primary = new CastProfile();
+        primary.setDisplayName("Uma Dixit");
+        primary.setGender("female");
+        CastProfile secondary = new CastProfile();
+        secondary.setDisplayName("Rajesh Kumar");
+        secondary.setGender("male");
+
+        String out = ShotImagePromptBuilder.buildProductionPrompt(shot, primary, null, null, java.util.List.of(secondary));
+
+        assertThat(out).contains("Additional subject 1: the person in the next attached reference photo");
+        assertThat(out).doesNotContain("Uma Dixit").doesNotContain("Rajesh Kumar");
     }
 
     private static Shot minimalShot() {
