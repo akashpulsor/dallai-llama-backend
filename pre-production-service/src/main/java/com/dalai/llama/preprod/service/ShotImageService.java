@@ -917,8 +917,32 @@ public class ShotImageService {
         int comma = content.indexOf(',');
         String header = content.substring(5, content.indexOf(';'));
         String extension = header.contains("/") ? header.substring(header.indexOf('/') + 1) : "png";
-        byte[] bytes = Base64.getDecoder().decode(content.substring(comma + 1));
+        byte[] bytes = Base64.getDecoder().decode(firstBase64Payload(content.substring(comma + 1)));
         return new DecodedImage(bytes, "image/" + extension, extension);
+    }
+
+    /** llm-gateway joins every part of the model's reply into one string, so a reply with two images
+     * (Gemini answered shot 18's "city fading into an ashram" with a pair, 2/2 times) or an image
+     * followed by text arrives as "data:...,AAAA" + "data:...,BBBB". The first image is the one kept:
+     * it ends where the next "data:" begins ("data" is itself valid base64, so the cut is at the word,
+     * not at its colon), at any character base64 cannot contain, and right after its "=" padding. */
+    static String firstBase64Payload(String afterComma) {
+        int next = afterComma.indexOf("data:");
+        String payload = next >= 0 ? afterComma.substring(0, next) : afterComma;
+        int end = 0;
+        while (end < payload.length() && isBase64Char(payload.charAt(end))) end++;
+        payload = payload.substring(0, end);
+        int padding = payload.indexOf('=');
+        if (padding >= 0) {
+            int afterPadding = padding;
+            while (afterPadding < payload.length() && payload.charAt(afterPadding) == '=') afterPadding++;
+            payload = payload.substring(0, afterPadding);
+        }
+        return payload;
+    }
+
+    private static boolean isBase64Char(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
     }
 
     /** Confirmed live (see the batch-run investigation this guards against): a prose-only aspect

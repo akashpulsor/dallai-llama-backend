@@ -155,6 +155,18 @@ class ShotImageServiceStepTest {
         assertThat(ShotImageService.refusalExplanation("finishReason=IMAGE_OTHER", List.of("earlier shot (step source)"))).isNull();
     }
 
+    @Test
+    void aReplyWithTwoImagesOrTrailingTextKeepsTheFirstImageWhole() {
+        String first = java.util.Base64.getEncoder().encodeToString("first-image-bytes".getBytes());
+        String second = java.util.Base64.getEncoder().encodeToString("second-image".getBytes());
+
+        assertThat(ShotImageService.firstBase64Payload(first + "data:image/jpeg;base64," + second)).isEqualTo(first);
+        assertThat(ShotImageService.firstBase64Payload(first + "Here is your image of the city.")).isEqualTo(first);
+        assertThat(ShotImageService.firstBase64Payload(first)).isEqualTo(first);
+        assertThat(new String(java.util.Base64.getDecoder().decode(
+                ShotImageService.firstBase64Payload(first + "data:image/jpeg;base64," + second)))).isEqualTo("first-image-bytes");
+    }
+
     private Shot shot(int number, String sketch) {
         Shot shot = new Shot();
         shot.setId(UUID.randomUUID());
