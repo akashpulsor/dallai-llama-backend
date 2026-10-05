@@ -43,6 +43,38 @@ public interface LlmJobRepository extends JpaRepository<LlmJob, UUID> {
             """, nativeQuery = true)
     List<ProjectJobCostRow> sumCostByTypeForProject(@Param("tenantId") String tenantId, @Param("projectId") UUID projectId);
 
+    /** A tenant's provider spend, one row per project x provider x model, from the cost each job
+     * recorded when it finished. A call that came back without a result (a provider refusal such as
+     * Gemini's IMAGE_OTHER, or a failed job) is counted in {@code noResult}; its cost, if the provider
+     * charged one, is still in {@code cost}. Jobs not tied to a project come back with a null id. */
+    @Query(value = """
+            SELECT j.project_id AS projectId,
+                   COALESCE(mm.provider_id, 'unknown') AS providerId,
+                   j.model_id AS modelId,
+                   COUNT(*) AS calls,
+                   COUNT(*) FILTER (WHERE j.status <> 'COMPLETED' OR j.result_content IS NULL OR j.result_content = '') AS noResult,
+                   COALESCE(SUM(j.cost), 0) AS cost,
+                   MIN(j.created_at) AS firstAt,
+                   MAX(j.created_at) AS lastAt
+            FROM llm_job j
+            LEFT JOIN model_master mm ON mm.model_id = j.model_id
+            WHERE j.tenant_id = :tenantId
+            GROUP BY j.project_id, COALESCE(mm.provider_id, 'unknown'), j.model_id
+            ORDER BY j.project_id, cost DESC
+            """, nativeQuery = true)
+    List<ProviderCostRow> providerCostsForTenant(@Param("tenantId") String tenantId);
+
+    interface ProviderCostRow {
+        UUID getProjectId();
+        String getProviderId();
+        String getModelId();
+        long getCalls();
+        long getNoResult();
+        java.math.BigDecimal getCost();
+        java.time.Instant getFirstAt();
+        java.time.Instant getLastAt();
+    }
+
     /** Native-query projection: one row per model_master.type with its summed cost. */
     interface ProjectJobCostRow {
         String getModelType();

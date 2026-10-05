@@ -4,6 +4,7 @@ import com.dalai.llama.llmgateway.domain.JobStatus;
 import com.dalai.llama.llmgateway.domain.entity.LlmJob;
 import com.dalai.llama.llmgateway.dto.ChatRequest;
 import com.dalai.llama.llmgateway.dto.RetryLlmJobResponse;
+import com.dalai.llama.llmgateway.dto.ProviderCostView;
 import com.dalai.llama.llmgateway.dto.StuckLlmJobView;
 import com.dalai.llama.llmgateway.kafka.ChatJobRequestedEvent;
 import com.dalai.llama.llmgateway.kafka.ChatJobRequestedPublisher;
@@ -139,5 +140,14 @@ public class AdminLlmJobService {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Stored request_content for job " + job.getJobId() + " is not a valid ChatRequest JSON", ex);
         }
+    }
+
+    /** Every project's raw provider spend for one tenant -- the ops page's "Provider costs" view. */
+    @Transactional(readOnly = true)
+    public List<ProviderCostView> providerCosts(String tenantId) {
+        return jobRepository.providerCostsForTenant(tenantId).stream()
+                .map(row -> new ProviderCostView(row.getProjectId(), row.getProviderId(), row.getModelId(), row.getCalls(),
+                        row.getNoResult(), row.getCost(), row.getFirstAt(), row.getLastAt()))
+                .toList();
     }
 }

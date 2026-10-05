@@ -90,4 +90,34 @@ class AdminLlmJobServiceTest {
                 .hasMessageContaining("already COMPLETED");
         verify(publisher, never()).publish(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void providerCostsCarryEveryRowWithItsProviderModelCallsRefusalsAndCost() {
+        java.util.UUID project = java.util.UUID.randomUUID();
+        java.time.Instant first = java.time.Instant.parse("2026-10-05T11:18:59Z");
+        java.time.Instant last = java.time.Instant.parse("2026-10-05T15:35:53Z");
+        LlmJobRepository.ProviderCostRow image = costRow(project, "google", "gemini-3.1-flash-image", 12, 3, "0.8093", first, last);
+        LlmJobRepository.ProviderCostRow unattributed = costRow(null, "google", "gemini-2.5-flash", 14, 0, "0.0323", first, last);
+        org.mockito.BDDMockito.given(jobs.providerCostsForTenant("tenant-1")).willReturn(List.of(image, unattributed));
+
+        assertThat(service.providerCosts("tenant-1")).containsExactly(
+                new com.dalai.llama.llmgateway.dto.ProviderCostView(project, "google", "gemini-3.1-flash-image", 12, 3,
+                        new java.math.BigDecimal("0.8093"), first, last),
+                new com.dalai.llama.llmgateway.dto.ProviderCostView(null, "google", "gemini-2.5-flash", 14, 0,
+                        new java.math.BigDecimal("0.0323"), first, last));
+    }
+
+    private static LlmJobRepository.ProviderCostRow costRow(java.util.UUID project, String provider, String model, long calls,
+                                                            long noResult, String cost, java.time.Instant first, java.time.Instant last) {
+        return new LlmJobRepository.ProviderCostRow() {
+            public java.util.UUID getProjectId() { return project; }
+            public String getProviderId() { return provider; }
+            public String getModelId() { return model; }
+            public long getCalls() { return calls; }
+            public long getNoResult() { return noResult; }
+            public java.math.BigDecimal getCost() { return new java.math.BigDecimal(cost); }
+            public java.time.Instant getFirstAt() { return first; }
+            public java.time.Instant getLastAt() { return last; }
+        };
+    }
 }

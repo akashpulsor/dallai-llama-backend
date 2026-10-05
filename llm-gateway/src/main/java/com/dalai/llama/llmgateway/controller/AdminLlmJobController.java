@@ -1,6 +1,7 @@
 package com.dalai.llama.llmgateway.controller;
 
 import com.dalai.llama.llmgateway.dto.RetryLlmJobResponse;
+import com.dalai.llama.llmgateway.dto.ProviderCostView;
 import com.dalai.llama.llmgateway.dto.StuckLlmJobView;
 import com.dalai.llama.llmgateway.service.AdminLlmJobService;
 import lombok.RequiredArgsConstructor;
@@ -53,6 +54,13 @@ public class AdminLlmJobController {
             @RequestParam(name = "lookbackHours", defaultValue = "24") long lookbackHours
     ) {
         return ResponseEntity.ok(adminLlmJobService.listAll(Duration.ofHours(lookbackHours)));
+    }
+
+    /** What every project of one tenant actually cost at the providers (Google, fal.ai, ElevenLabs),
+     * by model, in USD -- recorded per call when it finished. */
+    @GetMapping("/project-costs")
+    public ResponseEntity<List<ProviderCostView>> projectCosts(@RequestParam("tenantId") String tenantId) {
+        return ResponseEntity.ok(adminLlmJobService.providerCosts(tenantId));
     }
 
     @PostMapping("/{jobId}/retry")
