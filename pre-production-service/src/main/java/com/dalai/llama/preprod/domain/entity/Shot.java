@@ -401,6 +401,15 @@ public class Shot {
     @Column(name = "scene_type", length = 24)
     private SceneType sceneType;
 
+    /** The client supplies this shot's footage; nothing is generated for it (see V78). */
+    @Builder.Default
+    @Column(name = "client_footage", nullable = false)
+    private Boolean clientFootage = false;
+
+    /** What footage the client needs to provide for this shot, shown on the client review page. */
+    @Column(name = "client_footage_note")
+    private String clientFootageNote;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

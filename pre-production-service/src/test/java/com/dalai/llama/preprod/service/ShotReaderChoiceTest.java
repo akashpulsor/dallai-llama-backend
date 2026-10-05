@@ -40,7 +40,36 @@ class ShotReaderChoiceTest {
 
     private static UpdateShotRequest reader(String dubVoiceId, String dubCastProfileId) {
         return new UpdateShotRequest(null, null, null, null, dubVoiceId, null, null, null, null,
-                null, null, null, null, null, null, null, dubCastProfileId);
+                null, null, null, null, null, null, null, dubCastProfileId, null, null);
+    }
+
+    private static UpdateShotRequest clientFootage(Boolean clientFootage, String note) {
+        return new UpdateShotRequest(null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, clientFootage, note);
+    }
+
+    @Test
+    void taggingClientFootageKeepsTheNoteAndTheViewSaysSo() {
+        var view = mocked.instance().updateShot(tenant, shotId,
+                clientFootage(true, "  Real travellers speaking to camera about their stay  "));
+
+        assertThat(shot.getClientFootage()).isTrue();
+        assertThat(shot.getClientFootageNote()).isEqualTo("Real travellers speaking to camera about their stay");
+        assertThat(view.clientFootage()).isTrue();
+        assertThat(view.clientFootageNote()).isEqualTo("Real travellers speaking to camera about their stay");
+    }
+
+    @Test
+    void untaggingLeavesTheNoteUnlessItIsBlanked() {
+        shot.setClientFootage(true);
+        shot.setClientFootageNote("Testimonials");
+
+        mocked.instance().updateShot(tenant, shotId, clientFootage(false, null));
+        assertThat(shot.getClientFootage()).isFalse();
+        assertThat(shot.getClientFootageNote()).isEqualTo("Testimonials");
+
+        mocked.instance().updateShot(tenant, shotId, clientFootage(null, " "));
+        assertThat(shot.getClientFootageNote()).isNull();
     }
 
     @Test

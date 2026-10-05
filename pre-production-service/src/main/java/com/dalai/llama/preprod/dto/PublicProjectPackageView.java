@@ -40,7 +40,10 @@ public record PublicProjectPackageView(
             Integer shotNumber,
             String shotType,
             String action,
-            List<ShotImageView> images
+            List<ShotImageView> images,
+            /** The client supplies this shot's footage -- the review page marks where it goes. */
+            boolean clientFootage,
+            String clientFootageNote
     ) {
     }
 }

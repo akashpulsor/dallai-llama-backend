@@ -549,6 +549,11 @@ public class ShotListGenerationService {
         if (request.cameraAngle() != null) shot.setCameraAngle(request.cameraAngle());
         if (request.cameraMovement() != null) shot.setCameraMovement(request.cameraMovement());
         if (request.cameraNote() != null) shot.setCameraNote(request.cameraNote());
+        if (request.clientFootage() != null) shot.setClientFootage(request.clientFootage());
+        // Blank clears the note, same PATCH rule as dubVoiceId.
+        if (request.clientFootageNote() != null) {
+            shot.setClientFootageNote(request.clientFootageNote().isBlank() ? null : request.clientFootageNote().trim());
+        }
         shot.setUpdatedAt(OffsetDateTime.now());
         Shot saved = shotRepository.save(shot);
         return toView(saved, castByCharacterKeyForProject(tenantId, shot.getProjectId()));
@@ -750,7 +755,8 @@ public class ShotListGenerationService {
                 shot.getDirectorNote(), CinematographyMapper.toView(shot), cast,
                 Boolean.TRUE.equals(shot.getNeedsMultiImage()), shot.getMultiImageLabel(),
                 shot.getSceneType() == null ? null : shot.getSceneType().name(),
-                shot.getDubCastProfileId());
+                shot.getDubCastProfileId(),
+                Boolean.TRUE.equals(shot.getClientFootage()), shot.getClientFootageNote());
     }
 
     /** No one on screen but there's still a line to speak (voiceOver, no primaryCharacterKey) --

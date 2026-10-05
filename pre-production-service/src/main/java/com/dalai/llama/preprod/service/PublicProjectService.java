@@ -385,7 +385,8 @@ public class PublicProjectService {
         return shots.stream()
                 .map(shot -> {
                     List<ShotImageView> images = shotImageService.list(identity.tenantId(), shot.id());
-                    return new PublicShotView(shot.id(), shot.shotRef(), shot.shotNumber(), shot.shotType().toString(), shot.action(), images);
+                    return new PublicShotView(shot.id(), shot.shotRef(), shot.shotNumber(), shot.shotType().toString(), shot.action(), images,
+                            shot.clientFootage(), shot.clientFootageNote());
                 })
                 .collect(Collectors.toList());
     }

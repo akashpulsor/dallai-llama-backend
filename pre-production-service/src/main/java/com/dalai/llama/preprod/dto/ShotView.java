@@ -72,6 +72,10 @@ public record ShotView(
          * null reads as GENERIC downstream. */
         String sceneType,
         /** The cast character chosen to read this shot's line. Null: the shot's own character. */
-        UUID dubCastProfileId
+        UUID dubCastProfileId,
+        /** The client supplies this shot's footage; nothing is generated for it. */
+        boolean clientFootage,
+        /** What footage the client needs to provide for it. */
+        String clientFootageNote
 ) {
 }
