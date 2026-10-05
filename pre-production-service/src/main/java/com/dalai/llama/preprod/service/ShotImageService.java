@@ -195,6 +195,38 @@ public class ShotImageService {
      * earlier shot's image into this shot's moment, keeping the characters who stay and the look. */
     @Transactional
     public ShotImageView generateStepFrom(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
+        StepSource source = stepSource(tenantId, shotId, kind, sourceShotId);
+        return generate(tenantId, shotId, kind, StepShot.instruction(source.shot(), note), List.of(), source.imageUri());
+    }
+
+    /** The step shot as a zip instead of a generation: the exact prompt and images
+     * {@link #generateStepFrom} would send, for running the same step in an outside tool and
+     * uploading the result back ("Same" replace). Makes no image, but on an identity-conditioned
+     * still the prompt passes through the same reliability rewrite (one small text call). */
+    @Transactional(readOnly = true)
+    public ShotImageBundle stepBundle(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
+        StepSource source = stepSource(tenantId, shotId, kind, sourceShotId);
+        PreparedImageRequest request = prepare(tenantId, shotId, kind, StepShot.instruction(source.shot(), note),
+                List.of(), source.imageUri());
+        return ShotImageBundle.of(request.shot(), source.shot(), kind, request.modelId(), request.prompt(),
+                request.refsForAttempt().apply(1), request.attachmentLabels(), request.params());
+    }
+
+    /** Removes this shot's {@code kind} image so it can be made again from scratch (or uploaded).
+     * The stored file stays in the bucket -- media assets are never hard-deleted here. */
+    @Transactional
+    public void deleteImage(UUID tenantId, UUID shotId, ShotImageKind kind) {
+        shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        ShotImage image = shotImageRepository.findByShotIdAndKind(shotId, kind)
+                .orElseThrow(() -> PreProductionException.notFound("Shot " + shotId + " has no " + kind + " image"));
+        shotImageRepository.delete(image);
+        generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_DELETED", kind + " image removed");
+    }
+
+    private record StepSource(Shot shot, String imageUri) {}
+
+    private StepSource stepSource(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         Shot source = shotRepository.findByIdAndTenantId(sourceShotId, tenantId)
@@ -205,125 +237,20 @@ public class ShotImageService {
         if (sourceUri == null) {
             throw PreProductionException.upstream("Could not read shot " + sourceShotId + "'s image to step from");
         }
-        return generate(tenantId, shotId, kind, StepShot.instruction(source, note), List.of(), sourceUri);
+        return new StepSource(source, sourceUri);
     }
 
     /** {@code editSourceUri}, when given, is the image edited into this shot instead of the shot's
      * own current image (a step shot's earlier frame). */
     private ShotImageView generate(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
                                    List<String> inspirationDataUris, String editSourceUri) {
-        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
-                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
-        CastProfile castProfile = kind == ShotImageKind.PRODUCTION ? resolveCastProfile(tenantId, shot) : null;
-        ShotProductReference productReference = kind == ShotImageKind.PRODUCTION
-                ? shotProductReferenceRepository.findByShotId(shotId).orElse(null) : null;
-        // Other on-screen characters staged in the parent scene (antagonist alongside protagonist,
-        // etc). Only meaningful for the PRODUCTION still -- storyboard/planning kinds don't
-        // condition on faces and shouldn't burn extra reference images.
-        List<CastProfile> secondaryCasts = kind == ShotImageKind.PRODUCTION
-                ? resolveSecondarySceneCastProfiles(tenantId, shot, castProfile) : List.of();
-
-        // Production stills follow the approved creative direction's look, and -- where no identity
-        // reference is attached -- carry the client's approved reference images as style references.
-        ApprovedCreativeDirectionContext creativeDirection = kind == ShotImageKind.PRODUCTION
-                ? creativeDirectionContextService.forGeneration(tenantId, shot.getProjectId()).orElse(null) : null;
-        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts, creativeDirection);
-        if (prompt == null || prompt.isBlank()) {
-            throw PreProductionException.badRequest(
-                    "Shot " + shotId + " has no " + kind + " prompt available yet -- generate the shot list first");
-        }
-        if (note != null && !note.isBlank()) {
-            prompt = prompt + "\n\nRequested change: " + note;
-        }
-
+        PreparedImageRequest request = prepare(tenantId, shotId, kind, note, inspirationDataUris, editSourceUri);
+        Shot shot = request.shot();
+        CastProfile castProfile = request.castProfile();
+        String prompt = request.prompt();
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_STARTED", "Generating " + kind + " image");
-
-        String modelId;
-        Map<String, Object> params;
-        List<String> editDataUris = null;
-        java.util.function.IntFunction<List<String>> refsForAttempt = null;
-        if (productReference != null || castProfile != null) {
-            modelId = identityImageModel;
-            if (isGeminiModel(modelId)) {
-                // Gemini has no separate "reference image" request param the way fal.ai's
-                // FLUX_PULID does -- it conditions on whatever images ride along inline with the
-                // prompt, same imageDataUris mechanism the plain-edit path below already uses.
-                // Confirmed live: the fal.ai path 502'd with "FAL_API_KEY is not configured" the
-                // moment a real batch hit an identity-conditioned shot -- that key was never
-                // actually provisioned in this environment, so identity-image-model now defaults
-                // to Gemini (see application.yml), which needs no separate credential at all.
-                params = imageParams(shot);
-                // Compute each ref slot ONCE. generateWithRetry rebuilds the actual attached list
-                // per attempt via identityRefsForAttempt so IMAGE_OTHER refusals get a real chance
-                // to succeed with fewer refs (drop secondaries on attempt 2; drop the current-
-                // image edit source on attempt 3, primary-character-only being the most reliable
-                // combination). Order within an attempt stays current-image -> primary ->
-                // secondaries -> product so the numbered subject blocks in the prompt still map
-                // to the numbered reference image by position.
-                final String currentImageUri = editSourceUri != null ? editSourceUri
-                        : (note != null && !note.isBlank())
-                        ? shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).orElse(null)
-                        : null;
-                final String primaryUri = castProfile == null ? null
-                        : toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
-                final List<String> secondaryUris = secondaryCasts.stream()
-                        .map(s -> toDataUri(s.getFaceRefBucket(), s.getFaceRefObjectKey()))
-                        .filter(java.util.Objects::nonNull)
-                        .toList();
-                final String productUri = productReference == null ? null
-                        : toDataUri(productReference.getBucket(), productReference.getObjectKey());
-                refsForAttempt = attempt -> identityRefsForAttempt(attempt, currentImageUri, primaryUri, secondaryUris, productUri);
-                editDataUris = refsForAttempt.apply(1);
-                prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
-            } else {
-                // fal.ai FLUX_PULID's reference_image_urls param: send both refs when both exist,
-                // same order as the Gemini path above so downstream behavior stays symmetric.
-                List<String> refUrls = new java.util.ArrayList<>();
-                if (castProfile != null) refUrls.add(signedUrl(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey()));
-                // Secondary scene characters in the same primary-cast -> other -> product order the
-                // Gemini path uses, so ShotImagePromptBuilder's ordered subject blocks and the
-                // reference_image_urls positions stay aligned across providers.
-                for (CastProfile secondary : secondaryCasts) {
-                    String url = signedUrl(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
-                    if (url != null) refUrls.add(url);
-                }
-                if (productReference != null) refUrls.add(signedUrl(productReference.getBucket(), productReference.getObjectKey()));
-                params = Map.of("reference_image_urls", refUrls);
-            }
-        } else {
-            // Three tiers of image model routing, by kind:
-            //   PRODUCTION -> default-image-model (gemini-3.1-flash-image, photoreal video anchor)
-            //   STORYBOARD -> storyboard-image-model (gemini-3.1-flash-lite-image, budget sketch)
-            //   LIGHTING / CAMERA_PLAN / MOTION_GRAPHIC -> planning-image-model (fal-ai/flux/schnell)
-            // Config knobs are all in application.yml so a deployment can collapse the tiers
-            // (e.g. set storyboard-image-model = default-image-model to disable the lite split).
-            modelId = pickModelForKind(kind);
-            params = imageParams(shot, modelId);
-            // A chat-requested change ("make her jacket red") should edit the actual current
-            // image, not regenerate blind from text alone -- Gemini's image model accepts multiple
-            // input images inline alongside the instruction and edits from them directly (same
-            // imageDataUris path ShotImageDescriptionService uses to read an image, just fed into
-            // an image-out call here instead of a text-out one). Current image first (what's being
-            // edited), then any inspiration image(s) (what to match/borrow from).
-            List<String> images = new java.util.ArrayList<>();
-            if (editSourceUri != null) {
-                images.add(editSourceUri);
-            } else if (note != null && !note.isBlank()) {
-                shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).ifPresent(images::add);
-            }
-            images.addAll(inspirationDataUris);
-            List<String> styleReferences = creativeDirectionStyleReferences(creativeDirection);
-            if (!styleReferences.isEmpty()) {
-                images.addAll(styleReferences);
-                prompt = prompt + "\n\nThe last " + styleReferences.size() + " attached image(s) are the client's approved style references: "
-                        + "match their colour, light and texture only -- do not copy their subjects, layout or any text in them.";
-            }
-            editDataUris = images.isEmpty() ? null : images;
-        }
-
-        DecodedImage decoded = refsForAttempt != null
-                ? generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, params, refsForAttempt)
-                : generateWithRetry(tenantId, shotId, kind, shot, modelId, prompt, editDataUris, params);
+        DecodedImage decoded = generateWithRetry(tenantId, shotId, kind, shot, request.modelId(), prompt,
+                request.params(), request.refsForAttempt());
         String objectKey = "%s/%s/%s/%s.%s".formatted(storyboardPrefix, kind.name().toLowerCase(), shotId, UUID.randomUUID(), decoded.extension());
         upload(objectKey, decoded);
 
@@ -353,6 +280,143 @@ public class ShotImageService {
 
         annotateFromVisionAnalysis(tenantId, shot.getProjectId(), image);
         return toView(image);
+    }
+
+    /** Everything one image call sends: model, final prompt, params, and the attached images per
+     * retry attempt. {@code attachmentLabels} names attempt 1's images in send order -- the step
+     * bundle uses it so an outside run sees the same numbered images the prompt refers to. */
+    record PreparedImageRequest(Shot shot, CastProfile castProfile, String modelId, String prompt,
+                                Map<String, Object> params, java.util.function.IntFunction<List<String>> refsForAttempt,
+                                List<String> attachmentLabels) {}
+
+    /** Builds the request {@link #generate} sends, without sending it. Shared with
+     * {@link #stepBundle} so a downloaded bundle is exactly what the app would have generated from. */
+    private PreparedImageRequest prepare(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
+                                         List<String> inspirationDataUris, String editSourceUri) {
+        Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
+        CastProfile castProfile = kind == ShotImageKind.PRODUCTION ? resolveCastProfile(tenantId, shot) : null;
+        ShotProductReference productReference = kind == ShotImageKind.PRODUCTION
+                ? shotProductReferenceRepository.findByShotId(shotId).orElse(null) : null;
+        // Other on-screen characters staged in the parent scene (antagonist alongside protagonist,
+        // etc). Only meaningful for the PRODUCTION still -- storyboard/planning kinds don't
+        // condition on faces and shouldn't burn extra reference images.
+        List<CastProfile> secondaryCasts = kind == ShotImageKind.PRODUCTION
+                ? resolveSecondarySceneCastProfiles(tenantId, shot, castProfile) : List.of();
+
+        // Production stills follow the approved creative direction's look, and -- where no identity
+        // reference is attached -- carry the client's approved reference images as style references.
+        ApprovedCreativeDirectionContext creativeDirection = kind == ShotImageKind.PRODUCTION
+                ? creativeDirectionContextService.forGeneration(tenantId, shot.getProjectId()).orElse(null) : null;
+        String prompt = promptFor(shot, kind, castProfile, productReference, secondaryCasts, creativeDirection);
+        if (prompt == null || prompt.isBlank()) {
+            throw PreProductionException.badRequest(
+                    "Shot " + shotId + " has no " + kind + " prompt available yet -- generate the shot list first");
+        }
+        if (note != null && !note.isBlank()) {
+            prompt = prompt + "\n\nRequested change: " + note;
+        }
+        String editLabel = editSourceUri != null ? "earlier shot (step source)" : "this shot's current image";
+
+        if (productReference != null || castProfile != null) {
+            String modelId = identityImageModel;
+            if (!isGeminiModel(modelId)) {
+                // fal.ai FLUX_PULID's reference_image_urls param: send both refs when both exist,
+                // same order as the Gemini path below so downstream behavior stays symmetric.
+                List<String> refUrls = new java.util.ArrayList<>();
+                List<String> labels = new java.util.ArrayList<>();
+                if (castProfile != null) {
+                    refUrls.add(signedUrl(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey()));
+                    labels.add("face: " + castProfile.getDisplayName());
+                }
+                // Secondary scene characters in the same primary-cast -> other -> product order the
+                // Gemini path uses, so ShotImagePromptBuilder's ordered subject blocks and the
+                // reference_image_urls positions stay aligned across providers.
+                for (CastProfile secondary : secondaryCasts) {
+                    String url = signedUrl(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
+                    if (url != null) {
+                        refUrls.add(url);
+                        labels.add("face: " + secondary.getDisplayName());
+                    }
+                }
+                if (productReference != null) {
+                    refUrls.add(signedUrl(productReference.getBucket(), productReference.getObjectKey()));
+                    labels.add("product");
+                }
+                return new PreparedImageRequest(shot, castProfile, modelId, prompt,
+                        Map.of("reference_image_urls", refUrls), attempt -> null, labels);
+            }
+            // Gemini has no separate "reference image" request param the way fal.ai's FLUX_PULID
+            // does -- it conditions on whatever images ride along inline with the prompt. Each ref
+            // slot is computed ONCE; generateWithRetry rebuilds the attached list per attempt via
+            // identityRefsForAttempt so IMAGE_OTHER refusals get a real chance to succeed with
+            // fewer refs. Order within an attempt stays current-image -> primary -> secondaries ->
+            // product so the numbered subject blocks in the prompt map to images by position.
+            final String currentImageUri = editSourceUri != null ? editSourceUri
+                    : (note != null && !note.isBlank())
+                    ? shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).orElse(null)
+                    : null;
+            final String primaryUri = castProfile == null ? null
+                    : toDataUri(castProfile.getFaceRefBucket(), castProfile.getFaceRefObjectKey());
+            final List<CastProfile> secondariesWithFace = new java.util.ArrayList<>();
+            final List<String> secondaryUris = new java.util.ArrayList<>();
+            for (CastProfile secondary : secondaryCasts) {
+                String uri = toDataUri(secondary.getFaceRefBucket(), secondary.getFaceRefObjectKey());
+                if (uri != null) {
+                    secondariesWithFace.add(secondary);
+                    secondaryUris.add(uri);
+                }
+            }
+            final String productUri = productReference == null ? null
+                    : toDataUri(productReference.getBucket(), productReference.getObjectKey());
+            // A step shot's whole point is the earlier frame, so it is never dropped on retry.
+            final boolean keepEditSource = editSourceUri != null;
+            List<String> labels = new java.util.ArrayList<>();
+            if (currentImageUri != null) labels.add(editLabel);
+            if (primaryUri != null) labels.add("face: " + castProfile.getDisplayName());
+            secondariesWithFace.forEach(secondary -> labels.add("face: " + secondary.getDisplayName()));
+            if (productUri != null) labels.add("product");
+            prompt = reliabilityRewrite(tenantId, shot.getProjectId(), prompt, identityPronounHint(castProfile, productReference));
+            return new PreparedImageRequest(shot, castProfile, modelId, prompt, imageParams(shot),
+                    attempt -> identityRefsForAttempt(attempt, currentImageUri, keepEditSource, primaryUri, secondaryUris, productUri),
+                    labels);
+        }
+
+        // Three tiers of image model routing, by kind:
+        //   PRODUCTION -> default-image-model (gemini-3.1-flash-image, photoreal video anchor)
+        //   STORYBOARD -> storyboard-image-model (gemini-3.1-flash-lite-image, budget sketch)
+        //   LIGHTING / CAMERA_PLAN / MOTION_GRAPHIC -> planning-image-model (fal-ai/flux/schnell)
+        // Config knobs are all in application.yml so a deployment can collapse the tiers
+        // (e.g. set storyboard-image-model = default-image-model to disable the lite split).
+        String modelId = pickModelForKind(kind);
+        // A chat-requested change ("make her jacket red") should edit the actual current image, not
+        // regenerate blind from text alone -- Gemini's image model accepts multiple input images
+        // inline alongside the instruction and edits from them directly. Current image first (what's
+        // being edited), then any inspiration image(s) (what to match/borrow from).
+        List<String> images = new java.util.ArrayList<>();
+        List<String> labels = new java.util.ArrayList<>();
+        String currentImageUri = editSourceUri != null ? editSourceUri
+                : (note != null && !note.isBlank())
+                ? shotImageRepository.findByShotIdAndKind(shotId, kind).map(this::toDataUri).orElse(null)
+                : null;
+        if (currentImageUri != null) {
+            images.add(currentImageUri);
+            labels.add(editLabel);
+        }
+        for (String inspiration : inspirationDataUris) {
+            images.add(inspiration);
+            labels.add("inspiration");
+        }
+        List<String> styleReferences = creativeDirectionStyleReferences(creativeDirection);
+        if (!styleReferences.isEmpty()) {
+            images.addAll(styleReferences);
+            styleReferences.forEach(reference -> labels.add("client style reference"));
+            prompt = prompt + "\n\nThe last " + styleReferences.size() + " attached image(s) are the client's approved style references: "
+                    + "match their colour, light and texture only -- do not copy their subjects, layout or any text in them.";
+        }
+        List<String> editDataUris = images.isEmpty() ? null : images;
+        return new PreparedImageRequest(shot, null, modelId, prompt, imageParams(shot, modelId),
+                attempt -> editDataUris, labels);
     }
 
     /** Runs the vision-analysis call immediately after producing a new/replaced image, so the
@@ -732,13 +796,15 @@ public class ShotImageService {
      *   <li>attempt 1: everything (current image edit source + primary + secondaries + product)</li>
      *   <li>attempt 2: drop secondaries -- keep primary + product + current image edit source</li>
      *   <li>attempt 3: drop the current image edit source too -- primary + product only, the
-     *       most permissive combination Gemini reliably accepts.</li>
+     *       most permissive combination Gemini reliably accepts. Not for a step shot
+     *       ({@code keepEditSource}): its prompt says "the first attached image is shot N", and
+     *       without that frame the result silently loses all continuity.</li>
      * </ul>
      * A null slot is skipped naturally. */
-    private List<String> identityRefsForAttempt(int attempt, String currentImageUri, String primaryUri,
-                                                List<String> secondaryUris, String productUri) {
+    static List<String> identityRefsForAttempt(int attempt, String currentImageUri, boolean keepEditSource,
+                                               String primaryUri, List<String> secondaryUris, String productUri) {
         List<String> out = new java.util.ArrayList<>();
-        if (attempt <= 2 && currentImageUri != null) out.add(currentImageUri);
+        if ((attempt <= 2 || keepEditSource) && currentImageUri != null) out.add(currentImageUri);
         if (primaryUri != null) out.add(primaryUri);
         if (attempt == 1 && secondaryUris != null) {
             for (String uri : secondaryUris) if (uri != null) out.add(uri);

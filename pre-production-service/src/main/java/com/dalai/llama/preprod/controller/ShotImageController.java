@@ -2,8 +2,13 @@ package com.dalai.llama.preprod.controller;
 
 import com.dalai.llama.preprod.domain.ShotImageKind;
 import com.dalai.llama.preprod.dto.ShotImageView;
+import com.dalai.llama.preprod.service.ShotImageBundle;
 import com.dalai.llama.preprod.service.ShotImageService;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,6 +50,26 @@ public class ShotImageController extends BaseController {
             @PathVariable UUID shotId, @PathVariable ShotImageKind kind, @PathVariable UUID sourceShotId,
             @RequestParam(required = false) String note) {
         return ResponseEntity.ok(shotImageService.generateStepFrom(tenant().tenantId(), shotId, kind, sourceShotId, note));
+    }
+
+    /** The same step as a zip (prompt.txt + numbered images + README) for an outside image tool;
+     * the result comes back through {@link #replace}. POST, not GET: building it can make one
+     * billed text call (the identity reliability rewrite). */
+    @PostMapping("/v1/shots/{shotId}/images/{kind}/step-from/{sourceShotId}/bundle")
+    public ResponseEntity<byte[]> stepBundle(
+            @PathVariable UUID shotId, @PathVariable ShotImageKind kind, @PathVariable UUID sourceShotId,
+            @RequestParam(required = false) String note) {
+        ShotImageBundle bundle = shotImageService.stepBundle(tenant().tenantId(), shotId, kind, sourceShotId, note);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(bundle.fileName()).build().toString())
+                .body(bundle.zip());
+    }
+
+    @DeleteMapping("/v1/shots/{shotId}/images/{kind}")
+    public ResponseEntity<Void> delete(@PathVariable UUID shotId, @PathVariable ShotImageKind kind) {
+        shotImageService.deleteImage(tenant().tenantId(), shotId, kind);
+        return ResponseEntity.noContent().build();
     }
 
     /** "Same" upload flow -- creator downloaded the image, hand-corrected the typos (Gemini's
