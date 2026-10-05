@@ -9,6 +9,7 @@ import com.dalai.llama.preprod.dto.CreateCastAssignmentRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceCommand;
+import com.dalai.llama.preprod.dto.UpdateCastProfileRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.service.CastAssignmentService;
@@ -55,6 +56,12 @@ public class CastController extends BaseController {
     @PostMapping("/v1/cast-profiles")
     public ResponseEntity<CastProfileView> createProfile(@Valid @RequestBody CreateCastProfileRequest request) {
         return ResponseEntity.ok(castProfileService.create(tenant().tenantId(), request));
+    }
+
+    @PutMapping("/v1/cast-profiles/{castProfileId}")
+    public ResponseEntity<CastProfileView> updateProfile(
+            @PathVariable UUID castProfileId, @Valid @RequestBody UpdateCastProfileRequest request) {
+        return ResponseEntity.ok(castProfileService.update(tenant().tenantId(), castProfileId, request));
     }
 
     @PutMapping("/v1/cast-profiles/{castProfileId}/voice")

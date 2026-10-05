@@ -9,6 +9,7 @@ import com.dalai.llama.preprod.dto.ClonedVoiceIdentityView;
 import com.dalai.llama.preprod.dto.PersistClonedVoiceRequest;
 import com.dalai.llama.preprod.dto.CreateCastProfileRequest;
 import com.dalai.llama.preprod.dto.SelectCastProfileBuiltinVoiceCommand;
+import com.dalai.llama.preprod.dto.UpdateCastProfileRequest;
 import com.dalai.llama.preprod.dto.UpdateCastProfileVoiceCommand;
 import com.dalai.llama.preprod.repository.CastAssignmentRepository;
 import com.dalai.llama.preprod.repository.CastProfileRepository;
@@ -97,6 +98,29 @@ public class CastProfileService {
             mediaAssetService.registerIfAbsent(tenantId, profile.getVoiceRefBucket(), profile.getVoiceRefObjectKey(), MediaAssetType.CAST_VOICE_REFERENCE);
         }
         return toView(profile);
+    }
+
+    @Transactional
+    public CastProfileView update(UUID tenantId, UUID castProfileId, UpdateCastProfileRequest request) {
+        CastProfile profile = requireCastProfile(tenantId, castProfileId);
+        boolean actor = profile.getProfileType() == CastProfileType.ACTOR;
+        boolean newFace = hasText(request.faceRefBucket()) && hasText(request.faceRefObjectKey());
+        if (actor && newFace) {
+            entitlementClient.require(tenantId, entitlementClient.get(tenantId).imageUploadEnabled(),
+                    "uploading a character reference image");
+        }
+        profile.setDisplayName(request.displayName().trim());
+        profile.setDescription(request.description());
+        profile.setAge(actor ? request.age() : null);
+        profile.setGender(actor ? request.gender() : null);
+        if (newFace) {
+            profile.setFaceRefBucket(request.faceRefBucket());
+            profile.setFaceRefObjectKey(request.faceRefObjectKey());
+            mediaAssetService.registerIfAbsent(tenantId, request.faceRefBucket(), request.faceRefObjectKey(),
+                    actor ? MediaAssetType.CAST_FACE_REFERENCE : MediaAssetType.PRODUCT_REFERENCE);
+        }
+        profile.setUpdatedAt(OffsetDateTime.now());
+        return toView(castProfileRepository.save(profile));
     }
 
     /** Selects a HUMAN uploaded sample or an AI provider identity, clearing the other representation. */
