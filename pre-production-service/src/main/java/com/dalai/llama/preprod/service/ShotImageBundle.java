@@ -41,7 +41,7 @@ public record ShotImageBundle(String fileName, byte[] zip) {
     private static String readme(Shot shot, Shot source, ShotImageKind kind, String modelId, String order,
                                  Map<String, Object> params) {
         StringBuilder text = new StringBuilder()
-                .append("Step shot: shot ").append(label(shot)).append(" as the next frame of shot ").append(label(source))
+                .append("Step shot: ").append(StepShot.shotName(shot)).append(" as the next frame of ").append(StepShot.shotName(source))
                 .append(" (").append(kind).append(" image)\n\n")
                 .append("Model the app uses: ").append(modelId).append("\n\n")
                 .append("1. Paste prompt.txt as the instruction.\n")
@@ -52,7 +52,7 @@ public record ShotImageBundle(String fileName, byte[] zip) {
             text.append("\nReference images this model takes as URLs (links expire after an hour):\n");
             urls.forEach(url -> text.append("  ").append(url).append('\n'));
         }
-        return text.append("\n3. Bring the result back: in the app open shot ").append(label(shot))
+        return text.append("\n3. Bring the result back: in the app open ").append(StepShot.shotName(shot))
                 .append(", ").append(kind).append(" tile -> Upload -> \"Same -- use this exact image\".\n")
                 .toString();
     }

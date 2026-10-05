@@ -196,7 +196,7 @@ public class ShotImageService {
     @Transactional
     public ShotImageView generateStepFrom(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
         StepSource source = stepSource(tenantId, shotId, kind, sourceShotId);
-        return generate(tenantId, shotId, kind, StepShot.instruction(source.shot(), note), List.of(), source.imageUri());
+        return generate(tenantId, shotId, kind, note, List.of(), source);
     }
 
     /** The step shot as a zip instead of a generation: the exact prompt and images
@@ -206,8 +206,7 @@ public class ShotImageService {
     @Transactional(readOnly = true)
     public ShotImageBundle stepBundle(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId, String note) {
         StepSource source = stepSource(tenantId, shotId, kind, sourceShotId);
-        PreparedImageRequest request = prepare(tenantId, shotId, kind, StepShot.instruction(source.shot(), note),
-                List.of(), source.imageUri());
+        PreparedImageRequest request = prepare(tenantId, shotId, kind, note, List.of(), source);
         return ShotImageBundle.of(request.shot(), source.shot(), kind, request.modelId(), request.prompt(),
                 request.refsForAttempt().apply(1), request.attachmentLabels(), request.params());
     }
@@ -224,7 +223,8 @@ public class ShotImageService {
         generationThoughtService.log(tenantId, shotId, kind + "_IMAGE_DELETED", kind + " image removed");
     }
 
-    private record StepSource(Shot shot, String imageUri) {}
+    /** The earlier shot, its image (attached first) and the instruction that leads the prompt. */
+    private record StepSource(Shot shot, String imageUri, String instruction) {}
 
     private StepSource stepSource(UUID tenantId, UUID shotId, ShotImageKind kind, UUID sourceShotId) {
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
@@ -237,14 +237,15 @@ public class ShotImageService {
         if (sourceUri == null) {
             throw PreProductionException.upstream("Could not read shot " + sourceShotId + "'s image to step from");
         }
-        return new StepSource(source, sourceUri);
+        return new StepSource(source, sourceUri,
+                StepShot.instruction(source, primaryCharacterName(source), shot, primaryCharacterName(shot)));
     }
 
-    /** {@code editSourceUri}, when given, is the image edited into this shot instead of the shot's
-     * own current image (a step shot's earlier frame). */
+    /** {@code step}, when given, is a step shot: its earlier frame is edited into this shot instead
+     * of the shot's own current image, and its instruction leads the prompt. */
     private ShotImageView generate(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
-                                   List<String> inspirationDataUris, String editSourceUri) {
-        PreparedImageRequest request = prepare(tenantId, shotId, kind, note, inspirationDataUris, editSourceUri);
+                                   List<String> inspirationDataUris, StepSource step) {
+        PreparedImageRequest request = prepare(tenantId, shotId, kind, note, inspirationDataUris, step);
         Shot shot = request.shot();
         CastProfile castProfile = request.castProfile();
         String prompt = request.prompt();
@@ -292,7 +293,8 @@ public class ShotImageService {
     /** Builds the request {@link #generate} sends, without sending it. Shared with
      * {@link #stepBundle} so a downloaded bundle is exactly what the app would have generated from. */
     private PreparedImageRequest prepare(UUID tenantId, UUID shotId, ShotImageKind kind, String note,
-                                         List<String> inspirationDataUris, String editSourceUri) {
+                                         List<String> inspirationDataUris, StepSource step) {
+        String editSourceUri = step == null ? null : step.imageUri();
         Shot shot = shotRepository.findByIdAndTenantId(shotId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No shot " + shotId));
         CastProfile castProfile = kind == ShotImageKind.PRODUCTION ? resolveCastProfile(tenantId, shot) : null;
@@ -315,6 +317,11 @@ public class ShotImageService {
         }
         if (note != null && !note.isBlank()) {
             prompt = prompt + "\n\nRequested change: " + note;
+        }
+        // A step leads with its edit instruction, so the model reads the shot description that
+        // follows as the frame to mould the attached image into, not a frame to invent.
+        if (step != null) {
+            prompt = step.instruction() + "\n" + prompt;
         }
         String editLabel = editSourceUri != null ? "earlier shot (step source)" : "this shot's current image";
 
@@ -714,6 +721,18 @@ public class ShotImageService {
             result.add(p);
         }
         return result;
+    }
+
+    /** The display name of the shot's primary character, or null when it has none. */
+    private String primaryCharacterName(Shot shot) {
+        if (shot.getPrimaryCharacterKey() == null || shot.getPrimaryCharacterKey().isBlank()) {
+            return null;
+        }
+        return scriptRepository.findByProjectId(shot.getProjectId())
+                .flatMap(script -> scriptCharacterRepository.findByScriptIdAndCharacterKey(script.getId(), shot.getPrimaryCharacterKey()))
+                .map(ScriptCharacter::getCharacterName)
+                .filter(name -> !name.isBlank())
+                .orElse(shot.getPrimaryCharacterKey());
     }
 
     /** Same resolution {@code ShotContextAssemblyService} does for dispatch -- duplicated rather

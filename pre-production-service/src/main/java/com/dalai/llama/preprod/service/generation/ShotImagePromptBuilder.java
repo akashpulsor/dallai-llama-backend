@@ -193,18 +193,10 @@ public final class ShotImagePromptBuilder {
                 {"body language", shot.getBodyLanguage()},
         });
 
-        // Lighting plan slice -- direction/quality only, never numbered build steps or gear
-        // part numbers (those belong on the lighting sheet, not the finished frame). Absent
-        // plan or all-null plan -> block omitted entirely.
+        // Lighting plan as light sources -- never the numbered build steps (those belong on the
+        // lighting sheet, not the finished frame). Absent or all-empty plan -> block omitted.
         if (lightingPlan != null) {
-            appendSection(sb, "Lighting plan", new String[][]{
-                    {"cinematic intent", lightingPlan.getCinematicIntent()},
-                    {"key light", lightingPlan.getKeyLightGear()},
-                    {"fill", lightingPlan.getFillLightGear()},
-                    {"rim", lightingPlan.getRimLightGear()},
-                    {"negative fill", lightingPlan.getNegFillGear()},
-                    {"diffuser", lightingPlan.getDiffuserGear()},
-            });
+            appendLightSources(sb, lightingPlan);
         }
 
         // Identity reference. When BOTH cast and product are present, cast leads with the
@@ -269,13 +261,53 @@ public final class ShotImagePromptBuilder {
                 .append(personIdentityLockInstruction(pronounFor(castProfile)));
     }
 
+    /** The plan's gear written as where each light comes from and where it sits. Listed as bare
+     * gear ("LED desk lamp, foam board, smartphone flashlight") the model drew the props or read the
+     * scene as a tabletop set; as light sources it renders the light they cast on the real scene. */
+    private static void appendLightSources(StringBuilder sb, LightingPlan plan) {
+        String[][] sources = {
+                {"Key light comes from", plan.getKeyLightGear()},
+                {"Fill light comes from", plan.getFillLightGear()},
+                {"Rim light comes from", plan.getRimLightGear()},
+                {"Shadows are deepened by", plan.getNegFillGear()},
+                {"Light is softened by", plan.getDiffuserGear()},
+        };
+        StringBuilder lines = new StringBuilder();
+        for (String[] source : sources) {
+            if (isEmpty(source[1])) continue;
+            lines.append("- ").append(source[0]).append(' ').append(lowerFirst(source[1].trim())).append('\n');
+        }
+        boolean hasIntent = !isEmpty(plan.getCinematicIntent());
+        if (lines.isEmpty() && !hasIntent) return;
+        sb.append("Lighting plan -- the light sources and where they sit. Render the light they cast on the scene at its real scale; ")
+                .append("the equipment itself stays out of frame:\n");
+        if (hasIntent) sb.append("- Intent: ").append(plan.getCinematicIntent().trim()).append('\n');
+        sb.append(lines);
+    }
+
+    /** "A bright LED lamp" -> "a bright LED lamp" so it reads on after "comes from"; an acronym
+     * ("LED panel") keeps its case. */
+    private static String lowerFirst(String text) {
+        if (text.length() < 2 || !Character.isUpperCase(text.charAt(0))) return text;
+        char next = text.charAt(1);
+        return Character.isLowerCase(next) || next == ' ' ? Character.toLowerCase(text.charAt(0)) + text.substring(1) : text;
+    }
+
+    /** Blank, or a placeholder the plan generator writes for "nothing" -- printing those gave the
+     * model lines like "expression null, body language null". */
+    private static boolean isEmpty(String value) {
+        if (value == null || value.isBlank()) return true;
+        String text = value.trim().toLowerCase();
+        return text.equals("null") || text.equals("none") || text.equals("n/a");
+    }
+
     /** Emits "Section: k1 v1, k2 v2, ..." only for non-null/non-blank values. When every value
      * in the section is null or blank the whole section is omitted (including its label). */
     private static void appendSection(StringBuilder sb, String label, String[][] entries) {
         StringBuilder inner = new StringBuilder();
         for (String[] entry : entries) {
             String value = entry[1];
-            if (value == null || value.isBlank()) continue;
+            if (isEmpty(value)) continue;
             if (inner.length() > 0) inner.append(", ");
             inner.append(entry[0]).append(' ').append(value.trim());
         }
@@ -417,6 +449,6 @@ public final class ShotImagePromptBuilder {
             return "not specified";
         }
         String text = value.toString();
-        return text.isBlank() ? "not specified" : text;
+        return isEmpty(text) ? "not specified" : text;
     }
 }

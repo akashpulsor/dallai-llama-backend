@@ -8,7 +8,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** The next frame edited from an earlier shot: who stays keeps their look; who is not in the shot leaves. */
+/** The next frame edited from an earlier shot: the shot's description decides what changes, the
+ * earlier image supplies the place, the light and the people who stay. */
 class StepShotTest {
 
     private final UUID project = UUID.randomUUID();
@@ -29,18 +30,39 @@ class StepShotTest {
         assertThatThrownBy(() -> StepShot.requireUsableSource(next, next, true)).hasMessageContaining("itself");
         assertThatThrownBy(() -> StepShot.requireUsableSource(next, shot(UUID.randomUUID(), 1, "X"), true))
                 .hasMessageContaining("different project");
-        assertThatThrownBy(() -> StepShot.requireUsableSource(next, earlier, false)).hasMessageContaining("S1-03 has no image");
+        assertThatThrownBy(() -> StepShot.requireUsableSource(next, earlier, false)).hasMessageContaining("Shot S1-03 has no image");
     }
 
     @Test
-    void tellsTheModelToKeepWhoStaysAndLetTheOthersLeave() {
-        String instruction = StepShot.instruction(earlier, "she turns to the window");
+    void leadsWithTheEditAndLetsTheDescriptionDecideTheCamera() {
+        String instruction = StepShot.instruction(earlier, "Priya", next, "Priya");
 
         assertThat(instruction)
-                .contains("first attached image is shot S1-03")
+                .startsWith("STEP SHOT -- EDIT THE ATTACHED IMAGE. The first attached image is shot S1-03")
+                .contains("Mould that image into the shot described below")
+                .contains("Who is in this frame: Priya stays")
                 .contains("identical in face, hair, skin tone, build and wardrobe")
-                .contains("Characters this shot does not include leave the frame")
-                .endsWith("Also: she turns to the window");
-        assertThat(StepShot.instruction(earlier, " ")).doesNotContain("Also:");
+                .contains("Change to match the description: the action, poses, expressions, camera position, lens and framing")
+                .endsWith("Shot to produce:");
+        // The old wording told the model to keep the camera, contradicting a new camera setup.
+        assertThat(instruction).doesNotContain("camera feel");
+    }
+
+    @Test
+    void namesWhoStaysLeavesAndEnters() {
+        assertThat(StepShot.whoIsInFrame("Priya", "Ravi", null))
+                .isEqualTo("Ravi leads this frame and is not in the earlier image; Priya leaves the frame.");
+        assertThat(StepShot.whoIsInFrame("Priya", null, null)).isEqualTo("Priya from the earlier image leaves the frame.");
+        assertThat(StepShot.whoIsInFrame(null, "Ravi", 2))
+                .isEqualTo("Ravi leads this frame and is not in the earlier image. 2 people in frame in total.");
+        assertThat(StepShot.whoIsInFrame("Priya", "Priya", 0)).startsWith("no people");
+        assertThat(StepShot.whoIsInFrame(null, null, null)).startsWith("neither shot has a named character");
+    }
+
+    @Test
+    void namesAShotWithoutSayingShotTwice() {
+        assertThat(StepShot.shotName(shot(project, 1, "shot-01-001"))).isEqualTo("shot-01-001");
+        assertThat(StepShot.shotName(shot(project, 3, "S1-03"))).isEqualTo("shot S1-03");
+        assertThat(StepShot.shotName(shot(project, 7, null))).isEqualTo("shot 7");
     }
 }

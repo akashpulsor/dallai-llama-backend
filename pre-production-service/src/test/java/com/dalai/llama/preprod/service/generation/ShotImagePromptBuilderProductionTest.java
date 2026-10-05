@@ -103,7 +103,7 @@ class ShotImagePromptBuilderProductionTest {
         assertThat(out).doesNotContain("Focus:");
         assertThat(out).doesNotContain("Image character:");
         assertThat(out).doesNotContain("Performance:");
-        assertThat(out).doesNotContain("Lighting plan:");
+        assertThat(out).doesNotContain("Lighting plan");
     }
 
     @Test
@@ -146,12 +146,38 @@ class ShotImagePromptBuilderProductionTest {
         plan.setBuildSteps("1. Place softbox\n2. Angle card\n3. Meter for face");
 
         String out = ShotImagePromptBuilder.buildProductionPrompt(shot, null, null, plan);
-        assertThat(out).contains("Lighting plan: cinematic intent warm intimate cocoon");
-        assertThat(out).contains("key light softbox 24in, camera-left, 45 degrees");
-        assertThat(out).contains("fill bounce card, camera-right");
+        assertThat(out).contains("Lighting plan -- the light sources and where they sit");
+        assertThat(out).contains("the equipment itself stays out of frame");
+        assertThat(out).contains("- Intent: warm intimate cocoon");
+        assertThat(out).contains("- Key light comes from softbox 24in, camera-left, 45 degrees");
+        assertThat(out).contains("- Fill light comes from bounce card, camera-right");
         // Setup steps must never land in the still prompt.
         assertThat(out).doesNotContain("Place softbox");
         assertThat(out).doesNotContain("Meter for face");
+    }
+
+    @Test
+    void readsGearAsALightSourceKeepingAcronyms() {
+        Shot shot = minimalShot();
+        LightingPlan plan = new LightingPlan();
+        plan.setKeyLightGear("A bright LED desk lamp positioned high, front-side");
+        plan.setRimLightGear("LED panel low behind the subject");
+
+        String out = ShotImagePromptBuilder.buildProductionPrompt(shot, null, null, plan);
+        assertThat(out).contains("- Key light comes from a bright LED desk lamp positioned high, front-side");
+        assertThat(out).contains("- Rim light comes from LED panel low behind the subject");
+    }
+
+    @Test
+    void skipsFieldsTheGeneratorFilledWithTheWordNull() {
+        Shot shot = minimalShot();
+        shot.setExpression("null");
+        shot.setEmotion("Energy, dynamism");
+        shot.setBodyLanguage("NULL");
+
+        String out = ShotImagePromptBuilder.buildProductionPrompt(shot, null, null);
+        assertThat(out).contains("Performance: emotion Energy, dynamism\n");
+        assertThat(out).doesNotContain("null");
     }
 
     @Test
@@ -160,7 +186,7 @@ class ShotImagePromptBuilderProductionTest {
         // not synthesize a "Lighting plan:" section from nothing.
         Shot shot = minimalShot();
         String out = ShotImagePromptBuilder.buildProductionPrompt(shot, null, null);
-        assertThat(out).doesNotContain("Lighting plan:");
+        assertThat(out).doesNotContain("Lighting plan");
     }
 
     @Test

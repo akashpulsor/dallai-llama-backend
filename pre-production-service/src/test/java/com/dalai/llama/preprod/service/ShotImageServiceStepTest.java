@@ -78,9 +78,11 @@ class ShotImageServiceStepTest {
         assertThat(entries.keySet()).containsExactly("prompt.txt", "images/01-earlier-shot-step-source.png", "README.txt");
         String prompt = new String(entries.get("prompt.txt"), StandardCharsets.UTF_8);
         assertThat(prompt)
+                .startsWith("STEP SHOT -- EDIT THE ATTACHED IMAGE. The first attached image is shot 1")
+                .contains("Shot to produce:")
                 .contains("Scene: Priya steps into the hallway")
-                .contains("STEP SHOT. The first attached image is shot 1")
-                .contains("Also: only Priya stays");
+                .endsWith("Requested change: only Priya stays");
+        assertThat(prompt.indexOf("STEP SHOT")).isLessThan(prompt.indexOf("Scene: Priya steps into the hallway"));
         assertThat(ImageIO.read(new ByteArrayInputStream(entries.get("images/01-earlier-shot-step-source.png")))).isNotNull();
         assertThat(new String(entries.get("README.txt"), StandardCharsets.UTF_8))
                 .contains("gemini-image-lite")

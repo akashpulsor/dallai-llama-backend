@@ -4,9 +4,8 @@ import com.dalai.llama.preprod.domain.entity.Shot;
 
 /**
  * A "step shot": this shot's image made as the next moment of an earlier shot, by editing that
- * shot's image rather than generating from text. The people who stay keep their exact look, the
- * place and light carry over, and characters this shot does not include leave the frame -- two
- * people in the earlier shot can become one here.
+ * shot's image rather than generating from text. The shot's own description decides what changes;
+ * the earlier image supplies the place, the light and the people who stay.
  */
 final class StepShot {
 
@@ -21,21 +20,51 @@ final class StepShot {
             throw PreProductionException.badRequest("The shot to step from belongs to a different project");
         }
         if (!sourceHasImage) {
-            throw PreProductionException.badRequest("Shot " + label(source) + " has no image of this kind to step from yet");
+            throw PreProductionException.badRequest(capitalize(shotName(source)) + " has no image of this kind to step from yet");
         }
     }
 
-    /** Folded into the image prompt as the requested change; the source image is attached first. */
-    static String instruction(Shot source, String note) {
-        String step = "STEP SHOT. The first attached image is shot " + label(source)
-                + " of this film, the moment just before this one. Make the next frame by editing that image into the shot described above: "
-                + "keep the same location, light, colour grade and camera feel, and keep every character who remains in this shot identical "
-                + "in face, hair, skin tone, build and wardrobe. Characters this shot does not include leave the frame; do not add anyone the "
-                + "shot does not describe. Change only the pose, action, expression and framing this shot calls for.";
-        return note == null || note.isBlank() ? step : step + "\nAlso: " + note.trim();
+    /** Leads the image prompt, so the model knows before reading the shot description that this is
+     * an edit of the first attached image, not a new frame. Character names come from each shot's
+     * primary character; null when the shot has none. The creator's own note is added separately. */
+    static String instruction(Shot source, String sourceCharacter, Shot target, String targetCharacter) {
+        return "STEP SHOT -- EDIT THE ATTACHED IMAGE. The first attached image is " + shotName(source)
+                + " of this film, the moment just before this one. Mould that image into the shot described below: "
+                + "the description decides what changes, the image supplies everything else.\n"
+                + "Who is in this frame: " + whoIsInFrame(sourceCharacter, targetCharacter, target.getPeopleInFrame()) + "\n"
+                + "Keep from the image: the location, the light, the colour grade, and every person who stays -- "
+                + "identical in face, hair, skin tone, build and wardrobe.\n"
+                + "Change to match the description: the action, poses, expressions, camera position, lens and framing. "
+                + "Add no one the description does not include.\n\n"
+                + "Shot to produce:";
     }
 
-    private static String label(Shot shot) {
-        return shot.getShotRef() != null && !shot.getShotRef().isBlank() ? shot.getShotRef() : String.valueOf(shot.getShotNumber());
+    static String whoIsInFrame(String sourceCharacter, String targetCharacter, Integer peopleInFrame) {
+        if (peopleInFrame != null && peopleInFrame == 0) {
+            return "no people -- remove everyone shown in the earlier image.";
+        }
+        String who;
+        if (targetCharacter == null && sourceCharacter == null) {
+            who = "neither shot has a named character; the description below says who, if anyone, is in frame.";
+        } else if (targetCharacter == null) {
+            who = sourceCharacter + " from the earlier image leaves the frame.";
+        } else if (sourceCharacter == null) {
+            who = targetCharacter + " leads this frame and is not in the earlier image.";
+        } else if (targetCharacter.equalsIgnoreCase(sourceCharacter)) {
+            who = targetCharacter + " stays -- the same person as in the earlier image.";
+        } else {
+            who = targetCharacter + " leads this frame and is not in the earlier image; " + sourceCharacter + " leaves the frame.";
+        }
+        return peopleInFrame == null ? who : who + " " + peopleInFrame + (peopleInFrame == 1 ? " person" : " people") + " in frame in total.";
+    }
+
+    /** "shot-01-001" stays as is; "S1-03" or a bare number reads "shot S1-03" / "shot 3". */
+    static String shotName(Shot shot) {
+        String ref = shot.getShotRef() != null && !shot.getShotRef().isBlank() ? shot.getShotRef().trim() : String.valueOf(shot.getShotNumber());
+        return ref.toLowerCase().startsWith("shot") ? ref : "shot " + ref;
+    }
+
+    private static String capitalize(String text) {
+        return Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 }
