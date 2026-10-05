@@ -142,6 +142,19 @@ class ShotImageServiceStepTest {
                 .containsExactly("earlier", "face", "other", "product");
     }
 
+    @Test
+    void aRefusalWithAnActorsFaceAttachedNamesTheActorAndWhatToFix() {
+        String explained = ShotImageService.refusalExplanation(
+                "llm-gateway did not return an image for PRODUCTION shot image generation (finishReason=IMAGE_OTHER)",
+                List.of("face: Uma Dixit", "product"));
+
+        assertThat(explained).startsWith("The image model declined every attempt with Uma Dixit's reference photo attached")
+                .contains("tight head-and-shoulders photo of just that person");
+        // Any other failure, or a refusal with no face attached, keeps its own message.
+        assertThat(ShotImageService.refusalExplanation("timeout", List.of("face: Uma Dixit"))).isNull();
+        assertThat(ShotImageService.refusalExplanation("finishReason=IMAGE_OTHER", List.of("earlier shot (step source)"))).isNull();
+    }
+
     private Shot shot(int number, String sketch) {
         Shot shot = new Shot();
         shot.setId(UUID.randomUUID());

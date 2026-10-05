@@ -273,8 +273,15 @@ public class ShotImageService {
         if (!request.continuityWarnings().isEmpty()) {
             generationThoughtService.log(tenantId, shotId, kind + "_STEP_CONTINUITY_WARNING", String.join(" | ", request.continuityWarnings()));
         }
-        DecodedImage decoded = generateWithRetry(tenantId, shotId, kind, shot, request.modelId(), prompt,
-                request.params(), request.refsForAttempt());
+        DecodedImage decoded;
+        try {
+            decoded = generateWithRetry(tenantId, shotId, kind, shot, request.modelId(), prompt,
+                    request.params(), request.refsForAttempt());
+        } catch (PreProductionException ex) {
+            String explained = refusalExplanation(ex.getMessage(), request.attachmentLabels());
+            if (explained == null) throw ex;
+            throw PreProductionException.upstream(explained, ex);
+        }
         String objectKey = "%s/%s/%s/%s.%s".formatted(storyboardPrefix, kind.name().toLowerCase(), shotId, UUID.randomUUID(), decoded.extension());
         upload(objectKey, decoded);
 
@@ -304,6 +311,23 @@ public class ShotImageService {
 
         annotateFromVisionAnalysis(tenantId, shot.getProjectId(), image);
         return toView(image);
+    }
+
+    /** When the image model refuses every attempt (IMAGE_OTHER) with an actor's face attached, the
+     * usual cause is the reference photo itself: Gemini treats every face in it as an identity to
+     * keep, so a photo with a crowd, a second person or no clear face is refused however the prompt
+     * is worded. Says which reference and what to use instead; null for any other failure. */
+    static String refusalExplanation(String failure, List<String> attachmentLabels) {
+        if (failure == null || !failure.contains("IMAGE_OTHER") || attachmentLabels == null) return null;
+        List<String> faces = attachmentLabels.stream()
+                .filter(label -> label.startsWith("face: "))
+                .map(label -> label.substring("face: ".length()))
+                .toList();
+        if (faces.isEmpty()) return null;
+        return "The image model declined every attempt with " + String.join(", ", faces) + "'s reference photo attached (IMAGE_OTHER). "
+                + "This usually means the photo is not a clear picture of one person -- other people in the background, a busy scene "
+                + "or an unclear face. Replace it with a tight head-and-shoulders photo of just that person (Cast Library -> Edit: "
+                + "upload one, or use AI face), then generate again.";
     }
 
     /** Everything one image call sends: model, final prompt, params, and the attached images per

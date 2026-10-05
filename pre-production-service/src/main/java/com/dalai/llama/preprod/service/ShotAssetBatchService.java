@@ -90,7 +90,10 @@ public class ShotAssetBatchService {
         return toView(job);
     }
 
-    private static final Set<ShotImageKind> REQUIRED_IMAGE_KINDS = EnumSet.allOf(ShotImageKind.class);
+    /** The live-action image kinds. Not {@code allOf}: MOTION_GRAPHIC was added to the enum later and
+     * only motion-graphic shots (excluded below) ever get one, so requiring it left every shot
+     * permanently "incomplete". */
+    private static final Set<ShotImageKind> REQUIRED_IMAGE_KINDS = EnumSet.complementOf(EnumSet.of(ShotImageKind.MOTION_GRAPHIC));
 
     /** Drives the shots list's per-shot green check -- true only when every one of the 6 assets
      * this shot needs (lighting plan, camera plan, all 4 image kinds) actually exists, regardless
@@ -104,20 +107,23 @@ public class ShotAssetBatchService {
                 .filter(s -> s.getShotType() != ShotType.MOTION_GRAPHIC)
                 .toList();
         return eligibleShots.stream()
-                .map(shot -> new ShotAssetCompletionView(shot.getId(), isComplete(shot.getId())))
+                .map(shot -> {
+                    Set<ShotImageKind> presentKinds = shotImageRepository.findByShotId(shot.getId()).stream()
+                            .map(ShotImage::getKind)
+                            .collect(Collectors.toSet());
+                    return new ShotAssetCompletionView(shot.getId(), isComplete(shot.getId(), presentKinds),
+                            presentKinds.contains(ShotImageKind.PRODUCTION));
+                })
                 .collect(Collectors.toList());
     }
 
-    private boolean isComplete(UUID shotId) {
+    private boolean isComplete(UUID shotId, Set<ShotImageKind> presentKinds) {
         if (lightingPlanRepository.findByShotId(shotId).isEmpty()) {
             return false;
         }
         if (cameraPlanRepository.findByShotId(shotId).isEmpty()) {
             return false;
         }
-        Set<ShotImageKind> presentKinds = shotImageRepository.findByShotId(shotId).stream()
-                .map(ShotImage::getKind)
-                .collect(Collectors.toSet());
         return presentKinds.containsAll(REQUIRED_IMAGE_KINDS);
     }
 
