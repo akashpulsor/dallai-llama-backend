@@ -78,7 +78,7 @@ class ReviewedPromptSubmissionTest {
                 projectConfig, jobs, prompts, references, mock(VideoGenJobDialogueBeatRepository.class),
                 mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence, dubbing,
                 durationPolicy, new com.dalai.llama.videogen.service.render.ClipFinishing(dubbing,
-                        mock(BackgroundMusicMixService.class), jobs, mock(com.dalai.llama.videogen.service.postproduction.PostProductionClient.class)),
+                        jobs, mock(com.dalai.llama.videogen.service.postproduction.PostProductionClient.class)),
                 promptWriter, publisher, controls, "bytedance/seedance-2.0/fast");
         when(durationPolicy.clamp(anyString(), any())).thenAnswer(call -> call.getArgument(1));
 

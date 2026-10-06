@@ -116,7 +116,8 @@ class ClientFootageTest {
         when(videoGenerationClient.listJobsForProject(tenantId, projectId)).thenReturn(List.of(
                 new VideoGenShotJob(UUID.randomUUID(), "S2", "COMPLETED", null, false, null)));
         FilmAssemblyService films = new FilmAssemblyService(mock(FilmRenderRepository.class), mock(FilmAssemblyRequestedPublisher.class),
-                repository, preProductionClient, videoGenerationClient, service, ffmpeg, objectStore);
+                repository, preProductionClient, videoGenerationClient, service, ffmpeg, objectStore,
+                mock(com.dalai.llama.postprod.service.sound.SoundLayerService.class));
 
         FilmAssemblyService.Readiness readiness = films.readiness(tenantId, projectId);
 

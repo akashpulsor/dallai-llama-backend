@@ -62,7 +62,8 @@ class FilmAssemblyQueueingTest {
         service = new FilmAssemblyService(
                 filmRenderRepository, publisher, clipVersionRepository, preProductionClient,
                 videoGenerationClient, mock(ShotClipVersionService.class),
-                mock(FfmpegClipProcessor.class), mock(ClipObjectStore.class));
+                mock(FfmpegClipProcessor.class), mock(ClipObjectStore.class),
+                mock(com.dalai.llama.postprod.service.sound.SoundLayerService.class));
 
         // One shot, already cut, so the project is ready to join.
         when(preProductionClient.listShots(tenantId, projectId))

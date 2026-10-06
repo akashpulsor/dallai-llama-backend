@@ -103,10 +103,9 @@ public class ShotClipVersionController {
             @PathVariable UUID shotId,
             @RequestParam(required = false) Integer targetSeconds,
             @RequestParam(defaultValue = "false") boolean withDub,
-            @RequestParam(defaultValue = "false") boolean withMusic,
             @RequestParam(required = false) String shotRef) {
         return ResponseEntity.ok(clipVersionService.previewMix(
-                context(projectId, shotId, shotRef), targetSeconds, withDub, withMusic));
+                context(projectId, shotId, shotRef), targetSeconds, withDub));
     }
 
     /** Keep a preview: promotes it to a real version without re-rendering. */

@@ -47,6 +47,7 @@ public class LlmGatewayFoleyGenerationService implements FoleyGenerationService 
                 tenantId.toString(),
                 idempotencyKey,
                 new LlmGatewayChatRequest(modelId, List.of(new LlmGatewayMessage("user", cueDescription)), params, null, null)
+                        .withProjectId(projectId)
         );
         if (response == null || response.response() == null || response.response().isBlank()) {
             throw PostProductionException.upstream("llm-gateway returned no foley audio URL");

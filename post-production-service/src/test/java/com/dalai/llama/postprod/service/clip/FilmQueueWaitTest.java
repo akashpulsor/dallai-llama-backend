@@ -34,7 +34,8 @@ class FilmQueueWaitTest {
     private final FilmAssemblyService service = new FilmAssemblyService(
             repository, mock(FilmAssemblyRequestedPublisher.class), mock(ShotClipVersionRepository.class),
             mock(PreProductionClient.class), mock(VideoGenerationClient.class),
-            mock(ShotClipVersionService.class), mock(FfmpegClipProcessor.class), mock(ClipObjectStore.class));
+            mock(ShotClipVersionService.class), mock(FfmpegClipProcessor.class), mock(ClipObjectStore.class),
+            mock(com.dalai.llama.postprod.service.sound.SoundLayerService.class));
 
     private static FilmRender render(FilmRenderStatus status, OffsetDateTime createdAt) {
         return FilmRender.builder()

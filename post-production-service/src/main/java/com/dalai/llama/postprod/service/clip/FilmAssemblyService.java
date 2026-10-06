@@ -12,6 +12,10 @@ import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import com.dalai.llama.postprod.service.preproduction.PreProductionShotSummary;
 import com.dalai.llama.postprod.service.videogen.VideoGenShotJob;
 import com.dalai.llama.postprod.service.videogen.VideoGenerationClient;
+import com.dalai.llama.postprod.domain.entity.SoundLayer;
+import com.dalai.llama.postprod.service.sound.FilmSoundtrack;
+import com.dalai.llama.postprod.service.sound.SoundLayerService;
+import java.math.BigDecimal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -69,6 +73,7 @@ public class FilmAssemblyService {
     private final ShotClipVersionService clipVersionService;
     private final FfmpegClipProcessor ffmpeg;
     private final ClipObjectStore objectStore;
+    private final SoundLayerService soundLayerService;
 
     /** What the page needs to decide whether the combine button is usable, without assembling
      * anything. Cheap: two reads and no ffmpeg. */
@@ -222,23 +227,21 @@ public class FilmAssemblyService {
             Path joined = workDir.resolve("film.mp4");
             ffmpeg.concat(clips, size[0], size[1], joined);
 
-            // The project's planned score, laid under the joined film. Best-effort by design:
-            // a project that has not had a score generated assembles exactly as it did before,
-            // and a score that cannot be fetched must not cost the creator a film that
-            // otherwise rendered fine.
+            // The soundtrack under the joined film: the project's score from the first frame, and
+            // every sound layer the creator has switched on, each at its place. Best-effort by
+            // design: a project with neither assembles exactly as before, and a mix that fails
+            // must not cost the creator a film that otherwise rendered fine.
             Path output = joined;
-            String scoreUrl = preProductionClient.getProjectScoreUrl(render.getTenantId(), render.getProjectId());
-            if (scoreUrl != null && !scoreUrl.isBlank()) {
+            List<FilmAudioTrack> soundtrack = soundtrack(render, ordered, cutsInOrder);
+            if (!soundtrack.isEmpty()) {
                 try {
-                    Path score = workDir.resolve("score.mp3");
-                    fetchToFile(scoreUrl, score);
-                    Path scored = workDir.resolve("film-scored.mp4");
-                    ffmpeg.layScoreUnderFilm(joined, score, scored);
-                    output = scored;
-                    log.info("Laid the project score under the film renderId={} projectId={}",
-                            renderId, render.getProjectId());
+                    Path mixed = workDir.resolve("film-mixed.mp4");
+                    ffmpeg.mixUnderFilm(joined, soundtrack, mixed);
+                    output = mixed;
+                    log.info("Mixed the soundtrack under the film renderId={} projectId={} tracks={}",
+                            renderId, render.getProjectId(), soundtrack.size());
                 } catch (RuntimeException ex) {
-                    log.warn("Could not lay the score under the film renderId={} -- assembling without it: {}",
+                    log.warn("Could not mix the soundtrack under the film renderId={} -- assembling without it: {}",
                             renderId, ex.getMessage());
                     output = joined;
                 }
@@ -489,18 +492,40 @@ public class FilmAssemblyService {
         }
     }
 
+    /** The score's level under the film, unchanged from when it was the only thing mixed (0.22). */
+    static final double SCORE_VOLUME_DB = -13.15;
+
+    /** The score, then each included sound layer at its film time -- the shot it is anchored to
+     * starts where every earlier cut ends, plus the layer's own offset. */
+    private List<FilmAudioTrack> soundtrack(FilmRender render, List<PreProductionShotSummary> ordered,
+                                            List<ShotClipVersion> cutsInOrder) {
+        List<FilmAudioTrack> tracks = new java.util.ArrayList<>();
+        try {
+            String scoreUrl = preProductionClient.getProjectScoreUrl(render.getTenantId(), render.getProjectId());
+            if (scoreUrl != null && !scoreUrl.isBlank()) {
+                tracks.add(new FilmAudioTrack(scoreUrl, 0, SCORE_VOLUME_DB, 0, 0, null));
+            }
+        } catch (RuntimeException ex) {
+            log.warn("No score for the film projectId={}: {}", render.getProjectId(), ex.getMessage());
+        }
+        List<FilmSoundtrack.ShotSpan> spans = new java.util.ArrayList<>(ordered.size());
+        for (int index = 0; index < ordered.size(); index++) {
+            ShotClipVersion cut = cutsInOrder.get(index);
+            BigDecimal length = cut.getDurationSeconds() != null ? cut.getDurationSeconds()
+                    : ordered.get(index).durationSeconds() == null ? null : BigDecimal.valueOf(ordered.get(index).durationSeconds());
+            spans.add(new FilmSoundtrack.ShotSpan(ordered.get(index).id(), length));
+        }
+        for (FilmSoundtrack.Placement placement : FilmSoundtrack.place(spans, soundLayerService.includedForFilm(render.getProjectId()))) {
+            SoundLayer layer = placement.layer();
+            tracks.add(new FilmAudioTrack(objectStore.internalPresignedUrl(layer.getBucket(), layer.getObjectKey()),
+                    placement.startMs(), layer.getVolumeDb().doubleValue(), layer.getFadeInMs(), layer.getFadeOutMs(),
+                    layer.getDurationSeconds() == null ? null : layer.getDurationSeconds().doubleValue()));
+        }
+        return tracks;
+    }
+
     private static String label(PreProductionShotSummary shot) {
         return shot.shotRef() == null ? "(unnamed)" : shot.shotRef();
     }
 
-    /** Pulls a presigned asset to disk for ffmpeg. Deliberately local rather than shared with
-     * ShotClipVersionService's copy: that one is private to a different concern, and one small
-     * duplicated download is cheaper than widening another class's surface for it. */
-    private void fetchToFile(String url, java.nio.file.Path target) {
-        try (var in = java.net.URI.create(url).toURL().openStream()) {
-            java.nio.file.Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception ex) {
-            throw new ClipProcessingException("Could not download the project score: " + ex.getMessage());
-        }
-    }
 }

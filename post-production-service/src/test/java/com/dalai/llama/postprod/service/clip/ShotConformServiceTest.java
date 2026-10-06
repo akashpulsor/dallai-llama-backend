@@ -6,7 +6,6 @@ import com.dalai.llama.postprod.domain.entity.ShotClipVersion;
 import com.dalai.llama.postprod.dto.ShotConformDtos;
 import com.dalai.llama.postprod.kafka.ShotConformRequestedPublisher;
 import com.dalai.llama.postprod.repository.ShotClipConformRepository;
-import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,9 +35,8 @@ class ShotConformServiceTest {
     private final ShotClipConformRepository conforms = mock(ShotClipConformRepository.class);
     private final ShotClipVersionService clipVersions = mock(ShotClipVersionService.class);
     private final FfmpegClipProcessor ffmpeg = mock(FfmpegClipProcessor.class);
-    private final PreProductionClient preProduction = mock(PreProductionClient.class);
     private final ShotConformRequestedPublisher publisher = mock(ShotConformRequestedPublisher.class);
-    private final ShotConformService service = new ShotConformService(conforms, clipVersions, ffmpeg, preProduction, publisher);
+    private final ShotConformService service = new ShotConformService(conforms, clipVersions, ffmpeg, publisher);
 
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
@@ -79,7 +77,6 @@ class ShotConformServiceTest {
         ShotClipConform row = queued();
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0,
                 "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED"));
-        when(preProduction.getBackgroundMusicUrl(tenant, shot)).thenReturn(null);
         ShotClipVersion cut = ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(3).build();
         when(clipVersions.storeConformed(any(), eq(job), any(), any(), any(), any())).thenReturn(cut);
 
@@ -94,10 +91,10 @@ class ShotConformServiceTest {
     }
 
     @Test
-    void musicThatCannotBeFetchedIsLeftOffRatherThanFailingTheConform() {
+    void aConformNeverLaysMusicOnTheClip() {
+        // Shot music is a sound layer mixed into the film when it renders, not part of a cut.
         ShotClipConform row = queued();
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED"));
-        when(preProduction.getBackgroundMusicUrl(tenant, shot)).thenThrow(new RuntimeException("pre-production down"));
         when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any()))
                 .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(2).build());
 

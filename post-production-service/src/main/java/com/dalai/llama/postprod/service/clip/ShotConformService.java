@@ -7,7 +7,6 @@ import com.dalai.llama.postprod.dto.ShotConformDtos;
 import com.dalai.llama.postprod.kafka.ShotConformRequestedPublisher;
 import com.dalai.llama.postprod.repository.ShotClipConformRepository;
 import com.dalai.llama.postprod.service.PostProductionException;
-import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,7 +38,6 @@ public class ShotConformService {
     private final ShotClipConformRepository conforms;
     private final ShotClipVersionService clipVersions;
     private final FfmpegClipProcessor ffmpeg;
-    private final PreProductionClient preProduction;
     private final ShotConformRequestedPublisher publisher;
 
     public ShotConformDtos.View request(UUID tenantId, UUID projectId, UUID shotId, ShotConformDtos.Request request) {
@@ -92,7 +90,8 @@ public class ShotConformService {
             ClipProbe generatedProbe = playable(ffmpeg.probe(generated), "The generated clip");
 
             Path dub = source.hasDub() ? fetched(source.dubbedAudioUrl(), workDir.resolve("take.mp3")) : null;
-            Path music = musicBed(row, workDir.resolve("bed.mp3"));
+            // No music bed: shot music is a sound layer, mixed into the film when it renders.
+            Path music = null;
 
             Path output = workDir.resolve("conformed.mp4");
             ffmpeg.conform(generated, dub, music, row.getTargetSeconds().doubleValue(), row.getInterpolate(),
@@ -114,17 +113,6 @@ public class ShotConformService {
     private Path fetched(String url, Path target) {
         clipVersions.fetch(url, target);
         return target;
-    }
-
-    /** The shot's music bed, or null: a conform without music is still a conform. */
-    private Path musicBed(ShotClipConform row, Path target) {
-        try {
-            String url = preProduction.getBackgroundMusicUrl(row.getTenantId(), row.getShotId());
-            return url == null || url.isBlank() ? null : fetched(url, target);
-        } catch (RuntimeException ex) {
-            log.info("Conforming shotId={} without music: {}", row.getShotId(), ex.getMessage());
-            return null;
-        }
     }
 
     private static ClipProbe playable(ClipProbe probe, String what) {

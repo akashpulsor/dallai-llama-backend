@@ -243,27 +243,57 @@ public class FfmpegClipProcessor {
     }
 
     /**
-     * Lays the project's score under a finished film, keeping the film's own audio on top.
+     * Mixes sound under a finished film, keeping the film's own audio (dialogue, each shot's sound)
+     * at full level on top: the project score and the creator's sound layers, each placed at its
+     * start in the film with its own level and fades.
      *
-     * <p>This is what makes planning a score worth doing -- without it the track is generated,
-     * stored and never heard. The film already carries dialogue and per-shot audio from the
-     * concat, so the score is mixed underneath rather than replacing anything.
+     * <p>{@code normalize=0}: every input keeps the level it was given, instead of amix dividing all
+     * of them by the input count -- which would make the dialogue quieter each time a layer is
+     * added. {@code alimiter} then keeps the sum from clipping. {@code duration=first} ends the mix
+     * with the film, so a score or a cue running past the last frame is cut, never the picture.
      *
-     * <p>The score is ducked to {@code 0.22} and the film's audio left at full. That is a fixed
-     * ratio, not sidechain ducking: the planner is asked to thin the ARRANGEMENT under dialogue,
-     * which solves the same problem musically and avoids a second, competing ducking system.
-     * {@code apad} then {@code -shortest} cuts the score to the film, so a score that ran a
-     * little long is trimmed rather than extending the runtime -- and one that came back short
-     * leaves the tail dry instead of truncating the picture.
-     *
-     * <p>Video is stream-copied: the film is not re-encoded to add music.
+     * <p>Video is stream-copied: the film is not re-encoded to change its sound.
      */
-    public void layScoreUnderFilm(Path film, Path score, Path output) {
-        run(List.of("ffmpeg", "-y", "-i", film.toString(), "-i", score.toString(),
-                "-filter_complex",
-                "[1:a]volume=0.22,apad[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]",
-                "-map", "0:v:0", "-map", "[a]",
-                "-c:v", "copy", "-c:a", "aac", "-shortest", output.toString()));
+    public void mixUnderFilm(Path film, List<FilmAudioTrack> tracks, Path output) {
+        List<String> command = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", film.toString()));
+        for (FilmAudioTrack track : tracks) {
+            command.add("-i");
+            command.add(track.source());
+        }
+        command.addAll(List.of("-filter_complex", soundtrackFilter(tracks),
+                "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", output.toString()));
+        run(command);
+    }
+
+    /** The filter graph for {@link #mixUnderFilm}: input 0 is the film, input n the n-th track. */
+    static String soundtrackFilter(List<FilmAudioTrack> tracks) {
+        StringBuilder graph = new StringBuilder("[0:a]aformat=sample_rates=48000:channel_layouts=stereo[f];");
+        StringBuilder inputs = new StringBuilder("[f]");
+        for (int index = 1; index <= tracks.size(); index++) {
+            FilmAudioTrack track = tracks.get(index - 1);
+            graph.append('[').append(index).append(":a]aformat=sample_rates=48000:channel_layouts=stereo")
+                    .append(",volume=").append(track.volumeDb()).append("dB");
+            if (track.fadeInMs() > 0) {
+                graph.append(",afade=t=in:st=0:d=").append(seconds(track.fadeInMs()));
+            }
+            if (track.fadeOutMs() > 0 && track.durationSeconds() != null
+                    && track.durationSeconds() * 1000 > track.fadeOutMs()) {
+                long fadeStartMs = Math.round(track.durationSeconds() * 1000) - track.fadeOutMs();
+                graph.append(",afade=t=out:st=").append(seconds(fadeStartMs)).append(":d=").append(seconds(track.fadeOutMs()));
+            }
+            if (track.startMs() > 0) {
+                graph.append(",adelay=").append(track.startMs()).append(":all=1");
+            }
+            graph.append("[t").append(index).append("];");
+            inputs.append("[t").append(index).append(']');
+        }
+        return graph.append(inputs).append("amix=inputs=").append(tracks.size() + 1)
+                .append(":duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]")
+                .toString();
+    }
+
+    private static String seconds(long millis) {
+        return java.math.BigDecimal.valueOf(millis, 3).stripTrailingZeros().toPlainString();
     }
 
     /** The picture untouched, carrying silence instead of whatever it decided to say. */

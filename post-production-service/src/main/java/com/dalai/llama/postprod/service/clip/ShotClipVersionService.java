@@ -144,18 +144,12 @@ public class ShotClipVersionService {
      * up afterwards if it was wrong. Now the creator watches first and {@link #keepPreview} is
      * what makes it real -- a discarded preview is just an object that ages out.
      */
-    public PreviewMix previewMix(Context context, Integer targetSeconds, boolean withDub, boolean withMusic) {
+    public PreviewMix previewMix(Context context, Integer targetSeconds, boolean withDub) {
         ShotClipSource source = clipSource(context);
         if (withDub && !source.hasDub()) {
             throw new ClipProcessingException(
                     "Nothing has been dubbed for this shot yet, so there is no voice to put on it");
         }
-        String musicUrl = withMusic ? preProductionClient.getBackgroundMusicUrl(context.tenantId(), context.shotId()) : null;
-        if (withMusic && (musicUrl == null || musicUrl.isBlank())) {
-            throw new ClipProcessingException(
-                    "No background music has been generated or uploaded for this shot yet");
-        }
-
         ShotClipVersion current = repository.findByShotIdAndStatus(context.shotId(), ClipVersionStatus.ACTIVE)
                 .orElseThrow(() -> new ClipProcessingException(
                         "This shot has no clip yet, so there is nothing to mix"));
@@ -170,14 +164,10 @@ public class ShotClipVersionService {
                 dub = workDir.resolve("take.mp3");
                 fetch(source.dubbedAudioUrl(), dub);
             }
-            Path music = null;
-            if (withMusic) {
-                music = workDir.resolve("bed.mp3");
-                fetch(musicUrl, music);
-            }
-
+            // No music on a clip: shot music is a sound layer, mixed into the film when it renders,
+            // so it can be moved or switched off without remaking the shot.
             Path output = workDir.resolve("preview.mp4");
-            ffmpeg.mix(clip, dub, music, targetSeconds, output);
+            ffmpeg.mix(clip, dub, null, targetSeconds, output);
 
             ClipProbe probe = ffmpeg.probe(output);
             if (!probe.isPlayable()) {
@@ -188,7 +178,7 @@ public class ShotClipVersionService {
             String previewKey = "shot-clip-previews/%s/%s.mp4".formatted(context.shotId(), UUID.randomUUID());
             objectStore.upload(previewKey, output);
             return new PreviewMix(previewKey, objectStore.presignedUrl(objectStore.bucket(), previewKey),
-                    probe.durationSeconds(), targetSeconds, withDub, withMusic);
+                    probe.durationSeconds(), targetSeconds, withDub);
         } finally {
             ffmpeg.deleteQuietly(workDir);
         }
@@ -216,7 +206,7 @@ public class ShotClipVersionService {
 
     /** What a preview is: something to play, and the key needed to keep it. */
     public record PreviewMix(String previewKey, String videoUrl, java.math.BigDecimal durationSeconds,
-                             Integer targetSeconds, boolean withDub, boolean withMusic) {}
+                             Integer targetSeconds, boolean withDub) {}
 
     /** The creator's own cut, brought back after editing it elsewhere. {@code editedFromVersionId}
      * links it to the cut it was made from, so a version that went out and came back reads as a
@@ -573,7 +563,7 @@ public class ShotClipVersionService {
 
     /** Fetches a presigned URL to a file, and refuses anything too small to be media -- an expired
      * link returns a short error body that lands on disk as a real file that is not a video. */
-    void fetch(String url, Path target) {
+    public void fetch(String url, Path target) {
         try {
             HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
             connection.setConnectTimeout(30_000);

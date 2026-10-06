@@ -119,23 +119,6 @@ public class HttpPreProductionClient implements PreProductionClient {
     }
 
     @Override
-    public String getBackgroundMusicUrl(UUID tenantId, UUID shotId) {
-        try {
-            BackgroundMusic music = webClient.get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/shots/{shotId}/background-music", tenantId, shotId)
-                    .retrieve()
-                    .bodyToMono(BackgroundMusic.class)
-                    .block(java.time.Duration.ofMillis(timeoutMs));
-            return music == null ? null : music.signedUrl();
-        } catch (org.springframework.web.reactive.function.client.WebClientResponseException.NotFound ex) {
-            return null;
-        }
-    }
-
-    /** Only the field this service reads off the background-music view. */
-    private record BackgroundMusic(String signedUrl) {}
-
-    @Override
     public String getProjectScoreUrl(UUID tenantId, UUID projectId) {
         try {
             ProjectScore score = webClient.get()

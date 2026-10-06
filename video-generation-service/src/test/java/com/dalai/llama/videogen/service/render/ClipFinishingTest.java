@@ -7,7 +7,6 @@ import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
 import com.dalai.llama.videogen.dto.shotcontext.Narrative;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.BackgroundMusicMixService;
 import com.dalai.llama.videogen.service.BeatDubbingService;
 import com.dalai.llama.videogen.service.DispatchResult;
 import com.dalai.llama.videogen.service.VideoGenException;
@@ -36,10 +35,9 @@ import static org.mockito.Mockito.when;
 class ClipFinishingTest {
 
     private final BeatDubbingService dubbing = mock(BeatDubbingService.class);
-    private final BackgroundMusicMixService music = mock(BackgroundMusicMixService.class);
     private final VideoGenJobRepository jobs = mock(VideoGenJobRepository.class);
     private final PostProductionClient postProduction = mock(PostProductionClient.class);
-    private final ClipFinishing finishing = new ClipFinishing(dubbing, music, jobs, postProduction);
+    private final ClipFinishing finishing = new ClipFinishing(dubbing, jobs, postProduction);
 
     private static final List<DialogueBeat> BEATS = List.of(new DialogueBeat(BigDecimal.ZERO, BigDecimal.ONE,
             "Ho gaya.", "ravi", null, "voice-1", "elevenlabs", null, null, "hi"));
@@ -66,20 +64,19 @@ class ClipFinishingTest {
         assertThat(finished.outputUri()).isEqualTo("https://fal/clip.mp4");
         // Dubbing a 3s clip would squeeze the line; conform lays it on at the full 6s.
         verify(dubbing, never()).dub(anyString(), any(), any(), any(), anyString(), any(), any(), any(), any());
-        verifyNoInteractions(music);
     }
 
     @Test
-    void aClipAtItsPlannedLengthIsDubbedAndScoredHereAsBefore() {
+    void aClipAtItsPlannedLengthIsDubbedHereAndCarriesNoMusic() {
         when(dubbing.canAutoDub(any())).thenReturn(true);
         when(dubbing.dub(anyString(), any(), any(), any(), anyString(), any(), any(), any(), any()))
                 .thenReturn(new BeatDubbingService.DubResult("https://dubbed.mp4", new BigDecimal("0.05")));
-        when(music.mixIfPresent(any(), any(), any(), any(), eq("https://dubbed.mp4"))).thenReturn("https://scored.mp4");
         VideoGenJob job = job(6, 6);
 
         ClipFinishing.Finished finished = finishing.finish(job, prompt, BEATS, rendered(), GenerationControlsView.DEFAULTS);
 
-        assertThat(finished.outputUri()).isEqualTo("https://scored.mp4");
+        // Music is a sound layer mixed into the film, never laid on the clip.
+        assertThat(finished.outputUri()).isEqualTo("https://dubbed.mp4");
         assertThat(finished.cost()).isEqualByComparingTo("0.25");
         assertThat(job.getDubSucceeded()).isTrue();
     }
@@ -89,7 +86,6 @@ class ClipFinishingTest {
         when(dubbing.canAutoDub(any())).thenReturn(true);
         when(dubbing.dub(anyString(), any(), any(), any(), anyString(), any(), any(), any(), any()))
                 .thenThrow(new RuntimeException("ElevenLabs down"));
-        when(music.mixIfPresent(any(), any(), any(), any(), any())).thenAnswer(call -> call.getArgument(4));
         VideoGenJob job = job(6, 6);
 
         ClipFinishing.Finished finished = finishing.finish(job, prompt, BEATS, rendered(), GenerationControlsView.DEFAULTS);

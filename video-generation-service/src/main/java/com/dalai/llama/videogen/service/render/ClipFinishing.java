@@ -6,7 +6,6 @@ import com.dalai.llama.videogen.dto.generationplan.GenerationControlsView;
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.BackgroundMusicMixService;
 import com.dalai.llama.videogen.service.BeatDubbingService;
 import com.dalai.llama.videogen.service.DispatchResult;
 import com.dalai.llama.videogen.service.VideoGenException;
@@ -26,10 +25,12 @@ import java.util.UUID;
  * <p>One question settles most of it: will post-production conform this clip to the shot's planned
  * length? It does whenever the clip was generated at a different length -- shorter to save money,
  * or longer because the model has a minimum -- and the "conform" control is on. Such a clip is
- * generated silent (slowed-down speech is unusable), and the dub and the music bed are not laid on
- * here, because conform lays both on at the right length. Otherwise the clip is finished here, as
- * it always was. Nothing in here fails a render: dub, music and the conform request are all
- * best-effort extras on a clip that already exists.
+ * generated silent (slowed-down speech is unusable), and the dub is not laid on here, because
+ * conform lays it on at the right length. Otherwise the clip is finished here, as it always was.
+ * Music is never laid on a clip: shot music and sound effects are sound layers, mixed into the film
+ * when it renders (post-production), so they can be moved or switched off without remaking a clip.
+ * Nothing in here fails a render: the dub and the conform request are best-effort extras on a clip
+ * that already exists.
  */
 @Slf4j
 @Component
@@ -37,7 +38,6 @@ import java.util.UUID;
 public class ClipFinishing {
 
     private final BeatDubbingService dubbing;
-    private final BackgroundMusicMixService music;
     private final VideoGenJobRepository jobs;
     private final PostProductionClient postProduction;
 
@@ -58,7 +58,7 @@ public class ClipFinishing {
         return !hasSomethingToSay || dubbedHere || conformsLater(generationSeconds, plannedSeconds, controls);
     }
 
-    /** The rendered clip with its dub and music, unless post-production will lay those on instead. */
+    /** The rendered clip with its dub, unless post-production will lay that on instead. */
     public Finished finish(VideoGenJob job, ShotPrompt prompt, List<DialogueBeat> beats, DispatchResult result,
                            GenerationControlsView controls) {
         String uri = result.outputUri();
@@ -70,9 +70,6 @@ public class ClipFinishing {
             Finished dubbed = dub(job, beats, uri, cost);
             uri = dubbed.outputUri();
             cost = dubbed.cost();
-        }
-        if (controls.mixBackgroundMusic()) {
-            uri = music.mixIfPresent(job.getTenantId(), job.getJobId(), prompt.getPromptId(), prompt.getShotId(), uri);
         }
         return new Finished(uri, cost);
     }
