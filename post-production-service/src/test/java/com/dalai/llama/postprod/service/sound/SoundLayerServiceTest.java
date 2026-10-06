@@ -1,24 +1,23 @@
 package com.dalai.llama.postprod.service.sound;
 
+import com.dalai.llama.postprod.domain.FrameExtractionStatus;
 import com.dalai.llama.postprod.domain.SoundLayerKind;
 import com.dalai.llama.postprod.domain.SoundLayerSource;
 import com.dalai.llama.postprod.domain.entity.SoundLayer;
 import com.dalai.llama.postprod.dto.GenerateSoundLayerRequest;
 import com.dalai.llama.postprod.dto.SoundLayerView;
 import com.dalai.llama.postprod.dto.UpdateSoundLayerRequest;
+import com.dalai.llama.postprod.kafka.SoundLayerRequestedEvent;
+import com.dalai.llama.postprod.kafka.SoundLayerRequestedPublisher;
 import com.dalai.llama.postprod.repository.SoundLayerRepository;
-import com.dalai.llama.postprod.service.AudioGenerationResult;
-import com.dalai.llama.postprod.service.FoleyGenerationService;
-import com.dalai.llama.postprod.service.MusicGenerationService;
 import com.dalai.llama.postprod.service.PostProductionException;
 import com.dalai.llama.postprod.service.clip.ClipObjectStore;
-import com.dalai.llama.postprod.service.clip.ClipProbe;
 import com.dalai.llama.postprod.service.clip.FfmpegClipProcessor;
-import com.dalai.llama.postprod.service.clip.ShotClipVersionService;
 import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import com.dalai.llama.postprod.service.preproduction.PreProductionShotSummary;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
@@ -31,13 +30,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/** The request side: a sound is saved QUEUED and handed to the worker; no ffmpeg runs here. */
 class SoundLayerServiceTest {
 
     private final UUID tenantId = UUID.randomUUID();
@@ -45,84 +44,88 @@ class SoundLayerServiceTest {
     private final UUID userId = UUID.randomUUID();
     private final UUID shotId = UUID.randomUUID();
     private final SoundLayerRepository repository = mock(SoundLayerRepository.class);
-    private final FoleyGenerationService foley = mock(FoleyGenerationService.class);
-    private final MusicGenerationService music = mock(MusicGenerationService.class);
-    private final ShotClipVersionService clips = mock(ShotClipVersionService.class);
+    private final SoundLayerRequestedPublisher publisher = mock(SoundLayerRequestedPublisher.class);
     private final ClipObjectStore objectStore = mock(ClipObjectStore.class);
     private final FfmpegClipProcessor ffmpeg = mock(FfmpegClipProcessor.class);
     private final PreProductionClient preProduction = mock(PreProductionClient.class);
-    private final SoundLayerService service =
-            new SoundLayerService(repository, foley, music, clips, objectStore, ffmpeg, preProduction);
+    private final SoundLayerService service = new SoundLayerService(repository, publisher, objectStore, ffmpeg, preProduction);
 
     @BeforeEach
     void setUp() throws Exception {
         when(preProduction.listShots(tenantId, projectId)).thenReturn(List.of(new PreProductionShotSummary(shotId, "S12", 12, 6, false)));
         when(ffmpeg.createWorkDir(any())).thenReturn(Files.createTempDirectory("sound-layer-test"));
-        when(ffmpeg.probe(any())).thenReturn(new ClipProbe(false, true, new BigDecimal("3.2"), null, null));
         when(objectStore.bucket()).thenReturn("post-production");
-        when(objectStore.presignedUrl(any(), any())).thenReturn("https://minio/signed");
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
     }
 
     @Test
-    void aSoundEffectIsGeneratedFromItsDescriptionStoredAndPlacedOnTheShot() {
-        when(foley.generateFoley(eq(tenantId), eq(projectId), any(), isNull(), eq("a single temple bell, long ring"), isNull()))
-                .thenReturn(new AudioGenerationResult(UUID.randomUUID(), "https://fal.media/bell.wav?sig=1", BigDecimal.ONE));
-
+    void aSoundEffectIsQueuedWithItsPlacementAndNothingIsGeneratedOnTheRequest() {
         SoundLayerView bell = service.generate(tenantId, projectId, userId,
                 new GenerateSoundLayerRequest(shotId, SoundLayerKind.SOUND_EFFECT, "a single temple bell, long ring", null, 1500));
 
-        assertThat(bell.shotId()).isEqualTo(shotId);
-        assertThat(bell.kind()).isEqualTo(SoundLayerKind.SOUND_EFFECT);
+        assertThat(bell.status()).isEqualTo(FrameExtractionStatus.QUEUED);
         assertThat(bell.source()).isEqualTo(SoundLayerSource.GENERATED);
+        assertThat(bell.audioUrl()).isNull();
         assertThat(bell.offsetMs()).isEqualTo(1500);
         assertThat(bell.volumeDb()).isEqualByComparingTo("-4");
         assertThat(bell.fadeInMs()).isZero();
-        assertThat(bell.durationSeconds()).isEqualByComparingTo("3.2");
         assertThat(bell.included()).isTrue();
-        verify(clips).fetch(eq("https://fal.media/bell.wav?sig=1"), any());
-        verify(objectStore).upload(eq("sound-layers/" + projectId + "/" + bell.layerId() + ".wav"), any(), eq("audio/wav"));
-        verifyNoInteractions(music);
+        verify(publisher).publish(new SoundLayerRequestedEvent(bell.layerId(), tenantId, projectId, userId));
+        verify(ffmpeg, never()).probe(any());
     }
 
     @Test
-    void musicIsGeneratedAsMusicAndSitsLowerWithFades() {
-        when(music.generateMusic(eq(tenantId), eq(projectId), any(), eq("soft tanpura drone"), eq(12), isNull()))
-                .thenReturn(new AudioGenerationResult(UUID.randomUUID(), "https://elevenlabs/cue.mp3", BigDecimal.ONE));
-
-        SoundLayerView cue = service.generate(tenantId, projectId, userId,
+    void musicKeepsItsRequestedLengthForTheWorkerAndSitsLowerWithFades() {
+        service.generate(tenantId, projectId, userId,
                 new GenerateSoundLayerRequest(shotId, SoundLayerKind.MUSIC, "soft tanpura drone", 12, null));
 
-        assertThat(cue.volumeDb()).isEqualByComparingTo("-14");
-        assertThat(cue.fadeInMs()).isEqualTo(500);
-        assertThat(cue.fadeOutMs()).isEqualTo(1500);
-        assertThat(cue.offsetMs()).isZero();
-        verifyNoInteractions(foley);
+        ArgumentCaptor<SoundLayer> saved = ArgumentCaptor.forClass(SoundLayer.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getRequestedSeconds()).isEqualTo(12);
+        assertThat(saved.getValue().getVolumeDb()).isEqualByComparingTo("-14");
+        assertThat(saved.getValue().getFadeInMs()).isEqualTo(500);
+        assertThat(saved.getValue().getFadeOutMs()).isEqualTo(1500);
+        assertThat(saved.getValue().getOffsetMs()).isZero();
     }
 
     @Test
-    void aShotFromAnotherProjectIsRefusedBeforeAnythingIsPaidFor() {
+    void aShotFromAnotherProjectIsRefusedBeforeAnythingIsQueued() {
         assertThatThrownBy(() -> service.generate(tenantId, projectId, userId,
                 new GenerateSoundLayerRequest(UUID.randomUUID(), SoundLayerKind.SOUND_EFFECT, "bell", null, 0)))
                 .isInstanceOf(PostProductionException.class);
-        verifyNoInteractions(foley, music);
+        verify(repository, never()).save(any());
+        verify(publisher, never()).publish(any());
     }
 
     @Test
-    void anUploadWithNoSoundIsRefusedAndNotStored() {
-        when(ffmpeg.probe(any())).thenReturn(new ClipProbe(true, false, new BigDecimal("2"), 640, 360));
+    void anUploadIsStoredAsItArrivesAndQueuedForChecking() {
+        SoundLayerView upload = service.upload(tenantId, projectId, userId, shotId, SoundLayerKind.SOUND_EFFECT, 200,
+                new MockMultipartFile("file", "Bell.WAV", "audio/wav", new byte[2048]));
 
-        assertThatThrownBy(() -> service.upload(tenantId, projectId, userId, shotId, SoundLayerKind.SOUND_EFFECT, 0,
-                new MockMultipartFile("file", "silent.mp4", "video/mp4", new byte[2048])))
-                .isInstanceOf(PostProductionException.class)
-                .hasMessageContaining("no sound");
-        verify(objectStore, never()).upload(any(), any(), any());
+        assertThat(upload.status()).isEqualTo(FrameExtractionStatus.QUEUED);
+        verify(objectStore).upload(eq("sound-layers/" + projectId + "/" + upload.layerId() + ".wav"), any(), eq("audio/wav"));
+        verify(publisher).publish(any());
+        verify(ffmpeg, never()).probe(any());
+    }
+
+    @Test
+    void aSoundThatCannotBeQueuedIsMarkedFailedNotLeftWaiting() {
+        doThrow(PostProductionException.upstream("kafka down", new RuntimeException())).when(publisher).publish(any());
+
+        assertThatThrownBy(() -> service.generate(tenantId, projectId, userId,
+                new GenerateSoundLayerRequest(shotId, SoundLayerKind.SOUND_EFFECT, "bell", null, 0)))
+                .isInstanceOf(PostProductionException.class);
+
+        ArgumentCaptor<SoundLayer> saved = ArgumentCaptor.forClass(SoundLayer.class);
+        verify(repository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(FrameExtractionStatus.FAILED);
     }
 
     @Test
     void movingLevellingAndSwitchingOffChangeOnlyWhatIsSent() {
         SoundLayer layer = SoundLayer.builder().layerId(UUID.randomUUID()).tenantId(tenantId).projectId(projectId)
                 .shotId(shotId).kind(SoundLayerKind.SOUND_EFFECT).source(SoundLayerSource.GENERATED)
+                .status(FrameExtractionStatus.COMPLETED).bucket("post-production").objectKey("sound-layers/x.wav")
                 .offsetMs(0).volumeDb(new BigDecimal("-4")).fadeInMs(0).fadeOutMs(150).included(true).build();
         when(repository.findByLayerIdAndTenantIdAndProjectId(layer.getLayerId(), tenantId, projectId)).thenReturn(Optional.of(layer));
 
@@ -133,6 +136,13 @@ class SoundLayerServiceTest {
         assertThat(moved.included()).isFalse();
         assertThat(moved.volumeDb()).isEqualByComparingTo("-4");
         assertThat(moved.fadeOutMs()).isEqualTo(150);
+    }
+
+    @Test
+    void onlyPreparedLayersReachTheFilm() {
+        service.includedForFilm(projectId);
+
+        verify(repository).findByProjectIdAndIncludedTrueAndStatus(projectId, FrameExtractionStatus.COMPLETED);
     }
 
     @Test

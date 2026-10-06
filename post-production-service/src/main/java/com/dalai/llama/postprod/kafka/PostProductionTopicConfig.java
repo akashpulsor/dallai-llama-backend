@@ -31,6 +31,11 @@ public class PostProductionTopicConfig {
     }
 
     @Bean
+    public NewTopic soundLayerRequestedTopic(@Value("${post-production.sound-layer.requested-topic}") String topic) {
+        return new NewTopic(topic, 3, (short) 1);
+    }
+
+    @Bean
     public NewTopic conformRequestedTopic(@Value("${post-production.conform.requested-topic}") String topic) {
         return new NewTopic(topic, 3, (short) 1);
     }

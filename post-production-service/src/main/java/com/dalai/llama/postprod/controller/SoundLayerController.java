@@ -38,14 +38,17 @@ public class SoundLayerController {
         return ResponseEntity.ok(soundLayerService.list(TenantContextHolder.get().tenantId(), projectId));
     }
 
-    /** Generate one from a description -- "a single temple bell, long ring". */
+    /** Generate one from a description -- "a single temple bell, long ring". Answers 202 with the
+     * layer QUEUED; poll the list until it is COMPLETED (or FAILED, with its reason). */
     @PostMapping
     public ResponseEntity<SoundLayerView> generate(@PathVariable UUID projectId,
                                                    @Valid @RequestBody GenerateSoundLayerRequest request) {
         TenantContext ctx = TenantContextHolder.get();
-        return ResponseEntity.ok(soundLayerService.generate(ctx.tenantId(), projectId, ctx.userId(), request));
+        return ResponseEntity.accepted().body(soundLayerService.generate(ctx.tenantId(), projectId, ctx.userId(), request));
     }
 
+    /** Upload your own file. Stored as it arrives; checked for sound on the worker side, so this
+     * also answers 202 with the layer QUEUED. */
     @PostMapping(path = "/upload", consumes = "multipart/form-data")
     public ResponseEntity<SoundLayerView> upload(@PathVariable UUID projectId,
                                                  @RequestParam UUID shotId,
@@ -53,7 +56,7 @@ public class SoundLayerController {
                                                  @RequestParam(required = false) Integer offsetMs,
                                                  @RequestParam("file") MultipartFile file) {
         TenantContext ctx = TenantContextHolder.get();
-        return ResponseEntity.ok(soundLayerService.upload(ctx.tenantId(), projectId, ctx.userId(), shotId, kind, offsetMs, file));
+        return ResponseEntity.accepted().body(soundLayerService.upload(ctx.tenantId(), projectId, ctx.userId(), shotId, kind, offsetMs, file));
     }
 
     /** Move it, change its level or fades, or switch it in or out of the film. */

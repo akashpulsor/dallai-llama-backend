@@ -1,5 +1,6 @@
 package com.dalai.llama.postprod.domain.entity;
 
+import com.dalai.llama.postprod.domain.FrameExtractionStatus;
 import com.dalai.llama.postprod.domain.SoundLayerKind;
 import com.dalai.llama.postprod.domain.SoundLayerSource;
 import jakarta.persistence.Column;
@@ -54,11 +55,15 @@ public class SoundLayer {
     @Column(name = "prompt")
     private String prompt;
 
-    @Column(name = "bucket", nullable = false)
+    @Column(name = "bucket")
     private String bucket;
 
-    @Column(name = "object_key", nullable = false)
+    @Column(name = "object_key")
     private String objectKey;
+
+    /** Music only: the length asked for, held until the worker generates it. */
+    @Column(name = "requested_seconds")
+    private Integer requestedSeconds;
 
     @Column(name = "duration_seconds")
     private BigDecimal durationSeconds;
@@ -79,6 +84,16 @@ public class SoundLayer {
     /** In the film or not. Off keeps it, so it can be switched back on without regenerating. */
     @Column(name = "included", nullable = false)
     private boolean included;
+
+    /** QUEUED until the worker has generated or checked the audio and stored it; only COMPLETED
+     * layers are mixed into the film. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    private FrameExtractionStatus status;
+
+    /** Why preparing it failed, in words the creator can act on. */
+    @Column(name = "error")
+    private String error;
 
     @Column(name = "created_by")
     private UUID createdBy;

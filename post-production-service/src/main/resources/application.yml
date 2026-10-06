@@ -150,6 +150,11 @@ post-production:
   # Joining the film and re-dubbing both run on this service's own Kafka worker side rather than
   # the request thread. The consumer group IS the concurrency control -- tune parallelism by
   # partition count, not by a thread pool nobody can see or change without a redeploy.
+  # Preparing a sound layer (generate or pick up the upload, ffprobe, store) -- worker side, one at
+  # a time per consumer, like conform and the film join.
+  sound-layer:
+    requested-topic: ${POST_PROD_SOUND_LAYER_REQUESTED_TOPIC:postprod.sound-layer.requested}
+    requested-consumer-group: ${POST_PROD_SOUND_LAYER_REQUESTED_GROUP:post-production-service-sound-layer}
   film:
     requested-topic: ${POST_PROD_FILM_REQUESTED_TOPIC:postprod.film.requested}
     requested-consumer-group: ${POST_PROD_FILM_REQUESTED_GROUP:post-production-service-film}

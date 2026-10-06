@@ -1,20 +1,18 @@
 package com.dalai.llama.postprod.service.sound;
 
+import com.dalai.llama.postprod.domain.FrameExtractionStatus;
 import com.dalai.llama.postprod.domain.SoundLayerKind;
 import com.dalai.llama.postprod.domain.SoundLayerSource;
 import com.dalai.llama.postprod.domain.entity.SoundLayer;
 import com.dalai.llama.postprod.dto.GenerateSoundLayerRequest;
 import com.dalai.llama.postprod.dto.SoundLayerView;
 import com.dalai.llama.postprod.dto.UpdateSoundLayerRequest;
+import com.dalai.llama.postprod.kafka.SoundLayerRequestedEvent;
+import com.dalai.llama.postprod.kafka.SoundLayerRequestedPublisher;
 import com.dalai.llama.postprod.repository.SoundLayerRepository;
-import com.dalai.llama.postprod.service.AudioGenerationResult;
-import com.dalai.llama.postprod.service.FoleyGenerationService;
-import com.dalai.llama.postprod.service.MusicGenerationService;
 import com.dalai.llama.postprod.service.PostProductionException;
 import com.dalai.llama.postprod.service.clip.ClipObjectStore;
-import com.dalai.llama.postprod.service.clip.ClipProbe;
 import com.dalai.llama.postprod.service.clip.FfmpegClipProcessor;
-import com.dalai.llama.postprod.service.clip.ShotClipVersionService;
 import com.dalai.llama.postprod.service.preproduction.PreProductionClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,9 +28,13 @@ import java.util.UUID;
 
 /**
  * The creator's sound layers: music cues and sound effects placed on the film's timeline, each
- * anchored to a shot. Generated from a description or uploaded; stored once; moved, levelled and
- * switched on or off freely, because nothing is baked into a clip -- the film render mixes the
- * included layers ({@link FilmSoundtrack}).
+ * anchored to a shot. Moved, levelled and switched on or off freely, because nothing is baked into
+ * a clip -- the film render mixes the included layers ({@link FilmSoundtrack}).
+ *
+ * <p>This is the request side only. Adding a layer saves it QUEUED and publishes it; generating,
+ * ffprobe and storing run on the worker ({@link SoundLayerProcessor}), one at a time like every
+ * other ffmpeg job in this service. An upload is put in storage here as it arrives (a byte copy,
+ * no ffmpeg) so the worker can pick it up.
  */
 @Service
 @RequiredArgsConstructor
@@ -43,9 +45,7 @@ public class SoundLayerService {
     static final BigDecimal EFFECT_VOLUME_DB = BigDecimal.valueOf(-4);
 
     private final SoundLayerRepository repository;
-    private final FoleyGenerationService foleyGenerationService;
-    private final MusicGenerationService musicGenerationService;
-    private final ShotClipVersionService clipVersionService;
+    private final SoundLayerRequestedPublisher publisher;
     private final ClipObjectStore objectStore;
     private final FfmpegClipProcessor ffmpeg;
     private final PreProductionClient preProductionClient;
@@ -58,47 +58,39 @@ public class SoundLayerService {
                 .toList();
     }
 
-    @Transactional
+    /** Not @Transactional on purpose: the row must be committed before the worker can read it. */
     public SoundLayerView generate(UUID tenantId, UUID projectId, UUID userId, GenerateSoundLayerRequest request) {
         requireShotInProject(tenantId, projectId, request.shotId());
-        UUID layerId = UUID.randomUUID();
-        String idempotencyKey = "sound-layer-" + layerId;
-        AudioGenerationResult generated = request.kind() == SoundLayerKind.MUSIC
-                ? musicGenerationService.generateMusic(tenantId, projectId, idempotencyKey, request.prompt(),
-                        request.durationSeconds(), null)
-                : foleyGenerationService.generateFoley(tenantId, projectId, idempotencyKey, null, request.prompt(), null);
-        Path workDir = ffmpeg.createWorkDir("sound-" + layerId);
-        try {
-            Path audio = workDir.resolve("layer" + extensionOf(generated.audioUrl()));
-            clipVersionService.fetch(generated.audioUrl(), audio);
-            return toView(store(layerId, tenantId, projectId, userId, request.shotId(), request.kind(),
-                    SoundLayerSource.GENERATED, request.prompt(), offsetOrZero(request.offsetMs()), audio));
-        } finally {
-            ffmpeg.deleteQuietly(workDir);
-        }
+        SoundLayer layer = newLayer(tenantId, projectId, userId, request.shotId(), request.kind(),
+                SoundLayerSource.GENERATED, request.offsetMs());
+        layer.setPrompt(request.prompt());
+        layer.setRequestedSeconds(request.kind() == SoundLayerKind.MUSIC ? request.durationSeconds() : null);
+        return enqueue(layer);
     }
 
-    @Transactional
     public SoundLayerView upload(UUID tenantId, UUID projectId, UUID userId, UUID shotId, SoundLayerKind kind,
                                  Integer offsetMs, MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw PostProductionException.badRequest("No file was uploaded");
         }
         requireShotInProject(tenantId, projectId, shotId);
-        UUID layerId = UUID.randomUUID();
-        Path workDir = ffmpeg.createWorkDir("sound-" + layerId);
+        SoundLayer layer = newLayer(tenantId, projectId, userId, shotId, kind, SoundLayerSource.UPLOADED, offsetMs);
+        String objectKey = objectKeyFor(projectId, layer.getLayerId(), file.getOriginalFilename());
+        Path workDir = ffmpeg.createWorkDir("sound-upload-" + layer.getLayerId());
         try {
-            Path audio = workDir.resolve("layer" + extensionOf(file.getOriginalFilename()));
+            Path received = workDir.resolve("upload" + extensionOf(objectKey));
             try {
-                file.transferTo(audio);
+                file.transferTo(received);
             } catch (Exception ex) {
                 throw PostProductionException.badRequest("Could not read the uploaded file: " + ex.getMessage());
             }
-            return toView(store(layerId, tenantId, projectId, userId, shotId, kind, SoundLayerSource.UPLOADED, null,
-                    offsetOrZero(offsetMs), audio));
+            objectStore.upload(objectKey, received, contentTypeFor(objectKey));
         } finally {
             ffmpeg.deleteQuietly(workDir);
         }
+        layer.setBucket(objectStore.bucket());
+        layer.setObjectKey(objectKey);
+        return enqueue(layer);
     }
 
     @Transactional
@@ -118,44 +110,50 @@ public class SoundLayerService {
         repository.delete(require(tenantId, projectId, layerId));
     }
 
-    /** The layers the film render mixes. */
+    /** The layers the film render mixes: switched on, and prepared. */
     @Transactional(readOnly = true)
     public List<SoundLayer> includedForFilm(UUID projectId) {
-        return repository.findByProjectIdAndIncludedTrue(projectId);
+        return repository.findByProjectIdAndIncludedTrueAndStatus(projectId, FrameExtractionStatus.COMPLETED);
     }
 
-    private SoundLayer store(UUID layerId, UUID tenantId, UUID projectId, UUID userId, UUID shotId, SoundLayerKind kind,
-                             SoundLayerSource source, String prompt, int offsetMs, Path audio) {
-        ClipProbe probe = ffmpeg.probe(audio);
-        if (!probe.hasAudio()) {
-            throw PostProductionException.badRequest("That file has no sound in it");
-        }
-        String extension = extensionOf(audio.getFileName().toString());
-        String objectKey = "sound-layers/%s/%s%s".formatted(projectId, layerId, extension);
-        objectStore.upload(objectKey, audio, contentTypeFor(extension));
+    private SoundLayer newLayer(UUID tenantId, UUID projectId, UUID userId, UUID shotId, SoundLayerKind kind,
+                                SoundLayerSource source, Integer offsetMs) {
         boolean music = kind == SoundLayerKind.MUSIC;
         OffsetDateTime now = OffsetDateTime.now();
-        return repository.save(SoundLayer.builder()
-                .layerId(layerId)
+        return SoundLayer.builder()
+                .layerId(UUID.randomUUID())
                 .tenantId(tenantId)
                 .projectId(projectId)
                 .shotId(shotId)
                 .kind(kind)
                 .source(source)
-                .prompt(prompt)
-                .bucket(objectStore.bucket())
-                .objectKey(objectKey)
-                .durationSeconds(probe.durationSeconds())
-                .offsetMs(offsetMs)
+                .offsetMs(offsetMs == null ? 0 : Math.max(0, offsetMs))
                 .volumeDb(music ? MUSIC_VOLUME_DB : EFFECT_VOLUME_DB)
                 // A cue eases in and out under the scene; an effect starts on its hit.
                 .fadeInMs(music ? 500 : 0)
                 .fadeOutMs(music ? 1500 : 150)
                 .included(true)
+                .status(FrameExtractionStatus.QUEUED)
                 .createdBy(userId)
                 .createdAt(now)
                 .updatedAt(now)
-                .build());
+                .build();
+    }
+
+    /** Saves the layer QUEUED and hands it to the worker; a layer that cannot be queued is marked
+     * failed rather than left waiting for ever. */
+    private SoundLayerView enqueue(SoundLayer layer) {
+        SoundLayer saved = repository.save(layer);
+        try {
+            publisher.publish(new SoundLayerRequestedEvent(saved.getLayerId(), saved.getTenantId(),
+                    saved.getProjectId(), saved.getCreatedBy()));
+        } catch (PostProductionException ex) {
+            saved.setStatus(FrameExtractionStatus.FAILED);
+            saved.setError(ex.getMessage());
+            repository.save(saved);
+            throw ex;
+        }
+        return toView(saved);
     }
 
     private void requireShotInProject(UUID tenantId, UUID projectId, UUID shotId) {
@@ -172,14 +170,17 @@ public class SoundLayerService {
     }
 
     private SoundLayerView toView(SoundLayer layer) {
+        String audioUrl = layer.getStatus() == FrameExtractionStatus.COMPLETED
+                ? objectStore.presignedUrl(layer.getBucket(), layer.getObjectKey())
+                : null;
         return new SoundLayerView(layer.getLayerId(), layer.getShotId(), layer.getKind(), layer.getSource(),
-                layer.getPrompt(), objectStore.presignedUrl(layer.getBucket(), layer.getObjectKey()),
+                layer.getPrompt(), layer.getStatus(), layer.getError(), audioUrl,
                 layer.getDurationSeconds(), layer.getOffsetMs(), layer.getVolumeDb(), layer.getFadeInMs(),
                 layer.getFadeOutMs(), layer.isIncluded(), layer.getCreatedAt());
     }
 
-    private static int offsetOrZero(Integer offsetMs) {
-        return offsetMs == null ? 0 : Math.max(0, offsetMs);
+    static String objectKeyFor(UUID projectId, UUID layerId, String name) {
+        return "sound-layers/%s/%s%s".formatted(projectId, layerId, extensionOf(name));
     }
 
     /** ".wav" from a URL or file name (query string ignored); ".mp3" when it has none we know. */
@@ -193,8 +194,8 @@ public class SoundLayerService {
         return extension.matches("\\.(mp3|wav|ogg|m4a|aac|flac|webm)") ? extension : ".mp3";
     }
 
-    private static String contentTypeFor(String extension) {
-        return switch (extension) {
+    static String contentTypeFor(String name) {
+        return switch (extensionOf(name)) {
             case ".wav" -> "audio/wav";
             case ".ogg" -> "audio/ogg";
             case ".m4a", ".aac" -> "audio/mp4";
