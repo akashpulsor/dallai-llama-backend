@@ -121,6 +121,16 @@ public class ShotClipVersionController {
                 clipVersionService.keepPreview(context(projectId, shotId, shotRef), previewKey, origin)));
     }
 
+    /** The client's own footage for a shot tagged client footage: stored and made the shot's cut
+     * in one step, ready for the film. */
+    @PostMapping("/client-footage")
+    public ResponseEntity<ShotClipVersionView> clientFootage(@PathVariable UUID projectId,
+                                                             @PathVariable UUID shotId,
+                                                             @RequestParam(required = false) String shotRef,
+                                                             @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(toView(clipVersionService.uploadClientFootage(context(projectId, shotId, shotRef), file)));
+    }
+
     /** A cut the creator made themselves and brought back. */
     @PostMapping("/uploaded")
     public ResponseEntity<ShotClipVersionView> uploaded(@PathVariable UUID projectId,

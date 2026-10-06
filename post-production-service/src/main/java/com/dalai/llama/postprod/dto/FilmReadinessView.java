@@ -9,5 +9,7 @@ import java.util.List;
  * need generating. A disabled control with no reason attached is the thing a creator has to guess
  * their way around.
  */
-public record FilmReadinessView(boolean ready, int totalShots, int readyShots, List<String> missingShotRefs) {
+public record FilmReadinessView(boolean ready, int totalShots, int readyShots, List<String> missingShotRefs,
+                                /** Missing shots the client films -- they need the client's footage uploaded. */
+                                List<String> awaitingClientFootageShotRefs) {
 }

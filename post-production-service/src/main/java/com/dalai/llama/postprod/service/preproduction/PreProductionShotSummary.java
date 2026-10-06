@@ -10,5 +10,11 @@ import java.util.UUID;
  * wire exactly -- a rename on one side and not the other deserialises silently to null, and a null
  * shotNumber here means the film comes out in an arbitrary order.
  */
-public record PreProductionShotSummary(UUID id, String shotRef, Integer shotNumber, Integer durationSeconds) {
+public record PreProductionShotSummary(UUID id, String shotRef, Integer shotNumber, Integer durationSeconds,
+                                       Boolean clientFootage) {
+
+    /** The client films this shot; its cut is their uploaded footage. Absent reads as false. */
+    public boolean isClientFootage() {
+        return Boolean.TRUE.equals(clientFootage);
+    }
 }

@@ -29,5 +29,7 @@ public enum ClipOrigin {
      * being a dead end when no automatic cut is worth shipping. */
     UPLOADED,
     /** Brought to the shot's planned length -- slowed (optionally interpolated) or trimmed. */
-    CONFORMED
+    CONFORMED,
+    /** The client's own footage for a shot they film themselves -- nothing was generated for it. */
+    CLIENT_FOOTAGE
 }

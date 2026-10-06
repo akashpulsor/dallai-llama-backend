@@ -66,7 +66,7 @@ class FilmAssemblyQueueingTest {
 
         // One shot, already cut, so the project is ready to join.
         when(preProductionClient.listShots(tenantId, projectId))
-                .thenReturn(List.of(new PreProductionShotSummary(shotId, "S1", 1, 4)));
+                .thenReturn(List.of(new PreProductionShotSummary(shotId, "S1", 1, 4, false)));
         when(clipVersionRepository.findByProjectIdAndStatus(projectId, ClipVersionStatus.ACTIVE))
                 .thenReturn(List.of(ShotClipVersion.builder()
                         .versionId(UUID.randomUUID()).tenantId(tenantId).projectId(projectId)

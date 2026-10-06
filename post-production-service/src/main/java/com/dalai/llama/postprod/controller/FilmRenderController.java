@@ -37,8 +37,8 @@ public class FilmRenderController {
     public ResponseEntity<FilmReadinessView> readiness(@PathVariable UUID projectId) {
         TenantContext ctx = TenantContextHolder.get();
         FilmAssemblyService.Readiness readiness = filmAssemblyService.readiness(ctx.tenantId(), projectId);
-        return ResponseEntity.ok(new FilmReadinessView(
-                readiness.isReady(), readiness.total(), readiness.ready(), readiness.missingShotRefs()));
+        return ResponseEntity.ok(new FilmReadinessView(readiness.isReady(), readiness.total(), readiness.ready(),
+                readiness.missingShotRefs(), readiness.awaitingClientFootageShotRefs()));
     }
 
     /** Queue a join of every shot's current cut. Returns as soon as it is queued. */

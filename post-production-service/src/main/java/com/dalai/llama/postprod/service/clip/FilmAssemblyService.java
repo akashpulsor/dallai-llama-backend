@@ -84,12 +84,16 @@ public class FilmAssemblyService {
         // so this reported every single shot missing while every single one was generated. The
         // generated clip is the shot's video until someone makes a different one.
         java.util.Set<String> generated = generatedShotRefs(tenantId, projectId);
-        List<String> missing = shots.stream()
+        List<PreProductionShotSummary> missingShots = shots.stream()
                 .filter(shot -> !cuts.containsKey(shot.id()))
                 .filter(shot -> shot.shotRef() == null || !generated.contains(shot.shotRef()))
-                .map(shot -> shot.shotRef() == null ? "(unnamed)" : shot.shotRef())
                 .toList();
-        return new Readiness(shots.size(), shots.size() - missing.size(), missing);
+        List<String> missing = missingShots.stream().map(FilmAssemblyService::label).toList();
+        List<String> awaitingClient = missingShots.stream()
+                .filter(PreProductionShotSummary::isClientFootage)
+                .map(FilmAssemblyService::label)
+                .toList();
+        return new Readiness(shots.size(), shots.size() - missing.size(), missing, awaitingClient);
     }
 
     /** Shot refs whose render finished in video-generation-service. Empty rather than fatal when
@@ -475,12 +479,18 @@ public class FilmAssemblyService {
      *
      * @param missingShotRefs the shots with no cut yet -- named rather than counted, so the page can
      *                        say which ones to generate instead of only disabling a button.
+     * @param awaitingClientFootageShotRefs the subset of those the client films: they need the
+     *                        client's footage uploaded, not generating.
      */
-    public record Readiness(int total, int ready, List<String> missingShotRefs) {
+    public record Readiness(int total, int ready, List<String> missingShotRefs, List<String> awaitingClientFootageShotRefs) {
 
         public boolean isReady() {
             return total > 0 && missingShotRefs.isEmpty();
         }
+    }
+
+    private static String label(PreProductionShotSummary shot) {
+        return shot.shotRef() == null ? "(unnamed)" : shot.shotRef();
     }
 
     /** Pulls a presigned asset to disk for ffmpeg. Deliberately local rather than shared with

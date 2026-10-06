@@ -226,6 +226,39 @@ public class ShotClipVersionService {
             @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
     })
     @Transactional
+    public ShotClipVersion uploadClientFootage(Context context, MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ClipProcessingException("No file was uploaded");
+        }
+        // Not a cut of anything: a client-footage shot has no generated clip, so unlike
+        // createUploadedPreview there is no baseline to ensure and no source job to trace.
+        repository.lockByShotId(context.shotId());
+        Path workDir = ffmpeg.createWorkDir(context.shotId().toString());
+        try {
+            Path footage = workDir.resolve("client-footage");
+            try {
+                file.transferTo(footage);
+            } catch (Exception ex) {
+                throw new ClipProcessingException("Could not read the uploaded file: " + ex.getMessage(), ex);
+            }
+            ClipProbe probe = ffmpeg.probe(footage);
+            if (!probe.isPlayable()) {
+                throw new ClipProcessingException("That file has no usable video in it -- the shot is unchanged");
+            }
+            ShotClipVersion version = addVersion(context, null, ClipOrigin.CLIENT_FOOTAGE, footage, probe);
+            // The client's footage is the shot -- there is no generated alternative to compare it
+            // with, so it is the shot's cut straight away rather than a preview to accept.
+            return accept(context.tenantId(), context.shotId(), version.getVersionId());
+        } finally {
+            ffmpeg.deleteQuietly(workDir);
+        }
+    }
+
+    @Caching(evict = {
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.SHOT_CLIP_VERSIONS, key = "#context.shotId()"),
+            @CacheEvict(cacheNames = ClipVersionCacheConfig.PROJECT_ACTIVE_CLIPS, key = "#context.projectId()")
+    })
+    @Transactional
     public ShotClipVersion createUploadedPreview(Context context, MultipartFile file, UUID editedFromVersionId) {
         if (file == null || file.isEmpty()) {
             throw new ClipProcessingException("No file was uploaded");
