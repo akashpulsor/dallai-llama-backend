@@ -40,8 +40,10 @@ public class ShotAssetBatchExecutor implements BatchStepExecutor<ShotAssetStep> 
 
     @Override
     public List<ShotAssetStep> planSteps(UUID tenantId, UUID projectId) {
+        // Client-footage shots are filmed by the client, so nothing is generated for them.
         List<Shot> eligibleShots = shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).stream()
                 .filter(s -> s.getShotType() != ShotType.MOTION_GRAPHIC)
+                .filter(s -> !Boolean.TRUE.equals(s.getClientFootage()))
                 .toList();
         int totalShots = eligibleShots.size();
 

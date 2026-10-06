@@ -170,13 +170,16 @@ public class PrepareOrchestrationService {
     /** Every shot id in the bundle, ordered by shotNumber so the batch prepares in shooting order
      * and the UI's progress log reads top-to-bottom. Shots without a number sort last rather than
      * blowing up the comparator. */
-    private List<UUID> allShotIdsInShootingOrder(PreProductionViews.PrepareBundleView bundle) {
+    static List<UUID> allShotIdsInShootingOrder(PreProductionViews.PrepareBundleView bundle) {
         if (bundle.shots() == null) {
             return List.of();
         }
         return bundle.shots().stream()
                 .map(PreProductionViews.ShotBundleView::shot)
                 .filter(shot -> shot != null && shot.id() != null)
+                // The client films these: preparing a prompt would be a paid call for a clip that is
+                // never generated. Ticking the shot explicitly still prepares it.
+                .filter(shot -> !Boolean.TRUE.equals(shot.clientFootage()))
                 .sorted(Comparator.comparing(
                         PreProductionViews.ShotView::shotNumber,
                         Comparator.nullsLast(Comparator.naturalOrder())))

@@ -108,6 +108,11 @@ public class ShotAssetBatchService {
                     Set<ShotImageKind> presentKinds = shotImageRepository.findByShotId(shot.getId()).stream()
                             .map(ShotImage::getKind)
                             .collect(Collectors.toSet());
+                    // The client films it, so there is nothing to generate: done, and its final frame is
+                    // the client's footage, not ours (the shot list shows a "Client footage" chip instead).
+                    if (Boolean.TRUE.equals(shot.getClientFootage())) {
+                        return new ShotAssetCompletionView(shot.getId(), true, false);
+                    }
                     // A motion-graphic shot's one and only asset is its motion-graphic image: it has no
                     // plans and no live-action stills, so that image is both its final frame and "done".
                     if (shot.getShotType() == ShotType.MOTION_GRAPHIC) {

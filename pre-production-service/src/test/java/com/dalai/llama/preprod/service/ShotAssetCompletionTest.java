@@ -66,8 +66,32 @@ class ShotAssetCompletionTest {
                 new ShotAssetCompletionView(withoutGraphic.getId(), false, false));
     }
 
+    @Test
+    void aClientFootageShotIsDoneWithoutAnyGeneratedAssetAndHasNoGeneratedFrame() {
+        Shot testimonial = shot(ShotType.ACTION, false);
+        testimonial.setClientFootage(true);
+        given(shotRepository.findByProjectIdOrderByShotNumberAsc(projectId)).willReturn(List.of(testimonial));
+
+        assertThat(service.completion(UUID.randomUUID(), projectId))
+                .containsExactly(new ShotAssetCompletionView(testimonial.getId(), true, false));
+    }
+
+    @Test
+    void theBatchPlansNothingForAClientFootageShot() {
+        Shot generated = shot(ShotType.ACTION, false);
+        Shot testimonial = shot(ShotType.ACTION, false);
+        testimonial.setClientFootage(true);
+        given(shotRepository.findByProjectIdOrderByShotNumberAsc(projectId)).willReturn(List.of(generated, testimonial));
+        ShotAssetBatchExecutor executor = new ShotAssetBatchExecutor(shotRepository, mock(LightingPlanService.class),
+                mock(CameraPlanService.class), mock(ShotImageService.class));
+
+        assertThat(executor.planSteps(UUID.randomUUID(), projectId))
+                .isNotEmpty()
+                .allSatisfy(step -> assertThat(step.shotId()).isEqualTo(generated.getId()));
+    }
+
     private Shot shot(ShotType type, boolean plans, ShotImageKind... kinds) {
-        Shot shot = Shot.builder().id(UUID.randomUUID()).projectId(projectId).shotType(type).build();
+        Shot shot = Shot.builder().id(UUID.randomUUID()).projectId(projectId).shotNumber(1).shotType(type).build();
         given(lightingPlanRepository.findByShotId(shot.getId())).willReturn(plans ? Optional.of(new LightingPlan()) : Optional.empty());
         given(cameraPlanRepository.findByShotId(shot.getId())).willReturn(plans ? Optional.of(new CameraPlan()) : Optional.empty());
         given(shotImageRepository.findByShotId(shot.getId())).willReturn(Arrays.stream(kinds)

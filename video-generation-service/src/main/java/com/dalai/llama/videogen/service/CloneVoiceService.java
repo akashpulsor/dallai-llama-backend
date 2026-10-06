@@ -133,6 +133,11 @@ public class CloneVoiceService {
         for (PreProductionViews.ShotBundleView shotBundle : bundle.shots()) {
             PreProductionViews.ShotView shot = shotBundle.shot();
 
+            if (Boolean.TRUE.equals(shot.clientFootage())) {
+                // The client's own footage carries its own sound -- no cloned voice is laid over it.
+                log.debug("clone-project skipping client-footage shot projectId={} shotId={}", projectId, shot.id());
+                continue;
+            }
             if (shotBundle.dialogueBeats() == null || shotBundle.dialogueBeats().isEmpty()) {
                 log.debug("clone-project skipping shot with no dialogue beats projectId={} shotId={} shotRef={}", projectId, shot.id(), shot.shotRef());
                 continue;

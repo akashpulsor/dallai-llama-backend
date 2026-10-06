@@ -163,7 +163,10 @@ public final class PreProductionViews {
              * the scene. Wire-string, no shared enum. Null reads as GENERIC. */
             String sceneType,
             /** The cast character chosen to read this shot's line. Null: the shot's own character. */
-            UUID dubCastProfileId
+            UUID dubCastProfileId,
+            /** The client supplies this shot's footage: nothing is prepared, voiced or generated for
+             * it in a whole-project run. Null (older pre-production) reads as false. */
+            Boolean clientFootage
     ) {
     }
 
