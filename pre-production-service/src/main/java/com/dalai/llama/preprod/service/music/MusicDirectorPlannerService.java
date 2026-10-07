@@ -222,6 +222,12 @@ public class MusicDirectorPlannerService {
         return toPlan(musicPlanRepository.save(record));
     }
 
+    /** The plan, if one has been made -- for readers where "not planned yet" is ordinary. */
+    @Transactional(readOnly = true)
+    public java.util.Optional<MusicPlan> find(UUID tenantId, UUID projectId) {
+        return musicPlanRepository.findByProjectIdAndTenantId(projectId, tenantId).map(this::toPlan);
+    }
+
     MusicPlanRecord require(UUID tenantId, UUID projectId) {
         return musicPlanRepository.findByProjectIdAndTenantId(projectId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("Project " + projectId + " has no music plan yet"));
