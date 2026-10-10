@@ -182,6 +182,14 @@
     {
       "key": "templateId",
       "value": ""
+    },
+    {
+      "key": "publishJobId",
+      "value": ""
+    },
+    {
+      "key": "extensionToken",
+      "value": ""
     }
   ],
   "item": [
@@ -3730,6 +3738,541 @@
       ]
     },
     {
+      "name": "Creator Showcase · YouTube OAuth, publishing, analytics (creator, JWT)",
+      "description": "Phase Y (CREATOR_SHOWCASE.md rules 31-37). Connecting opens Google's page in a browser: call 'Start connect', open authorizationUrl, sign in; Google returns to /api/v1/public/youtube/oauth/callback, which redirects to creator-ui with ?youtube=connected (or a reason). Needs the Google OAuth client configured.",
+      "item": [
+        {
+          "name": "Connection status",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/connection",
+            "description": "Never carries a token. canPublish / canReadAnalytics from granted scopes.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start connect (get Google URL)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/connection/start",
+            "description": "PKCE + single-use state. 503 if the OAuth client isn't set.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 503', () => pm.expect([200, 503]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) console.log(pm.response.json().authorizationUrl);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disconnect",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/connection",
+            "description": "Revokes at Google; the channel stays your verified channel.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publishable films",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/films",
+            "description": "Finished Dalaillama films; clientConsented false = private only.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish a film",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs",
+            "description": "Queues a resumable upload. PUBLIC or a schedule needs confirmPublic: true; non-private needs client consent; same idempotencyKey (or an active job for the same film) returns the existing job. Stores {{publishJobId}}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{ppProjectId}}\",\n  \"title\": \"Masala chai launch\",\n  \"description\": \"Made with Dalai Llama\",\n  \"tags\": [\n    \"chai\"\n  ],\n  \"privacy\": \"UNLISTED\",\n  \"publishAt\": null,\n  \"confirmPublic\": false,\n  \"idempotencyKey\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201, 400, 409', () => pm.expect([201, 400, 409]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) pm.collectionVariables.set('publishJobId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publishing jobs",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs",
+            "description": "status, bytesSent/bytesTotal, progressPercent, youtubeUrl, lastError.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set thumbnail",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs/{{publishJobId}}/thumbnail",
+            "description": "JPEG/PNG ≤ 2 MB. Before upload it waits in the job; after, it goes straight to YouTube.",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Edit a published video",
+          "request": {
+            "method": "PATCH",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs/{{publishJobId}}",
+            "description": "Title, description, tags, visibility, schedule (videos.update).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"New title\",\n  \"description\": \"New text\",\n  \"tags\": [\n    \"chai\"\n  ],\n  \"privacy\": \"PUBLIC\",\n  \"publishAt\": null,\n  \"confirmPublic\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs/{{publishJobId}}/cancel",
+            "description": "Waiting or uploading jobs only.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 409', () => pm.expect([204, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/publish-jobs/{{publishJobId}}/retry",
+            "description": "Failed jobs only; needs an active connection.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "YouTube analytics",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/analytics?days=28",
+            "description": "Live from YouTube Analytics with your token (7-90 days, cached 1 h). 409 if analytics wasn't allowed.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pair the Chrome extension (mint token)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/extension/tokens",
+            "description": "The web app passes the returned token to the extension and forgets it. Stores {{extensionToken}}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) pm.collectionVariables.set('extensionToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Paired browsers",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/extension/tokens",
+            "description": "",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chrome extension API (extension token)",
+      "description": "Rule 39. Header X-Dalai-Extension-Token; no JWT. 401 EXTENSION_NOT_PAIRED for missing, expired or revoked tokens.",
+      "item": [
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/extension/me",
+            "description": "",
+            "header": [
+              {
+                "key": "X-Dalai-Extension-Token",
+                "value": "{{extensionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 401', () => pm.expect([200, 401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Import a YouTube video into my portfolio",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/extension/portfolio/import",
+            "description": "Must be on my verified channel.",
+            "header": [
+              {
+                "key": "X-Dalai-Extension-Token",
+                "value": "{{extensionToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"video\": \"https://www.youtube.com/watch?v={{youtubeVideoId}}\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"PRODUCT_AD\",\n  \"clientLabel\": null,\n  \"rightsConfirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201, 400, 409', () => pm.expect([201, 400, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My publishable films",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/extension/films",
+            "description": "",
+            "header": [
+              {
+                "key": "X-Dalai-Extension-Token",
+                "value": "{{extensionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish a film",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/extension/publish",
+            "description": "Same rules as the web app.",
+            "header": [
+              {
+                "key": "X-Dalai-Extension-Token",
+                "value": "{{extensionToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{ppProjectId}}\",\n  \"title\": \"Masala chai launch\",\n  \"description\": \"Made with Dalai Llama\",\n  \"tags\": [\n    \"chai\"\n  ],\n  \"privacy\": \"UNLISTED\",\n  \"publishAt\": null,\n  \"confirmPublic\": false,\n  \"idempotencyKey\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201, 400, 409', () => pm.expect([201, 400, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publishing status",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/extension/publish-jobs",
+            "description": "",
+            "header": [
+              {
+                "key": "X-Dalai-Extension-Token",
+                "value": "{{extensionToken}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Without a token is 401",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/extension/me",
+            "description": "",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Ops · Showcase admin (mesh-internal)",
       "description": "Reachable on ops.dalaillama.in (oauth2-proxy + dalai_admin) under /api/v1/internal/admin/tenants/**, or port-forward tenant-service first (kubectl -n apps port-forward svc/tenant-service 8091:8080) and check {{tenantServiceInternalUrl}}. Gives every subscribed creator (live tenant with an app) their email identity and public profile; idempotent, safe to re-run.",
       "auth": {
@@ -4264,6 +4807,78 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "YouTube: official channel connection",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/youtube/platform-connection",
+            "description": "",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "YouTube: start official channel connect",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/youtube/platform-connection/start",
+            "description": "Open authorizationUrl and sign in as the channel's owner.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 503', () => pm.expect([200, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "YouTube: disconnect official channel",
+          "request": {
+            "method": "DELETE",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/youtube/platform-connection",
+            "description": "",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
                 ]
               }
             }

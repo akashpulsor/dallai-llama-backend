@@ -283,6 +283,25 @@ video-host:
     require-funded-and-consent: true
   health:
     probe-video-id: ${YT_PROBE_VIDEO_ID:}
+
+# Phase Y (CREATOR_SHOWCASE.md rules 31-40): Google OAuth for creator channels and the official channel.
+google-oauth:
+  client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+  client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
+  auth-url: https://accounts.google.com/o/oauth2/v2/auth
+  token-url: https://oauth2.googleapis.com/token
+  revoke-url: https://oauth2.googleapis.com/revoke
+  redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:https://api.dalaillama.in/api/v1/public/youtube/oauth/callback}
+  scopes:
+    - https://www.googleapis.com/auth/youtube
+    - https://www.googleapis.com/auth/yt-analytics.readonly
+  creator-return-url: ${GOOGLE_OAUTH_CREATOR_RETURN_URL:https://creator.dalaillama.in/marketing}
+  platform-return-url: ${GOOGLE_OAUTH_PLATFORM_RETURN_URL:https://ops.dalaillama.in/admin}
+  state-minutes: 10
+
+# Rule 35: the creator-channel upload worker (one job at a time).
+youtube-publish:
+  poll-ms: 20000
 youtube:
   # Restricted to YouTube Data API v3 + the box IP; from the youtube-api k8s secret. Blank = YouTube
   # features answer 503 "not set up yet".

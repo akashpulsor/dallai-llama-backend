@@ -32,6 +32,8 @@ public class SecurityConfig {
                 .securityMatcher(
                         "/api/v1/internal/**",
                         "/api/v1/public/**",
+                        // Chrome extension: authenticated by its own token (rule 39), not a JWT.
+                        "/api/v1/extension/**",
                         "/api/v1/webhooks/**",
                         "/actuator/**",
                         "/swagger-ui/**",

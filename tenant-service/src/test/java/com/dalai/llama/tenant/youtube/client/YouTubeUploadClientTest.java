@@ -26,6 +26,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * resumable-upload endpoints and our MinIO film link. */
 class YouTubeUploadClientTest {
 
+    /** No ops OAuth connection: the configured refresh token is used. */
+    private static final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.youtube.oauth.PlatformYouTubeTokens> NO_PLATFORM =
+            new org.springframework.beans.factory.support.StaticListableBeanFactory()
+                    .getBeanProvider(com.dalai.llama.tenant.youtube.oauth.PlatformYouTubeTokens.class);
+
+
     private static final byte[] FILM = "not really an mp4, but bytes are bytes".getBytes(StandardCharsets.UTF_8);
 
     private HttpServer server;
@@ -71,7 +77,7 @@ class YouTubeUploadClientTest {
 
     @Test
     void streamsTheFilmIntoAResumableUploadWithTheAiDisclosure() throws Exception {
-        YouTubeUploadClient client = new YouTubeUploadClient(properties(true), json);
+        YouTubeUploadClient client = new YouTubeUploadClient(properties(true), json, NO_PLATFORM);
 
         YouTubeUploadClient.UploadResult result = client.upload(request());
 
@@ -97,15 +103,15 @@ class YouTubeUploadClientTest {
     @Test
     void reportsThePrivacyYouTubeActuallyApplied() {
         appliedPrivacy = "private";
-        assertThat(new YouTubeUploadClient(properties(true), json).upload(request()).privacyStatus()).isEqualTo("private");
+        assertThat(new YouTubeUploadClient(properties(true), json, NO_PLATFORM).upload(request()).privacyStatus()).isEqualTo("private");
     }
 
     @Test
     void refusesWhenNotConnectedOrWhenGoogleRefusesTheToken() {
-        assertThatThrownBy(() -> new YouTubeUploadClient(properties(false), json).upload(request()))
+        assertThatThrownBy(() -> new YouTubeUploadClient(properties(false), json, NO_PLATFORM).upload(request()))
                 .isInstanceOf(YouTubeUnavailableException.class).hasMessageContaining("not connected");
         tokenStatus = 400;
-        assertThatThrownBy(() -> new YouTubeUploadClient(properties(true), json).upload(request()))
+        assertThatThrownBy(() -> new YouTubeUploadClient(properties(true), json, NO_PLATFORM).upload(request()))
                 .isInstanceOf(YouTubeUnavailableException.class).hasMessageContaining("reconnect");
     }
 

@@ -2,15 +2,9 @@ package com.dalai.llama.tenant.leadmanagement.controller;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.leadmanagement.domain.entity.CreatorEmailIdentity;
-import com.dalai.llama.tenant.leadmanagement.email.CreatorEmailMessage;
-import com.dalai.llama.tenant.leadmanagement.email.CreatorEmailSender;
-import com.dalai.llama.tenant.leadmanagement.email.EmailSendResult;
 import com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService;
 import com.dalai.llama.tenant.service.TenantService;
 import io.swagger.v3.oas.annotations.Hidden;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -19,14 +13,14 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
-/** Creator-facing (JWT-authenticated) view + rotate + send for their OWN email identity.
+/** Creator-facing (JWT-authenticated) view + rotate for their OWN email identity. There is no
+ * free-form send: creators reach brands only through templates (CREATOR_SHOWCASE.md Phase Y,
+ * rule 15), via {@code /api/v1/tenants/me/outreach/**}.
  * Under {@code /api/v1/tenants/me/email/*}, same self-service convention as
  * {@link com.dalai.llama.tenant.controller.TenantController#getMe}, so the
  * gateway VirtualService's {@code /api/v1/tenants} route already covers it and no chart
@@ -43,7 +37,6 @@ public class SelfServiceCreatorEmailController {
 
     private final TenantService tenantService;
     private final CreatorEmailIdentityService creatorEmailIdentityService;
-    private final CreatorEmailSender emailSender;
 
     @GetMapping("/identity")
     public ResponseEntity<Map<String, Object>> myIdentity(@AuthenticationPrincipal Jwt jwt) {
@@ -75,34 +68,6 @@ public class SelfServiceCreatorEmailController {
         }
     }
 
-    @PostMapping("/send")
-    public ResponseEntity<Map<String, Object>> send(
-            @AuthenticationPrincipal Jwt jwt,
-            @Valid @RequestBody SendRequest req) {
-        Tenant tenant = resolveTenant(jwt);
-        if (tenant == null) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "no tenant"));
-
-        EmailSendResult result = emailSender.send(CreatorEmailMessage.builder()
-                .fromCreatorId(tenant.getId())
-                .to(req.to())
-                .subject(req.subject())
-                .bodyText(req.bodyText())
-                .bodyHtml(req.bodyHtml())
-                .replyTo(null)
-                .build());
-
-        if (result.accepted()) {
-            return ResponseEntity.accepted().body(Map.of(
-                    "accepted", true,
-                    "providerMessageId", result.providerMessageId() == null ? "" : result.providerMessageId()));
-        }
-        // A "not configured" reject reads as SERVICE_UNAVAILABLE, everything else 502 -- lets
-        // the UI distinguish "setup incomplete" (show admin CTA) from "transient send error".
-        String err = result.error() == null ? "unknown" : result.error();
-        HttpStatus status = err.contains("not configured") ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.BAD_GATEWAY;
-        return ResponseEntity.status(status).body(Map.of("accepted", false, "error", err));
-    }
-
     private Tenant resolveTenant(Jwt jwt) {
         if (jwt == null) return null;
         return tenantService.findByAdminUserId(jwt.getSubject()).orElse(null);
@@ -118,11 +83,4 @@ public class SelfServiceCreatorEmailController {
                 "createdAt", id.getCreatedAt()
         );
     }
-
-    public record SendRequest(
-            @NotEmpty List<@Size(min = 3, max = 254) String> to,
-            @Size(max = 300) String subject,
-            @Size(max = 200_000) String bodyText,
-            @Size(max = 500_000) String bodyHtml
-    ) {}
 }

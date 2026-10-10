@@ -73,6 +73,26 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.UNAUTHORIZED, "BRAND_SIGN_IN_REQUIRED", ex.getMessage());
     }
 
+    @ExceptionHandler(com.dalai.llama.tenant.extension.ExtensionTokenService.ExtensionNotPairedException.class)
+    public ResponseEntity<Map<String, Object>> handleExtensionNotPaired(
+            com.dalai.llama.tenant.extension.ExtensionTokenService.ExtensionNotPairedException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, "EXTENSION_NOT_PAIRED", ex.getMessage());
+    }
+
+    @ExceptionHandler(com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionService.ReconnectRequiredException.class)
+    public ResponseEntity<Map<String, Object>> handleReconnect(
+            com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionService.ReconnectRequiredException ex) {
+        return buildResponse(HttpStatus.CONFLICT, "YOUTUBE_RECONNECT_REQUIRED", ex.getMessage());
+    }
+
+    @ExceptionHandler(com.dalai.llama.tenant.youtube.publish.YouTubeApiClient.YouTubeCallException.class)
+    public ResponseEntity<Map<String, Object>> handleYouTubeCall(
+            com.dalai.llama.tenant.youtube.publish.YouTubeApiClient.YouTubeCallException ex) {
+        HttpStatus status = ex.failure() == com.dalai.llama.tenant.youtube.publish.YouTubeApiClient.Failure.REJECTED
+                ? HttpStatus.UNPROCESSABLE_ENTITY : HttpStatus.SERVICE_UNAVAILABLE;
+        return buildResponse(status, "YOUTUBE_" + ex.failure().name(), ex.getMessage());
+    }
+
     // ==================== 402 PAYMENT REQUIRED ====================
 
     @ExceptionHandler(com.dalai.llama.tenant.leadmanagement.outreach.WalletTooLowException.class)

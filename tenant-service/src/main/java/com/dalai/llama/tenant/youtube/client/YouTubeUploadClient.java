@@ -20,8 +20,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/** Uploads a film to Dalaillama's OWN YouTube channel (CREATOR_SHOWCASE.md rule 3). Uses the one
- * refresh token ops created through our Internal-consent OAuth client; never a creator's account.
+/** Uploads a film to Dalaillama's OWN YouTube channel (CREATOR_SHOWCASE.md rule 3). Uses the
+ * official channel ops connected with OAuth (rule 33), else the refresh-token secret; never a
+ * creator's account.
  * The film is streamed from its presigned MinIO link straight into YouTube's resumable upload, so
  * it never sits in memory or on disk here. */
 @Slf4j
@@ -36,13 +37,16 @@ public class YouTubeUploadClient {
     private final VideoHostProperties properties;
     private final ObjectMapper json;
     private final HttpClient http;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.youtube.oauth.PlatformYouTubeTokens> platformTokens;
 
     private String accessToken;
     private Instant accessTokenExpiresAt = Instant.EPOCH;
 
-    public YouTubeUploadClient(VideoHostProperties properties, ObjectMapper json) {
+    public YouTubeUploadClient(VideoHostProperties properties, ObjectMapper json,
+                               org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.youtube.oauth.PlatformYouTubeTokens> platformTokens) {
         this.properties = properties;
         this.json = json;
+        this.platformTokens = platformTokens;
         this.http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NORMAL).build();
     }
@@ -57,7 +61,9 @@ public class YouTubeUploadClient {
 
     public synchronized UploadResult upload(UploadRequest request) {
         VideoHostProperties.OfficialChannel channel = properties.officialChannel();
-        if (!channel.configured()) throw new YouTubeUnavailableException("Dalaillama's YouTube channel is not connected yet");
+        if (!channel.configured() && connectedToken().isEmpty()) {
+            throw new YouTubeUnavailableException("Dalaillama's YouTube channel is not connected yet");
+        }
         try {
             HttpResponse<InputStream> film = http.send(HttpRequest.newBuilder(URI.create(request.sourceUrl()))
                     .timeout(UPLOAD_TIMEOUT).GET().build(), HttpResponse.BodyHandlers.ofInputStream());
@@ -118,7 +124,15 @@ public class YouTubeUploadClient {
                 .orElseThrow(() -> new YouTubeUnavailableException("YouTube did not return an upload session"));
     }
 
+    /** The ops OAuth connection, when there is one. */
+    private java.util.Optional<String> connectedToken() {
+        com.dalai.llama.tenant.youtube.oauth.PlatformYouTubeTokens tokens = platformTokens.getIfAvailable();
+        return tokens == null ? java.util.Optional.empty() : tokens.platformAccessToken();
+    }
+
     private String token(VideoHostProperties.OfficialChannel channel) throws IOException, InterruptedException {
+        java.util.Optional<String> connected = connectedToken();
+        if (connected.isPresent()) return connected.get();
         if (accessToken != null && Instant.now().isBefore(accessTokenExpiresAt)) return accessToken;
         String form = Map.of(
                         "client_id", channel.clientId(),

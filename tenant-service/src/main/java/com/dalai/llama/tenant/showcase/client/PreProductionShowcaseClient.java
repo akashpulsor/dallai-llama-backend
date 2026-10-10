@@ -48,6 +48,34 @@ public class PreProductionShowcaseClient {
         return source;
     }
 
+    /** A creator's finished films (pre-production {@code showcase-films}), newest projects first. */
+    public java.util.List<FilmSummary> films(UUID tenantId) {
+        try {
+            FilmSummary[] films = webClient.get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/showcase-films", tenantId)
+                    .retrieve()
+                    .bodyToMono(FilmSummary[].class)
+                    .block(TIMEOUT.multipliedBy(2));
+            return films == null ? java.util.List.of() : java.util.List.of(films);
+        } catch (RuntimeException e) {
+            log.error("pre-production showcase-films failed: {}", e.getMessage(), e);
+            throw new UpstreamUnavailableException("Your films are unavailable right now; please try again", e);
+        }
+    }
+
+    /** Wire mirror of pre-production's {@code ShowcaseSourceService.FilmSummary}. */
+    public record FilmSummary(
+            UUID projectId,
+            String projectName,
+            OffsetDateTime renderedAt,
+            BigDecimal durationSeconds,
+            Integer width,
+            Integer height,
+            OffsetDateTime clientLockedAt,
+            OffsetDateTime marketingTermsAcceptedAt
+    ) {
+    }
+
     /** Wire mirror of pre-production's {@code ShowcaseSourceService.ShowcaseSourceView}. */
     public record ShowcaseSource(
             UUID projectId,
