@@ -34,6 +34,7 @@ public class BrandAccountService {
     private final BrandProperties properties;
     private final JdbcTemplate jdbc;
     private final Clock clock;
+    private final com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator contactPoints;
 
     /** Always succeeds from the caller's point of view (202), whether the email is new, known, or
      * over its hourly link limit, so the form reveals nothing about who has an account. */
@@ -83,6 +84,8 @@ public class BrandAccountService {
         jdbc.update("UPDATE lead_brand_sign_in SET used_at = ? WHERE token_hash = ?",
                 Timestamp.from(now.toInstant()), PublicTokens.sha256Hex(token));
         BrandContact contact = contactRepository.findById(contactId).orElseThrow();
+        // Opening the link proves the inbox: verify this address wherever creators have it.
+        contactPoints.markVerifiedByEmail(contact.getEmail(), "BRAND_SIGN_IN");
         if (contact.getVerifiedAt() == null) {
             contact.setVerifiedAt(now);
             contactRepository.save(contact);

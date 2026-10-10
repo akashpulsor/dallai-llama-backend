@@ -19,12 +19,19 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OutreachStore {
 
-    public enum IntentStatus { PENDING, SENT, DIGESTED, EXPIRED, FAILED }
+    /** QUEUED: waiting for the dispatcher. PENDING: waiting for the recipient's next digest. */
+    public enum IntentStatus { QUEUED, PENDING, SENT, DIGESTED, EXPIRED, FAILED }
 
     public enum Origin { CREATOR, AUTO_PICK, FOLLOW }
 
     public record NewIntent(UUID tenantId, String recipientHash, String email, String name, String company,
-                            OutreachTemplate template, Origin origin, UUID showcaseItemId, String note, UUID mailPackId) {
+                            OutreachTemplate template, Origin origin, UUID showcaseItemId, String note, UUID mailPackId,
+                            UUID emailTemplateId, UUID audienceId, UUID leadId) {
+    }
+
+    /** Everything the dispatcher needs to send one queued intent. */
+    public record QueuedIntent(UUID id, UUID tenantId, String recipientHash, String email, String name, OutreachTemplate template,
+                               UUID showcaseItemId, String note, UUID mailPackId, UUID emailTemplateId) {
     }
 
     public record PendingIntent(UUID id, UUID tenantId, String email, String name, OutreachTemplate template, Origin origin,
@@ -51,8 +58,9 @@ public class OutreachStore {
         jdbc.update("INSERT INTO lead_suppression (recipient_hash, reason) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 recipientHash, reason);
         // Nothing queued for them goes out any more.
-        jdbc.update("UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = NOW() WHERE recipient_hash = ? AND status = 'PENDING'",
-                recipientHash);
+        jdbc.update("""
+                UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = NOW()
+                WHERE recipient_hash = ? AND status IN ('QUEUED', 'PENDING')""", recipientHash);
     }
 
     public Optional<String> recipientOfUnsubscribeToken(String token) {
@@ -69,15 +77,41 @@ public class OutreachStore {
                 Boolean.class, tenantId, recipientHash, Timestamp.from(since)));
     }
 
-    public UUID addIntent(NewIntent i, Instant now) {
+    public UUID addIntent(NewIntent i, IntentStatus status, Instant now) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO lead_outreach_intent (id, tenant_id, recipient_hash, recipient_email, recipient_name, company_name,
-                    template, origin, showcase_item_id, personal_note, status, mail_pack_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
+                    template, origin, showcase_item_id, personal_note, status, mail_pack_id, email_template_id, audience_id,
+                    lead_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 id, i.tenantId(), i.recipientHash(), i.email(), i.name(), i.company(), i.template().name(), i.origin().name(),
-                i.showcaseItemId(), i.note(), i.mailPackId(), Timestamp.from(now));
+                i.showcaseItemId(), i.note(), status.name(), i.mailPackId(), i.emailTemplateId(), i.audienceId(), i.leadId(),
+                Timestamp.from(now));
         return id;
+    }
+
+    /** Oldest queued intents first; the dispatcher locks each one before sending it. */
+    public List<UUID> queuedIds(int limit) {
+        return jdbc.queryForList("SELECT id FROM lead_outreach_intent WHERE status = 'QUEUED' ORDER BY created_at LIMIT ?",
+                UUID.class, limit);
+    }
+
+    /** Locks one queued intent; empty when another run took it or it is no longer queued. */
+    public Optional<QueuedIntent> lockQueued(UUID id) {
+        return jdbc.query("""
+                SELECT id, tenant_id, recipient_hash, recipient_email, recipient_name, template, showcase_item_id, personal_note,
+                       mail_pack_id, email_template_id
+                FROM lead_outreach_intent WHERE id = ? AND status = 'QUEUED' FOR UPDATE SKIP LOCKED""",
+                (rs, n) -> new QueuedIntent(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
+                        rs.getString(4), rs.getString(5), OutreachTemplate.valueOf(rs.getString(6)), rs.getObject(7, UUID.class),
+                        rs.getString(8), rs.getObject(9, UUID.class), rs.getObject(10, UUID.class)),
+                id).stream().findFirst();
+    }
+
+    /** A mail that will never go out gives its pack mail back (free mails come back on their own:
+     * FAILED intents don't count against the week). */
+    public void refundPack(UUID packId) {
+        if (packId != null) jdbc.update("UPDATE lead_mail_pack SET remaining = remaining + 1 WHERE id = ? AND remaining < quantity", packId);
     }
 
     public void markIntents(List<UUID> ids, IntentStatus status, UUID deliveryId, Instant now) {
@@ -173,6 +207,13 @@ public class OutreachStore {
                 token, deliveryId, tenantId, showcaseItemId, targetUrl);
     }
 
+    /** Who a tracked link was sent to (for engagement-based verification). */
+    public Optional<String> recipientOfLink(String token) {
+        return jdbc.queryForList("""
+                SELECT d.recipient_hash FROM lead_outreach_link l JOIN lead_outreach_delivery d ON d.id = l.delivery_id
+                WHERE l.token = ?""", String.class, token).stream().findFirst();
+    }
+
     /** Counts the click and returns where the link goes. */
     public Optional<String> click(String token) {
         List<String> target = jdbc.queryForList("""
@@ -190,7 +231,7 @@ public class OutreachStore {
         int intents = jdbc.update("""
                 UPDATE lead_outreach_intent SET recipient_email = NULL, recipient_name = NULL, company_name = NULL,
                     personal_note = NULL, purged_at = NOW()
-                WHERE purged_at IS NULL AND status <> 'PENDING' AND COALESCE(decided_at, created_at) < ?""", at);
+                WHERE purged_at IS NULL AND status NOT IN ('QUEUED', 'PENDING') AND COALESCE(decided_at, created_at) < ?""", at);
         int deliveries = jdbc.update("""
                 UPDATE lead_outreach_delivery SET recipient_email = NULL, purged_at = NOW()
                 WHERE purged_at IS NULL AND delivery_day < ?""", Date.valueOf(cutoff.atZone(java.time.ZoneOffset.UTC).toLocalDate()));

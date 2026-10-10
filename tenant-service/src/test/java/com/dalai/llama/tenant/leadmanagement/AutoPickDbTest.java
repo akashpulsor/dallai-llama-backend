@@ -54,7 +54,12 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({AutoPickJob.class, BrandDirectoryService.class, FollowService.class, OutreachService.class, OutreachStore.class,
         MailAllowance.class, MailableFilms.class, OutreachComposer.class, OutreachRenderer.class, RecipientHasher.class,
-        DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class, AutoPickDbTest.TestConfig.class})
+        DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.class,
+        com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class,
+        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, AutoPickDbTest.TestConfig.class})
 class AutoPickDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-07T12:30:00Z");
@@ -71,6 +76,7 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
     @MockBean private CreatorEmailSender creatorSender;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private AutoPickJob autoPicks;
     @Autowired private BrandDirectoryService directory;
     @Autowired private FollowService follows;

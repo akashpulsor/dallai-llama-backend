@@ -21,11 +21,14 @@ public class PublicOutreachController {
     private final OutreachStore store;
     private final OutreachService outreachService;
     private final ShowcaseProperties showcaseProperties;
+    private final com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator validator;
 
     /** A film link: counts the click, then on to the creator's page (with ?ref= for attribution). */
     @GetMapping("/r/{token}")
     public ResponseEntity<Void> redirect(@PathVariable String token) {
         String target = store.click(token).orElse(showcaseProperties.publicBaseUrl() + "/creators");
+        // A click proves the address reaches a person: our strongest evidence (AUDIENCE_PROVIDER §48).
+        store.recipientOfLink(token).ifPresent(hash -> validator.markVerifiedByHash(hash, "CLICKED"));
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(target)).build();
     }
 

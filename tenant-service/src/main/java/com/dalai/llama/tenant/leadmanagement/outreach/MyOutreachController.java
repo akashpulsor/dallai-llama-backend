@@ -32,6 +32,7 @@ public class MyOutreachController {
 
     private final TenantService tenantService;
     private final OutreachService outreachService;
+    private final OutreachAnalyticsService analyticsService;
 
     @GetMapping
     public ResponseEntity<OverviewView> overview(@AuthenticationPrincipal Jwt jwt) {
@@ -46,6 +47,20 @@ public class MyOutreachController {
     @PostMapping("/send")
     public ResponseEntity<SendResult> send(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody SendRequest request) {
         return ResponseEntity.of(tenant(jwt).map(t -> outreachService.send(t.getId(), request)));
+    }
+
+    /** Rule 26: queue one mail per lead in an audience; the dispatcher sends them within minutes. */
+    @PostMapping("/send-to-audience")
+    public ResponseEntity<OutreachDtos.AudienceSendResult> sendToAudience(@AuthenticationPrincipal Jwt jwt,
+                                                                          @Valid @RequestBody OutreachDtos.AudienceSendRequest request) {
+        return ResponseEntity.of(tenant(jwt).map(t -> outreachService.sendToAudience(t.getId(), request)));
+    }
+
+    /** Rule 28: totals, per template and per audience, over the last {@code days} (1–90). */
+    @GetMapping("/analytics")
+    public ResponseEntity<OutreachAnalyticsService.AnalyticsView> analytics(@AuthenticationPrincipal Jwt jwt,
+                                                                            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.of(tenant(jwt).map(t -> analyticsService.view(t.getId(), days)));
     }
 
     @GetMapping("/reach")

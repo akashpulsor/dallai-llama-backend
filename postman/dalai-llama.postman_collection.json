@@ -166,6 +166,22 @@
     {
       "key": "creativePlanningInternalUrl",
       "value": "http://localhost:8085"
+    },
+    {
+      "key": "audienceId",
+      "value": ""
+    },
+    {
+      "key": "leadId",
+      "value": ""
+    },
+    {
+      "key": "contactPointId",
+      "value": ""
+    },
+    {
+      "key": "templateId",
+      "value": ""
     }
   ],
   "item": [
@@ -3276,6 +3292,444 @@
       ]
     },
     {
+      "name": "Creator Showcase · Audiences, templates, analytics (creator, JWT)",
+      "description": "Phase E (CREATOR_SHOWCASE.md rules 21-30). Upload a CSV into an audience: rows sharing any email or phone become one lead; contact points are validated (domain MX, clicks, brand sign-ins) and shown by rule 25 (validated ones if any, else unchecked ones; INVALID counted as discarded). Send a template to a whole audience; queued mail goes out through the one-a-day slot within a couple of minutes.",
+      "item": [
+        {
+          "name": "List audiences",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences",
+            "description": "Each with leads and reachable counts.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create an audience",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences",
+            "description": "409 if the name is taken. Stores {{audienceId}}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Food brands, Mumbai\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) pm.collectionVariables.set('audienceId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload a CSV into the audience",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences/{{audienceId}}/upload",
+            "description": "Multipart field 'file': a CSV of up to 2 MB / 5,000 rows with a header row: email (email2…, or several separated by ;), phone, name or first_name+last_name, company, industry, website.",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"batchId\": \"6a0e…\",\n  \"rowsTotal\": 7,\n  \"rowsImported\": 6,\n  \"rowsRejected\": 1,\n  \"leadsCreated\": 3,\n  \"leadsMerged\": 3,\n  \"contactPointsAdded\": 6,\n  \"audienceSize\": 2\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Leads in the audience",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences/{{audienceId}}/leads?page=0&q=",
+            "description": "50 per page; q searches name, company and email.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"leads\": [\n    {\n      \"id\": \"…\",\n      \"name\": \"Asha\",\n      \"company\": \"Hearth Foods\",\n      \"industry\": \"FOOD_BEVERAGE\",\n      \"website\": null,\n      \"emails\": [\n        {\n          \"id\": \"…\",\n          \"value\": \"asha@hearth.example\",\n          \"status\": \"LIKELY_VALID\",\n          \"unsubscribed\": false\n        }\n      ],\n      \"phones\": [],\n      \"discarded\": 1,\n      \"reachable\": true\n    }\n  ],\n  \"page\": 0,\n  \"size\": 50,\n  \"total\": 1\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove a lead from the audience",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences/{{audienceId}}/leads/{{leadId}}",
+            "description": "The lead stays with you.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 400', () => pm.expect([204, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Discard a wrong contact point",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/leads/{{leadId}}/contact-points/{{contactPointId}}",
+            "description": "Unlinks it from your lead; the platform record stays.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 400', () => pm.expect([204, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete an audience",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences/{{audienceId}}",
+            "description": "Memberships go; leads stay.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 400', () => pm.expect([204, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Templates I can use",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/templates",
+            "description": "Dalai Llama's (global: true, read-only) then mine.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create my template",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/templates",
+            "description": "Layout SHOWCASE_WORK | SIMILAR_BRAND_WORK | CREATOR_PORTFOLIO; placeholders {film} {creator} {industry} {name}. Stores {{templateId}}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Festive\",\n  \"layout\": \"SIMILAR_BRAND_WORK\",\n  \"subject\": \"{name}, a {industry} film for Diwali\",\n  \"intro\": \"I made {film} for a {industry} brand and thought of you.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) pm.collectionVariables.set('templateId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Edit my template",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/templates/{{templateId}}",
+            "description": "Globals can't be edited here (400).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Festive\",\n  \"layout\": \"SIMILAR_BRAND_WORK\",\n  \"subject\": \"{name}, a {industry} film for Diwali\",\n  \"intro\": \"I made {film} for a {industry} brand and thought of you.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete my template",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/templates/{{templateId}}",
+            "description": "Deactivates; past sends keep their numbers.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 400', () => pm.expect([204, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send a template to an audience",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/send-to-audience",
+            "description": "One email per lead (VERIFIED, then LIKELY_VALID, then unchecked; never INVALID). Suppression, cooldown and allowance per recipient; the rest is queued for the dispatcher.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audienceId\": \"{{audienceId}}\",\n  \"templateId\": \"{{templateId}}\",\n  \"publicId\": \"{{showcasePublicId}}\",\n  \"note\": \"Hello!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"queued\": 41,\n  \"suppressed\": 2,\n  \"cooldown\": 3,\n  \"overAllowance\": 0,\n  \"duplicates\": 0,\n  \"noReachableContact\": 4,\n  \"allowance\": {\n    \"freePerWeek\": 100,\n    \"freeUsedThisWeek\": 45,\n    \"packMailsLeft\": 0\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send with my template to typed addresses",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/send",
+            "description": "Same as before, naming a template instead of a layout. New outcome UNDELIVERABLE when the domain takes no mail (the mail is given back).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"templateId\": \"{{templateId}}\",\n  \"publicId\": \"{{showcasePublicId}}\",\n  \"note\": null,\n  \"recipients\": [\n    {\n      \"email\": \"asha@hearthfoods.example\",\n      \"name\": \"Asha\",\n      \"company\": \"Hearth Foods\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Marketing analytics",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/analytics?days=30",
+            "description": "Totals, per template and per audience: sent, waiting, clicks, requests from mail. Our own data only.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"days\": 30,\n  \"totals\": {\n    \"delivered\": 52,\n    \"queued\": 3,\n    \"clicks\": 14,\n    \"requestsFromMail\": 2,\n    \"followers\": 5\n  },\n  \"templates\": [\n    {\n      \"templateId\": \"00000000-0000-4000-8000-0000000000a1\",\n      \"name\": \"Share a film\",\n      \"layout\": \"SHOWCASE_WORK\",\n      \"global\": true,\n      \"active\": true,\n      \"sent\": 40,\n      \"queued\": 1,\n      \"clicks\": 11,\n      \"requests\": 2\n    }\n  ],\n  \"audiences\": [\n    {\n      \"audienceId\": \"…\",\n      \"name\": \"Food brands, Mumbai\",\n      \"leads\": 50,\n      \"reachable\": 46,\n      \"sent\": 41,\n      \"queued\": 0,\n      \"clicks\": 9,\n      \"requests\": 1\n    }\n  ]\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Ops · Showcase admin (mesh-internal)",
       "description": "Reachable on ops.dalaillama.in (oauth2-proxy + dalai_admin) under /api/v1/internal/admin/tenants/**, or port-forward tenant-service first (kubectl -n apps port-forward svc/tenant-service 8091:8080) and check {{tenantServiceInternalUrl}}. Gives every subscribed creator (live tenant with an app) their email identity and public profile; idempotent, safe to re-run.",
       "auth": {
@@ -3662,6 +4116,154 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: send queued mail now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/dispatch/run",
+            "description": "Normally every minute.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: check unverified contact points now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/contact-points/validate",
+            "description": "One batch of 200 (domain MX/A). Normally every 5 minutes.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Templates: list global templates",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/templates",
+            "description": "Every creator sees the active ones.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Templates: create a global template",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/templates",
+            "description": "",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Festive (global)\",\n  \"layout\": \"SIMILAR_BRAND_WORK\",\n  \"subject\": \"{name}, a {industry} film for Diwali\",\n  \"intro\": \"I made {film} for a {industry} brand and thought of you.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Templates: edit or deactivate a global template",
+          "request": {
+            "method": "PUT",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/templates/{{templateId}}",
+            "description": "active: false hides it from creators.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Festive\",\n  \"layout\": \"SIMILAR_BRAND_WORK\",\n  \"subject\": \"{name}, a {industry} film for Diwali\",\n  \"intro\": \"I made {film} for a {industry} brand and thought of you.\",\n  \"active\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
                 ]
               }
             }

@@ -66,7 +66,11 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
         OutreachRenderer.class, RecipientHasher.class, DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class,
-        OutreachDbTest.TestConfig.class})
+        com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.class,
+        com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class,
+        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, OutreachDbTest.TestConfig.class})
 class OutreachDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-07T09:00:00Z"); // a Wednesday
@@ -83,6 +87,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     @MockBean private CreatorEmailSender creatorSender;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private OutreachService outreach;
     @Autowired private DailyDigestJob digest;
     @Autowired private OutreachStore store;
@@ -101,6 +106,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         arjun = creator("Arjun Frames", "UCarjun", "arjun000001", "pubarjun001", true);
         film(riya, "riyaext0001", "pubriyaext1", "UCriya", false);
         when(creatorSender.send(any())).thenReturn(EmailSendResult.accepted(null));
+        when(domains.check(any())).thenReturn(com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver.MailDomain.ACCEPTS_MAIL);
         when(platformMailer.send(any())).thenReturn(true);
     }
 
@@ -128,7 +134,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
 
     @Test
     void theSameCreatorWaitsTwoWeeksBeforeMailingTheSamePersonAgain() {
-        SendResult first = outreach.send(riya, new SendRequest(OutreachTemplate.SHOWCASE_WORK, "pubriya0001", null,
+        SendResult first = outreach.send(riya, new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, "pubriya0001", null,
                 List.of(new Recipient("a@x.example", null, null), new Recipient("A@x.example ", null, null))));
         assertThat(first.results()).extracting(r -> r.outcome()).containsExactly(Outcome.SENT, Outcome.DUPLICATE);
 
@@ -140,7 +146,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
 
     @Test
     void freeMailsRunOutThenAPaidPackIsUsedAndARetriedPurchaseIsNotDoubled() {
-        SendResult sent = outreach.send(riya, new SendRequest(OutreachTemplate.CREATOR_PORTFOLIO, null, null, List.of(
+        SendResult sent = outreach.send(riya, new SendRequest(OutreachTemplate.CREATOR_PORTFOLIO, null, null, null, List.of(
                 new Recipient("1@x.example", null, null), new Recipient("2@x.example", null, null),
                 new Recipient("3@x.example", null, null), new Recipient("4@x.example", null, null))));
         assertThat(sent.results()).extracting(r -> r.outcome())
@@ -199,7 +205,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     }
 
     private SendResult send(UUID tenant, String publicId, String email) {
-        return outreach.send(tenant, new SendRequest(OutreachTemplate.SHOWCASE_WORK, publicId, "Hello",
+        return outreach.send(tenant, new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, publicId, "Hello",
                 List.of(new Recipient(email, "Asha", "Hearth"))));
     }
 

@@ -23,15 +23,17 @@ class OutreachOffWithoutPepperTest {
     private final OutreachProperties properties = new OutreachProperties("", 100, 25, 14, 4, 7, 30, "https://api.example/outreach");
     private final OutreachStore store = mock(OutreachStore.class);
     private final CreatorEmailSender sender = mock(CreatorEmailSender.class);
+    private final IntentDispatcher dispatcher = mock(IntentDispatcher.class);
     private final OutreachService service = new OutreachService(store, mock(MailAllowance.class), mock(MailableFilms.class),
-            mock(OutreachComposer.class), new RecipientHasher(properties), sender, mock(CreatorPublicProfileRepository.class),
+            mock(OutreachComposer.class), new RecipientHasher(properties), dispatcher, mock(EmailTemplateService.class),
+            mock(com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class), mock(CreatorPublicProfileRepository.class),
             mock(BillingServiceClient.class), properties, Clock.systemUTC());
 
     @Test
     void creatorSendsAreRefused() {
-        assertThatThrownBy(() -> service.send(UUID.randomUUID(), new SendRequest(OutreachTemplate.SHOWCASE_WORK, "pub1", null,
+        assertThatThrownBy(() -> service.send(UUID.randomUUID(), new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, "pub1", null,
                 List.of(new Recipient("a@x.example", null, null))))).isInstanceOf(IllegalStateException.class);
-        verifyNoInteractions(store, sender);
+        verifyNoInteractions(store, sender, dispatcher);
     }
 
     @Test

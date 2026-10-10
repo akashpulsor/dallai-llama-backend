@@ -62,13 +62,15 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
         FollowService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class, CreatorProfileService.class,
-        HandlePolicy.class, BrandEngagementDbTest.TestConfig.class})
+        HandlePolicy.class, com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher.class, BrandEngagementDbTest.TestConfig.class})
 class BrandEngagementDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-09T10:00:00Z");
 
     @TestConfiguration
-    @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class})
+    @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class,
+            com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -78,6 +80,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private PlatformMailer mailer;
     @MockBean private CreativePlanningBriefClient briefClient;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private BrandAccountService accounts;
     @Autowired private BrandSessionService sessions;
     @Autowired private BrandInquiryService inquiries;

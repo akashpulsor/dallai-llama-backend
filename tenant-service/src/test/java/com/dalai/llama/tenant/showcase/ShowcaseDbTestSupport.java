@@ -26,11 +26,15 @@ public abstract class ShowcaseDbTestSupport {
 
     protected static void wipe(JdbcTemplate jdbc) {
         for (String table : new String[]{"lead_outreach_link", "lead_outreach_intent", "lead_outreach_delivery", "lead_mail_pack",
+                "lead_creator_lead_source", "lead_import_batch", "lead_saved_audience_member", "lead_creator_lead_contact_point",
+                "lead_contact_point", "lead_creator_lead", "lead_saved_audience",
                 "lead_suppression", "lead_brand_inquiry", "creator_follower", "showcase_like", "lead_brand_sign_in",
                 "lead_brand_contact", "official_upload_job", "showcase_play", "showcase_item", "youtube_video",
                 "creator_youtube_channel", "creator_handle_history", "creator_profile_industry", "creator_public_profile"}) {
             jdbc.update("DELETE FROM " + table);
         }
+        // The seeded global templates (V34) stay; anything a test created goes.
+        jdbc.update("DELETE FROM lead_email_template WHERE tenant_id IS NOT NULL OR id::text NOT LIKE '00000000-0000-4000-8000-0000000000a%'");
     }
 
     protected static UUID tenant(JdbcTemplate jdbc, String name) {

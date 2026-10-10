@@ -1,4 +1,9 @@
 spring:
+  servlet:
+    multipart:
+      # Audience CSV uploads (rule 21) are at most 2 MB; a little headroom for the form wrapper.
+      max-file-size: 3MB
+      max-request-size: 3MB
   application:
     name: tenant-service
 

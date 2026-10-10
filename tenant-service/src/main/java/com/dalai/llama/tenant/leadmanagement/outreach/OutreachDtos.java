@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
+import java.util.UUID;
 
 /** Requests and views of the creator's outreach endpoints. */
 public final class OutreachDtos {
@@ -21,8 +22,11 @@ public final class OutreachDtos {
                             @Size(max = 120) String company) {
     }
 
+    /** Name a template ({@code templateId}: global or the creator's own) or just a layout
+     * ({@code template}: uses the built-in global template for it). */
     public record SendRequest(
-            @NotNull OutreachTemplate template,
+            OutreachTemplate template,
+            UUID templateId,
             /* Required except for CREATOR_PORTFOLIO, which uses the creator's best films. */
             @Size(max = 12) String publicId,
             @Size(max = 500) String note,
@@ -30,8 +34,22 @@ public final class OutreachDtos {
     ) {
     }
 
-    public record PreviewRequest(@NotNull OutreachTemplate template, @Size(max = 12) String publicId,
+    public record PreviewRequest(OutreachTemplate template, UUID templateId, @Size(max = 12) String publicId,
                                  @Size(max = 500) String note, @Size(max = 80) String recipientName) {
+    }
+
+    /** Rule 26: send to every lead in one of the creator's audiences, one email per lead. */
+    public record AudienceSendRequest(
+            @NotNull UUID audienceId,
+            OutreachTemplate template,
+            UUID templateId,
+            @Size(max = 12) String publicId,
+            @Size(max = 500) String note
+    ) {
+    }
+
+    public record AudienceSendResult(int queued, int suppressed, int cooldown, int overAllowance, int duplicates,
+                                     int noReachableContact, MailAllowance.AllowanceView allowance) {
     }
 
     public enum Outcome {
@@ -45,6 +63,8 @@ public final class OutreachDtos {
         SUPPRESSED,
         /** No free mails or pack mails left. */
         OVER_ALLOWANCE,
+        /** The address can't receive mail (bad syntax or no mail server); the mail was given back. */
+        UNDELIVERABLE,
         DUPLICATE
     }
 
@@ -61,7 +81,8 @@ public final class OutreachDtos {
     }
 
     public record OverviewView(MailAllowance.AllowanceView allowance, List<BillingServiceClient.AddonOffer> packs,
-                               List<MailableFilmView> mailableFilms, int maxRecipientsPerSend, int cooldownDays) {
+                               List<MailableFilmView> mailableFilms, int maxRecipientsPerSend, int maxAudienceSend,
+                               int cooldownDays) {
     }
 
     public record ReachView(int mailsDelivered30d, int clicks30d, int requestsFromMail30d, int followers) {
