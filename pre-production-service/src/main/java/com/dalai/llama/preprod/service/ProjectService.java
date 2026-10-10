@@ -137,6 +137,20 @@ public class ProjectService {
         projectRepository.save(project);
     }
 
+    /** Records that the client accepted the marketing-use terms (version + time) while paying to
+     * lock. A blank version records nothing: an older review page that doesn't send it simply
+     * leaves the film out of marketing. */
+    @Transactional
+    public void recordMarketingConsent(UUID tenantId, UUID projectId, String termsVersion) {
+        if (termsVersion == null || termsVersion.isBlank()) return;
+        Project project = requireProject(tenantId, projectId);
+        OffsetDateTime now = OffsetDateTime.now();
+        project.setMarketingTermsVersion(termsVersion.trim());
+        project.setMarketingTermsAcceptedAt(now);
+        project.setUpdatedAt(now);
+        projectRepository.save(project);
+    }
+
     /** Called by creative-planning-service after it creates a new LockedIdea for this project (a
      * creator picking a different idea) -- see ProjectIdeaService#switchToOption there. Just a
      * pointer update: repoints which idea is "current" for this project. Script/Screenplay/Shot

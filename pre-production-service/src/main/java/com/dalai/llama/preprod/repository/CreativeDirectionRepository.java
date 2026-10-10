@@ -17,4 +17,6 @@ public interface CreativeDirectionRepository extends JpaRepository<CreativeDirec
     List<CreativeDirection> findByProjectIdAndReviewStatusIn(UUID projectId, List<CreativeDirectionReviewStatus> statuses);
 
     List<CreativeDirection> findByGenerationIdOrderByOptionNumberAscVersionDesc(UUID generationId);
+
+    long countByProjectIdAndApprovedVia(UUID projectId, com.dalai.llama.preprod.domain.ReviewActor approvedVia);
 }

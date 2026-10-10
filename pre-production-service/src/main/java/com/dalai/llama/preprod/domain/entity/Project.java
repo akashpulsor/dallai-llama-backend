@@ -91,6 +91,15 @@ public class Project {
     @Column(name = "client_locked_at")
     private OffsetDateTime clientLockedAt;
 
+    /** The marketing-use terms version the client accepted when paying to lock (CREATOR_SHOWCASE.md
+     * rule 10), and when. Null means no consent: the film never goes into brand mail or onto
+     * Dalaillama's own channel. */
+    @Column(name = "marketing_terms_version", length = 16)
+    private String marketingTermsVersion;
+
+    @Column(name = "marketing_terms_accepted_at")
+    private OffsetDateTime marketingTermsAcceptedAt;
+
     /** chat-service session id, created once the client locks the package -- null until then. */
     @Column(name = "chat_session_id")
     private UUID chatSessionId;

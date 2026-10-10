@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface ReviewCommentRepository extends JpaRepository<ReviewComment, UUID> {
 
     List<ReviewComment> findByProjectIdOrderByCreatedAtDesc(UUID projectId);
+
+    long countByProjectId(UUID projectId);
 }

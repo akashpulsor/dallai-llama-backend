@@ -33,8 +33,40 @@ class PublicProjectServiceLockSettledTest {
         when(projectService.resolveByClientReviewToken("tok")).thenReturn(new ProjectService.ProjectIdentity(tenantId, projectId));
         when(billingClient.quote(tenantId, projectId)).thenReturn(quote("2587.50"));
 
-        assertThatThrownBy(() -> service.lockSettled("tok")).isInstanceOf(PreProductionException.class);
+        assertThatThrownBy(() -> service.lockSettled("tok", "2026-10")).isInstanceOf(PreProductionException.class);
         verify(projectLockService, never()).lock(any(), any());
+        // Nothing was paid, so no marketing consent is recorded either.
+        verify(projectService, never()).recordMarketingConsent(any(), any(), any());
+    }
+
+    @Test
+    void aSettledLockRecordsTheMarketingConsentBeforeLocking() {
+        UUID tenantId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        when(projectService.resolveByClientReviewToken("tok")).thenReturn(new ProjectService.ProjectIdentity(tenantId, projectId));
+        when(billingClient.quote(tenantId, projectId)).thenReturn(quote("0.00"));
+
+        try {
+            service.lockSettled("tok", "2026-10");
+        } catch (RuntimeException ignoredViewRendering) {
+            // view(token) needs collaborators this test doesn't wire; the order of the two calls is the point.
+        }
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(projectService, projectLockService);
+        order.verify(projectService).recordMarketingConsent(tenantId, projectId, "2026-10");
+        order.verify(projectLockService).lock(tenantId, projectId);
+    }
+
+    @Test
+    void startingTheLockPaymentRecordsConsent() {
+        UUID tenantId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        when(projectService.resolveByClientReviewToken("tok")).thenReturn(new ProjectService.ProjectIdentity(tenantId, projectId));
+
+        service.startLockPayment("tok", "2026-10");
+
+        verify(projectService).recordMarketingConsent(tenantId, projectId, "2026-10");
+        verify(billingClient).createOrder(tenantId, projectId, "tok");
     }
 
     @Test

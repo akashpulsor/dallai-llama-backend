@@ -48,9 +48,15 @@ public class PublicProjectController {
 
     /** Starts the Razorpay order for the lock payment. Nothing locks yet. */
     @PostMapping("/v1/public/projects/{token}/lock/payment")
-    public ResponseEntity<com.dalai.llama.preprod.service.revenue.BillingClient.OrderResult> startLockPayment(@PathVariable String token) {
-        return ResponseEntity.ok(publicProjectService.startLockPayment(token));
+    public ResponseEntity<com.dalai.llama.preprod.service.revenue.BillingClient.OrderResult> startLockPayment(
+            @PathVariable String token, @RequestBody(required = false) LockConsent consent) {
+        return ResponseEntity.ok(publicProjectService.startLockPayment(token, consent == null ? null : consent.acceptedTermsVersion()));
     }
+
+    /** The client's tick on "this film may be used to promote the creator and Dalaillama", sent
+     * with the lock payment. Optional on the wire so an older page still locks; without it the film
+     * just stays out of marketing. */
+    public record LockConsent(String acceptedTermsVersion) {}
 
     /** The project's director's treatments, shared with the client for review. */
     @GetMapping("/v1/public/projects/{token}/creative-directions")
@@ -83,8 +89,9 @@ public class PublicProjectController {
 
     /** Lock with nothing left to pay (brief paid in full). Refused while any balance is due. */
     @PostMapping("/v1/public/projects/{token}/lock/settled")
-    public ResponseEntity<PublicProjectPackageView> lockSettled(@PathVariable String token) {
-        return ResponseEntity.ok(publicProjectService.lockSettled(token));
+    public ResponseEntity<PublicProjectPackageView> lockSettled(@PathVariable String token,
+                                                                @RequestBody(required = false) LockConsent consent) {
+        return ResponseEntity.ok(publicProjectService.lockSettled(token, consent == null ? null : consent.acceptedTermsVersion()));
     }
 
     /** The pay-gate: verifies the client's payment, credits the creator, then locks. The old bare

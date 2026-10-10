@@ -14,6 +14,11 @@ public interface ShotImageRepository extends JpaRepository<ShotImage, UUID> {
 
     List<ShotImage> findByShotId(UUID shotId);
 
+    /** Images generated for the project's shots: evidence the film was really made here. */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT COUNT(i) FROM ShotImage i WHERE i.shotId IN (SELECT s.id FROM Shot s WHERE s.projectId = :projectId)")
+    long countForProject(@org.springframework.data.repository.query.Param("projectId") UUID projectId);
+
     List<ShotImage> findByShotIdIn(List<UUID> shotIds);
     List<ShotImage> findByTenantIdAndShotIdIn(UUID tenantId, List<UUID> shotIds);
 }

@@ -127,8 +127,9 @@ public class PublicProjectService {
 
     /** Starts a Razorpay order for the lock payment (via billing-service). Nothing locks yet --
      * the client pays, then {@link #verifyPaymentAndLock} runs on a verified payment. */
-    public BillingClient.OrderResult startLockPayment(String token) {
+    public BillingClient.OrderResult startLockPayment(String token, String acceptedTermsVersion) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
+        projectService.recordMarketingConsent(identity.tenantId(), identity.projectId(), acceptedTermsVersion);
         return billingClient.createOrder(identity.tenantId(), identity.projectId(), token);
     }
 
@@ -165,13 +166,14 @@ public class PublicProjectService {
     /** Lock for a package whose brief was already paid in full -- there is no balance to put
      * through Razorpay. billing's quote is re-read here rather than trusted from the client, so a
      * package with anything still due can never reach {@code lock} through this door. */
-    public PublicProjectPackageView lockSettled(String token) {
+    public PublicProjectPackageView lockSettled(String token, String acceptedTermsVersion) {
         ProjectService.ProjectIdentity identity = projectService.resolveByClientReviewToken(token);
         BillingClient.Quote quote = billingClient.quote(identity.tenantId(), identity.projectId());
         if (!quote.settled()) {
             throw PreProductionException.badRequest("A payment of %s %s is still due to lock this package"
                     .formatted(quote.currency(), quote.totalAmount()));
         }
+        projectService.recordMarketingConsent(identity.tenantId(), identity.projectId(), acceptedTermsVersion);
         projectLockService.lock(identity.tenantId(), identity.projectId());
         return view(token);
     }
