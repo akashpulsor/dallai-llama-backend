@@ -60,6 +60,7 @@ public class PlatformPublishService {
     private final ShowcaseItemRepository itemRepository;
     private final OfficialUploadJobRepository uploadJobRepository;
     private final CreatorPublicProfileRepository profileRepository;
+    private final CreatorProfileService profileService;
     private final CreatorYouTubeChannelRepository channelRepository;
     private final YouTubeDataClient youTube;
     private final YouTubeVideoCache videoCache;
@@ -257,8 +258,7 @@ public class PlatformPublishService {
     }
 
     private CreatorPublicProfile profile(UUID tenantId) {
-        return profileRepository.findById(tenantId)
-                .orElseThrow(() -> new IllegalStateException("Your creator profile isn't ready yet"));
+        return profileService.requireProfile(tenantId);
     }
 
     private static OfficialUploadView toView(OfficialUploadJob job) {

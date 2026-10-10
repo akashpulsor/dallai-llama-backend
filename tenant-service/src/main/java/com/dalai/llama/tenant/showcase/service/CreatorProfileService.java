@@ -1,5 +1,7 @@
 package com.dalai.llama.tenant.showcase.service;
 
+import com.dalai.llama.tenant.domain.entity.enums.TenantStatus;
+import com.dalai.llama.tenant.repository.TenantRepository;
 import com.dalai.llama.tenant.showcase.config.ShowcaseProperties;
 import com.dalai.llama.tenant.showcase.domain.ProfileChecklistItem;
 import com.dalai.llama.tenant.showcase.domain.ProfileStatus;
@@ -47,6 +49,7 @@ public class CreatorProfileService {
     private final CreatorYouTubeChannelRepository channelRepository;
     private final ShowcaseItemRepository itemRepository;
     private final HandlePolicy handlePolicy;
+    private final TenantRepository tenantRepository;
     private final ShowcaseProperties properties;
     private final Clock clock;
 
@@ -80,7 +83,23 @@ public class CreatorProfileService {
     }
 
     public Optional<MyPublicProfileView> findMine(UUID tenantId) {
-        return profileRepository.findById(tenantId).map(this::toView);
+        return ensureProfile(tenantId).map(this::toView);
+    }
+
+    /** The creator's profile, created on first use for any live tenant (bootstrapping: creators
+     * who never had a subscription event still get one). Empty for unknown, deleted or suspended
+     * tenants. */
+    public Optional<CreatorPublicProfile> ensureProfile(UUID tenantId) {
+        Optional<CreatorPublicProfile> existing = profileRepository.findById(tenantId);
+        if (existing.isPresent()) return existing;
+        return tenantRepository.findById(tenantId)
+                .filter(t -> t.getStatus() != TenantStatus.DELETED && t.getStatus() != TenantStatus.SUSPENDED)
+                .map(t -> ensureProfile(tenantId, t.getName()));
+    }
+
+    /** {@link #ensureProfile(UUID)} or a 409 with a plain message. */
+    public CreatorPublicProfile requireProfile(UUID tenantId) {
+        return ensureProfile(tenantId).orElseThrow(() -> new IllegalStateException("Your account can't have a public profile right now"));
     }
 
     @Transactional

@@ -175,6 +175,21 @@ class CreatorProfileServiceDbTest {
         return new UpdatePublicProfileRequest(handle, "Display Name", headline, null, "in", null, industries, true);
     }
 
+    @Test
+    void findMine_createsTheProfileOnFirstUseForALiveTenantWithoutASubscription() {
+        UUID tenant = newTenant();
+        jdbc.update("UPDATE tenants SET name = 'Akash Films' WHERE id = ?", tenant);
+
+        assertThat(service.findMine(tenant)).get().satisfies(p -> assertThat(p.handle()).isEqualTo("akash-films"));
+        assertThat(service.requireProfile(tenant).getHandle()).isEqualTo("akash-films");
+        assertThat(service.findMine(UUID.randomUUID())).isEmpty();
+
+        UUID suspended = newTenant();
+        jdbc.update("UPDATE tenants SET status = 'SUSPENDED' WHERE id = ?", suspended);
+        assertThat(service.findMine(suspended)).isEmpty();
+        assertThatThrownBy(() -> service.requireProfile(suspended)).isInstanceOf(IllegalStateException.class);
+    }
+
     private UUID newTenant() {
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO tenants (id, name, slug, primary_contact_name, primary_contact_email) VALUES (?, ?, ?, ?, ?)",

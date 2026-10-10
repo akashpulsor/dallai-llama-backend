@@ -1,6 +1,6 @@
 package com.dalai.llama.tenant.youtube.service;
 
-import com.dalai.llama.tenant.showcase.repository.CreatorPublicProfileRepository;
+import com.dalai.llama.tenant.showcase.service.CreatorProfileService;
 import com.dalai.llama.tenant.youtube.client.ChannelRef;
 import com.dalai.llama.tenant.youtube.client.YouTubeDataClient;
 import com.dalai.llama.tenant.youtube.domain.ChannelStatus;
@@ -32,7 +32,7 @@ public class ChannelLinkService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final CreatorYouTubeChannelRepository channelRepository;
-    private final CreatorPublicProfileRepository profileRepository;
+    private final CreatorProfileService profileService;
     private final YouTubeDataClient youTube;
     private final ChannelImportService importService;
     private final Clock clock;
@@ -44,9 +44,7 @@ public class ChannelLinkService {
     /** Step 1: find the channel and issue a code. Re-running it for a channel that is still
      * pending keeps the same code, so a creator who already pasted it isn't sent back. */
     public ChannelLinkView start(UUID tenantId, String input) {
-        if (!profileRepository.existsById(tenantId)) {
-            throw new IllegalStateException("Your creator profile isn't ready yet; it is created when you subscribe");
-        }
+        profileService.requireProfile(tenantId);
         YouTubeDataClient.ChannelInfo channel = youTube.findChannel(ChannelRef.parse(input))
                 .orElseThrow(() -> new IllegalArgumentException("We couldn't find that YouTube channel"));
 

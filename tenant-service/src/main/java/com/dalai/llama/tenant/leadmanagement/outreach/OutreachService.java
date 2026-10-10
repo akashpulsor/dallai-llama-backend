@@ -57,6 +57,7 @@ public class OutreachService {
     private final EmailTemplateService templates;
     private final AudienceStore audiences;
     private final CreatorPublicProfileRepository profileRepository;
+    private final com.dalai.llama.tenant.showcase.service.CreatorProfileService profileService;
     private final BillingServiceClient billing;
     private final OutreachProperties properties;
     private final Clock clock;
@@ -225,7 +226,7 @@ public class OutreachService {
             + "to marketing use of can be emailed. Publish one to your profile first.";
 
     private CreatorPublicProfile profile(UUID tenantId) {
-        return profileRepository.findById(tenantId).orElseThrow(() -> new IllegalStateException("Set up your public profile first"));
+        return profileService.requireProfile(tenantId);
     }
 
     private static MailableFilmView toView(MailableFilm f) {

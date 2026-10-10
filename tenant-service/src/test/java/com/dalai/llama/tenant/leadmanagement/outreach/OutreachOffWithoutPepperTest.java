@@ -27,6 +27,7 @@ class OutreachOffWithoutPepperTest {
     private final OutreachService service = new OutreachService(store, mock(MailAllowance.class), mock(MailableFilms.class),
             mock(OutreachComposer.class), new RecipientHasher(properties), dispatcher, mock(EmailTemplateService.class),
             mock(com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class), mock(CreatorPublicProfileRepository.class),
+            mock(com.dalai.llama.tenant.showcase.service.CreatorProfileService.class),
             mock(BillingServiceClient.class), properties, Clock.systemUTC());
 
     @Test
