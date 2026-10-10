@@ -73,6 +73,7 @@ public class OutreachService {
 
     @Transactional
     public SendResult send(UUID tenantId, SendRequest request) {
+        if (!hasher.configured()) throw new IllegalStateException(OUTREACH_OFF);
         if (request.recipients().size() > properties.maxRecipientsPerSend()) {
             throw new IllegalArgumentException("Send to at most " + properties.maxRecipientsPerSend() + " people at a time");
         }
@@ -123,6 +124,7 @@ public class OutreachService {
     /** Automatic picks and follower notices (Phase D): digest only, never the creator's allowance. */
     @Transactional
     public boolean enqueue(UUID tenantId, String email, String name, OutreachTemplate template, Origin origin, UUID itemId) {
+        if (!hasher.configured()) return false;
         String hash = hasher.hash(email);
         Instant now = clock.instant();
         if (store.isSuppressed(hash)) return false;
@@ -174,6 +176,8 @@ public class OutreachService {
         if (publicId == null) throw new IllegalArgumentException("Choose the film to send");
         return List.of(mailableFilms.byPublicId(tenantId, publicId).orElseThrow(() -> new IllegalStateException(NOTHING_MAILABLE)));
     }
+
+    private static final String OUTREACH_OFF = "Sending to brands isn't switched on yet. Please try again later.";
 
     private static final String NOTHING_MAILABLE = "Only films made on Dalai Llama that your client fully paid for and agreed "
             + "to marketing use of can be emailed. Publish one to your profile first.";

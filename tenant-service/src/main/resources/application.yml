@@ -175,6 +175,8 @@ lead-management:
 brands:
   session-secret: ${BRAND_SESSION_SECRET:}
   session-days: ${BRAND_SESSION_DAYS:30}
+  # Secure session cookie (HTTPS only). Set BRAND_COOKIE_SECURE=false only for local http dev.
+  cookie-secure: ${BRAND_COOKIE_SECURE:true}
   sign-in-link-minutes: 30
   sign-in-links-per-hour: 5
   sign-in-page-url: ${BRANDS_SIGN_IN_PAGE_URL:https://platform.dalaillama.in/brands/sign-in/}

@@ -3,7 +3,6 @@ package com.dalai.llama.tenant.leadmanagement;
 import com.dalai.llama.tenant.common.token.PublicTokens;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandAccountService;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.SignInRequest;
-import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.SignedIn;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandProperties;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandSessionService;
 import com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiry;
@@ -119,10 +118,10 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_brand_sign_in WHERE token_hash = ?", Integer.class,
                 PublicTokens.sha256Hex(token))).isEqualTo(1);
 
-        SignedIn signedIn = accounts.completeSignIn(token);
-        assertThat(signedIn.pendingAction()).isEqualTo("follow:riya-motion");
-        assertThat(signedIn.brand().companyName()).isEqualTo("Hearth Foods");
-        assertThat(sessions.resolve(signedIn.sessionToken())).isPresent();
+        BrandAccountService.SignInResult signedIn = accounts.completeSignIn(token);
+        assertThat(signedIn.view().pendingAction()).isEqualTo("follow:riya-motion");
+        assertThat(signedIn.view().brand().companyName()).isEqualTo("Hearth Foods");
+        assertThat(sessions.resolve(signedIn.session().token())).isPresent();
         assertThatThrownBy(() -> accounts.completeSignIn(token)).isInstanceOf(IllegalStateException.class);
     }
 
@@ -215,7 +214,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(mailer, atLeastOnce()).send(mail.capture());
         String token = mail.getValue().text().replaceAll("(?s).*/brands/sign-in/(\\S+).*", "$1");
-        return sessions.resolve(accounts.completeSignIn(token).sessionToken()).orElseThrow();
+        return sessions.resolve(accounts.completeSignIn(token).session().token()).orElseThrow();
     }
 
     private static SignInRequest signIn(String email, String pendingAction) {

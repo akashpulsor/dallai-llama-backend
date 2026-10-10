@@ -66,9 +66,13 @@ public class BrandAccountService {
         mailer.send(signInMail(contact, properties.signInPageUrl() + token));
     }
 
+    /** A completed sign-in: the session for the cookie, and what the page is told. */
+    public record SignInResult(BrandSessionService.Session session, SignedIn view) {
+    }
+
     /** Opens a sign-in link: single use, expires after {@code signInLinkMinutes}. */
     @Transactional
-    public SignedIn completeSignIn(String token) {
+    public SignInResult completeSignIn(String token) {
         OffsetDateTime now = OffsetDateTime.now(clock);
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT brand_contact_id, pending_action FROM lead_brand_sign_in
@@ -84,7 +88,7 @@ public class BrandAccountService {
             contactRepository.save(contact);
         }
         BrandSessionService.Session session = sessions.issue(contactId);
-        return new SignedIn(session.token(), session.expiresAt(), (String) rows.get(0).get("pending_action"), me(contactId));
+        return new SignInResult(session, new SignedIn(session.expiresAt(), (String) rows.get(0).get("pending_action"), me(contactId)));
     }
 
     public BrandMeView me(UUID contactId) {

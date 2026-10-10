@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,19 +46,19 @@ public class PublicEngagementController {
 
     @PutMapping("/api/v1/public/creators/{handle}/follow")
     public ResponseEntity<FollowService.FollowState> follow(@PathVariable String handle,
-                                                            @RequestHeader(value = BrandSessionService.HEADER, required = false) String session) {
+                                                            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
         return ResponseEntity.ok(followService.follow(sessions.require(session), handle));
     }
 
     @DeleteMapping("/api/v1/public/creators/{handle}/follow")
     public ResponseEntity<FollowService.FollowState> unfollow(@PathVariable String handle,
-                                                              @RequestHeader(value = BrandSessionService.HEADER, required = false) String session) {
+                                                              @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
         return ResponseEntity.ok(followService.unfollow(sessions.require(session), handle));
     }
 
     @PostMapping("/api/v1/public/creators/{handle}/inquiries")
     public ResponseEntity<SubmittedInquiry> request(@PathVariable String handle,
-                                                    @RequestHeader(value = BrandSessionService.HEADER, required = false) String session,
+                                                    @CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
                                                     @Valid @RequestBody SubmitInquiryRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submit(sessions.require(session), handle, request));
     }

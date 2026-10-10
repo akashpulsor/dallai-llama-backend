@@ -9,6 +9,8 @@ public record BrandProperties(
          * which just means brands sign in again after a restart. */
         String sessionSecret,
         int sessionDays,
+        /* Secure flag on the session cookie; false only for local http development. */
+        boolean cookieSecure,
         int signInLinkMinutes,
         /* Sign-in links a brand can be sent per hour, so the form can't be used to mail-bomb. */
         int signInLinksPerHour,

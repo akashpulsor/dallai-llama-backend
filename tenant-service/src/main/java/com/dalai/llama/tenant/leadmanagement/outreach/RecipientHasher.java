@@ -16,13 +16,19 @@ public class RecipientHasher {
 
     public RecipientHasher(OutreachProperties properties) {
         if (properties.hashPepper() == null || properties.hashPepper().isBlank()) {
-            log.warn("outreach.hash-pepper is not set; recipient hashes are unpeppered");
+            log.warn("outreach.hash-pepper is not set; outreach mail stays off until it is");
         }
         this.pepper = properties.hashPepper() == null ? "" : properties.hashPepper();
     }
 
     public static String normalise(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** Outreach stays off without a pepper: hashes made before one is set would stop matching
+     * afterwards, silently forgetting every unsubscribe and cooldown. */
+    public boolean configured() {
+        return !pepper.isBlank();
     }
 
     public String hash(String email) {

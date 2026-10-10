@@ -144,10 +144,6 @@
       "type": "string"
     },
     {
-      "key": "brandSession",
-      "value": ""
-    },
-    {
       "key": "signInToken",
       "value": ""
     },
@@ -2475,8 +2471,8 @@
       ]
     },
     {
-      "name": "Creator Showcase · Brands (public, brand session)",
-      "description": "Brands sign in with an emailed one-time link (no password, no Keycloak). The session is a signed token sent as X-Brand-Session; it lasts brands.session-days (30). Likes need only X-Visitor-Id. Follow, request and brand home need a session: without one they answer 401 BRAND_SIGN_IN_REQUIRED.",
+      "name": "Creator Showcase · Brands (public, brand session cookie)",
+      "description": "Brands sign in with an emailed one-time link (no password, no Keycloak). Completing sign-in sets the dl_brand_session cookie (HttpOnly, Secure, SameSite=Lax, Path=/api/v1/public, 30 days); Postman's cookie jar then sends it on every request below. Pages never see the token. Likes need only X-Visitor-Id. Follow, request and brand home need the cookie: without it they answer 401 BRAND_SIGN_IN_REQUIRED.",
       "item": [
         {
           "name": "Request a sign-in link (sign up or sign in)",
@@ -2521,7 +2517,7 @@
           "request": {
             "method": "POST",
             "url": "{{apiBaseUrl}}/public/brands/sign-in/{{signInToken}}",
-            "description": "Single use. 409 when expired or already used. Stores the session in {{brandSession}}.",
+            "description": "Single use; 409 when expired or already used. Answers with Set-Cookie dl_brand_session (HttpOnly) and a body without the token.",
             "header": [],
             "auth": {
               "type": "noauth"
@@ -2539,7 +2535,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"sessionToken\": \"v1.6f1c...\",\n  \"expiresAt\": \"2026-11-09T10:00:00Z\",\n  \"pendingAction\": \"follow:riya-motion\",\n  \"brand\": {\n    \"email\": \"asha@hearthfoods.example\",\n    \"contactName\": \"Asha\",\n    \"companyName\": \"Hearth Foods\",\n    \"websiteUrl\": \"https://hearthfoods.example\",\n    \"industry\": \"FOOD_BEVERAGE\",\n    \"countryCode\": \"IN\",\n    \"autoPicksOptIn\": false,\n    \"autoCadenceDays\": 7,\n    \"following\": []\n  }\n}"
+              "body": "{\n  \"expiresAt\": \"2026-11-09T10:00:00Z\",\n  \"pendingAction\": \"follow:riya-motion\",\n  \"brand\": {\n    \"email\": \"asha@hearthfoods.example\",\n    \"contactName\": \"Asha\",\n    \"companyName\": \"Hearth Foods\",\n    \"websiteUrl\": \"https://hearthfoods.example\",\n    \"industry\": \"FOOD_BEVERAGE\",\n    \"countryCode\": \"IN\",\n    \"autoPicksOptIn\": false,\n    \"autoCadenceDays\": 7,\n    \"following\": []\n  }\n}"
             }
           ],
           "event": [
@@ -2549,7 +2545,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));",
-                  "if (pm.response.code === 200) pm.collectionVariables.set('brandSession', pm.response.json().sessionToken);"
+                  "pm.test('session only in an HttpOnly cookie', () => {",
+                  "  pm.expect(pm.response.headers.get('Set-Cookie')).to.include('HttpOnly');",
+                  "  pm.expect(pm.response.json()).to.not.have.property('sessionToken');",
+                  "});"
                 ]
               }
             }
@@ -2561,12 +2560,7 @@
             "method": "GET",
             "url": "{{apiBaseUrl}}/public/brands/me",
             "description": "Details and the creators they follow.",
-            "header": [
-              {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              }
-            ],
+            "header": [],
             "auth": {
               "type": "noauth"
             }
@@ -2589,7 +2583,7 @@
           "request": {
             "method": "GET",
             "url": "{{apiBaseUrl}}/public/brands/me",
-            "description": "No X-Brand-Session header.",
+            "description": "Clear the dl_brand_session cookie for api.dalaillama.in in Postman's cookie manager first.",
             "header": [],
             "auth": {
               "type": "noauth"
@@ -2615,10 +2609,6 @@
             "url": "{{apiBaseUrl}}/public/brands/me/preferences",
             "description": "Automatic picks of new films in their industry, at most every autoCadenceDays (7 to 60).",
             "header": [
-              {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              },
               {
                 "key": "Content-Type",
                 "value": "application/json"
@@ -2656,12 +2646,7 @@
             "method": "GET",
             "url": "{{apiBaseUrl}}/public/brands/me/inquiries",
             "description": "Status NEW / VIEWED / CONVERTED / DECLINED; briefUrl once the creator made a brief.",
-            "header": [
-              {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              }
-            ],
+            "header": [],
             "auth": {
               "type": "noauth"
             }
@@ -2685,12 +2670,7 @@
             "method": "PUT",
             "url": "{{apiBaseUrl}}/public/creators/{{handle}}/follow",
             "description": "Idempotent.",
-            "header": [
-              {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              }
-            ],
+            "header": [],
             "auth": {
               "type": "noauth"
             }
@@ -2728,12 +2708,7 @@
             "method": "DELETE",
             "url": "{{apiBaseUrl}}/public/creators/{{handle}}/follow",
             "description": "Idempotent.",
-            "header": [
-              {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              }
-            ],
+            "header": [],
             "auth": {
               "type": "noauth"
             }
@@ -2831,10 +2806,6 @@
             "description": "Emails the creator. publicId (the film they watched) bumps that film's inquiry count; attributionToken is the ?ref= from a tracked mail link. At most 10 requests per brand per day (409). Stores {{inquiryId}}.",
             "header": [
               {
-                "key": "X-Brand-Session",
-                "value": "{{brandSession}}"
-              },
-              {
                 "key": "Content-Type",
                 "value": "application/json"
               }
@@ -2861,6 +2832,30 @@
                 "exec": [
                   "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));",
                   "if (pm.response.code === 201) pm.collectionVariables.set('inquiryId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign out",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/brands/sign-out",
+            "description": "Clears the HttpOnly cookie (Set-Cookie with Max-Age=0); only the server can.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
                 ]
               }
             }

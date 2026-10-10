@@ -32,7 +32,9 @@ public final class BrandDtos {
     ) {
     }
 
-    public record SignedIn(String sessionToken, Instant expiresAt, String pendingAction, BrandMeView brand) {
+    /** What a completed sign-in tells the page. The session itself travels only in the HttpOnly
+     * cookie, never in a body a script could read. */
+    public record SignedIn(Instant expiresAt, String pendingAction, BrandMeView brand) {
     }
 
     public record FollowedCreator(String handle, String displayName, String avatarUrl, String headline) {
