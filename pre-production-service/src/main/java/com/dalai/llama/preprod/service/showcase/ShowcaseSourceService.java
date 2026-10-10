@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -65,6 +66,32 @@ public class ShowcaseSourceService {
                 reviewCommentRepository.countByProjectId(projectId),
                 creativeDirectionRepository.countByProjectIdAndApprovedVia(projectId, ReviewActor.CLIENT),
                 film.map(PostProductionFilmClient.PublishedFilm::videoUrl).orElse(null));
+    }
+
+    /** How many recent projects {@link #films} looks at; each needs one post-production lookup. */
+    static final int FILM_LOOKBACK = 30;
+
+    /** A creator's finished films, newest projects first, for "publish to YouTube" pickers
+     * (CREATOR_SHOWCASE.md rule 34). No download links: those are fetched per film when needed. */
+    public List<FilmSummary> films(UUID tenantId) {
+        return projectRepository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream()
+                .limit(FILM_LOOKBACK)
+                .flatMap(project -> filmClient.getPublishedFilm(tenantId, project.getId()).stream()
+                        .map(film -> new FilmSummary(project.getId(), project.getName(), film.completedAt(), film.durationSeconds(),
+                                film.width(), film.height(), project.getClientLockedAt(), project.getMarketingTermsAcceptedAt())))
+                .toList();
+    }
+
+    public record FilmSummary(
+            UUID projectId,
+            String projectName,
+            OffsetDateTime renderedAt,
+            BigDecimal durationSeconds,
+            Integer width,
+            Integer height,
+            OffsetDateTime clientLockedAt,
+            OffsetDateTime marketingTermsAcceptedAt
+    ) {
     }
 
     /** The wire shape tenant-service reads. {@code downloadUrl} is a short-lived presigned link to

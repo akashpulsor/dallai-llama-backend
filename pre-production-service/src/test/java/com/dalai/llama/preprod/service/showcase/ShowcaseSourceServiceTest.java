@@ -72,6 +72,27 @@ class ShowcaseSourceServiceTest {
     }
 
     @Test
+    void listsOnlyProjectsWithAFinishedFilm() {
+        UUID tenant = UUID.randomUUID();
+        Project done = new Project();
+        done.setId(UUID.randomUUID());
+        done.setName("Done");
+        Project wip = new Project();
+        wip.setId(UUID.randomUUID());
+        wip.setName("Still making");
+        OffsetDateTime at = OffsetDateTime.parse("2026-10-01T10:00:00Z");
+        when(projects.findByTenantIdOrderByCreatedAtDesc(tenant)).thenReturn(java.util.List.of(done, wip));
+        when(films.getPublishedFilm(tenant, done.getId())).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
+                true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("30"), 1920, 1080, at, at)));
+        when(films.getPublishedFilm(tenant, wip.getId())).thenReturn(Optional.empty());
+
+        assertThat(service.films(tenant)).singleElement().satisfies(f -> {
+            assertThat(f.projectId()).isEqualTo(done.getId());
+            assertThat(f.width()).isEqualTo(1920);
+        });
+    }
+
+    @Test
     void noPublishedFilmMeansNotReady_andAnotherTenantsProjectIs404() {
         UUID tenant = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();

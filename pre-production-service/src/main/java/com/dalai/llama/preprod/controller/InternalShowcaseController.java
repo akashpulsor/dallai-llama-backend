@@ -19,6 +19,12 @@ public class InternalShowcaseController {
         this.showcaseSourceService = showcaseSourceService;
     }
 
+    /** The tenant's finished films (newest projects first), for publish pickers. */
+    @GetMapping("/api/v1/internal/tenants/{tenantId}/showcase-films")
+    public java.util.List<ShowcaseSourceService.FilmSummary> films(@PathVariable UUID tenantId) {
+        return showcaseSourceService.films(tenantId);
+    }
+
     @GetMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/showcase-source")
     public ShowcaseSourceService.ShowcaseSourceView source(@PathVariable UUID tenantId, @PathVariable UUID projectId) {
         return showcaseSourceService.source(tenantId, projectId);
