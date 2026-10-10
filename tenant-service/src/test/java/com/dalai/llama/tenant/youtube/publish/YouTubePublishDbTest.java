@@ -72,7 +72,7 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({YouTubePublishService.class, YouTubePublishWorker.class, YouTubePublishStore.class, YouTubeApiClient.class,
-        FilmRangeReader.class, YouTubeConnectionService.class, YouTubeConnectionStore.class, GoogleOAuthClient.class,
+        FilmRangeReader.class, YouTubeQuotaService.class, YouTubeConnectionService.class, YouTubeConnectionStore.class, GoogleOAuthClient.class,
         CredentialEncryptorConfig.class, ExtensionTokenService.class, CreatorProfileService.class, HandlePolicy.class,
         YouTubePublishDbTest.TestConfig.class})
 class YouTubePublishDbTest extends ShowcaseDbTestSupport {
@@ -116,6 +116,7 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
     @Autowired private YouTubePublishService publishing;
     @Autowired private YouTubePublishWorker worker;
     @Autowired private ExtensionTokenService extensionTokens;
+    @Autowired private YouTubeQuotaService quota;
     @Autowired private CredentialEncryptor encryptor;
     @Autowired private CreatorProfileService profileService;
     @Autowired private JdbcTemplate jdbc;
@@ -178,6 +179,33 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
         assertThat(THUMBNAILS.get()).isEqualTo(1);
         assertThat(METADATA.get(0)).contains("\"privacyStatus\":\"unlisted\"", "\"containsSyntheticMedia\":true");
         assertThat(worker.runOnce()).isFalse();
+    }
+
+    @Test
+    void whenTodaysSharedQuotaIsUsedUpTheNextUploadWaitsForTheReset() {
+        quota.setBudget(1600, 1600);
+        UUID other = UUID.randomUUID();
+        when(preProduction.source(riya, other)).thenReturn(source(other, true));
+        JobView first = publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "q1"), "WEB");
+        JobView second = publishing.publish(riya, "u", new PublishRequest(other, "Second", "", null, null, Privacy.PRIVATE, null, false, "q2"), "WEB");
+
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(publishing.job(riya, first.id()).status()).isEqualTo(Status.PUBLISHED);
+
+        RECEIVED.set(0);
+        assertThat(worker.runOnce()).isTrue();
+        JobView waiting = publishing.job(riya, second.id());
+        assertThat(waiting.status()).isEqualTo(Status.QUEUED);
+        assertThat(waiting.lastError()).contains("daily upload limit");
+        assertThat(waiting.attempts()).isZero();
+        assertThat(worker.runOnce()).isFalse();
+        assertThat(quota.view().uploadsLeftToday()).isZero();
+        assertThat(quota.view().waitingJobs()).isEqualTo(1);
+
+        // YouTube resets at midnight Pacific; then it goes.
+        clock.set(quota.nextReset().plusSeconds(60));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(publishing.job(riya, second.id()).status()).isEqualTo(Status.PUBLISHED);
     }
 
     @Test

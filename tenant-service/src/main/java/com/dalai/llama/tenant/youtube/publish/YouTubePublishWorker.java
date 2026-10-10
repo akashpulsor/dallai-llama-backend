@@ -47,6 +47,7 @@ public class YouTubePublishWorker {
     private final FilmRangeReader film;
     private final YouTubeApiClient youTube;
     private final CredentialEncryptor encryptor;
+    private final YouTubeQuotaService quota;
     private final Clock clock;
 
     @Scheduled(fixedDelayString = "${youtube-publish.poll-ms:20000}", initialDelayString = "${youtube-publish.poll-ms:20000}")
@@ -83,6 +84,12 @@ public class YouTubePublishWorker {
         String session = job.uploadUrlEnc() == null ? null : encryptor.decrypt(job.uploadUrlEnc());
         long total = job.bytesTotal() == null ? 0 : job.bytesTotal();
         if (session == null) {
+            // Starting an upload is what YouTube charges for (rule 41): only when today's budget can pay.
+            if (!quota.tryReserveUpload()) {
+                store.waitForQuota(job.id(), quota.nextReset(),
+                        "Waiting for YouTube's daily upload limit; it continues automatically after the reset.");
+                return;
+            }
             final long length = film.size(sourceUrl);
             total = length;
             session = withToken(connection, token -> youTube.startUpload(token, metadata(job), length));
@@ -111,7 +118,7 @@ public class YouTubePublishWorker {
     }
 
     private void finish(Job job, Connection connection, UploadState state) {
-        store.thumbnail(job.id()).ifPresent(thumbnail -> {
+        store.thumbnail(job.id()).filter(t -> quota.tryReserve(YouTubeQuotaService.EDIT_UNITS, false)).ifPresent(thumbnail -> {
             try {
                 withToken(connection, token -> {
                     youTube.setThumbnail(token, state.videoId(), thumbnail.bytes(), thumbnail.contentType());

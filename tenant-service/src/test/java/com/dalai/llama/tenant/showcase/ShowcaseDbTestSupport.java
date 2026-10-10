@@ -25,7 +25,8 @@ public abstract class ShowcaseDbTestSupport {
     }
 
     protected static void wipe(JdbcTemplate jdbc) {
-        for (String table : new String[]{"youtube_publish_job", "extension_token", "lead_outreach_link", "lead_outreach_intent", "lead_outreach_delivery", "lead_mail_pack",
+        for (String table : new String[]{"youtube_publish_job", "extension_token", "youtube_quota_usage", "youtube_quota_setting",
+                "lead_provider_search_result", "lead_provider_search", "lead_company_contact", "lead_company", "lead_provider_usage", "lead_outreach_link", "lead_outreach_intent", "lead_outreach_delivery", "lead_mail_pack",
                 "lead_creator_lead_source", "lead_import_batch", "lead_saved_audience_member", "lead_creator_lead_contact_point",
                 "lead_contact_point", "lead_creator_lead", "lead_saved_audience",
                 "lead_suppression", "lead_brand_inquiry", "creator_follower", "showcase_like", "lead_brand_sign_in",

@@ -3734,6 +3734,38 @@
               }
             }
           ]
+        },
+        {
+          "name": "Find brands (shared directory, Hunter.io)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/brand-search?industry=FOOD_BEVERAGE&country=IN&q=tea",
+            "description": "Rule 42: cache-first; reaches Hunter only for a search nobody ran in 30 days.",
+            "header": []
+          }
+        },
+        {
+          "name": "Add found brands to the audience",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/audiences/{{audienceId}}/add-companies",
+            "description": "Looks up emails once per company (credits), adds private leads. Max 25.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyIds\": [\n    \"{{companyId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -4883,6 +4915,56 @@
               }
             }
           ]
+        },
+        {
+          "name": "YouTube: quota today",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/youtube/quota",
+            "description": "Rule 41: shared project quota, uploads left, queue, reset time.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "YouTube: set quota budget",
+          "request": {
+            "method": "PUT",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/youtube/quota",
+            "description": "Raise after Google grants more quota.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dailyLimit\": 10000,\n  \"uploadUnits\": 1600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Brand directory: credits this month",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/brand-directory/credits",
+            "description": "Hunter.io lookups used/left.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          }
         }
       ]
     },

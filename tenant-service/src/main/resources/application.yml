@@ -299,6 +299,37 @@ google-oauth:
   platform-return-url: ${GOOGLE_OAUTH_PLATFORM_RETURN_URL:https://ops.dalaillama.in/admin}
   state-minutes: 10
 
+
+# Rule 41: YouTube Data API quota is per Google Cloud project, shared by every creator. Ops can raise
+# the budget at runtime (admin quota endpoint) after Google grants more.
+youtube-quota:
+  daily-limit: ${YOUTUBE_QUOTA_DAILY_LIMIT:10000}
+  upload-units: ${YOUTUBE_QUOTA_UPLOAD_UNITS:1600}
+
+# Rule 42: the shared brand directory, filled from Hunter.io (Discover is free; Domain Search costs
+# one credit per email found). Blank key = searches are served from the directory only.
+audience-provider:
+  hunter:
+    api-key: ${HUNTER_API_KEY:}
+    base-url: https://api.hunter.io/v2
+    monthly-credits: ${HUNTER_MONTHLY_CREDITS:50}
+    emails-per-company: 3
+    search-cache-days: 30
+    contacts-cache-days: 90
+    industries:
+      FASHION: [ "Retail", "Manufacturing" ]
+      BEAUTY: [ "Retail", "Consumer Services" ]
+      FOOD_BEVERAGE: [ "Food and Beverage Services" ]
+      TECH: [ "Technology, Information and Media" ]
+      FINANCE: [ "Financial Services" ]
+      REAL_ESTATE: [ "Real Estate and Equipment Rental" ]
+      EDUCATION: [ "Education" ]
+      HEALTH: [ "Hospitals and Health Care" ]
+      TRAVEL: [ "Accommodation Services", "Transportation, Logistics, Supply Chain and Storage" ]
+      AUTOMOTIVE: [ "Repair and Maintenance", "Retail" ]
+      ECOMMERCE: [ "Retail" ]
+      ENTERTAINMENT: [ "Entertainment Providers" ]
+      OTHER: [ ]
 # Rule 35: the creator-channel upload worker (one job at a time).
 youtube-publish:
   poll-ms: 20000

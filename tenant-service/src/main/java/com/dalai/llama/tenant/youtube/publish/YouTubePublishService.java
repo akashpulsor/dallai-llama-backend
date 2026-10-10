@@ -40,6 +40,7 @@ public class YouTubePublishService {
     private final YouTubeConnectionService connections;
     private final PreProductionShowcaseClient preProduction;
     private final YouTubeApiClient youTube;
+    private final YouTubeQuotaService quota;
     private final Clock clock;
 
     public List<PublishableFilm> publishableFilms(UUID tenantId) {
@@ -104,6 +105,7 @@ public class YouTubePublishService {
             store.setThumbnail(id, image, contentType);
         } else {
             Connection connection = activeConnection(tenantId);
+            requireQuota();
             youTube.setThumbnail(connections.accessToken(connection), job.videoId(), image, contentType);
         }
         return job(tenantId, id);
@@ -121,6 +123,7 @@ public class YouTubePublishService {
             throw new IllegalArgumentException("Confirm that this video will be public on YouTube");
         }
         Connection connection = activeConnection(tenantId);
+        requireQuota();
         String privacy = youTube.updateVideo(connections.accessToken(connection), job.videoId(), new YouTubeApiClient.Metadata(
                 r.title().trim(), r.description() == null ? "" : r.description().trim(), r.tags() == null ? List.of() : r.tags(),
                 job.categoryId(), r.privacy().name().toLowerCase(), r.publishAt()));
@@ -135,6 +138,12 @@ public class YouTubePublishService {
                 .orElseThrow(() -> new IllegalStateException("Connect your YouTube channel first"));
         if (c.status() != Status.ACTIVE) throw new YouTubeConnectionService.ReconnectRequiredException();
         return c;
+    }
+
+    private void requireQuota() {
+        if (!quota.tryReserve(YouTubeQuotaService.EDIT_UNITS, false)) {
+            throw new IllegalStateException("YouTube's daily limit for Dalai Llama is used up; try again after " + quota.nextReset());
+        }
     }
 
     private void checkSchedule(Instant publishAt, Instant now) {

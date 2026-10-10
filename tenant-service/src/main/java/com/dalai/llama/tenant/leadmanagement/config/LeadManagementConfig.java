@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
  * so the config surface is discoverable via a single grep for the module. */
 @Configuration
 @EnableConfigurationProperties({LeadManagementProperties.class, com.dalai.llama.tenant.leadmanagement.brand.BrandProperties.class,
-        com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class})
+        com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
+        com.dalai.llama.tenant.leadmanagement.audience.provider.HunterProperties.class})
 public class LeadManagementConfig {
 }
