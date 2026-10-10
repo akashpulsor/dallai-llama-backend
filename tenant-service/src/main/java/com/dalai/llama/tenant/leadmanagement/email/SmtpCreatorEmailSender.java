@@ -106,6 +106,11 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
             } else {
                 helper.setText(textBody, false);
             }
+            if (message.headers() != null) {
+                for (java.util.Map.Entry<String, String> header : message.headers().entrySet()) {
+                    mime.setHeader(header.getKey(), header.getValue());
+                }
+            }
             mailSender.send(mime);
             log.info("Sent creator email tenantId={} from={} to={} subject={}",
                     creatorId, identity.getEmail(), message.to(), message.subject());

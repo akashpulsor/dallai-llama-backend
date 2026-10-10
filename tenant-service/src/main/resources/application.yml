@@ -168,6 +168,128 @@ lead-management:
   inbound-webhook-max-body-bytes: ${INBOUND_EMAIL_WEBHOOK_MAX_BODY_BYTES:10485760}
   inbound-webhook-timestamp-tolerance-seconds: ${INBOUND_EMAIL_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS:300}
 # ================================================================
+# CREATOR SHOWCASE (public creator profiles; contract: docs/lead-management/CREATOR_SHOWCASE.md)
+# ================================================================
+
+# Creator Showcase, Phase B: brands sign in by email link (no password, no Keycloak).
+brands:
+  session-secret: ${BRAND_SESSION_SECRET:}
+  session-days: ${BRAND_SESSION_DAYS:30}
+  sign-in-link-minutes: 30
+  sign-in-links-per-hour: 5
+  sign-in-page-url: ${BRANDS_SIGN_IN_PAGE_URL:https://platform.dalaillama.in/brands/sign-in/}
+  brief-page-url: ${BRANDS_BRIEF_PAGE_URL:https://creator.dalaillama.in/brief/}
+  creator-requests-url: ${BRANDS_CREATOR_REQUESTS_URL:https://creator.dalaillama.in/requests}
+
+# Creator Showcase, Phase C: outreach mail (rules 15-17).
+outreach:
+  hash-pepper: ${OUTREACH_HASH_PEPPER:}
+  free-per-week: ${OUTREACH_FREE_PER_WEEK:100}
+  max-recipients-per-send: 25
+  cooldown-days: 14
+  digest-max-cards: 4
+  pending-expiry-days: 7
+  retention-days: 30
+  # 13:00 UTC = 18:30 IST.
+  digest-cron: "0 0 13 * * *"
+  public-api-base-url: ${OUTREACH_PUBLIC_API_BASE_URL:https://api.dalaillama.in/api/v1/public/outreach}
+showcase:
+  public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
+  public-data-max-age-days: 30
+  picks:
+    min-initial-picks: 2
+    max-external-picks: 6
+  # Rule 8: a client-locked project counts as funded only with real work done in the app.
+  funding:
+    require-client-locked: true
+    min-shot-images: 5
+    min-client-review-sessions: 1
+    min-client-comments-or-approvals: 1
+  # Rule 18: this many distinct brand reports hide a video until ops reviews it.
+  reports:
+    auto-hide-after: 3
+  platform-match:
+    duration-tolerance-seconds: 1.5
+    marker-prefix: "Made on Dalaillama"
+  profile:
+    handle-change-cooldown-days: 30
+    old-handle-redirect-days: 90
+    max-industries: 3
+    # Collide with site routes (dalaillama.in/<x>) or the brand; nobody may claim them.
+    reserved-handles: [admin, api, app, brands, c, creators, dalaillama, help, login, logout,
+                       platform, privacy, r, signup, support, terms, unsubscribe, verify, www]
+showcase-ranking:
+  # Written next to every score; bump it whenever you change a number below.
+  version: v1
+  ladder:
+    l2-min-platform-films: 1
+    l3-min-funded-platform-films: 1
+    l3-window-days: 90
+    l4-min-funded-platform-films: 3
+    l4-min-converted-requests: 2
+    level-weights: { L1: 0.6, L2: 0.8, L3: 1.0, L4: 1.1 }
+    decay-half-life-days: 60
+    decay-min: 0.5
+  bootstrap:
+    maturity-target-funded-films: 40
+    external-floor-factor: 0.3
+    fill-factor: 1.5
+    max-floor-step-per-run: 1
+  scoring:
+    weight-funded: 0.30
+    weight-like-rate: 0.20
+    weight-completion-rate: 0.15
+    weight-brand-intent: 0.25
+    weight-freshness: 0.10
+    smoothing-plays: 20
+    prior-like-rate: 0.05
+    prior-completion-rate: 0.30
+    brand-intent-saturation: 3
+    freshness-half-life-days: 21
+  reinforcement:
+    spotlight-hours: 72
+    spotlight-slots: 2
+    exploration-slots: 3
+    exploration-max-age-days: 14
+    exploration-max-plays: 50
+  landing:
+    size: 12
+    min-items-to-show: 6
+    max-per-creator: 2
+    max-per-industry: 4
+    pinned-public-ids: []
+    top-surface-size: 24
+    auto-surface-size: 9
+  rescore-cron: "0 30 2 * * *"
+video-host:
+  # YOUTUBE | SELF. SELF plays every platform film from our own copy (rule 5 fallback).
+  platform-films: ${VIDEO_HOST_PLATFORM_FILMS:YOUTUBE}
+  official-channel:
+    enabled: ${YT_OFFICIAL_ENABLED:false}
+    client-id: ${YT_OFFICIAL_CLIENT_ID:}
+    client-secret: ${YT_OFFICIAL_CLIENT_SECRET:}
+    refresh-token: ${YT_OFFICIAL_REFRESH_TOKEN:}
+    token-url: https://oauth2.googleapis.com/token
+    upload-url: https://www.googleapis.com/upload/youtube/v3/videos
+    privacy: public
+    description-template: "Made by {creatorName} on Dalaillama · {profileUrl}"
+    require-funded-and-consent: true
+  health:
+    probe-video-id: ${YT_PROBE_VIDEO_ID:}
+youtube:
+  # Restricted to YouTube Data API v3 + the box IP; from the youtube-api k8s secret. Blank = YouTube
+  # features answer 503 "not set up yet".
+  api-key: ${YOUTUBE_API_KEY:}
+  base-url: ${YOUTUBE_API_BASE_URL:https://www.googleapis.com/youtube/v3}
+  import-max-videos: 500
+  # YouTube policy: cached API data at most 30 days old.
+  refresh-after-days: 25
+  refresh-batch-size: 500
+  refresh-cron: "0 0 2 * * *"
+  eligibility:
+    min-duration-seconds: 5
+    max-duration-seconds: 600
+# ================================================================
 # SERVER
 # ================================================================
 server:

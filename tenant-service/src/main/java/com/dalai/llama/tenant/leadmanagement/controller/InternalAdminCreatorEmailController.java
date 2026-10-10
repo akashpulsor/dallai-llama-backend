@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.leadmanagement.controller;
 import com.dalai.llama.tenant.domain.entity.Tenant;
 import com.dalai.llama.tenant.leadmanagement.domain.entity.CreatorEmailIdentity;
 import com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService;
+import com.dalai.llama.tenant.onboarding.CreatorOnboardingService;
 import com.dalai.llama.tenant.repository.TenantRepository;
 import io.swagger.v3.oas.annotations.Hidden;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class InternalAdminCreatorEmailController {
 
     private final CreatorEmailIdentityService creatorEmailIdentityService;
     private final TenantRepository tenantRepository;
+    private final CreatorOnboardingService onboardingService;
 
     @PostMapping("/email/{tenantId}/rotate-password")
     public ResponseEntity<Map<String, Object>> rotate(@PathVariable UUID tenantId) {
@@ -63,7 +65,13 @@ public class InternalAdminCreatorEmailController {
         List<Map<String, Object>> created = new ArrayList<>();
         List<Map<String, Object>> existing = new ArrayList<>();
         int failed = 0;
+        int skipped = 0;
         for (Tenant tenant : tenantRepository.findAll()) {
+            // Only creators who really subscribed get an identity; registration alone never does.
+            if (!onboardingService.isEligible(tenant)) {
+                skipped++;
+                continue;
+            }
             try {
                 boolean alreadyThere = creatorEmailIdentityService.findByTenant(tenant.getId()).isPresent();
                 CreatorEmailIdentity id = creatorEmailIdentityService.provisionForCreator(
@@ -80,12 +88,13 @@ public class InternalAdminCreatorEmailController {
                 log.error("Backfill failed for tenant {}: {}", tenant.getId(), e.getMessage(), e);
             }
         }
-        log.info("Creator email backfill: created={} existing={} failed={}",
-                created.size(), existing.size(), failed);
+        log.info("Creator email backfill: created={} existing={} failed={} skippedNotSubscribed={}",
+                created.size(), existing.size(), failed, skipped);
         return ResponseEntity.ok(Map.of(
                 "createdCount", created.size(),
                 "existingCount", existing.size(),
                 "failedCount", failed,
+                "skippedNotSubscribedCount", skipped,
                 "created", created,
                 "existing", existing
         ));

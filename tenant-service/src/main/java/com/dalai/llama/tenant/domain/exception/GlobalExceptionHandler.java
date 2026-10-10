@@ -65,6 +65,38 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "PROVISIONING_ERROR", ex.getMessage());
     }
 
+    // ==================== 401 UNAUTHORIZED ====================
+
+    @ExceptionHandler(com.dalai.llama.tenant.leadmanagement.brand.BrandNotSignedInException.class)
+    public ResponseEntity<Map<String, Object>> handleBrandNotSignedIn(
+            com.dalai.llama.tenant.leadmanagement.brand.BrandNotSignedInException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, "BRAND_SIGN_IN_REQUIRED", ex.getMessage());
+    }
+
+    // ==================== 402 PAYMENT REQUIRED ====================
+
+    @ExceptionHandler(com.dalai.llama.tenant.leadmanagement.outreach.WalletTooLowException.class)
+    public ResponseEntity<Map<String, Object>> handleWalletTooLow(
+            com.dalai.llama.tenant.leadmanagement.outreach.WalletTooLowException ex) {
+        return buildResponse(HttpStatus.PAYMENT_REQUIRED, "INSUFFICIENT_BALANCE", ex.getMessage());
+    }
+
+    // ==================== 503 SERVICE UNAVAILABLE ====================
+
+    @ExceptionHandler(com.dalai.llama.tenant.youtube.client.YouTubeUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleYouTubeUnavailable(
+            com.dalai.llama.tenant.youtube.client.YouTubeUnavailableException ex) {
+        log.warn("YouTube unavailable: {}", ex.getMessage());
+        return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, "YOUTUBE_UNAVAILABLE", ex.getMessage());
+    }
+
+    @ExceptionHandler(com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleUpstreamUnavailable(
+            com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException ex) {
+        log.warn("Upstream unavailable: {}", ex.getMessage());
+        return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE", ex.getMessage());
+    }
+
     // ==================== 400 BAD REQUEST ====================
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -80,6 +112,18 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining(", "));
         log.warn("Validation failed: {}", errors);
         return buildResponse(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", errors);
+    }
+
+    /** Missing header, bad path/query value (e.g. an unknown enum), unreadable JSON body: the
+     * caller's mistake, not a server error. */
+    @ExceptionHandler({
+            org.springframework.web.bind.ServletRequestBindingException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class
+    })
+    public ResponseEntity<Map<String, Object>> handleBadRequestShape(Exception ex) {
+        log.warn("Malformed request: {}", ex.getMessage());
+        return buildResponse(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", ex.getMessage());
     }
 
     // ==================== 500 CATCH-ALL ====================

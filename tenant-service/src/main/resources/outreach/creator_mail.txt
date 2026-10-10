@@ -1,0 +1,13 @@
+{{greeting}}
+
+{{intro}}
+
+{{note}}
+
+{{filmsText}}
+{{creatorName}}
+See all my work: {{profileUrl}}
+
+--
+Sent by {{creatorName}} through Dalai Llama. You get at most one email a day from creators on Dalai Llama.
+Unsubscribe: {{unsubscribeUrl}}

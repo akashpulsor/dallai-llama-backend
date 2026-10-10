@@ -64,4 +64,47 @@ public class BillingServiceClient {
             return BigDecimal.ZERO;
         }
     }
+
+    /** Billing's add-on price list (billing owns prices). */
+    public record AddonOffer(String code, int quantity, BigDecimal price, String currency) {
+    }
+
+    public record AddonPurchase(String code, int quantity, BigDecimal price, String currency, BigDecimal balanceAfter) {
+    }
+
+    record AddonPurchaseRequest(String code, String idempotencyKey) {
+    }
+
+    public java.util.List<AddonOffer> addonCatalog(UUID tenantId) {
+        try {
+            AddonOffer[] offers = client().get()
+                    .uri("/api/v1/internal/tenants/{tenantId}/addons", tenantId)
+                    .retrieve()
+                    .bodyToMono(AddonOffer[].class)
+                    .block(java.time.Duration.ofSeconds(10));
+            return offers == null ? java.util.List.of() : java.util.List.of(offers);
+        } catch (RuntimeException e) {
+            log.warn("Add-on catalog unavailable for tenant {}: {}", tenantId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    /** Debits the wallet for an add-on. Retrying with the same key never charges twice. */
+    public AddonPurchase purchaseAddon(UUID tenantId, String code, String idempotencyKey) {
+        try {
+            return client().post()
+                    .uri("/api/v1/internal/tenants/{tenantId}/wallet/addon-purchase", tenantId)
+                    .bodyValue(new AddonPurchaseRequest(code, idempotencyKey))
+                    .retrieve()
+                    .bodyToMono(AddonPurchase.class)
+                    .block(java.time.Duration.ofSeconds(20));
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            if (e.getStatusCode().value() == 402) {
+                throw new com.dalai.llama.tenant.leadmanagement.outreach.WalletTooLowException();
+            }
+            throw new com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException("Billing is unavailable right now", e);
+        } catch (RuntimeException e) {
+            throw new com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException("Billing is unavailable right now", e);
+        }
+    }
 }

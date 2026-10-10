@@ -19,6 +19,8 @@ public record CreatorEmailMessage(
         String subject,
         String bodyText,
         String bodyHtml,
-        String replyTo
+        String replyTo,
+        /* Extra headers, e.g. List-Unsubscribe on outreach mail. Null = none. */
+        java.util.Map<String, String> headers
 ) {
 }

@@ -97,6 +97,79 @@
       "key": "refreshToken",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "handle",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "youtubeChannel",
+      "value": "https://www.youtube.com/@YourChannel",
+      "type": "string"
+    },
+    {
+      "key": "verificationCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "youtubeVideoId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "youtubeVideoId2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "showcaseItemId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "showcasePublicId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "visitorId",
+      "value": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "type": "string"
+    },
+    {
+      "key": "tenantServiceInternalUrl",
+      "value": "http://localhost:8091",
+      "type": "string"
+    },
+    {
+      "key": "brandSession",
+      "value": ""
+    },
+    {
+      "key": "signInToken",
+      "value": ""
+    },
+    {
+      "key": "inquiryId",
+      "value": ""
+    },
+    {
+      "key": "outreachLinkToken",
+      "value": ""
+    },
+    {
+      "key": "unsubscribeToken",
+      "value": ""
+    },
+    {
+      "key": "billingServiceInternalUrl",
+      "value": "http://localhost:8083"
+    },
+    {
+      "key": "creativePlanningInternalUrl",
+      "value": "http://localhost:8085"
     }
   ],
   "item": [
@@ -1062,6 +1135,82 @@
             "method": "GET",
             "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/review-comments"
           }
+        },
+        {
+          "name": "Start pay-to-lock payment (with marketing consent)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/lock/payment",
+            "description": "Same as 'Start pay-to-lock payment' plus the client's tick on the review page: \"this finished film may be used to promote the creator and Dalaillama\". Stores the terms version and time on the project; without it the film never goes into brand mail or onto Dalaillama's channel. The body is optional so older pages still work.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"acceptedTermsVersion\": \"2026-10\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lock a settled package (with marketing consent)",
+          "request": {
+            "method": "POST",
+            "url": "{{platformBaseUrl}}/public/projects/{{reviewToken}}/lock/settled",
+            "description": "For a package with nothing left to pay; records the consent, then locks.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"acceptedTermsVersion\": \"2026-10\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1273,6 +1422,2361 @@
             },
             "description": "Every field optional -- only what's sent changes, everything else keeps its current value. Sets source=EDITED and clears critiqueNotes."
           }
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Profile (creator, JWT)",
+      "description": "The creator's public profile (dalaillama.in/c/<handle>). Created automatically on subscription.activated together with the partner email identity; run 'Ops · Onboarding backfill' once for creators who subscribed before this shipped. 404 = no profile yet. Contract: docs/lead-management/CREATOR_SHOWCASE.md.",
+      "item": [
+        {
+          "name": "Get my profile",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/public-profile",
+            "description": "Returns MyPublicProfileView. `missing` lists what is still needed before the profile counts as complete: YOUTUBE_CHANNEL, SHOWCASE_PICKS, AVATAR (the verified channel's picture counts), HEADLINE, INDUSTRY.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"handle\": \"riya-motion\",\n  \"publicUrl\": \"https://dalaillama.in/c/riya-motion\",\n  \"displayName\": \"Riya Motion\",\n  \"headline\": \"Beverage ads that sell\",\n  \"bio\": null,\n  \"avatarUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n  \"countryCode\": \"IN\",\n  \"websiteUrl\": null,\n  \"industries\": [\n    \"FOOD_BEVERAGE\"\n  ],\n  \"autoPicksEnabled\": true,\n  \"status\": \"ACTIVE\",\n  \"handleChangeAllowedFrom\": null,\n  \"missing\": [\n    \"SHOWCASE_PICKS\"\n  ]\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('handle', pm.response.json().handle);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check handle availability",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/public-profile/handle-availability?handle=Riya Motion Films",
+            "description": "Live check for the handle field. Input is normalised first (lower case, hyphens). reason: TOO_SHORT, TOO_LONG, INVALID_FORMAT, RESERVED or TAKEN.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"handle\": \"riya-motion-films\",\n  \"available\": true,\n  \"reason\": null\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/tenants/me/public-profile",
+            "description": "Full replacement of the editable fields. Changing `handle` is allowed once per 30 days (409 with the date it reopens otherwise); the old handle stays reserved for you for 90 days. At most 3 industries (400).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"{{handle}}\",\n  \"displayName\": \"Riya Motion\",\n  \"headline\": \"Beverage ads that sell\",\n  \"bio\": \"Short, punchy food and drink films.\",\n  \"countryCode\": \"IN\",\n  \"websiteUrl\": \"https://riyamotion.in\",\n  \"industries\": [\n    \"FOOD_BEVERAGE\",\n    \"ECOMMERCE\"\n  ],\n  \"autoPicksEnabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"handle\": \"riya-motion\",\n  \"publicUrl\": \"https://dalaillama.in/c/riya-motion\",\n  \"displayName\": \"Riya Motion\",\n  \"headline\": \"Beverage ads that sell\",\n  \"bio\": null,\n  \"avatarUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n  \"countryCode\": \"IN\",\n  \"websiteUrl\": null,\n  \"industries\": [\n    \"FOOD_BEVERAGE\"\n  ],\n  \"autoPicksEnabled\": true,\n  \"status\": \"ACTIVE\",\n  \"handleChangeAllowedFrom\": null,\n  \"missing\": [\n    \"SHOWCASE_PICKS\"\n  ]\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · YouTube channel (creator, JWT)",
+      "description": "Link the creator's channel without OAuth: 'Link channel' returns a code, the creator adds it anywhere in their YouTube channel description (YouTube Studio > Customization > Basic info), then 'Verify channel'. On success the channel's uploads are imported. 503 YOUTUBE_UNAVAILABLE = no API key configured on the server, or Google is not answering. Set {{youtubeChannel}} to your channel link first.",
+      "item": [
+        {
+          "name": "Link channel (get a verification code)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/channel",
+            "description": "`channel` accepts https://www.youtube.com/@handle, @handle, a UC... channel id, a /channel/UC... link or a legacy /user/ link. Asking again for the same channel keeps the same code. 409 if the channel is already verified by another account; 400 if YouTube has no such channel.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"{{youtubeChannel}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK, pending",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"PENDING\",\n  \"channelId\": \"UCxxxxxxxxxxxxxxxxxxxxxx\",\n  \"channelTitle\": \"Riya Motion\",\n  \"channelThumbnailUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n  \"channelUrl\": \"https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx\",\n  \"verificationCode\": \"dalai-K7Q2MP\",\n  \"verifiedAt\": null,\n  \"lastSyncedAt\": null\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('verificationCode', pm.response.json().verificationCode);",
+                  "console.log('Put this in the channel description:', pm.response.json().verificationCode);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify channel (after adding the code)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/channel/verify",
+            "description": "Reads the channel description. 409 with an explanation while the code isn't there yet (YouTube can take a minute). On success: status VERIFIED and the uploads are imported (up to 500).",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK, verified",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"VERIFIED\",\n  \"channelId\": \"UCxxxxxxxxxxxxxxxxxxxxxx\",\n  \"channelTitle\": \"Riya Motion\",\n  \"channelThumbnailUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n  \"channelUrl\": \"https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx\",\n  \"verificationCode\": null,\n  \"verifiedAt\": \"2026-10-09T10:05:00Z\",\n  \"lastSyncedAt\": \"2026-10-09T10:05:01Z\"\n}"
+            },
+            {
+              "name": "409, code not found yet",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"timestamp\": \"2026-10-09T10:04:00Z\",\n  \"status\": 409,\n  \"error\": \"ILLEGAL_STATE\",\n  \"message\": \"We couldn't find dalai-K7Q2MP in your channel description yet. YouTube can take a minute to update; try again shortly.\"\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status one of 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get my channel",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/channel",
+            "description": "404 when no channel has been added yet.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status one of 200, 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List my videos (with eligibility)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/videos",
+            "description": "Every imported upload, newest first. eligible=false comes with ineligibleReason: NOT_PUBLIC, EMBEDDING_OFF, AGE_RESTRICTED, MADE_FOR_KIDS, TOO_SHORT, TOO_LONG. aspectW/aspectH are the true ratio (vertical Shorts are e.g. 405x720). Stores the first two eligible ids in {{youtubeVideoId}} and {{youtubeVideoId2}}.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "[\n  {\n    \"videoId\": \"dQw4w9WgXcQ\",\n    \"title\": \"Street-side filter coffee\",\n    \"thumbnailUrl\": \"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg\",\n    \"publishedAt\": \"2026-09-01T10:00:00Z\",\n    \"durationSeconds\": 20.0,\n    \"aspectW\": 405,\n    \"aspectH\": 720,\n    \"vertical\": true,\n    \"eligible\": true,\n    \"ineligibleReason\": null,\n    \"watchUrl\": \"https://www.youtube.com/shorts/dQw4w9WgXcQ\"\n  }\n]"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const ok = pm.response.json().filter(v => v.eligible);",
+                  "if (ok.length) pm.collectionVariables.set('youtubeVideoId', ok[0].videoId);",
+                  "if (ok.length > 1) pm.collectionVariables.set('youtubeVideoId2', ok[1].videoId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-sync channel",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/youtube/sync",
+            "description": "Re-imports the uploads (new videos appear, deleted ones disappear). At most once every 10 minutes (409 otherwise).",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status one of 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Showcase items (creator, JWT)",
+      "description": "The videos on the creator's profile. Pick at least 2 (showcase.picks.min-initial-picks) before the profile goes public; at most 6 from their own channel are live at once.",
+      "item": [
+        {
+          "name": "Pick a video for my profile",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase",
+            "description": "The video must be on the creator's verified channel and eligible (400 with the reason otherwise). rightsConfirmed must be true. 409 if it's already on the profile or 6 are already live. Stores the new item in {{showcaseItemId}} / {{showcasePublicId}}.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"youtubeVideoId\": \"{{youtubeVideoId}}\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"PRODUCT_AD\",\n  \"clientLabel\": \"Café chain\",\n  \"titleOverride\": null,\n  \"rightsConfirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"3f2b0c1e-0000-4000-8000-000000000001\",\n  \"publicId\": \"aZ3k9QwP0x\",\n  \"youtubeVideoId\": \"dQw4w9WgXcQ\",\n  \"title\": \"Street-side filter coffee\",\n  \"thumbnailUrl\": \"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg\",\n  \"aspectW\": 405,\n  \"aspectH\": 720,\n  \"origin\": \"EXTERNAL\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"PRODUCT_AD\",\n  \"clientLabel\": \"Café chain\",\n  \"titleOverride\": null,\n  \"status\": \"LIVE\",\n  \"hiddenByOps\": false,\n  \"playCount\": 0,\n  \"fullPlayCount\": 0,\n  \"watchUrl\": \"https://www.youtube.com/shorts/dQw4w9WgXcQ\"\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('showcaseItemId', pm.response.json().id);",
+                  "pm.collectionVariables.set('showcasePublicId', pm.response.json().publicId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pick a second video",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase",
+            "description": "Same as above with {{youtubeVideoId2}} (set by 'List my videos'). After two picks the public page is ready.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"youtubeVideoId\": \"{{youtubeVideoId2}}\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"UGC\",\n  \"clientLabel\": \"Beverage brand\",\n  \"titleOverride\": null,\n  \"rightsConfirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List my items",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase",
+            "description": "LIVE and HIDDEN items in the creator's order, with play counts.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "[\n  {\n    \"id\": \"3f2b0c1e-0000-4000-8000-000000000001\",\n    \"publicId\": \"aZ3k9QwP0x\",\n    \"youtubeVideoId\": \"dQw4w9WgXcQ\",\n    \"title\": \"Street-side filter coffee\",\n    \"thumbnailUrl\": \"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg\",\n    \"aspectW\": 405,\n    \"aspectH\": 720,\n    \"origin\": \"EXTERNAL\",\n    \"industry\": \"FOOD_BEVERAGE\",\n    \"format\": \"PRODUCT_AD\",\n    \"clientLabel\": \"Café chain\",\n    \"titleOverride\": null,\n    \"status\": \"LIVE\",\n    \"hiddenByOps\": false,\n    \"playCount\": 0,\n    \"fullPlayCount\": 0,\n    \"watchUrl\": \"https://www.youtube.com/shorts/dQw4w9WgXcQ\"\n  }\n]"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update an item (or hide it)",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/{{showcaseItemId}}",
+            "description": "Full replacement of industry/format/clientLabel/titleOverride; visible=false hides it, true shows it again (409 if that would exceed 6).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"BRAND_FILM\",\n  \"clientLabel\": \"Café chain\",\n  \"titleOverride\": \"Filter coffee, 20 seconds\",\n  \"visible\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reorder my items",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/order",
+            "description": "Send every LIVE and HIDDEN item id exactly once, in the new order (400 otherwise). Paste the ids from 'List my items'.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itemIds\": [\n    \"{{showcaseItemId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status one of 200, 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove an item",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/{{showcaseItemId}}",
+            "description": "Takes it off the profile (kept for history). Picking the same video again revives it with the same public id. Run this last.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Platform films (creator, JWT)",
+      "description": "Publishing a film made on Dalaillama from the film bar. Two paths, neither needs a creator's Google login: (1) the upload kit, where the creator uploads to their own channel and pastes the link back, and (2) an upload to Dalaillama's own channel by our worker. Set {{ppProjectId}} to a project whose finished film is published.",
+      "item": [
+        {
+          "name": "Get the upload kit",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/projects/{{ppProjectId}}/youtube-kit",
+            "description": "Download link (short-lived), title, a description whose first line is our marker (keep it), tags, the AI disclosure step, whether the film is verified funded and has the client's marketing consent, and whether 'Publish on Dalaillama's channel' is available (or why not).",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"projectName\": \"Masala chai launch\",\n  \"filmReady\": true,\n  \"downloadUrl\": \"https://minio/film.mp4?X-Amz-Signature=...\",\n  \"title\": \"Made by Riya Motion on Dalaillama\",\n  \"description\": \"Made on Dalaillama · https://dalaillama.in/c/riya-motion\\n\\n\",\n  \"tags\": [\n    \"dalaillama\",\n    \"ai video\"\n  ],\n  \"disclosureStep\": \"In YouTube Studio, under Details > Altered content, choose Yes: this film was made with AI.\",\n  \"verifiedFunded\": true,\n  \"marketingConsent\": true,\n  \"officialUploadAvailable\": true,\n  \"officialUploadBlockedReason\": null\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Link the film I uploaded to my channel",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/projects/{{ppProjectId}}/youtube-link",
+            "description": "Matched against the film on every rule: on your verified channel, published after the film was made, length within 1.5 s, the marker line in the description. 400 names the rule that failed; 409 if this film is already on the profile. An earlier pick of the same video is upgraded to a platform film.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://youtu.be/XXXXXXXXXXX\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"PRODUCT_AD\",\n  \"clientLabel\": \"Café chain\",\n  \"rightsConfirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201, 400, 409', () => pm.expect([201, 400, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish on Dalaillama's channel",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/projects/{{ppProjectId}}/official-upload",
+            "description": "Queues an upload by our worker (one at a time). Only films the client paid for in full, with their review on Dalaillama, and marketing consent (409 with the reason otherwise). Asking again after a failure re-queues it.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"format\": \"PRODUCT_AD\",\n  \"clientLabel\": \"Café chain\",\n  \"rightsConfirmed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "202 Accepted",
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"QUEUED\",\n  \"youtubeVideoId\": null,\n  \"error\": null,\n  \"attempts\": 0\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202, 409', () => pm.expect([202, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Official upload status",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/showcase/projects/{{ppProjectId}}/official-upload",
+            "description": "QUEUED, UPLOADING, DONE, FAILED (after 3 attempts) or NEEDS_MANUAL (YouTube made it private; ops publishes it in Studio and links it). 404 until requested.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Visibility (creator, JWT)",
+      "description": "The creator's ladder card: level L0-L4, the next step and what it unlocks, standing, the landing floor (it rises as funded films accumulate), and any active spotlight.",
+      "item": [
+        {
+          "name": "Get my visibility",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/visibility",
+            "description": "",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"level\": \"L1\",\n  \"nextLevel\": \"L2\",\n  \"nextStep\": \"Publish a film you made on Dalaillama to your profile\",\n  \"standingFactor\": 0.6,\n  \"landingFloor\": \"L1\",\n  \"eligibleForLanding\": true,\n  \"activeSpotlightUntil\": null,\n  \"lastRankedAt\": \"2026-10-09T02:30:00Z\"\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Public (no auth)",
+      "description": "What anyone on the internet sees. No JWT. Rate-limited with the rest of /api/v1/public/* (30/min). Payloads never carry internal ids, only publicId, the YouTube id and the creator handle. An item shows only when it is live, not hidden by ops, its YouTube video is still public and embeddable and was refreshed within 30 days, and its creator has a verified channel and at least 2 such items.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Get a creator's public page",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/creators/{{handle}}",
+            "description": "404 for unknown handles and suspended or hidden profiles. ready=false (items empty) until the creator has a verified channel and 2 showable items: render 'coming soon' with noindex.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK, ready",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"handle\": \"riya-motion\",\n  \"displayName\": \"Riya Motion\",\n  \"headline\": \"Beverage ads that sell\",\n  \"bio\": null,\n  \"avatarUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n  \"countryCode\": \"IN\",\n  \"websiteUrl\": null,\n  \"industries\": [\n    \"FOOD_BEVERAGE\"\n  ],\n  \"youtubeChannelUrl\": \"https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx\",\n  \"ready\": true,\n  \"items\": [\n    {\n      \"publicId\": \"aZ3k9QwP0x\",\n      \"youtubeVideoId\": \"dQw4w9WgXcQ\",\n      \"title\": \"Street-side filter coffee\",\n      \"thumbnailUrl\": \"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg\",\n      \"aspectW\": 405,\n      \"aspectH\": 720,\n      \"vertical\": true,\n      \"durationSeconds\": 20.0,\n      \"origin\": \"EXTERNAL\",\n      \"industry\": \"FOOD_BEVERAGE\",\n      \"format\": \"PRODUCT_AD\",\n      \"clientLabel\": \"Café chain\",\n      \"watchUrl\": \"https://www.youtube.com/shorts/dQw4w9WgXcQ\",\n      \"creator\": {\n        \"handle\": \"riya-motion\",\n        \"displayName\": \"Riya Motion\",\n        \"avatarUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n        \"profileUrl\": \"https://dalaillama.in/c/riya-motion\"\n      }\n    }\n  ]\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items;",
+                  "if (items.length) pm.collectionVariables.set('showcasePublicId', items[0].publicId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Showcase feed (all)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase?page=0",
+            "description": "Newest first, 24 per page; hasMore says whether to fetch page+1. Ranking by score replaces this order in a later slice.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"items\": [\n    {\n      \"publicId\": \"aZ3k9QwP0x\",\n      \"youtubeVideoId\": \"dQw4w9WgXcQ\",\n      \"title\": \"Street-side filter coffee\",\n      \"thumbnailUrl\": \"https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg\",\n      \"aspectW\": 405,\n      \"aspectH\": 720,\n      \"vertical\": true,\n      \"durationSeconds\": 20.0,\n      \"origin\": \"EXTERNAL\",\n      \"industry\": \"FOOD_BEVERAGE\",\n      \"format\": \"PRODUCT_AD\",\n      \"clientLabel\": \"Café chain\",\n      \"watchUrl\": \"https://www.youtube.com/shorts/dQw4w9WgXcQ\",\n      \"creator\": {\n        \"handle\": \"riya-motion\",\n        \"displayName\": \"Riya Motion\",\n        \"avatarUrl\": \"https://yt3.ggpht.com/riya.jpg\",\n        \"profileUrl\": \"https://dalaillama.in/c/riya-motion\"\n      }\n    }\n  ],\n  \"page\": 0,\n  \"hasMore\": false\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Showcase feed (food & beverage, product ads)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase?industry=FOOD_BEVERAGE&format=PRODUCT_AD&page=0",
+            "description": "industry: FASHION, BEAUTY, FOOD_BEVERAGE, TECH, FINANCE, REAL_ESTATE, EDUCATION, HEALTH, TRAVEL, AUTOMOTIVE, ECOMMERCE, ENTERTAINMENT, OTHER. format: PRODUCT_AD, UGC, EXPLAINER, BRAND_FILM, SOCIAL_SHORT. An unknown value is 400.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record a play (after 3 s)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/plays",
+            "description": "Counted once per visitor per item per day. X-Visitor-Id is a random UUID the browser keeps; missing or not a UUID is 400. An unknown public id is 400.",
+            "header": [
+              {
+                "key": "X-Visitor-Id",
+                "value": "{{visitorId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"completed\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record a full play (video ended)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/plays",
+            "description": "Same call with completed=true when the player fires ENDED. Counts as a full play once per visitor per day.",
+            "header": [
+              {
+                "key": "X-Visitor-Id",
+                "value": "{{visitorId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"completed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Landing grid",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase/landing",
+            "description": "Up to 12 cards: pinned, active spotlights, 3 exploration slots, then by score from creators at or above the landing floor; at most 2 per creator and 4 per industry. Empty while fewer than 6 qualify: hide the section.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Showcase feed (Top)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase?tab=TOP&page=0",
+            "description": "By score, creators at or above the Top floor only.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Showcase feed (All, by score)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase?tab=ALL&page=0",
+            "description": "By score, everyone public.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report a video",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/reports",
+            "description": "reason: RIGHTS, OFFENSIVE, MISLEADING, OTHER. One per visitor per video; 3 distinct reports hide it until ops reviews it.",
+            "header": [
+              {
+                "key": "X-Visitor-Id",
+                "value": "{{visitorId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"RIGHTS\",\n  \"note\": \"This is our ad and we didn't agree to it being shown\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect([202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Self-hosted source (SELF fallback only)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/source",
+            "description": "Only when VIDEO_HOST_PLATFORM_FILMS=SELF and the card's host is SELF: a short-lived MP4 link. 404 otherwise.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Brands (public, brand session)",
+      "description": "Brands sign in with an emailed one-time link (no password, no Keycloak). The session is a signed token sent as X-Brand-Session; it lasts brands.session-days (30). Likes need only X-Visitor-Id. Follow, request and brand home need a session: without one they answer 401 BRAND_SIGN_IN_REQUIRED.",
+      "item": [
+        {
+          "name": "Request a sign-in link (sign up or sign in)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/brands/sign-in",
+            "description": "Always 202, known email or not, and also when the hourly link limit (5) is reached, so the form reveals nothing. The link (valid 30 min, once) goes to the email: copy its token into {{signInToken}}. pendingAction is handed back after sign-in: follow:<handle> or request:<handle>.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"asha@hearthfoods.example\",\n  \"contactName\": \"Asha\",\n  \"companyName\": \"Hearth Foods\",\n  \"websiteUrl\": \"https://hearthfoods.example\",\n  \"industry\": \"FOOD_BEVERAGE\",\n  \"countryCode\": \"IN\",\n  \"autoPicksOptIn\": false,\n  \"pendingAction\": \"follow:{{handle}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect([202]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete sign-in (token from the email)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/brands/sign-in/{{signInToken}}",
+            "description": "Single use. 409 when expired or already used. Stores the session in {{brandSession}}.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"sessionToken\": \"v1.6f1c...\",\n  \"expiresAt\": \"2026-11-09T10:00:00Z\",\n  \"pendingAction\": \"follow:riya-motion\",\n  \"brand\": {\n    \"email\": \"asha@hearthfoods.example\",\n    \"contactName\": \"Asha\",\n    \"companyName\": \"Hearth Foods\",\n    \"websiteUrl\": \"https://hearthfoods.example\",\n    \"industry\": \"FOOD_BEVERAGE\",\n    \"countryCode\": \"IN\",\n    \"autoPicksOptIn\": false,\n    \"autoCadenceDays\": 7,\n    \"following\": []\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) pm.collectionVariables.set('brandSession', pm.response.json().sessionToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Brand home: me",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/brands/me",
+            "description": "Details and the creators they follow.",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Brand home: without a session is 401",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/brands/me",
+            "description": "No X-Brand-Session header.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', () => pm.expect([401]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Brand home: email preferences",
+          "request": {
+            "method": "PATCH",
+            "url": "{{apiBaseUrl}}/public/brands/me/preferences",
+            "description": "Automatic picks of new films in their industry, at most every autoCadenceDays (7 to 60).",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"autoPicksOptIn\": true,\n  \"autoCadenceDays\": 14,\n  \"industry\": \"FOOD_BEVERAGE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Brand home: my requests",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/brands/me/inquiries",
+            "description": "Status NEW / VIEWED / CONVERTED / DECLINED; briefUrl once the creator made a brief.",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Follow a creator",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/public/creators/{{handle}}/follow",
+            "description": "Idempotent.",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"following\": true,\n  \"followerCount\": 1\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unfollow a creator",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/public/creators/{{handle}}/follow",
+            "description": "Idempotent.",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Like a film (anonymous)",
+          "request": {
+            "method": "PUT",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/like",
+            "description": "One like per visitor id; repeats are no-ops. Our own count, never YouTube's.",
+            "header": [
+              {
+                "key": "X-Visitor-Id",
+                "value": "{{visitorId}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"liked\": true,\n  \"likeCount\": 4\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unlike a film",
+          "request": {
+            "method": "DELETE",
+            "url": "{{apiBaseUrl}}/public/showcase/{{showcasePublicId}}/like",
+            "description": "Idempotent.",
+            "header": [
+              {
+                "key": "X-Visitor-Id",
+                "value": "{{visitorId}}"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Request a video",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/creators/{{handle}}/inquiries",
+            "description": "Emails the creator. publicId (the film they watched) bumps that film's inquiry count; attributionToken is the ?ref= from a tracked mail link. At most 10 requests per brand per day (409). Stores {{inquiryId}}.",
+            "header": [
+              {
+                "key": "X-Brand-Session",
+                "value": "{{brandSession}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"publicId\": \"{{showcasePublicId}}\",\n  \"attributionToken\": null,\n  \"budgetBand\": \"FROM_50K_TO_2L\",\n  \"timeline\": \"THIS_MONTH\",\n  \"message\": \"A 30-second launch film for our new ghee, for Instagram.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) pm.collectionVariables.set('inquiryId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Requests (creator, JWT)",
+      "description": "The creator's inbox of brand requests. Converting creates a brief in creative-planning (30 s, English, brand = the brand's company) and emails the brand the brief link; from there it's the normal brief, payment and review flow. Converted requests are the L4 ladder signal.",
+      "item": [
+        {
+          "name": "List requests",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/inquiries",
+            "description": "Newest first.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark as seen",
+          "request": {
+            "method": "PATCH",
+            "url": "{{apiBaseUrl}}/tenants/me/inquiries/{{inquiryId}}",
+            "description": "Only VIEWED or DECLINED here; 409 once converted.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"VIEWED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Make a brief",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/inquiries/{{inquiryId}}/convert",
+            "description": "503 if creative-planning is down (nothing changes); 409 if already converted or declined.",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409, 503', () => pm.expect([200, 409, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decline",
+          "request": {
+            "method": "PATCH",
+            "url": "{{apiBaseUrl}}/tenants/me/inquiries/{{inquiryId}}",
+            "description": "409 once converted.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DECLINED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204, 409', () => pm.expect([204, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Outreach (creator, JWT)",
+      "description": "Template mail to brands (rules 9, 15, 16). Only PLATFORM films that are verified funded and have the client's marketing consent can be sent. Each recipient gets at most one email a day: sent now from the creator's address if they've had nothing today, else queued for the 18:30 IST digest. Same creator to same brand: 14-day cooldown. 100 free mails per ISO week, then packs bought from the wallet.",
+      "item": [
+        {
+          "name": "Overview: allowance, packs, mailable films",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach",
+            "description": "Everything the Marketing tab needs.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"allowance\": {\n    \"freePerWeek\": 100,\n    \"freeUsedThisWeek\": 3,\n    \"packMailsLeft\": 0\n  },\n  \"packs\": [\n    {\n      \"code\": \"OUTREACH_MAIL_PACK\",\n      \"quantity\": 500,\n      \"price\": 499,\n      \"currency\": \"INR\"\n    }\n  ],\n  \"mailableFilms\": [\n    {\n      \"publicId\": \"aZ3k9QwP0x\",\n      \"title\": \"Masala chai launch\",\n      \"thumbnailUrl\": \"https://i.ytimg.com/vi/x/hqdefault.jpg\",\n      \"industry\": \"FOOD_BEVERAGE\",\n      \"clientLabel\": \"Tea brand\"\n    }\n  ],\n  \"maxRecipientsPerSend\": 25,\n  \"cooldownDays\": 14\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview a mail",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/preview",
+            "description": "Nothing is stored; links point straight at the profile. 409 if the film isn't mailable.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"template\": \"SHOWCASE_WORK\",\n  \"publicId\": \"{{showcasePublicId}}\",\n  \"note\": \"Loved your last campaign.\",\n  \"recipientName\": \"Asha\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/send",
+            "description": "Per-recipient outcome: SENT, QUEUED (digest), COOLDOWN, SUPPRESSED, OVER_ALLOWANCE, DUPLICATE. Templates: SHOWCASE_WORK, SIMILAR_BRAND_WORK (need publicId), CREATOR_PORTFOLIO (best 3). Up to 25 recipients.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"template\": \"SHOWCASE_WORK\",\n  \"publicId\": \"{{showcasePublicId}}\",\n  \"note\": \"Loved your last campaign.\",\n  \"recipients\": [\n    {\n      \"email\": \"asha@hearthfoods.example\",\n      \"name\": \"Asha\",\n      \"company\": \"Hearth Foods\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"results\": [\n    {\n      \"email\": \"asha@hearthfoods.example\",\n      \"outcome\": \"SENT\"\n    }\n  ],\n  \"allowance\": {\n    \"freePerWeek\": 100,\n    \"freeUsedThisWeek\": 4,\n    \"packMailsLeft\": 0\n  }\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 409', () => pm.expect([200, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reach (last 30 days)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/reach",
+            "description": "Our own counts.",
+            "header": []
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"mailsDelivered30d\": 12,\n  \"clicks30d\": 5,\n  \"requestsFromMail30d\": 1,\n  \"followers\": 3\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "History (last 30 days)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/history",
+            "description": "Raw addresses are purged 30 days after delivery (email null).",
+            "header": []
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Buy a mail pack",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/tenants/me/outreach/packs",
+            "description": "Billing debits the wallet and owns the price. Repeat with the same idempotencyKey after a timeout: no second charge, no second pack. 402 when the wallet is too low.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotencyKey\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 402', () => pm.expect([200, 402]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Creator Showcase · Outreach links (public)",
+      "description": "Links inside outreach mail, under the /api/v1/public/outreach gateway prefix. Turn off 'Automatically follow redirects' to see the 302s.",
+      "item": [
+        {
+          "name": "Tracked film link",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/outreach/r/{{outreachLinkToken}}",
+            "description": "302 to the creator's page with ?industry=...&ref=<token>; unknown tokens go to /creators.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 302, 200', () => pm.expect([302, 200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsubscribe link (footer)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBaseUrl}}/public/outreach/unsubscribe/{{unsubscribeToken}}",
+            "description": "302 to the platform-ui confirm page; opening it never unsubscribes by itself.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 302, 200', () => pm.expect([302, 200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsubscribe (confirm / RFC 8058 one-click)",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBaseUrl}}/public/outreach/unsubscribe/{{unsubscribeToken}}",
+            "description": "Always 204. Suppresses the address for every creator and drops anything queued for it.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ops · Showcase admin (mesh-internal)",
+      "description": "Reachable on ops.dalaillama.in (oauth2-proxy + dalai_admin) under /api/v1/internal/admin/tenants/**, or port-forward tenant-service first (kubectl -n apps port-forward svc/tenant-service 8091:8080) and check {{tenantServiceInternalUrl}}. Gives every subscribed creator (live tenant with an app) their email identity and public profile; idempotent, safe to re-run.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Backfill email identity + public profile",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/onboarding/backfill",
+            "description": "Skips tenants that never subscribed. incompleteTenantIds lists anyone where a step failed; re-run after fixing.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"onboardedCount\": 3,\n  \"skippedNotSubscribedCount\": 5,\n  \"incompleteTenantIds\": []\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-score now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/rescore",
+            "description": "Runs the ranking (normally nightly at 02:30) and returns the floors and maturity it chose. Run after changing showcase-ranking.* config.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"runAt\": \"2026-10-09T10:00:00Z\",\n  \"maturity\": 0.025,\n  \"landingFloor\": \"L1\",\n  \"topFloor\": \"L1\",\n  \"autoFloor\": \"L1\",\n  \"configVersion\": \"v1\",\n  \"creatorsRanked\": 3,\n  \"itemsScored\": 8\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hide or show a video (kill switch)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/items/{{showcasePublicId}}",
+            "description": "",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hidden\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hide or restore a profile",
+          "request": {
+            "method": "PATCH",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/profiles/{{handle}}",
+            "description": "status: ACTIVE, HIDDEN (ops) or SUSPENDED (normally set by billing).",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"HIDDEN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reported videos",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/reports",
+            "description": "",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Video host health",
+          "request": {
+            "method": "GET",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/health",
+            "description": "API key and official channel configured, current platform-films host, last nightly probe.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run the YouTube probe now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/showcase/health/probe",
+            "description": "",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: suppress an address",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/suppressions",
+            "description": "Bounce, complaint, or a request by phone.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nomore@brand.example\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 204', () => pm.expect([204]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: import brand directory (CSV)",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/brands/import?autoPicks=true",
+            "description": "email,name,company,industry,country,website. Needs email and a valid industry code; unsubscribed addresses are skipped; existing brands only get blanks filled.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/csv"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "email,name,company,industry,country,website\nasha@hearthfoods.example,Asha,Hearth Foods,FOOD_BEVERAGE,IN,https://hearthfoods.example"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"added\": 1,\n  \"updated\": 0,\n  \"skippedUnsubscribed\": 0,\n  \"rejectedLines\": []\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: run automatic picks now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/auto-picks/run",
+            "description": "Normally 12:30 UTC. Queues picks and follower notices; the digest delivers them.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"picksQueued\": 4,\n  \"followerNoticesQueued\": 2\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outreach: run the digest now",
+          "request": {
+            "method": "POST",
+            "url": "{{tenantServiceInternalUrl}}/api/v1/internal/admin/tenants/outreach/digest/run",
+            "description": "Normally 13:00 UTC (18:30 IST). Recipients already emailed today wait for tomorrow.",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"digestsSent\": 3,\n  \"expired\": 0\n}"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Internal · Showcase service calls (mesh-internal)",
+      "description": "Calls tenant-service makes to other services. Not on the public gateway; reach them with kubectl port-forward.",
+      "item": [
+        {
+          "name": "billing: add-on price list",
+          "request": {
+            "method": "GET",
+            "url": "{{billingServiceInternalUrl}}/api/v1/internal/tenants/{{tenantId}}/addons",
+            "description": "Billing owns prices (billing.addons.outreach-mail-pack.*).",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect([200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "billing: buy an add-on",
+          "request": {
+            "method": "POST",
+            "url": "{{billingServiceInternalUrl}}/api/v1/internal/tenants/{{tenantId}}/wallet/addon-purchase",
+            "description": "Debits the wallet (transaction type ADDON). Same idempotencyKey = no second charge. 402 if the balance is short.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"OUTREACH_MAIL_PACK\",\n  \"idempotencyKey\": \"{{tenantId}}:{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200, 402', () => pm.expect([200, 402]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "creative-planning: create a brief from a brand request",
+          "request": {
+            "method": "POST",
+            "url": "{{creativePlanningInternalUrl}}/api/v1/internal/tenants/{{tenantId}}/project-requirements/standalone",
+            "description": "Returns the requirement id and the share token of the brief page sent to the brand.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"briefText\": \"Request from Hearth Foods via Dalai Llama.\\n\\nA 30-second launch film.\",\n  \"durationSeconds\": 30,\n  \"languages\": [\n    \"English\"\n  ],\n  \"tenantType\": \"AI_VIDEO_CREATOR\",\n  \"brandContext\": {\n    \"brandName\": \"Hearth Foods\",\n    \"industry\": \"food beverage\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201', () => pm.expect([201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

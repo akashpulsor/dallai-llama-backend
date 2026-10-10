@@ -1,0 +1,1258 @@
+<title>Creator Showcase Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: single reading column (max 860px) with a sticky contents rail on wide screens; sections run HLD -> LLD -> delivery. */
+  :root {
+    --bg: #f3f5f7;
+    --panel: #ffffff;
+    --ink: #13202b;
+    --ink-soft: #33424f;
+    --muted: #64727f;
+    --line: #dbe1e7;
+    --line-soft: #eaeef2;
+    --accent: #0a6c86;
+    --accent-soft: #e0f0f4;
+    --ok: #1d6b45; --ok-soft: #e1f1e8;
+    --warn: #8a5b0c; --warn-soft: #f7eed8;
+    --risk: #9b2c2c; --risk-soft: #f8e3e1;
+    --code-bg: #eef1f4;
+    --f-display: 'Sora', 'Segoe UI', system-ui, sans-serif;
+    --f-body: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+    --f-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1419; --panel: #141e25; --ink: #e6eef3; --ink-soft: #c2cfd8; --muted: #8597a4;
+      --line: #25343f; --line-soft: #1b2830; --accent: #5cc3dd; --accent-soft: #11313b;
+      --ok: #73c99c; --ok-soft: #133022; --warn: #e0b469; --warn-soft: #33270e;
+      --risk: #ee8b85; --risk-soft: #351816; --code-bg: #18242c; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1419; --panel: #141e25; --ink: #e6eef3; --ink-soft: #c2cfd8; --muted: #8597a4;
+    --line: #25343f; --line-soft: #1b2830; --accent: #5cc3dd; --accent-soft: #11313b;
+    --ok: #73c99c; --ok-soft: #133022; --warn: #e0b469; --warn-soft: #33270e;
+    --risk: #ee8b85; --risk-soft: #351816; --code-bg: #18242c; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.55; }
+  .shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 96px; }
+  @media (min-width: 1100px) { .shell { grid-template-columns: 220px minmax(0, 1fr); } }
+  nav.toc { display: none; }
+  @media (min-width: 1100px) {
+    nav.toc { display: block; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 13.5px; }
+    nav.toc a { display: block; color: var(--muted); text-decoration: none; padding: 4px 0 4px 10px; border-left: 2px solid var(--line); }
+    nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); outline: none; }
+    nav.toc .grp { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin: 14px 0 4px; }
+  }
+  main { min-width: 0; max-width: 860px; }
+  header.doc { padding-bottom: 24px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .eyebrow { font-family: var(--f-mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-family: var(--f-display); font-size: clamp(28px, 4vw, 40px); line-height: 1.12; letter-spacing: -0.02em; margin: 10px 0 12px; text-wrap: balance; }
+  h2 { font-family: var(--f-display); font-size: 23px; letter-spacing: -0.01em; margin: 56px 0 6px; text-wrap: balance; scroll-margin-top: 20px; }
+  h2 .tag { font-family: var(--f-mono); font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 4px; vertical-align: 4px; margin-right: 10px; }
+  h3 { font-family: var(--f-display); font-size: 16.5px; margin: 30px 0 6px; }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  .lead { color: var(--muted); max-width: 66ch; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; max-width: 72ch; }
+  li { margin-bottom: 5px; }
+  code { font-family: var(--f-mono); font-size: 0.8em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  pre { font-family: var(--f-mono); font-size: 12.5px; line-height: 1.55; background: var(--code-bg); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 10px 0 22px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre.mermaid { background: var(--panel); color: var(--ink); font-size: 12px; text-align: center; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+  .meta b { color: var(--ink-soft); font-weight: 600; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; margin: 14px 0 22px; font-size: 15px; }
+  .note > :last-child { margin-bottom: 0; }
+  .note.ok { border-left: 4px solid var(--ok); }
+  .note.warn { border-left: 4px solid var(--warn); }
+  .note.risk { border-left: 4px solid var(--risk); }
+  .note.info { border-left: 4px solid var(--accent); }
+  .note b { color: var(--ink); }
+  .tw { overflow-x: auto; margin: 10px 0 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+  th { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--line-soft); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  td.path code { white-space: normal; }
+  .op { font-family: var(--f-mono); font-size: 11px; font-weight: 600; }
+  .op.new { color: var(--ok); } .op.edit { color: var(--warn); } .op.reuse { color: var(--accent); } .op.ignore { color: var(--muted); }
+  .pill { display: inline-block; font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+  .pill.a { background: var(--ok-soft); color: var(--ok); }
+  .pill.b { background: var(--accent-soft); color: var(--accent); }
+  .pill.c { background: var(--warn-soft); color: var(--warn); }
+  .pill.d { background: var(--risk-soft); color: var(--risk); }
+  .loop { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 16px 0 22px; font-size: 13.5px; }
+  .loop span.step { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  .loop span.step b { display: block; font-family: var(--f-mono); font-size: 10px; letter-spacing: .08em; color: var(--accent); text-transform: uppercase; }
+  .loop span.arr { color: var(--muted); font-family: var(--f-mono); }
+  .phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0 24px; }
+  .phase { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; font-size: 14.5px; }
+  .phase h4 { font-family: var(--f-display); font-size: 15px; margin: 6px 0 6px; }
+  .phase ul { padding-left: 18px; margin-bottom: 8px; }
+  .phase .est { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .q { border-top: 1px solid var(--line); padding: 14px 0; }
+  .q:last-child { border-bottom: 1px solid var(--line); }
+  .q .qh { font-weight: 700; margin-bottom: 4px; }
+  .q .rec { color: var(--ink-soft); }
+  .q .rec b { color: var(--ok); }
+  .q .alt { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+  @media (max-width: 520px) { body { font-size: 15px; } table { font-size: 13px; } th, td { padding: 8px 9px; } }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<style>
+  .v3 { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--warn); background: var(--warn-soft); padding: 1px 6px; border-radius: 3px; vertical-align: 2px; margin-left: 6px; }
+  .formula { font-family: var(--f-mono); font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 10px 0 20px; color: var(--ink); line-height: 1.8; }
+  .v4 { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: .06em; color: var(--ok); background: var(--ok-soft); padding: 1px 6px; border-radius: 3px; vertical-align: 2px; margin-left: 6px; }
+  .ladder { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 12px 0 22px; }
+  .rung { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 13.5px; min-width: 0; }
+  .rung b { display: block; font-family: var(--f-mono); font-size: 11px; color: var(--accent); letter-spacing: .06em; }
+  .rung .u { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+</style>
+<div class="shell">
+<nav class="toc" aria-label="Contents">
+  <div class="grp">Product</div>
+  <a href="#summary">Summary</a>
+  <a href="#framing">Problem and personas</a>
+  <a href="#decisions">Decisions</a>
+  <a href="#emailcheck">Email identity check</a>
+  <a href="#scope">Scope and phases</a>
+  <a href="#exists">What exists today</a>
+  <div class="grp">HLD</div>
+  <a href="#hld">Architecture</a>
+  <a href="#youtube">YouTube as the video layer</a>
+  <a href="#connect">Connecting a channel</a>
+  <a href="#ranking">Visibility and ranking</a>
+  <a href="#engine">One mail a day per brand</a>
+  <a href="#flows">Key flows</a>
+  <div class="grp">Design</div>
+  <a href="#design">Screens and gates</a>
+  <div class="grp">LLD</div>
+  <a href="#data">Data model</a>
+  <a href="#config">Configuration</a>
+  <a href="#api">API surface</a>
+  <a href="#classes">Class diagrams</a>
+  <a href="#rules">Rules and edge cases</a>
+  <div class="grp">Delivery</div>
+  <a href="#affected">Affected places</a>
+  <a href="#success">Success criteria</a>
+  <a href="#risks">Risks</a>
+  <a href="#oldplan">Fit with old plan</a>
+</nav>
+
+<main>
+<header class="doc">
+  <div class="eyebrow">Design doc · Creator Showcase &amp; Outreach · v4</div>
+  <h1>Creator profiles that brands can watch, and mailers that lead there</h1>
+  <p class="lead">Creators link their YouTube channel. YouTube hosts and streams every video, and we embed it at its real aspect ratio. Our pages add the brand funnel on top: ranking, likes, requests and mail. Visibility rewards funded films made on the platform, and it adjusts on its own as the platform grows.</p>
+  <div class="meta">
+    <span><b>Date:</b> 2026-10-08</span>
+    <span><b>Revision:</b> v4: every risk closed with a design, no dependency on Google OAuth review</span>
+    <span><b>Owner service:</b> tenant-service</span>
+    <span><b>Touches:</b> pre-production, creative-planning, platform-ui, creator-ui, infra-platform, Google Cloud</span>
+  </div>
+</header>
+
+<div class="note ok"><b>What changed in v4: the risks are closed.</b>
+<ul style="margin:6px 0 0">
+  <li><b>No creator OAuth on the critical path.</b> Platform films can go to an <b>official Dalaillama YouTube channel</b>, uploaded by us through an OAuth app on our own Google Workspace. An internal app needs no Google review, shows no "unverified" screen and has no 7-day token expiry. Creators can also publish to their own channel through the kit. Creator OAuth (Phase Y) is now optional and off the plan.</li>
+  <li><b>YouTube is replaceable.</b> A <code>VideoHost</code> port with two adapters: YouTube (default) and SELF (MinIO, short-lived signed URLs). We own every platform film's master, so platform films can move off YouTube with one config change.</li>
+  <li><b>Funded is now verified:</b> the client paid through the review page's pay gate, plus production evidence from the app (generated takes, review sessions, client comments).</li>
+  <li><b>Mail:</b> 100 free mails per creator per week; past that, creators buy mail packs from their wallet, and that revenue pays for more sending capacity. Recipient data is hashed and raw emails are purged after 30 days. Templates and platform mails only carry fully funded films whose client accepted marketing use at payment. Brands can report a video.</li>
+</ul>
+Sections marked <span class="v4">V4</span> changed in this revision; <span class="v3">V3</span> marks the YouTube redesign.</div>
+
+<div class="note info"><b>v3 recap (changes from v2).</b>
+<ul style="margin:6px 0 0">
+  <li><b>Video storage:</b> R2 and every copy of video bytes are gone. YouTube hosts and streams all video, and we store only video ids.</li>
+  <li><b>Onboarding:</b> creators link a channel and choose 2 videos (configurable) to start their showcase.</li>
+  <li><b>Origin:</b> every video is tagged PLATFORM or EXTERNAL. As funded platform films build up, external work loses visibility gradually.</li>
+  <li><b>Weak profile and bootstrap:</b> both are now defined by a reinforcement ladder (from Skinner's pigeon experiments) and a visibility floor that rises with the platform's own inventory.</li>
+  <li><b>Publishing platform films:</b> creators publish to their own YouTube channel with our marker. A manual kit works from day one; one-click upload comes after Google approves our OAuth app.</li>
+</ul>
+Sections marked <span class="v3">V3</span> are new or rewritten.</div>
+
+<h2 id="summary"><span class="tag">§1</span>Summary</h2>
+<ul>
+  <li><b>Creator profile</b> <code>dalaillama.in/c/&lt;handle&gt;</code> is created at subscription. A creator without a channel is asked to create one; it is free and takes a minute. The creator links their YouTube channel; we import their uploads, and they pick at least 2 to showcase. Name and avatar are filled in from the channel.</li>
+  <li><b>Platform films</b> go to the creator's own YouTube channel, through a prefilled upload kit now and one-click upload later. Our marker and the stored video id let us recognise them as <code>PLATFORM</code>. Everything else is <code>EXTERNAL</code>.</li>
+  <li><b>Our pages embed YouTube</b> at the video's true aspect ratio (vertical Shorts stay vertical), with "Watch on YouTube" always available. Video bandwidth and storage cost us nothing.</li>
+  <li><b>Visibility</b> follows a creator ladder and a self-adjusting floor. At launch everyone is shown, because nobody has funded platform films yet. As funded platform films build up, external-only creators sink slowly but never vanish.</li>
+  <li><b>Brands</b> watch and like without signing in, and sign up (by email link) to follow a creator or request a video. All brand mail goes through the one-a-day delivery engine.</li>
+</ul>
+<div class="loop" aria-label="The core loop">
+  <span class="step"><b>Subscribe</b>Profile + email</span><span class="arr">→</span>
+  <span class="step"><b>Link</b>YouTube channel</span><span class="arr">→</span>
+  <span class="step"><b>Pick</b>2 showcase videos</span><span class="arr">→</span>
+  <span class="step"><b>Make</b>Funded platform film</span><span class="arr">→</span>
+  <span class="step"><b>Publish</b>To their YouTube</span><span class="arr">→</span>
+  <span class="step"><b>Rise</b>Visibility reward</span><span class="arr">→</span>
+  <span class="step"><b>Mail</b>≤1/brand/day</span><span class="arr">→</span>
+  <span class="step"><b>Convert</b>Request → brief</span>
+</div>
+
+<h2 id="framing"><span class="tag">§2</span>Problem, personas, constraints</h2>
+<p>Creators make good brand films and nobody can find them. Brands will not browse an unknown platform. Email is our cheapest reach, and it needs a landing place that proves the work within ten seconds. Every creator already has, or can make for free, a YouTube channel, which is the cheapest video CDN available.</p>
+<div class="tw"><table>
+  <thead><tr><th>Persona</th><th>Needs</th><th>Identity</th></tr></thead>
+  <tbody>
+    <tr><td><b>Creator</b></td><td>A profile without re-uploading their work, a fast way to email brands, and a visible path to more reach</td><td>Keycloak login (unchanged) + linked YouTube channel</td></tr>
+    <tr><td><b>Brand visitor</b></td><td>To watch work for their industry with zero friction</td><td>None. Likes use an id kept in the browser</td></tr>
+    <tr><td><b>Signed-up brand</b></td><td>To follow creators, request videos, and optionally get picks</td><td>Passwordless email link, then a 30-day session</td></tr>
+    <tr><td><b>Ops</b></td><td>No review queue; a kill switch; brand-list import; ranking tuned in config</td><td>Internal endpoints</td></tr>
+  </tbody>
+</table></div>
+<h3>Constraints</h3>
+<ul>
+  <li><b>No new microservice and minimal cost.</b> YouTube carries the video. Our cost is API quota, which is free at our scale.</li>
+  <li><b>YouTube's rules bind us.</b> The developer policies govern the player, attribution, data storage (30-day refresh) and derived metrics. See §8.</li>
+  <li><b>Google OAuth verification takes time.</b> YouTube scopes are sensitive, so day one must not depend on OAuth (§9).</li>
+  <li><b>One sender reputation, no ffmpeg on request threads, manual ops:</b> unchanged from v2.</li>
+</ul>
+
+<h2 id="decisions"><span class="tag">§3</span>Decisions <span class="v3">V3</span></h2>
+<div class="tw"><table>
+  <thead><tr><th>#</th><th>Topic</th><th>Decision</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Joining</td><td>Profile + handle + email at subscription, no admin step (fix in §4). Then: link a YouTube channel and pick at least <code>min-initial-picks</code> (2) videos.</td></tr>
+    <tr><td>2</td><td>Video delivery</td><td>YouTube embeds only. We store video ids and refresh titles and thumbnails within 30 days. No video bytes on our infrastructure.</td></tr>
+    <tr><td>3</td><td>Aspect ratio</td><td>Platform films: from our own render's width and height. External videos: from <code>videos.list part=player&amp;maxHeight=…</code> (<code>embedWidth/embedHeight</code>). Stored per item. The player box uses that ratio, and vertical videos open as vertical.</td></tr>
+    <tr><td>4</td><td>Origin</td><td><code>PLATFORM</code> if we uploaded it, or if a link the creator pasted matches one of their platform films (§9.4). Otherwise <code>EXTERNAL</code>. Creators cannot tag a video PLATFORM themselves.</td></tr>
+    <tr><td>5</td><td>Bad or non-AI videos</td><td>Hard gates (public, embeddable, not age-restricted, not made-for-kids, duration bounds), creator curation (only picked videos show), and our own engagement signals. We do not try to detect AI; origin is what we rank on.</td></tr>
+    <tr><td>6</td><td>Weak profile, bootstrap, "best"</td><td>The reinforcement ladder plus a visibility floor that rises with inventory (§10). Everything is configurable.</td></tr>
+    <tr><td>7</td><td>Publishing to YouTube <span class="v4">V4</span></td><td>Two paths from day one, neither needing Google review. <b>(a) Official channel:</b> "Publish on Dalaillama's channel" uploads the film to our own channel through an internal Workspace OAuth app, credits the creator in the description and links to their profile. <b>(b) Creator's channel:</b> the upload kit plus the pasted link. Creator OAuth (Phase Y) is optional, built only if creators ask for it.</td></tr>
+    <tr><td>8</td><td>Creator login</td><td>Keycloak stays the login. YouTube is a <i>linked account</i>: proven by a code in the channel description now (no Google review needed), and by Google OAuth later.</td></tr>
+    <tr><td>9</td><td>Likes</td><td>Our own likes, stored by us, anonymous. YouTube's like and view counts are not shown and not used for ranking (policy, §8).</td></tr>
+    <tr><td>10</td><td>Brand sign-up, delivery engine, automatic picks</td><td>Unchanged from v2.</td></tr>
+    <tr><td>11</td><td>Video host <span class="v4">V4</span></td><td>A <code>VideoHost</code> port. YouTube is the default; SELF (MinIO, signed URLs issued per request) is the fallback for platform films. Each item stores <code>host</code> + <code>host_ref</code>. See §21.2.</td></tr>
+    <tr><td>12</td><td>What "funded" means <span class="v4">V4</span></td><td>The project is client-locked (the review page's pay gate captured the client's payment, so no balance is left) <b>and</b> it passes a production-evidence gate from the app (§21.4).</td></tr>
+    <tr><td>13</td><td>Mail volume and data <span class="v4">V4</span></td><td>100 free mails per creator per ISO week. Paid mail packs come from the creator's wallet. Recipient emails are stored hashed for rules, and raw values are purged after 30 days (§21.5).</td></tr>
+    <tr><td>14</td><td>What may appear in mail <span class="v4">V4</span></td><td>Only <b>fully funded PLATFORM films whose client accepted marketing use at payment</b> go into templates, digests and automatic picks. Films still in production never appear. EXTERNAL picks show on the profile only (§21.6).</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="emailcheck"><span class="tag">§4</span>Do subscribed creators get their email?</h2>
+<p><b>In code: yes, with one gap.</b> <code>handleSubscriptionActivated</code> runs <code>provisionApp()</code> first and then <code>creatorEmailIdentityService.provisionForCreator</code> in a try/catch. If anything outside the orchestrator's own try throws (<code>findById</code>, the state check, <code>distributedLock.acquire</code>), the identity step is skipped. When Kafka redelivers, the existing <code>TenantApp</code> triggers the early <code>return</code>, so the email is <b>never</b> created.</p>
+<p><b>Fix (Phase A):</b> add <code>CreatorOnboardingService.onSubscriptionActivated</code>, which creates the email identity and the profile, both idempotent. Call it <b>first</b>, before the idempotency return, in its own try/catch. Gate the backfill on an active subscription. I could not read the live database (the box read was blocked), so run this on <code>tenant_db</code>:</p>
+<pre><code>SELECT t.id, t.name, a.deployment_status
+FROM tenants t
+JOIN tenant_apps a ON a.tenant_id = t.id
+LEFT JOIN creator_email_identity e ON e.tenant_id = t.id
+WHERE e.id IS NULL;     -- any row = a subscribed creator with no email</code></pre>
+
+<h2 id="scope"><span class="tag">§5</span>Scope and phases <span class="v3">V3</span></h2>
+<div class="phases">
+  <div class="phase"><span class="pill a">Phase A</span><h4>Channel, showcase, ranking</h4>
+    <ul><li>Onboarding fix, automatic profile</li><li>Link channel (description code), import, refresh job</li><li>Pick 2+ videos, aspect-correct embeds</li><li>Official-channel upload worker + creator upload kit</li><li><code>VideoHost</code> port: YouTube + SELF adapters</li><li>Verified-funded gate, marketing consent at lock payment</li><li>Ladder, floor, score; landing + Discover; Report button</li></ul>
+    <div class="est">~9 days</div></div>
+  <div class="phase"><span class="pill b">Phase B</span><h4>Brand sign-up, like, follow, request</h4>
+    <ul><li>Passwordless sign-up + session</li><li>Likes; play and full-play events from the IFrame API</li><li>Follow, Request → brief</li></ul>
+    <div class="est">~4 days</div></div>
+  <div class="phase"><span class="pill c">Phase C</span><h4>Delivery engine + manual mail</h4>
+    <ul><li>Intents, guard, 1/day/brand</li><li>Fast path + daily digest</li><li>Templates, unsubscribe, tracking</li><li>Weekly free allowance + paid mail packs</li><li>Hashing + 30-day purge</li></ul>
+    <div class="est">~6 days</div></div>
+  <div class="phase"><span class="pill d">Phase D</span><h4>Automatic picks</h4>
+    <ul><li>Brand directory, ops import</li><li>Picker uses ladder + score</li><li>Follower "new work"</li></ul>
+    <div class="est">~3 days</div></div>
+  <div class="phase"><span class="pill b">Phase Y</span><h4>Creator OAuth (optional)</h4>
+    <ul><li>Only if creators ask for one-click upload to their own channel</li><li>Applied for once the app has a track record (§21.1)</li></ul>
+    <div class="est">not scheduled</div></div>
+</div>
+<div class="note info"><b>Out of scope:</b> comments, DMs, an admin review UI, a template editor, provider lead search, a reply inbox, AI-content detection, and showing YouTube statistics.</div>
+
+<h2 id="exists"><span class="tag">§6</span>What exists today</h2>
+<div class="tw"><table>
+  <thead><tr><th>Piece</th><th>Where</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td>Subscription → email identity</td><td class="path"><code>TenantAppServiceImpl.handleSubscriptionActivated</code></td><td><span class="op edit">FIX + EXTEND</span> (§4)</td></tr>
+    <tr><td>Creator email identity + SMTP</td><td class="path"><code>tenant-service/.../leadmanagement/</code></td><td><span class="op reuse">REUSE</span> sender</td></tr>
+    <tr><td>Marketing page</td><td class="path"><code>creator-ui/src/pages/MarketingPage.jsx</code></td><td><span class="op edit">REBUILD</span> on templates</td></tr>
+    <tr><td>Film bar</td><td class="path"><code>creator-ui/src/components/creator/FilmAssemblyBar.jsx</code></td><td><span class="op edit">EXTEND</span> with "Publish to YouTube"</td></tr>
+    <tr><td>Final film for the creator</td><td class="path"><code>pre-production PublicProjectService.finalVideo</code> / <code>PostProductionFilmClient</code></td><td><span class="op reuse">REUSE</span> the presigned download for the kit; duration, width and height for matching and aspect ratio</td></tr>
+    <tr><td><code>Project.client_locked_at</code></td><td class="path">pre-production</td><td><span class="op reuse">SIGNAL</span>: locking requires payment, so a locked project is funded</td></tr>
+    <tr><td>Public chain, rate limit, share-token pattern</td><td class="path">tenant <code>SecurityConfig</code>, chart values</td><td><span class="op reuse">REUSE</span></td></tr>
+    <tr><td>Standalone brief</td><td class="path">creative-planning <code>ProjectRequirementController</code></td><td><span class="op edit">EXTEND</span> with an internal twin</td></tr>
+    <tr><td>Landing page</td><td class="path"><code>platform-ui/src/pages/LandingPage.jsx</code></td><td><span class="op edit">EXTEND</span></td></tr>
+    <tr><td><code>CreatorProfilePage.jsx</code></td><td class="path">creator-ui</td><td><span class="op edit">REPLACE</span> the stub</td></tr>
+    <tr><td>Google Cloud project for YouTube</td><td class="path">none</td><td><span class="op new">NEW</span>: API key now, OAuth client and verification later</td></tr>
+    <tr><td>R2 / MinIO public copy (v2)</td><td class="path">n/a</td><td><span class="op ignore">DROPPED</span></td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="hld"><span class="tag">§7</span>HLD: architecture <span class="v3">V3</span></h2>
+<pre class="mermaid">
+flowchart LR
+  subgraph Browser
+    PUI[platform-ui - landing, creators, profile]
+    CUI[creator-ui - Profile, Channel, film bar, Requests, Marketing]
+    YTP[YouTube IFrame player]
+  end
+  GW[Istio gateway]
+  subgraph TS[tenant-service]
+    ONB[CreatorOnboardingService]
+    YT[youtube - link, verify, import, refresh, upload]
+    SC[showcase - items, ladder, floor, score, likes]
+    BR[leadmanagement.brand]
+    INQ[leadmanagement.inquiry]
+    OUT[leadmanagement.outreach]
+    EID[email identity - existing]
+  end
+  GAPI[YouTube Data API v3]
+  GOA[Google OAuth - Phase Y]
+  PRE[pre-production - film, lock signal, download URL]
+  CP[creative-planning]
+  SMTP[Hostinger SMTP]
+  PUI --> GW
+  CUI --> GW
+  PUI --> YTP
+  GW --> YT
+  GW --> SC
+  GW --> BR
+  GW --> INQ
+  GW --> OUT
+  YT --> GAPI
+  YT --> GOA
+  YT --> PRE
+  SC --> PRE
+  ONB --> EID
+  ONB --> SC
+  INQ --> CP
+  OUT --> SMTP
+  BR --> SMTP
+</pre>
+<p>A new <code>youtube</code> package owns every call to Google: the API key client, channel verification, import, the 30-day refresh, and in Phase Y the OAuth tokens and upload worker. <code>showcase</code> holds only video ids and our own signals. post-production-service is no longer involved.</p>
+
+<h2 id="youtube"><span class="tag">§8</span>YouTube as the video layer <span class="v3">V3</span></h2>
+<h3>8.1 What YouTube gives us for free</h3>
+<ul>
+  <li>Hosting, transcoding, adaptive streaming and a global CDN. Brands play the video inside our page, and "Watch on YouTube" opens the original.</li>
+  <li>Reads cost 1 quota unit per call (<code>channels.list</code>, <code>playlistItems.list</code>, <code>videos.list</code> with up to 50 ids). The default allowance is 10,000 units a day. Importing a 500-video channel costs about 20 units.</li>
+  <li>Per current docs, uploads (<code>videos.insert</code>) have their own allowance of 100 calls a day by default, and uploads are no longer forced to private for unverified API projects. Re-check both when Phase Y starts, because Google has changed these rules before.</li>
+  <li><code>status.containsSyntheticMedia</code> on upload, which is YouTube's own AI-content disclosure.</li>
+</ul>
+<h3>8.2 Policy rules we design around</h3>
+<div class="tw"><table>
+  <thead><tr><th>Policy</th><th>What we do</th></tr></thead>
+  <tbody>
+    <tr><td>Most API data may be stored for at most 30 days, then deleted or refreshed</td><td>We store video ids and channel ids (identifiers) permanently. Titles, thumbnails, durations and status are cached in <code>youtube_video</code> and refreshed by a nightly job when older than <code>refresh-after-days</code> (25). Videos that disappear or turn private are hidden from the showcase.</td></tr>
+    <tr><td>No new or derived metrics from API data</td><td>The ranking uses only <b>our own</b> data: likes, plays and full plays on our pages, brand requests, funded flags and origin. YouTube's view and like counts are never stored, scored or shown.</td></tr>
+    <tr><td>The player must not be modified or obscured; YouTube must be shown as the source</td><td>Standard IFrame player with no overlays on the video. Cards show a small YouTube mark. A "Watch on YouTube" link sits beside every player.</td></tr>
+    <tr><td>Player at least 200×200 px</td><td>Minimum card width 220 px; a vertical card is at least 220 wide.</td></tr>
+    <tr><td>Privacy policy that explains what we access, with a revoke link</td><td>A new <code>/privacy</code> section for YouTube data and the Google security-settings link. Google's OAuth verification requires it anyway.</td></tr>
+  </tbody>
+</table></div>
+<h3>8.3 Aspect ratio</h3>
+<ul>
+  <li>Each item stores <code>aspect_w</code> and <code>aspect_h</code>. Platform films take these from our render; external videos from <code>videos.list?part=player&amp;maxHeight=720</code>, which returns <code>embedWidth/embedHeight</code> scaled to the true ratio. If no size comes back, the import marks the item <code>UNKNOWN_RATIO</code> and shows it as 16:9.</li>
+  <li>The player container is CSS <code>aspect-ratio: w / h</code>, capped at 80 vh tall. Vertical videos (ratio below 1) render as vertical cards in the grid, two rows tall, and open in a vertical modal on desktop and full screen on phones.</li>
+  <li>The "Watch on YouTube" link is <code>youtube.com/shorts/{id}</code> for vertical videos up to 3 minutes and <code>youtube.com/watch?v={id}</code> otherwise.</li>
+  <li>Player options: <code>playsinline=1</code>, <code>rel=0</code>, muted autoplay only on hover previews. Events: <code>PLAYING</code> for 3 s counts as a play, <code>ENDED</code> as a full play, both sent to our <code>/plays</code> endpoint.</li>
+</ul>
+
+<h2 id="connect"><span class="tag">§9</span>Connecting a channel, and publishing to it <span class="v3">V3</span></h2>
+<h3>9.1 How the creator logs in and proves the channel is theirs</h3>
+<p>The creator keeps logging in with Keycloak. YouTube is linked to their account afterwards, in one of two ways:</p>
+<div class="tw"><table>
+  <thead><tr><th></th><th>A. Description code (Phase A)</th><th>B. Google OAuth (Phase Y)</th></tr></thead>
+  <tbody>
+    <tr><td>How</td><td>The creator pastes the channel URL or <code>@handle</code>. We resolve it with the API key, show a code such as <code>dalai-7KQ2</code>, and the creator adds it to the channel description and clicks Verify. We read the description; on a match the channel is linked, and the creator can remove the code.</td><td>"Connect YouTube" → Google consent for <code>youtube.readonly</code> + <code>youtube.upload</code> → callback → <code>channels.list?mine=true</code> gives the channel id directly.</td></tr>
+    <tr><td>Proves ownership</td><td>Yes. Only the owner can edit the description.</td><td>Yes</td></tr>
+    <tr><td>Google review needed</td><td>No. API key only.</td><td>Yes. YouTube scopes are <b>sensitive</b>, so we need app verification (privacy policy, domain, demo video). Until verified: warning screen and at most 100 users. In "Testing" status, refresh tokens expire after 7 days, so run the app in "In production" while unverified.</td></tr>
+    <tr><td>Can upload</td><td>No. Upload kit only.</td><td>Yes</td></tr>
+  </tbody>
+</table></div>
+<h3>9.2 Import and first picks</h3>
+<ol>
+  <li>Get the channel's uploads playlist id from <code>channels.list part=contentDetails,snippet</code>. The display name and avatar are filled in from the channel's snippet if empty.</li>
+  <li>Page through <code>playlistItems.list</code>, 50 at a time, up to <code>import-max-videos</code> (500), then call <code>videos.list part=snippet,contentDetails,status,player</code> in batches of 50.</li>
+  <li>Mark each video eligible or not, with the reason: public, embeddable, not age-restricted, not made for kids, duration within bounds.</li>
+  <li>The creator sees a grid of eligible videos with their ratio badge and must pick at least <code>min-initial-picks</code> (2). Each pick gets an industry, a format and a client label, plus the rights checkbox. Picks are capped at <code>max-external-picks</code> (6), so creators show their best rather than everything.</li>
+  <li>Re-sync is manual (a button), plus the nightly refresh for cached fields.</li>
+</ol>
+<h3>9.3 Publishing a platform film <span class="v4">V4</span></h3>
+<p>The film bar's "Publish" dialog offers two destinations. Neither needs Google to review our app.</p>
+<p><b>Path 1: Dalaillama's official channel (one click).</b> tenant-service holds one refresh token, for our own channel only, issued by an OAuth client whose consent screen is <b>Internal</b> to our Google Workspace (§21.1). A single worker streams the film from its presigned MinIO URL into YouTube's resumable upload. It sets the title, a description crediting the creator (<code>Made by &lt;name&gt; on Dalaillama · dalaillama.in/c/&lt;handle&gt;</code>), <code>containsSyntheticMedia=true</code> and public visibility. The returned id is stored, so the film is PLATFORM by construction. If Google ever forces API uploads to private, ops uploads in YouTube Studio and pastes the link, which goes through the same match check as Path 2.</p>
+<p><b>Path 2: the creator's own channel (upload kit):</b></p>
+<ol>
+  <li>Download the film (the creator's existing presigned link).</li>
+  <li>Copy a prefilled title, a description whose first line is our marker <code>Made on Dalaillama · dalaillama.in/c/&lt;handle&gt;</code>, and tags <code>dalaillama, ai video</code>.</li>
+  <li>A checklist step: "In YouTube Studio, set <i>Altered or synthetic content</i> to Yes". This is YouTube's disclosure rule for realistic AI video.</li>
+  <li>Paste the YouTube link back. We verify it (§9.4) and create a <code>PLATFORM</code> showcase item linked to the project.</li>
+</ol>
+<p><b>Phase Y (optional, only if creators ask), one-click to the creator's own channel</b>: the same metadata is set through <code>videos.insert</code>, with <code>status.containsSyntheticMedia=true</code>, <code>selfDeclaredMadeForKids=false</code>, and privacy as the creator chooses (public or unlisted). A worker streams the file from the presigned URL to YouTube's resumable upload, one at a time. The returned id is stored, so recognition is certain.</p>
+<h3>9.4 How we recognise our videos</h3>
+<div class="tw"><table>
+  <thead><tr><th>Path</th><th>Rule</th><th>Confidence</th></tr></thead>
+  <tbody>
+    <tr><td>Uploaded by us (official channel; Phase Y)</td><td>The id returned by <code>videos.insert</code></td><td>Certain</td></tr>
+    <tr><td>Kit link (Phase A)</td><td>All of: the video is on the creator's verified channel; it was published after the film was rendered; its duration is within ±<code>duration-tolerance-seconds</code> (1.5) of the film; the description contains the marker line; and the project is not already linked</td><td>High</td></tr>
+    <tr><td>Anything else on the channel</td><td>EXTERNAL</td><td>n/a</td></tr>
+  </tbody>
+</table></div>
+<p>An import never turns an EXTERNAL video into PLATFORM, even if it contains the marker. A video only becomes PLATFORM by being linked to a project, which stops people pasting the marker into old videos.</p>
+
+<h2 id="ranking"><span class="tag">§10</span>Visibility and ranking: the reinforcement model <span class="v3">V3</span></h2>
+<p>You asked for a system that starts with no platform videos and shifts visibility toward creators who make <b>funded films on our platform</b>, using the pigeon experiment. That is B. F. Skinner's operant-conditioning work: a behaviour that is reinforced, ideally immediately, becomes more frequent. Rewards can be built up step by step (shaping), and a behaviour that is no longer rewarded fades slowly (extinction). We apply it in the open: the rules are shown to creators on a "How visibility works" page. Motivation comes from clear, earnable rewards, not hidden tricks.</p>
+<h3>10.1 The behaviour we reinforce</h3>
+<p>The behaviour is to <b>finish a client-funded film on the platform and publish it</b>. Linking a channel, curating picks and completing the profile are the earlier steps that lead up to it.</p>
+<h3>10.2 Shaping: the creator ladder (this defines "weak")</h3>
+<div class="ladder">
+  <div class="rung"><b>L0 · HIDDEN</b>No verified channel, or fewer than 2 picks<div class="u">Profile page shows "Coming soon"; noindex</div></div>
+  <div class="rung"><b>L1 · STARTER</b>Channel verified, ≥2 picks, name + avatar + headline + industry<div class="u">On Discover; on the landing page only while the floor is L1</div></div>
+  <div class="rung"><b>L2 · MAKER</b>≥1 PLATFORM film published<div class="u">Platform badge; exploration slots</div></div>
+  <div class="rung"><b>L3 · PROVEN</b>≥1 <i>verified-funded</i> PLATFORM film in the last 90 days (§21.4)<div class="u">Eligible for landing and automatic picks at any stage</div></div>
+  <div class="rung"><b>L4 · STAR</b>≥3 funded in 90 days, or ≥2 converted brand requests<div class="u">Highest standing; first in automatic picks</div></div>
+</div>
+<p><b>Weak profile = a creator below the current visibility floor (§10.3).</b> It is relative on purpose. At launch nobody is weak, because the floor is L1. Later, an L1 creator who never makes platform films becomes weak. The thresholds per level are in config.</p>
+<h3>10.3 Bootstrap: a floor that rises with inventory</h3>
+<p>The nightly ranking run computes the floor separately for each surface (landing, Discover "Top", automatic picks):</p>
+<div class="formula">floor(surface) = the highest level L such that creators at level ≥ L supply at least<br>&nbsp;&nbsp;fill-factor × surface-size eligible items (fill-factor 1.5; landing size 12 → 18 items)</div>
+<ul>
+  <li><b>Day one:</b> everyone is L1, so the floor is L1 and the landing page is full of external work picked by creators.</li>
+  <li><b>As funded platform films arrive,</b> once creators at L3 and above can fill 18 landing items on their own, the landing floor becomes L3 by itself. External-only creators move to Discover. Nobody flips a switch.</li>
+  <li><b>No cliff:</b> the floor changes by at most one level per run, and the "All" tab on Discover always lists everyone at L1 and above.</li>
+</ul>
+<h3>10.4 Item score: platform maturity and origin decay</h3>
+<div class="formula">maturity m = min(1, funded PLATFORM films published in last 90 days / maturity-target)  (target 40)<br>
+originFactor = 1.0 for PLATFORM; 1 − m × (1 − external-floor) for EXTERNAL  (external-floor 0.3)<br>
+standingFactor = level weight × reinforcement decay<br>
+&nbsp;&nbsp;level weights L1 0.6 · L2 0.8 · L3 1.0 · L4 1.1<br>
+&nbsp;&nbsp;decay = 0.5 ^ (days since last funded PLATFORM film / 60), never below 0.5; = 1 for L1 and L2<br>
+quality = 0.30 funded + 0.20 likeRate + 0.15 completionRate + 0.25 brandIntent + 0.10 freshness  (as v2, our own data only)<br>
+<b>score = quality × originFactor × standingFactor</b></div>
+<p>At launch m = 0, so external videos are not penalised, and with no engagement yet the order comes from creator picks and freshness. As the platform matures, external videos fall to 30% weight. Creators who keep finishing funded films hold their standing; ones who stop decay gently toward half.</p>
+<h3>10.5 Reinforcement schedule (what the creator feels)</h3>
+<div class="tw"><table>
+  <thead><tr><th>Principle</th><th>Mechanism</th><th>Config</th></tr></thead>
+  <tbody>
+    <tr><td><b>Immediate reinforcement</b></td><td>When a <i>funded</i> PLATFORM film goes live, it gets a <b>spotlight</b>: a guaranteed landing slot for 72 h and inclusion in the next digest for brands in its industry. The creator gets an in-app and email note that same minute.</td><td><code>spotlight-hours: 72</code>, <code>spotlight-slots: 2</code></td></tr>
+    <tr><td><b>Variable reward</b></td><td>Exploration slots (3 per landing view) rotate randomly among L2+ films weighted by score, so new platform work gets unpredictable extra exposure. The creator's weekly "Your films reached N brands" number varies naturally.</td><td><code>exploration-slots: 3</code></td></tr>
+    <tr><td><b>Shaping</b></td><td>The ladder card in creator-ui always shows the next step and what it unlocks: "1 funded film away from landing-page eligibility".</td><td>level thresholds</td></tr>
+    <tr><td><b>Gentle extinction</b></td><td>Standing decays with a 60-day half-life and stops at 0.5. Nothing is removed, so creators can always earn their way back.</td><td><code>decay-half-life-days: 60</code></td></tr>
+    <tr><td><b>No punishment</b></td><td>Lower standing only means lower placement. Profiles and links keep working. No public "downgrade" labels.</td><td></td></tr>
+  </tbody>
+</table></div>
+<h3>10.6 Assembling the landing grid (12)</h3>
+<ol>
+  <li>Pinned ids from config. 2. Active spotlights. 3. Exploration slots. 4. The rest by score from creators at or above the floor, at most 2 per creator and 4 per industry, with vertical and horizontal mixed so the grid stays balanced. The section is hidden while fewer than 6 items pass the gates.</li>
+</ol>
+
+<h2 id="engine"><span class="tag">§11</span>One mail a day per brand: the delivery engine</h2>
+<p>Unchanged from v2. Every non-transactional brand mail (manual, automatic, follow) becomes an <b>intent</b>. The guard refuses suppressed recipients, the same creator mailing the same brand within 14 days, and anything over the caps.</p>
+<ul>
+  <li><b>Fast path:</b> a manual intent to a brand with no mail in the last 24 hours and nothing else queued is sent immediately from the creator's own address.</li>
+  <li><b>Daily digest</b> at 13:00 UTC (18:30 IST): one solo mail or one platform digest (up to 4 cards) per recipient. Manual intents first, then follow, then automatic. Leftovers roll over and expire after 3 days.</li>
+  <li><code>UNIQUE (recipient_email, delivery_day)</code> guarantees one mail per day.</li>
+</ul>
+<p>Mail cards use the YouTube thumbnail, which is allowed while cached for 30 days or less, with a "▶ Watch" button that opens <b>our</b> profile page, because attribution and the request button live there. Automatic picks now draw from creators at or above the automatic-picks floor and prefer spotlit films.</p>
+
+<h2 id="flows"><span class="tag">§12</span>Key flows</h2>
+<h3>Link a channel and pick (Phase A)</h3>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor Creator
+  participant CUI as creator-ui
+  participant YT as tenant-service youtube
+  participant G as YouTube Data API
+  Creator->>CUI: paste channel URL or handle
+  CUI->>YT: POST /tenants/me/youtube/channel
+  YT->>G: channels.list forHandle or id
+  G-->>YT: channel id, title, avatar, uploads playlist
+  YT-->>CUI: code dalai-7KQ2, add it to your channel description
+  Creator->>CUI: Verify
+  CUI->>YT: POST /tenants/me/youtube/channel/verify
+  YT->>G: channels.list part=snippet
+  YT->>YT: description contains code, channel VERIFIED, fill name and avatar
+  YT->>G: playlistItems.list pages, videos.list batches of 50
+  YT->>YT: upsert youtube_video, eligibility, aspect ratio
+  YT-->>CUI: eligible videos
+  Creator->>CUI: pick 2, set industry, format, label, rights
+  CUI->>YT: POST /tenants/me/showcase (EXTERNAL items)
+</pre>
+<h3>Publish a platform film with the kit (Phase A)</h3>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor Creator
+  participant CUI as creator-ui film bar
+  participant SC as tenant-service showcase
+  participant PRE as pre-production
+  participant G as YouTube Data API
+  Creator->>CUI: Publish to YouTube
+  CUI->>SC: GET /tenants/me/showcase/projects/p/youtube-kit
+  SC->>PRE: GET /internal/tenants/t/projects/p/showcase-source
+  PRE-->>SC: filmReady, renderedAt, duration, width, height, clientLockedAt, downloadUrl
+  SC-->>CUI: download link, title, description with marker, tags, AI disclosure step
+  Creator->>Creator: uploads in YouTube Studio
+  Creator->>CUI: paste YouTube link
+  CUI->>SC: POST /tenants/me/showcase/projects/p/youtube-link
+  SC->>G: videos.list id
+  SC->>SC: on verified channel, after render, duration within 1.5s, marker present
+  SC->>SC: create PLATFORM item, score, spotlight if funded
+  SC-->>CUI: On your profile
+</pre>
+<h3>Subscription → profile and email</h3>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant K as Kafka
+  participant T as TenantAppServiceImpl
+  participant O as CreatorOnboardingService
+  K->>T: product.subscription.activated
+  T->>O: onSubscriptionActivated FIRST, own try-catch
+  O->>O: ensure email identity, ensure profile and handle
+  T->>T: TenantApp idempotency check, provisionApp (unchanged)
+</pre>
+<h3>Mail through the engine (Phase C)</h3>
+<pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor Creator
+  participant OUT as OutreachService
+  participant D as Dispatcher
+  participant J as DailyDigestJob
+  participant SMTP as Hostinger SMTP
+  Creator->>OUT: send template, film, recipients
+  OUT->>OUT: guard each recipient, save intents
+  OUT->>D: tryFastPath
+  alt no mail in 24h and nothing queued
+    D->>SMTP: solo mail from creator address
+  else
+    D-->>OUT: queued for today
+  end
+  J->>SMTP: 13:00 UTC one solo or one digest per recipient
+</pre>
+
+<h2 id="design"><span class="tag">§13</span>Design plan: screens and gates</h2>
+<h3>Public (platform-ui)</h3>
+<div class="tw"><table>
+  <thead><tr><th>Screen</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><b>Landing section</b></td><td>12 cards in a mixed grid (vertical cards span two rows). Each card shows the thumbnail, title, industry, creator, a YouTube mark and a "Made on Dalaillama" badge for PLATFORM. A tap opens the aspect-correct player modal.</td></tr>
+    <tr><td><b>Discover <code>/creators</code></b></td><td>Tabs Top / New / All. Industry chips, format filter, and a "Made on Dalaillama only" toggle.</td></tr>
+    <tr><td><b>Profile <code>/c/:handle</code></b></td><td>Channel avatar and name, headline, industries, follower count, Follow, "YouTube channel" link. Two rows: "Made on Dalaillama" (PLATFORM) first, then "More work". <code>?industry=</code> brings matching items first.</td></tr>
+    <tr><td><b>Player modal</b></td><td>The YouTube IFrame at the stored ratio, max 80 vh. Beside it: title, client label, Like, Request a video, Watch on YouTube.</td></tr>
+    <tr><td><b>Sign-up, request, link pages</b></td><td>As in v2.</td></tr>
+  </tbody>
+</table></div>
+<h3>Creator (creator-ui)</h3>
+<div class="tw"><table>
+  <thead><tr><th>Screen</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><b>Profile → Channel</b></td><td>Step 1: paste channel → code → Verify. Step 2: grid of imported videos with eligibility reasons ("Embedding off", "Age-restricted") and ratio badges. Pick 2 to 6. Re-sync button. In Phase Y: "Connect with Google" instead.</td></tr>
+    <tr><td><b>Profile → Visibility</b></td><td>Ladder card with the current level, the next step and what it unlocks; this week's brand reach; active spotlight countdown; link to "How visibility works".</td></tr>
+    <tr><td><b>Profile → Showcase</b></td><td>The creator's order, edits, hide and remove. PLATFORM items are badged.</td></tr>
+    <tr><td><b>Film bar</b></td><td>"Publish to YouTube" opens the kit (download, copy buttons, AI disclosure checkbox, paste link). In Phase Y: "Upload to my channel" with a progress state.</td></tr>
+    <tr><td><b>Requests, Marketing</b></td><td>As in v2. Marketing is disabled until the creator reaches L1.</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="data"><span class="tag">§14</span>LLD: data model <span class="v3">V3</span></h2>
+<p class="lead">tenant-service Flyway. Check <code>flyway_schema_history</code> on the box before numbering, and never edit an applied migration.</p>
+<h3>V26 profile, YouTube, showcase (Phase A)</h3>
+<pre><code>CREATE TABLE creator_public_profile (
+  tenant_id          UUID PRIMARY KEY REFERENCES tenants(id),
+  handle             VARCHAR(40) NOT NULL UNIQUE,
+  handle_changed_at  TIMESTAMPTZ,
+  display_name       VARCHAR(80) NOT NULL,
+  headline           VARCHAR(120),
+  bio                VARCHAR(1000),
+  avatar_url         VARCHAR(512),              -- from channel unless creator overrides
+  country_code       CHAR(2),
+  industries         VARCHAR(32)[] NOT NULL DEFAULT '{}',
+  auto_picks_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  status             VARCHAR(16) NOT NULL,      -- ACTIVE, SUSPENDED, HIDDEN
+  level              VARCHAR(8)  NOT NULL DEFAULT 'L0',   -- written by ranking run
+  standing_factor    NUMERIC(4,3),
+  last_funded_platform_at TIMESTAMPTZ,
+  follower_count     INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE creator_handle_history (handle VARCHAR(40) PRIMARY KEY, tenant_id UUID NOT NULL, released_at TIMESTAMPTZ NOT NULL);
+
+CREATE TABLE creator_youtube_channel (
+  tenant_id            UUID PRIMARY KEY REFERENCES creator_public_profile(tenant_id),
+  channel_id           VARCHAR(32) NOT NULL UNIQUE,   -- one channel, one creator
+  channel_handle       VARCHAR(64),
+  uploads_playlist_id  VARCHAR(40) NOT NULL,
+  verification_code    VARCHAR(16) NOT NULL,
+  verification_method  VARCHAR(16),                   -- DESCRIPTION_CODE, OAUTH
+  verified_at          TIMESTAMPTZ,
+  oauth_refresh_token_enc BYTEA,                      -- Phase Y, AES-GCM
+  oauth_scopes         VARCHAR(255),
+  last_synced_at       TIMESTAMPTZ,
+  status               VARCHAR(16) NOT NULL,          -- PENDING, VERIFIED, REVOKED
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE youtube_video (                           -- API cache; refreshed within 30 days
+  video_id          VARCHAR(16) PRIMARY KEY,
+  channel_id        VARCHAR(32) NOT NULL,
+  title             VARCHAR(200),
+  thumbnail_url     VARCHAR(512),
+  published_at      TIMESTAMPTZ,
+  duration_seconds  NUMERIC(8,2),
+  aspect_w INT, aspect_h INT,
+  privacy_status    VARCHAR(12),
+  embeddable        BOOLEAN,
+  age_restricted    BOOLEAN,
+  made_for_kids     BOOLEAN,
+  has_marker        BOOLEAN NOT NULL DEFAULT FALSE,
+  fetched_at        TIMESTAMPTZ NOT NULL,
+  gone_at           TIMESTAMPTZ                       -- deleted or private on refresh
+);
+CREATE INDEX ix_ytv_channel ON youtube_video (channel_id, published_at DESC);
+CREATE INDEX ix_ytv_refresh ON youtube_video (fetched_at);
+
+CREATE TABLE showcase_item (
+  id                UUID PRIMARY KEY,
+  public_id         VARCHAR(12) NOT NULL UNIQUE,
+  tenant_id         UUID NOT NULL REFERENCES creator_public_profile(tenant_id),
+  youtube_video_id  VARCHAR(16) NOT NULL UNIQUE REFERENCES youtube_video(video_id),
+  origin            VARCHAR(10) NOT NULL,              -- PLATFORM, EXTERNAL
+  platform_proof    VARCHAR(16),                       -- UPLOADED, LINK_MATCH
+  source_project_id UUID UNIQUE,                       -- PLATFORM only
+  client_locked_at  TIMESTAMPTZ,                       -- raw fact; funded signal
+  title_override    VARCHAR(120),
+  client_label      VARCHAR(80),
+  industry          VARCHAR(32) NOT NULL,
+  format            VARCHAR(32) NOT NULL,
+  aspect_w INT NOT NULL, aspect_h INT NOT NULL,
+  status            VARCHAR(16) NOT NULL,              -- LIVE, HIDDEN, REMOVED, UNAVAILABLE
+  hidden_by_ops     BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order        INT NOT NULL DEFAULT 0,
+  like_count INT NOT NULL DEFAULT 0, play_count INT NOT NULL DEFAULT 0,
+  full_play_count INT NOT NULL DEFAULT 0, inquiry_count INT NOT NULL DEFAULT 0,
+  spotlight_until   TIMESTAMPTZ,
+  global_score      NUMERIC(6,5),
+  score_version     VARCHAR(40),
+  rights_confirmed_at TIMESTAMPTZ NOT NULL,
+  published_at      TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX ix_item_global ON showcase_item (status, global_score DESC);
+CREATE INDEX ix_item_industry ON showcase_item (industry, status, global_score DESC);
+
+CREATE TABLE showcase_play (
+  showcase_item_id UUID NOT NULL REFERENCES showcase_item(id),
+  visitor_id UUID NOT NULL, play_day DATE NOT NULL,
+  completed BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (showcase_item_id, visitor_id, play_day)
+);
+
+CREATE TABLE showcase_ranking_run (                    -- traceability of every bootstrap decision
+  id UUID PRIMARY KEY, run_at TIMESTAMPTZ NOT NULL,
+  maturity NUMERIC(4,3) NOT NULL,
+  landing_floor VARCHAR(8) NOT NULL, top_floor VARCHAR(8) NOT NULL, auto_floor VARCHAR(8) NOT NULL,
+  config_version VARCHAR(40) NOT NULL,
+  items_scored INT NOT NULL
+);</code></pre>
+<h3>V27 brands, likes, follows, requests (Phase B) and V28 delivery engine (Phase C)</h3>
+<p>Unchanged from v2: <code>lead_brand_contact</code>, <code>lead_brand_sign_in</code>, <code>showcase_like</code>, <code>creator_follower</code>, <code>lead_brand_inquiry</code>; <code>lead_suppression</code>, <code>lead_outreach_intent</code>, <code>lead_outreach_delivery</code> with <code>UNIQUE (recipient_email, delivery_day)</code>.</p>
+<pre><code>-- key columns, for reference
+lead_brand_contact   (id, email UNIQUE, contact_name, company_name, industry, country_code,
+                      source SIGNUP|OPS_IMPORT, verified_at, auto_picks_opt_in, auto_cadence_days, last_auto_pick_at)
+lead_brand_inquiry   (id, tenant_id, brand_contact_id, showcase_item_id, outreach_intent_id,
+                      budget_band, timeline, message, status NEW|VIEWED|CONVERTED|DECLINED, requirement_id)
+lead_outreach_intent (id, source MANUAL|AUTO|FOLLOW, tenant_id, recipient_email, showcase_item_id,
+                      template_code, template_revision, tracking_token, status, delivery_id, expires_at)
+lead_outreach_delivery (id, recipient_email, delivery_day, kind SOLO|DIGEST, sender_email,
+                      unsubscribe_token, status, UNIQUE (recipient_email, delivery_day))</code></pre>
+<h3>V29 YouTube upload jobs (Phase Y)</h3>
+<pre><code>CREATE TABLE youtube_upload_job (
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL, project_id UUID NOT NULL UNIQUE,
+  privacy VARCHAR(10) NOT NULL,                       -- PUBLIC, UNLISTED
+  status VARCHAR(16) NOT NULL,                        -- QUEUED, UPLOADING, DONE, FAILED
+  youtube_video_id VARCHAR(16),
+  attempts INT NOT NULL DEFAULT 0, error VARCHAR(255),
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);</code></pre>
+
+<h3>Additions for the risk fixes <span class="v4">V4</span></h3>
+<pre><code>-- tenant-service, V26 (Phase A): host abstraction on showcase_item
+ALTER TABLE showcase_item ALTER COLUMN youtube_video_id DROP NOT NULL;
+ALTER TABLE showcase_item ADD COLUMN host        VARCHAR(8)  NOT NULL DEFAULT 'YOUTUBE';  -- YOUTUBE, SELF
+ALTER TABLE showcase_item ADD COLUMN channel     VARCHAR(10);          -- OFFICIAL, CREATOR (where the YouTube copy lives)
+ALTER TABLE showcase_item ADD COLUMN funded_verified_at TIMESTAMPTZ;   -- §21.4 gate passed
+ALTER TABLE showcase_item ADD COLUMN marketing_consent_at TIMESTAMPTZ; -- client accepted at lock payment
+ALTER TABLE showcase_item ADD COLUMN report_count INT NOT NULL DEFAULT 0;
+-- (written into V26 directly, since V26 is not applied yet; shown as ALTERs for readability)
+
+CREATE TABLE official_upload_job (               -- one worker, one upload at a time
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL, project_id UUID NOT NULL UNIQUE,
+  status VARCHAR(16) NOT NULL,                   -- QUEUED, UPLOADING, DONE, FAILED, NEEDS_MANUAL
+  youtube_video_id VARCHAR(16),
+  attempts INT NOT NULL DEFAULT 0, error VARCHAR(255),
+  created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE showcase_report (                   -- brand "Report this video"
+  id UUID PRIMARY KEY, showcase_item_id UUID NOT NULL REFERENCES showcase_item(id),
+  visitor_id UUID NOT NULL, reason VARCHAR(24) NOT NULL,   -- RIGHTS, OFFENSIVE, MISLEADING, OTHER
+  note VARCHAR(500), created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (showcase_item_id, visitor_id)
+);
+
+-- tenant-service, V28 (Phase C): hashing, allowance, packs
+ALTER TABLE lead_outreach_intent ADD COLUMN recipient_hash CHAR(64) NOT NULL;   -- sha256(normalised email + pepper)
+ALTER TABLE lead_outreach_intent ALTER COLUMN recipient_email DROP NOT NULL;    -- purged after 30 days
+ALTER TABLE lead_outreach_intent ADD COLUMN pii_purged_at TIMESTAMPTZ;
+-- lead_suppression and lead_outreach_delivery key on recipient_hash instead of the raw email:
+--   lead_suppression (recipient_hash PK, reason, created_at)
+--   lead_outreach_delivery UNIQUE (recipient_hash, delivery_day)
+
+CREATE TABLE lead_mail_pack (                    -- paid mail credits, consumed oldest first
+  id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  pack_code VARCHAR(24) NOT NULL,                -- e.g. MAIL_PACK_500
+  mails_granted INT NOT NULL,
+  mails_remaining INT NOT NULL,
+  billing_reference VARCHAR(64) NOT NULL UNIQUE, -- idempotency key sent to billing
+  purchased_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ                         -- null = never
+);
+CREATE INDEX ix_mail_pack_open ON lead_mail_pack (tenant_id, purchased_at) WHERE mails_remaining &gt; 0;
+
+-- pre-production-service, next free version (check flyway_schema_history first)
+ALTER TABLE projects ADD COLUMN marketing_terms_version VARCHAR(16);
+ALTER TABLE projects ADD COLUMN marketing_terms_accepted_at TIMESTAMPTZ;   -- set by the lock payment
+
+-- billing-service, next free version
+-- new TransactionType ADDON; add-on prices live in billing config, never in tenant-service</code></pre>
+
+<h2 id="config"><span class="tag">§15</span>Configuration <span class="v3">V3</span></h2>
+<pre><code>youtube:
+  api-key: ${YOUTUBE_API_KEY}             # restricted to YouTube Data API v3
+  import-max-videos: 500
+  refresh-after-days: 25                  # policy limit is 30
+  refresh-cron: "0 0 2 * * *"
+  eligibility:
+    require-public: true
+    require-embeddable: true
+    exclude-age-restricted: true
+    exclude-made-for-kids: true
+    min-duration-seconds: 5
+    max-duration-seconds: 600
+  oauth:                                  # Phase Y
+    enabled: false
+    client-id: ${GOOGLE_OAUTH_CLIENT_ID}
+    scopes: [youtube.readonly, youtube.upload]
+    token-encryption-key: ${YT_TOKEN_KEY}
+
+showcase:
+  picks:
+    min-initial-picks: 2
+    max-external-picks: 6
+  platform-match:
+    duration-tolerance-seconds: 1.5
+    marker-prefix: "Made on Dalaillama"
+  publish:
+    allowed-project-statuses: [VIDEO_GENERATION_COMPLETE, READY_FOR_REVIEW, CLIENT_LOCKED]
+  ladder:
+    l2-min-platform-films: 1
+    l3-min-funded-platform-films: 1
+    l3-window-days: 90
+    l4-min-funded-platform-films: 3
+    l4-min-converted-requests: 2
+    level-weights: { L1: 0.6, L2: 0.8, L3: 1.0, L4: 1.1 }
+    decay-half-life-days: 60
+    decay-min: 0.5
+  bootstrap:
+    maturity-target-funded-films: 40
+    external-floor-factor: 0.3
+    fill-factor: 1.5
+    max-floor-step-per-run: 1
+  ranking:
+    version: v3
+    weights: { funded: 0.30, like-rate: 0.20, completion-rate: 0.15, brand-intent: 0.25, freshness: 0.10 }
+    smoothing-plays: 20
+    freshness-half-life-days: 21
+    rescore-cron: "0 30 2 * * *"
+  reinforcement:
+    spotlight-hours: 72
+    spotlight-slots: 2
+    exploration-slots: 3
+  landing:
+    size: 12
+    min-items-to-show: 6
+    max-per-creator: 2
+    max-per-industry: 4
+    pinned-public-ids: []
+
+video-host:                               # V4
+  default: YOUTUBE                        # YOUTUBE | SELF
+  platform-films: YOUTUBE                 # flip to SELF to move every platform film off YouTube
+  self:
+    signed-url-ttl-minutes: 360           # issued per page load, never stored
+  official-channel:
+    enabled: true
+    refresh-token: ${YT_OFFICIAL_REFRESH_TOKEN}
+    privacy: public
+    description-template: "Made by {creatorName} on Dalaillama · {profileUrl}"
+  health:
+    probe-video-id: ${YT_PROBE_VIDEO_ID}  # one public video of ours, checked nightly
+
+showcase-funding:                         # V4
+  require-client-locked: true
+  min-generated-takes: 5
+  min-client-review-sessions: 1
+  min-client-comments-or-approvals: 1
+  require-marketing-consent-for-mail: true
+
+showcase-reports:
+  auto-hide-after-reports: 3              # hidden until ops looks at it
+
+outreach:                                 # V4: weekly free allowance + paid packs
+  manual: { max-recipients-per-send: 25, free-per-creator-per-week: 100, same-creator-recipient-cooldown-days: 14 }
+  packs:  [ { code: MAIL_PACK_500, mails: 500 }, { code: MAIL_PACK_2000, mails: 2000 } ]   # prices live in billing
+  retention: { raw-email-days: 30, purge-cron: "0 15 3 * * *" }
+  hashing: { pepper: ${OUTREACH_HASH_PEPPER} }
+  delivery: { max-per-recipient-per-day: 1, digest-cron: "0 0 13 * * *", digest-max-cards: 4, intent-max-age-days: 3 }
+  auto: { enabled: false, picks-per-brand: 3, default-cadence-days: 7, creator-recipient-cooldown-days: 30 }</code></pre>
+
+<h2 id="api"><span class="tag">§16</span>LLD: API surface</h2>
+<h3>Creator (JWT) <span class="v3">V3</span></h3>
+<div class="tw"><table>
+  <thead><tr><th>Method + path</th><th>Phase</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST /api/v1/tenants/me/youtube/channel</code></td><td>A</td><td><code>{channel}</code> (URL, @handle or id) → <code>{channelTitle, avatar, verificationCode}</code></td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/youtube/channel/verify</code></td><td>A</td><td>→ VERIFIED + import started, or <code>{verified:false, reason}</code></td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/youtube/sync</code></td><td>A</td><td>Re-import (rate-limited to 1 per 10 min)</td></tr>
+    <tr><td><code>GET /api/v1/tenants/me/youtube/videos</code></td><td>A</td><td>Imported videos with <code>eligible</code>, <code>reason</code>, <code>aspect</code>, <code>picked</code></td></tr>
+    <tr><td><code>GET|PUT /api/v1/tenants/me/public-profile</code></td><td>A</td><td>Profile + ladder <code>{level, nextStep, unlocks}</code></td></tr>
+    <tr><td><code>GET|POST /api/v1/tenants/me/showcase</code></td><td>A</td><td>List; pick an EXTERNAL video <code>{youtubeVideoId, industry, format, clientLabel, rightsConfirmed}</code></td></tr>
+    <tr><td><code>PATCH|DELETE /api/v1/tenants/me/showcase/{id}</code>, <code>PUT .../order</code></td><td>A</td><td>Edit, remove, reorder</td></tr>
+    <tr><td><code>GET /api/v1/tenants/me/showcase/projects/{projectId}/youtube-kit</code></td><td>A</td><td>Download URL, title, description, tags, disclosure step</td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/showcase/projects/{projectId}/youtube-link</code></td><td>A</td><td><code>{url}</code> → PLATFORM item, or 422 with the failed match rule</td></tr>
+    <tr><td><code>GET /api/v1/tenants/me/visibility</code></td><td>A</td><td>Level, standing, spotlight, weekly reach</td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/showcase/projects/{projectId}/official-upload</code> <span class="v4">V4</span></td><td>A</td><td>Queue an upload to Dalaillama's channel → job; 409 if the project fails the funded or consent gate the creator chose to require</td></tr>
+    <tr><td><code>GET /api/v1/tenants/me/outreach/allowance</code> <span class="v4">V4</span></td><td>C</td><td><code>{freeLeftThisWeek, weekResetsAt, packMailsLeft, packs[{code, mails, price}]}</code>, with prices read from billing</td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/outreach/packs</code> <span class="v4">V4</span></td><td>C</td><td><code>{packCode}</code> → billing charges the wallet → credits granted; 402 if the balance is too low</td></tr>
+    <tr><td><code>GET /api/v1/tenants/me/youtube/oauth/start</code></td><td>Y</td><td>302 to Google with signed <code>state</code></td></tr>
+    <tr><td><code>POST /api/v1/tenants/me/showcase/projects/{projectId}/youtube-upload</code></td><td>Y</td><td><code>{privacy}</code> → job</td></tr>
+    <tr><td>Requests, outreach, templates</td><td>B, C</td><td>As in v2</td></tr>
+  </tbody>
+</table></div>
+<h3>Public (no auth unless noted)</h3>
+<div class="tw"><table>
+  <thead><tr><th>Method + path</th><th>Phase</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/v1/public/showcase/landing</code></td><td>A</td><td>Assembled grid; each card has <code>publicId, youtubeVideoId, aspectW, aspectH, origin, thumbnailUrl, creator{handle,name,avatar}</code></td></tr>
+    <tr><td><code>GET /api/v1/public/showcase</code></td><td>A</td><td><code>?tab=top|new|all&amp;industry&amp;format&amp;platformOnly&amp;cursor</code></td></tr>
+    <tr><td><code>GET /api/v1/public/creators/{handle}</code></td><td>A</td><td>Profile, PLATFORM and EXTERNAL rows, <code>indexable</code></td></tr>
+    <tr><td><code>POST /api/v1/public/showcase/{publicId}/plays</code></td><td>A</td><td><code>{completed}</code> from IFrame events</td></tr>
+    <tr><td><code>POST /api/v1/public/showcase/{publicId}/reports</code> <span class="v4">V4</span></td><td>A</td><td><code>{reason, note}</code> + <code>X-Visitor-Id</code> → 202; auto-hides after 3 distinct reports</td></tr>
+    <tr><td><code>GET /api/v1/public/showcase/{publicId}/source</code> <span class="v4">V4</span></td><td>A</td><td>Only when <code>host=SELF</code>: a signed MinIO URL valid for 6 h</td></tr>
+    <tr><td><code>GET /api/v1/public/youtube/oauth/callback</code></td><td>Y</td><td>Google redirect target. Validates <code>state</code>, stores the encrypted token, 302 back to creator-ui</td></tr>
+    <tr><td>Likes, brands, follow, inquiries, r, unsubscribe</td><td>B, C</td><td>As in v2</td></tr>
+  </tbody>
+</table></div>
+<h3>Internal and ops</h3>
+<div class="tw"><table>
+  <thead><tr><th>Method + path</th><th>Service</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/v1/internal/tenants/{t}/projects/{p}/showcase-source</code> <span class="v4">V4</span></td><td>pre-production</td><td><code>{filmReady, renderedAt, durationSeconds, width, height, clientLockedAt, marketingTermsVersion, marketingTermsAcceptedAt, generatedTakes, clientReviewSessions, clientComments, clientApprovals, downloadUrl}</code>. These are raw facts; tenant-service applies the thresholds.</td></tr>
+    <tr><td><code>POST /v1/public/projects/{token}/lock/payment</code>, <code>/lock/settled</code> <span class="v4">V4</span></td><td>pre-production</td><td>Existing routes now require <code>{acceptedTermsVersion}</code>. Both are stored on the project when the payment is verified or the lock settles.</td></tr>
+    <tr><td><code>POST /api/v1/internal/tenants/{t}/wallet/addon-purchase</code> <span class="v4">V4</span></td><td>billing</td><td><code>{addonCode, idempotencyKey}</code> → billing looks up its own price and debits as <code>ADDON</code> → <code>{charged, amount, balance}</code>. A retry with the same key returns the first result.</td></tr>
+    <tr><td><code>GET /api/v1/internal/addons</code> <span class="v4">V4</span></td><td>billing</td><td>Add-on catalogue with prices, for the allowance view</td></tr>
+    <tr><td><code>GET /api/v1/internal/admin/tenants/showcase/health</code> <span class="v4">V4</span></td><td>tenant</td><td>Last probe result, quota used today, last refresh, current host settings. Shown on AdminOps, no alerting.</td></tr>
+    <tr><td><code>POST /api/v1/internal/tenants/{t}/project-requirements/standalone</code></td><td>creative-planning</td><td>Request → brief</td></tr>
+    <tr><td><code>PATCH /api/v1/internal/admin/tenants/showcase/{publicId}</code></td><td>tenant</td><td>Ops kill switch</td></tr>
+    <tr><td><code>POST /api/v1/internal/admin/tenants/showcase/rescore</code></td><td>tenant</td><td>Re-run ranking after a config change</td></tr>
+    <tr><td><code>POST /api/v1/internal/admin/tenants/brand-contacts/import</code>, <code>.../onboarding/backfill</code></td><td>tenant</td><td>As in v2</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="classes"><span class="tag">§17</span>LLD: class diagrams <span class="v3">V3</span></h2>
+<h3>Package layout</h3>
+<pre><code>tenant-service/src/main/java/com/dalai/llama/tenant/
+  onboarding/   CreatorOnboardingService
+  youtube/
+    client/     YouTubeDataClient            (API key: channels, playlistItems, videos)
+                YouTubeOAuthClient, YouTubeUploadClient       (Phase Y)
+    domain/     CreatorYouTubeChannel, YouTubeVideo, YouTubeUploadJob
+    service/    ChannelLinkService, ChannelImportService, VideoEligibility,
+                AspectRatioResolver, YouTubeRefreshJob, PlatformVideoMatcher,
+                TokenCipher, YouTubeUploadWorker              (Phase Y)
+    config/     YouTubeProperties
+    controller/ MyYouTubeController, PublicYouTubeOAuthController (Phase Y)
+  showcase/
+    domain/     CreatorPublicProfile, ShowcaseItem, ShowcasePlay, ShowcaseLike,
+                CreatorFollower, ShowcaseRankingRun, CreatorLevel, Origin, ...
+    service/    CreatorProfileService, HandlePolicy, ShowcasePickService,
+                PlatformPublishService (kit + link), CreatorLadder, VisibilityFloor,
+                MaturityCalculator, ShowcaseScorer, RankingRunJob, LandingAssembler,
+                SpotlightService, ShowcaseFeedService, ShowcaseEngagementService
+    client/     PreProductionShowcaseClient
+    config/     ShowcaseProperties
+    controller/ MyPublicProfileController, MyShowcaseController, MyVisibilityController,
+                PublicShowcaseController, PublicCreatorController, AdminShowcaseController
+  leadmanagement/ brand/, inquiry/, outreach/, notify/   (as v2)</code></pre>
+<h3>YouTube and showcase</h3>
+<pre class="mermaid">
+classDiagram
+  direction LR
+  class CreatorYouTubeChannel {
+    UUID tenantId
+    String channelId
+    String uploadsPlaylistId
+    String verificationCode
+    VerificationMethod method
+    ChannelStatus status
+    verify(now)
+    revoke()
+  }
+  class YouTubeVideo {
+    String videoId
+    String channelId
+    int aspectW
+    int aspectH
+    boolean embeddable
+    boolean hasMarker
+    Instant fetchedAt
+    markGone(now)
+  }
+  class ShowcaseItem {
+    String publicId
+    String youtubeVideoId
+    Origin origin
+    PlatformProof platformProof
+    UUID sourceProjectId
+    Instant clientLockedAt
+    Instant spotlightUntil
+    BigDecimal globalScore
+  }
+  class CreatorPublicProfile {
+    String handle
+    CreatorLevel level
+    BigDecimal standingFactor
+    Instant lastFundedPlatformAt
+  }
+  class YouTubeDataClient {
+    channelByHandle(handle) ChannelInfo
+    playlistItems(playlistId, pageToken) Page
+    videos(ids) List~VideoInfo~
+  }
+  class ChannelLinkService {
+    start(tenantId, input) LinkStartView
+    verify(tenantId) LinkResult
+  }
+  class ChannelImportService {
+    importAll(tenantId) ImportSummary
+  }
+  class VideoEligibility {
+    evaluate(video) Eligibility
+  }
+  class AspectRatioResolver {
+    resolve(videoInfo) AspectRatio
+  }
+  class YouTubeRefreshJob {
+    refreshStale()
+  }
+  class PlatformVideoMatcher {
+    match(film, video, channel) MatchResult
+  }
+  class PlatformPublishService {
+    kit(tenantId, projectId) YouTubeKitView
+    link(tenantId, projectId, url) ShowcaseItemView
+  }
+  class ShowcasePickService {
+    pick(tenantId, req) ShowcaseItemView
+  }
+  ChannelLinkService --> YouTubeDataClient
+  ChannelLinkService --> CreatorYouTubeChannel
+  ChannelImportService --> YouTubeDataClient
+  ChannelImportService --> VideoEligibility
+  ChannelImportService --> AspectRatioResolver
+  ChannelImportService --> YouTubeVideo
+  YouTubeRefreshJob --> YouTubeDataClient
+  YouTubeRefreshJob --> YouTubeVideo
+  PlatformPublishService --> PlatformVideoMatcher
+  PlatformPublishService --> PreProductionShowcaseClient
+  PlatformPublishService --> ShowcaseItem
+  ShowcasePickService --> YouTubeVideo
+  ShowcasePickService --> ShowcaseItem
+  CreatorPublicProfile "1" o-- "*" ShowcaseItem
+  ShowcaseItem "*" --> "1" YouTubeVideo
+</pre>
+<h3>Ranking run</h3>
+<pre class="mermaid">
+classDiagram
+  direction LR
+  class RankingRunJob {
+    run()
+  }
+  class CreatorLadder {
+    levelOf(creatorFacts) CreatorLevel
+    nextStep(level, facts) NextStep
+  }
+  class MaturityCalculator {
+    maturity(now) double
+  }
+  class VisibilityFloor {
+    floorFor(surface, levelCounts, previous) CreatorLevel
+  }
+  class ShowcaseScorer {
+    score(item, standing, maturity) Score
+  }
+  class SpotlightService {
+    grantIfFunded(item)
+    active(now) List
+  }
+  class LandingAssembler {
+    assemble(floor) List~PublicShowcaseCard~
+  }
+  class ShowcaseRankingRun {
+    double maturity
+    CreatorLevel landingFloor
+    CreatorLevel topFloor
+    CreatorLevel autoFloor
+    String configVersion
+  }
+  class ShowcaseProperties {
+    Ladder ladder
+    Bootstrap bootstrap
+    Ranking ranking
+    Reinforcement reinforcement
+    Landing landing
+  }
+  RankingRunJob --> CreatorLadder
+  RankingRunJob --> MaturityCalculator
+  RankingRunJob --> VisibilityFloor
+  RankingRunJob --> ShowcaseScorer
+  RankingRunJob --> ShowcaseRankingRun
+  LandingAssembler --> SpotlightService
+  LandingAssembler --> ShowcaseRankingRun
+  CreatorLadder --> ShowcaseProperties
+  VisibilityFloor --> ShowcaseProperties
+  ShowcaseScorer --> ShowcaseProperties
+</pre>
+<h3>Brand, inquiry and delivery engine</h3>
+<p>Unchanged from v2: <code>BrandContact</code>, <code>BrandSessionService</code>, <code>BrandInquiryService</code>, <code>OutreachIntent</code>, <code>OutreachDelivery</code>, <code>OutreachGuard</code>, <code>OutreachService</code>, <code>OutreachDispatcher</code>, <code>DailyDigestJob</code>, <code>AutoPickJob</code> (now reads <code>autoFloor</code> and prefers spotlights), <code>CampaignEmailRenderer</code>, <code>SuppressionService</code>, the existing <code>SmtpCreatorEmailSender</code>.</p>
+
+<h2 id="rules"><span class="tag">§18</span>Rules and edge cases</h2>
+<div class="tw"><table>
+  <thead><tr><th>Area</th><th>Rule</th></tr></thead>
+  <tbody>
+    <tr><td>One channel per creator</td><td><code>channel_id</code> is unique. A second creator claiming the same channel is refused with "This channel is linked to another account; contact support".</td></tr>
+    <tr><td>Channel goes away</td><td>The refresh job finds the video private or deleted → <code>gone_at</code> is set → the item becomes <code>UNAVAILABLE</code> and drops from every surface. If the channel loses the code after verification, nothing happens; it was proven once.</td></tr>
+    <tr><td>Embedding blocked later</td><td><code>onError</code> codes 101/150 in the player → hide the card for that session and report it. The next refresh marks the item.</td></tr>
+    <tr><td>Thumbnails</td><td>Use <code>thumbnail_url</code> from the API cache (YouTube's own image host). Never copy images to our storage.</td></tr>
+    <tr><td>No YouTube stats</td><td>View and like counts are not fetched, stored or shown, so the derived-metrics clause never applies.</td></tr>
+    <tr><td>OAuth tokens</td><td>Refresh tokens are encrypted with AES-GCM and a key from a k8s secret, and never leave tenant-service. On revoke or <code>invalid_grant</code> → status REVOKED and the creator is asked to reconnect. The <code>state</code> parameter is HMAC-signed with the tenant id and a 10-minute expiry.</td></tr>
+    <tr><td>Uploads</td><td>One worker, one upload at a time, resumable. Retry 3 times, then FAILED with a reason. Quota is checked before starting. <code>containsSyntheticMedia=true</code> is always set.</td></tr>
+    <tr><td>Floor changes</td><td>At most one level per run. Every run is written to <code>showcase_ranking_run</code>, so you can see why the landing page looked the way it did on any date.</td></tr>
+    <tr><td>Public payloads</td><td>Only <code>publicId</code>, <code>handle</code>, <code>youtubeVideoId</code> and display fields; never internal ids or emails.</td></tr>
+    <tr><td>Rights</td><td>The rights checkbox applies to EXTERNAL picks too (a client's ad on the creator's channel).</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="affected"><span class="tag">§19</span>Affected places <span class="v3">V3</span></h2>
+<p class="lead">Tests ship in the same commit as the code they cover and use the real repositories (Testcontainers Postgres). The YouTube API is stubbed at the HTTP boundary with recorded responses.</p>
+<h3>Phase A</h3>
+<div class="tw"><table>
+  <thead><tr><th>Op</th><th>Path</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../db/migration/V26__creator_showcase_youtube.sql</code></td><td>§14 tables</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../tenant/onboarding/CreatorOnboardingService.java</code></td><td>Identity + profile</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>tenant-service/.../service/impl/TenantAppServiceImpl.java</code></td><td>Call onboarding first (§4)</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>tenant-service/.../leadmanagement/controller/InternalAdminCreatorEmailController.java</code></td><td>Backfill only active subscribers, and create profiles</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../tenant/youtube/**</code> (no OAuth yet)</td><td>Client, link, import, eligibility, aspect, refresh, matcher</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../tenant/showcase/**</code></td><td>Picks, publish kit, ladder, floor, maturity, scorer, ranking run, spotlight, feeds</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>tenant-service/src/main/resources/application.yml</code></td><td><code>youtube.*</code>, <code>showcase.*</code></td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>pre-production-service/.../controller/InternalShowcaseController.java</code></td><td>showcase-source (with <code>renderedAt</code> and download URL)</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>infra-platform/charts/backend-service/values.yaml</code></td><td>Prefixes <code>/api/v1/public/showcase</code>, <code>/api/v1/public/creators</code>; <code>YOUTUBE_API_KEY</code> secret</td></tr>
+    <tr><td class="op new">NEW</td><td class="path">Google Cloud project: enable YouTube Data API v3; API key restricted to that API and the box IP</td><td>Manual setup</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>platform-ui/src/App.jsx</code>, <code>pages/LandingPage.jsx</code></td><td>Routes + section</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>platform-ui/src/pages/{DiscoverPage,CreatorPublicPage,PrivacyPage}.jsx</code>, <code>components/showcase/{ShowcaseCard,YouTubePlayerModal,IndustryChips}.jsx</code>, <code>hooks/useYouTubeIframeApi.js</code>, <code>api/showcaseApi.js</code>, <code>utils/visitorId.js</code></td><td>Aspect-correct player, play events</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>creator-ui/src/pages/CreatorProfilePage.jsx</code></td><td>Tabs: Profile, Channel, Showcase, Visibility</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>creator-ui/src/components/showcase/{ChannelLinkWizard,VideoPickerGrid,LadderCard,YouTubeKitDialog}.jsx</code>, <code>api/showcaseEndpoints.js</code>, <code>pages/VisibilityRulesPage.jsx</code></td><td></td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>creator-ui/src/components/creator/FilmAssemblyBar.jsx</code></td><td>"Publish to YouTube"</td></tr>
+    <tr><td class="op new">TEST</td><td class="path"><code>CreatorOnboardingServiceTest</code>, <code>ChannelLinkServiceTest</code>, <code>ChannelImportServiceTest</code> (paging, eligibility reasons), <code>AspectRatioResolverTest</code> (vertical, square, unknown), <code>YouTubeRefreshJobTest</code> (30-day rule, gone), <code>PlatformVideoMatcherTest</code> (each failing rule), <code>CreatorLadderTest</code>, <code>VisibilityFloorTest</code> (launch L1, rising floor, one step per run), <code>ShowcaseScorerTest</code> (maturity decay, standing decay), <code>LandingAssemblerTest</code>, <code>PublicShowcaseControllerTest</code> (no internal ids)</td><td></td></tr>
+  </tbody>
+</table></div>
+<h3>Risk-fix additions <span class="v4">V4</span></h3>
+<div class="tw"><table>
+  <thead><tr><th>Op</th><th>Path</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td class="op new">NEW</td><td class="path">Google Workspace (Business Starter, one seat) + brand channel "Dalaillama" owned by it; Cloud project with an <b>Internal</b> consent screen; one-time consent run by ops → refresh token in a k8s secret</td><td>Week 1, about 1 hour (§21.1)</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../tenant/videohost/{VideoHost,VideoHostRouter,YouTubeVideoHost,SelfVideoHost,VideoHostHealthJob}.java</code></td><td>Port + adapters + nightly probe</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../youtube/{client/YouTubeUploadClient,service/OfficialUploadWorker}.java</code></td><td>Resumable upload to our channel</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../showcase/service/{FundingVerifier,ShowcaseReportService}.java</code></td><td>§21.4 gate; reports</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../leadmanagement/outreach/service/{MailAllowanceService,MailPackService,OutreachRetentionJob,RecipientHasher}.java</code>, <code>client/BillingAddonClient.java</code></td><td>Allowance, packs, purge</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>pre-production-service</code>: new migration (marketing terms columns); <code>PublicProjectService.lockSettled</code> / lock payment verify; <code>InternalShowcaseController</code> evidence counts</td><td>Consent at payment + raw evidence</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>creator-ui/src/pages/ClientReviewPage.jsx</code></td><td>A required checkbox before lock payment: "I agree to the Terms, including that this film may be used to market the creator and Dalaillama"</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>platform-ui/src/pages/TermsPage.jsx</code> (versioned), <code>components/showcase/ReportDialog.jsx</code>, <code>SelfHostedPlayer.jsx</code></td><td>Terms, Report, fallback player</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>billing-service</code>: <code>InternalBillingController</code> (+ addon-purchase, addons), <code>TransactionType.ADDON</code>, add-on prices in <code>application.yml</code>, migration if the enum is DB-checked</td><td>Billing owns the price</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>creator-ui/src/pages/MarketingPage.jsx</code>, <code>AdminOpsPage.jsx</code></td><td>Allowance meter + "Buy more mails"; health panel + reported items</td></tr>
+    <tr><td class="op new">TEST</td><td class="path"><code>VideoHostRouterTest</code> (flip to SELF), <code>SelfVideoHostTest</code>, <code>OfficialUploadWorkerTest</code> (forced-private → NEEDS_MANUAL), <code>FundingVerifierTest</code> (each threshold), <code>MailAllowanceServiceTest</code> (free first, packs FIFO, week rollover), <code>MailPackServiceTest</code> (idempotent charge, insufficient balance), <code>OutreachRetentionJobTest</code> (rules still work after purge), <code>InternalBillingControllerAddonTest</code>, <code>PublicProjectServiceTermsTest</code></td><td></td></tr>
+  </tbody>
+</table></div>
+<h3>Phases B, C, D</h3>
+<p>As in v2 (brand, inquiry, engagement, outreach engine, automatic picks), with these changes: no R2 or post-production work; mail cards use the cached YouTube thumbnail; <code>AutoPickJob</code> reads <code>autoFloor</code> and spotlights.</p>
+<h3>Phase Y</h3>
+<div class="tw"><table>
+  <thead><tr><th>Op</th><th>Path</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td class="op new">NEW</td><td class="path"><code>tenant-service/.../db/migration/V29__youtube_upload_job.sql</code></td><td>Job table</td></tr>
+    <tr><td class="op new">NEW</td><td class="path"><code>youtube/client/{YouTubeOAuthClient,YouTubeUploadClient}.java</code>, <code>service/{TokenCipher,YouTubeUploadWorker}.java</code>, <code>controller/PublicYouTubeOAuthController.java</code></td><td>OAuth + resumable upload</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>infra-platform/charts/backend-service/values.yaml</code></td><td>Prefix <code>/api/v1/public/youtube</code>; OAuth client and token key secrets</td></tr>
+    <tr><td class="op new">NEW</td><td class="path">Google: OAuth consent screen, domain verification, privacy policy URL, demo video, verification submission</td><td>Start in week 1; it runs in parallel</td></tr>
+    <tr><td class="op edit">EDIT</td><td class="path"><code>creator-ui</code> ChannelLinkWizard, YouTubeKitDialog</td><td>"Connect with Google", "Upload to my channel"</td></tr>
+    <tr><td class="op new">TEST</td><td class="path"><code>TokenCipherTest</code>, <code>YouTubeUploadWorkerTest</code> (resume, retry, quota, disclosure flag), <code>PublicYouTubeOAuthControllerTest</code> (state tamper, expiry)</td><td></td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="success"><span class="tag">§20</span>Success criteria <span class="v3">V3</span></h2>
+<h3>Product outcomes (60 days after Phase C)</h3>
+<div class="tw"><table>
+  <thead><tr><th>Metric</th><th>Target</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Subscribed creators with profile + email</td><td class="num">100 %</td><td>§4 query</td></tr>
+    <tr><td>Subscribed creators at L1 or above (channel verified, ≥2 picks)</td><td class="num">≥ 70 %</td><td><code>level</code></td></tr>
+    <tr><td>Median time from subscription to L1</td><td class="num">&lt; 1 day</td><td>timestamps</td></tr>
+    <tr><td>Platform films published to YouTube / platform films finished</td><td class="num">≥ 50 %</td><td>PLATFORM items vs projects</td></tr>
+    <tr><td>Funded platform films (drives maturity)</td><td class="num">rising month on month</td><td><code>showcase_ranking_run.maturity</code></td></tr>
+    <tr><td>Share of landing items that are PLATFORM</td><td class="num">rises as maturity rises</td><td>ranking runs</td></tr>
+    <tr><td>Clicked visitors who play a video for 3 s</td><td class="num">≥ 50 %</td><td><code>showcase_play</code></td></tr>
+    <tr><td>Unique click rate on deliveries</td><td class="num">≥ 3 %</td><td>intents</td></tr>
+    <tr><td>Brand sign-ups / requests / conversion to brief</td><td class="num">≥ 30 / ≥ 10 / ≥ 30 %</td><td>v2 tables</td></tr>
+    <tr><td>Video hosting cost</td><td class="num">$0</td><td>no video bytes on our side</td></tr>
+  </tbody>
+</table></div>
+<h3>Guardrails</h3>
+<div class="tw"><table>
+  <thead><tr><th>Guardrail</th><th>Threshold</th></tr></thead>
+  <tbody>
+    <tr><td>YouTube API data older than 30 days</td><td>Zero rows (<code>fetched_at</code> check in a test and a daily log alarm)</td></tr>
+    <tr><td>YouTube stats stored or shown</td><td>None</td></tr>
+    <tr><td>Films in mail without verified funding and marketing consent</td><td>Zero (enforced in the query, covered by a test)</td></tr>
+    <tr><td>Raw recipient emails older than 30 days</td><td>Zero rows</td></tr>
+    <tr><td>Free mails per creator per week</td><td>≤ 100; anything more is paid</td></tr>
+    <tr><td>Time to move platform films off YouTube</td><td>One config change + redeploy, with no data migration</td></tr>
+    <tr><td>Daily quota use</td><td class="num">&lt; 50 % of 10,000 units</td></tr>
+    <tr><td>Mails per brand per day</td><td>Never more than 1</td></tr>
+    <tr><td>Bounce / complaints</td><td class="num">&lt; 3 % / &lt; 0.1 %</td></tr>
+    <tr><td>Internal ids or emails in public responses</td><td>Zero</td></tr>
+    <tr><td>Landing LCP on 4G, p75</td><td class="num">&lt; 2.5 s (thumbnails first; the iframe loads on tap)</td></tr>
+  </tbody>
+</table></div>
+<h3>Definition of done</h3>
+<div class="tw"><table>
+  <thead><tr><th>Phase</th><th>Done when</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pill a">A</span></td><td>A new subscriber gets email + profile even after a Kafka redelivery. They link a channel by description code, see their videos with eligibility reasons, pick 2, and reach L1. A vertical Short opens vertical and a 16:9 film opens wide, on phone and desktop, each with "Watch on YouTube". A platform film published through the kit is recognised as PLATFORM, and a non-matching link is refused with the failed rule. With all creators at L1 the landing page shows their picks; after test data adds 18 L3 items, the next run raises the floor one level. Changing a weight and re-scoring changes the order. Cached data older than 25 days is refreshed.</td></tr>
+    <tr><td><span class="pill b">B</span>–<span class="pill d">D</span></td><td>As in v2.</td></tr>
+    <tr><td><span class="pill b">Y</span></td><td>"Connect with Google" links the channel without a code. "Upload to my channel" publishes a film with the AI disclosure set and our marker, and it appears as PLATFORM with no paste step. Revoking access in Google is detected and the creator is asked to reconnect.</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="risks"><span class="tag">§21</span>Risks and how each is closed <span class="v4">V4</span></h2>
+
+<h3>21.1 Google OAuth trust: removed from the critical path</h3>
+<p>A new app asking strangers for YouTube access is the hardest case for Google review: sensitive scopes, a scary warning screen, and weeks of back-and-forth. The design now needs <b>no</b> third-party OAuth at all.</p>
+<div class="tw"><table>
+  <thead><tr><th>Need</th><th>How it works without review</th></tr></thead>
+  <tbody>
+    <tr><td>Prove a creator owns a channel</td><td>A code in the channel description, read with an API key. No OAuth.</td></tr>
+    <tr><td>Read channel videos</td><td>Public data through the API key. No OAuth.</td></tr>
+    <tr><td>Upload platform films with zero creator effort</td><td>Upload to <b>our own</b> channel. The Google Cloud project sits in a Google Workspace org (Business Starter, one seat) whose user owns the "Dalaillama" brand channel. The OAuth consent screen is set to <b>Internal</b>, so only accounts in our org can authorise. Google's help centre lists this as exempt from verification ("The app is only used by people in your Google Workspace or Cloud Identity organization. The project must be owned by the organization, and its OAuth Consent Screen must be configured for internal use"), so it has no unverified screen and no 100-user cap. The 7-day token expiry applies only to external apps in Testing. <b>The Cloud project must be created inside the Workspace org</b>, not under a personal Gmail account. Ops authorises once, and the refresh token goes into a k8s secret.</td></tr>
+    <tr><td>Put a film on the creator's own channel</td><td>The upload kit plus a pasted link. The creator uploads in YouTube Studio as usual.</td></tr>
+    <tr><td>If Google ever forces API uploads to private again</td><td>The job moves to <code>NEEDS_MANUAL</code>, ops uploads that film in Studio and pastes the link, and it is matched like a kit link. Nothing is blocked.</td></tr>
+  </tbody>
+</table></div>
+<p><b>Week-1 checklist (about 2 hours of ops work):</b> create the Workspace (in the Admin console, turn on YouTube and Brand Accounts for the org) and the brand channel; create the Cloud project and enable YouTube Data API v3; restrict the API key to that API and the box IP; set the consent screen to Internal with scope <code>youtube.upload</code>; run the consent once; store <code>YT_OFFICIAL_REFRESH_TOKEN</code> and <code>YOUTUBE_API_KEY</code>; upload one probe video. Creator OAuth (Phase Y) waits until the app has a public track record (privacy policy, terms, live users), which makes external verification much easier if creators ever ask for it.</p>
+<p>Bonus: the official channel becomes Dalaillama's own marketing channel, full of real client work, each video crediting and linking to its creator.</p>
+
+<h3>21.2 YouTube terms change: a host port with a working fallback</h3>
+<p>Everything that plays video goes through one port. Each showcase item records its <code>host</code>, and the frontend picks the player by host.</p>
+<pre class="mermaid">
+classDiagram
+  direction LR
+  class VideoHost {
+    &lt;&lt;interface&gt;&gt;
+    playback(item) Playback
+    health() HostHealth
+  }
+  class YouTubeVideoHost {
+    playback(item) YouTubeEmbed
+  }
+  class SelfVideoHost {
+    playback(item) SignedMp4
+  }
+  class VideoHostRouter {
+    hostFor(item) VideoHost
+  }
+  class VideoHostHealthJob {
+    probe()
+  }
+  VideoHost &lt;|.. YouTubeVideoHost
+  VideoHost &lt;|.. SelfVideoHost
+  VideoHostRouter --> VideoHost
+  VideoHostHealthJob --> VideoHost
+</pre>
+<div class="tw"><table>
+  <thead><tr><th>If YouTube changes...</th><th>Effect</th><th>Response</th></tr></thead>
+  <tbody>
+    <tr><td>Quota cut</td><td>Refresh may lag</td><td>Reads are batched 50 to a call; we use about 1% of quota. If refresh still cannot keep up, items past 30 days are hidden rather than kept stale (compliance first).</td></tr>
+    <tr><td>Uploads restricted</td><td>Official uploads fail or go private</td><td><code>NEEDS_MANUAL</code> path (21.1)</td></tr>
+    <tr><td>Embedding blocked, API key or project suspended, or terms we cannot accept</td><td>Videos stop playing</td><td>Set <code>video-host.platform-films: SELF</code>. Every PLATFORM item plays from MinIO through a short-lived signed URL. We own every platform film's master file, so nothing is lost. EXTERNAL items become link-out cards ("Watch on YouTube") with our cached title; once the cache is 30 days old they hide until the creator re-picks.</td></tr>
+    <tr><td>Traffic outgrows the box on SELF</td><td>Bandwidth</td><td>Add the v2 R2 adapter behind the same port (documented, not built).</td></tr>
+  </tbody>
+</table></div>
+<p><b>How we notice:</b> a nightly probe plays our own probe video through the API (embeddable? reachable?) and records quota use. The result shows on the AdminOps health panel. No alerting service; per your earlier call, ops looks at the panel.</p>
+
+<h3>21.3 Creators without a channel</h3>
+<p>The wizard asks them to create one, with YouTube's two-minute guide linked. Until they do, they stay L0 for EXTERNAL picks. Their <b>platform films can still go on the official channel</b>, so a creator without a channel is never blocked from showing platform work.</p>
+<p><b>Broken embeds:</b> the player's <code>onError</code> (101/150) hides the card for the session and reports it; the nightly refresh marks the item <code>UNAVAILABLE</code>. Films on the official channel are under our control, so they do not break this way.</p>
+
+<h3>21.4 "Funded" is verified, not claimed</h3>
+<p>Funding is unambiguous in today's flow. A package only locks through the review page's pay gate (<code>/lock/verify</code> captures the client's Razorpay payment, and <code>/lock/settled</code> is refused while any balance is due). Locked therefore means fully paid by the client. On top of that, <code>FundingVerifier</code> checks production evidence that only real work in the app produces. pre-production returns raw counts and the thresholds live in config:</p>
+<div class="tw"><table>
+  <thead><tr><th>Signal</th><th>Default threshold</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Client lock (fully paid)</td><td>required</td><td><code>projects.client_locked_at</code></td></tr>
+    <tr><td>Generated takes on the project</td><td class="num">≥ 5</td><td>shot clip versions</td></tr>
+    <tr><td>Client review sessions</td><td class="num">≥ 1</td><td>reviews start/end</td></tr>
+    <tr><td>Client comments or direction approvals</td><td class="num">≥ 1</td><td>review comments, creative-direction approvals</td></tr>
+  </tbody>
+</table></div>
+<p>All of them pass → <code>funded_verified_at</code> is set. Only verified-funded films count toward L3/L4, maturity and spotlights. Faking this means paying real money and running a full production and review cycle, which costs more than the visibility is worth.</p>
+
+<h3>21.5 Mail volume, paid packs, data retention</h3>
+<ul>
+  <li><b>Free allowance:</b> 100 mails per creator per ISO week (Monday 00:00 UTC). Every recipient in a manual send uses one. Automatic and follow mails are platform-sent and do not use the creator's allowance.</li>
+  <li><b>Paid packs:</b> when the free allowance runs out, the composer shows "Buy 500 more". tenant-service calls billing's <code>addon-purchase</code> with an idempotency key. <b>Billing owns the price</b> and debits the wallet as <code>ADDON</code>. On success, <code>lead_mail_pack</code> rows hold the credits, consumed oldest first after the free allowance. That revenue pays for extra sending capacity (a larger relay plan or a second mailbox) when volume needs it.</li>
+  <li><b>Retention:</b> every rule (suppression, cooldowns, one-per-day) works on <code>recipient_hash</code> = sha256(normalised email + secret pepper). Raw email, name and company are needed only to render and send. A nightly job nulls them 30 days after delivery and sets <code>pii_purged_at</code>. Counts and attribution stay.</li>
+  <li><b>Cold-email law:</b> low volume, at most one mail a day per brand, a 14-day same-creator cooldown, one-click unsubscribe, honest sender and subject, and a postal address. That is the respectful pattern the rules ask for.</li>
+</ul>
+
+<h3>21.6 Content legality and client rights</h3>
+<div class="tw"><table>
+  <thead><tr><th>Surface</th><th>Allowed films</th></tr></thead>
+  <tbody>
+    <tr><td>Templates, digests, automatic picks, landing spotlights</td><td>PLATFORM <b>and</b> <code>funded_verified_at</code> set <b>and</b> <code>marketing_consent_at</code> set. Films in production or not fully paid never qualify.</td></tr>
+    <tr><td>Official-channel upload</td><td>The same rule: consent and fully paid</td></tr>
+    <tr><td>Creator profile and Discover</td><td>The above, plus EXTERNAL picks with the creator's rights attestation (their own published YouTube videos)</td></tr>
+  </tbody>
+</table></div>
+<ul>
+  <li><b>Consent at payment:</b> the client review page shows a required checkbox at lock payment. "I agree to the Terms, including that the finished film may be used to promote the creator and Dalaillama." pre-production stores <code>marketing_terms_version</code> and <code>marketing_terms_accepted_at</code> with the verified payment. Terms are versioned at <code>/terms</code>, and existing locked projects without consent are simply not mailable.</li>
+  <li><b>Withdrawal:</b> a client who later objects is handled with the ops kill switch (hides everywhere) and, if the film is on the official channel, by unlisting it.</li>
+  <li><b>Unlawful or harmful content:</b> YouTube's own policies apply to every hosted video, and we add gates (no age-restricted or made-for-kids videos), the AI disclosure on every platform film, and a <b>Report</b> button on the player. Three distinct reports auto-hide the item until ops reviews it.</li>
+</ul>
+
+<h2 id="oldplan"><span class="tag">§22</span>Fit with the existing 9-phase marketing plan</h2>
+<p>Unchanged from v2: the public profile and brand request move first; entitlement snapshot, canonical contacts, provider search, inbox and analytics stay deferred; suppression and templates land in Phase C. Once this is confirmed, add a pointer in <code>docs/lead-management/PLATFORM.md</code>.</p>
+<p class="lead" style="margin-top:28px">Sources: <a href="https://developers.google.com/youtube/v3/docs/videos/insert">YouTube videos.insert</a> · <a href="https://developers.google.com/youtube/v3/determine_quota_cost">YouTube quota costs</a> · <a href="https://developers.google.com/youtube/v3/docs/videos">YouTube video resource</a> · <a href="https://developers.google.com/youtube/terms/developer-policies">YouTube API developer policies</a> · <a href="https://developers.google.com/youtube/iframe_api_reference">IFrame Player API</a> · <a href="https://developers.google.com/identity/protocols/oauth2">Google OAuth 2.0 (refresh token expiry)</a> · <a href="https://support.google.com/cloud/answer/13464323">When OAuth verification is not needed</a> · <a href="https://developers.google.com/youtube/v3/guides/uploading_a_video">YouTube upload guide</a> · <a href="https://www.cloudflare.com/service-specific-terms-application-services/">Cloudflare CDN terms</a></p>
+</main>
+</div>

@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
  * dedicated @Configuration class rather than a class-level annotation on the properties record
  * so the config surface is discoverable via a single grep for the module. */
 @Configuration
-@EnableConfigurationProperties(LeadManagementProperties.class)
+@EnableConfigurationProperties({LeadManagementProperties.class, com.dalai.llama.tenant.leadmanagement.brand.BrandProperties.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class})
 public class LeadManagementConfig {
 }

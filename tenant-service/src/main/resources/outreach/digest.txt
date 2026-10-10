@@ -1,0 +1,10 @@
+{{greeting}}
+
+{{intro}}
+
+{{cardsText}}
+See more films from our creators: {{discoverUrl}}
+
+--
+Dalai Llama sends at most one email a day to this address, grouping what creators wanted you to see.
+Unsubscribe: {{unsubscribeUrl}}

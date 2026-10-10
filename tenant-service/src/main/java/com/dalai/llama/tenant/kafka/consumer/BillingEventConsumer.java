@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 public class BillingEventConsumer {
 
     private final TenantService tenantService;
+    private final com.dalai.llama.tenant.showcase.service.ShowcaseModerationService showcaseModeration;
 
 
     @KafkaListener(topics = "billing.wallet.created", groupId = "tenant-billing-consumer",
@@ -56,6 +57,12 @@ public class BillingEventConsumer {
         log.info("Received billing.state.changed: tenantId={} state={}",
                 event.getTenantId(), event.getCurrentState());
         tenantService.onBillingStateChanged(event.getTenantId(), event.getCurrentState().toString());
+        // Creator Showcase: a lapsed subscription takes the public profile down (and back up).
+        try {
+            showcaseModeration.onBillingState(event.getTenantId(), event.getCurrentState().toString());
+        } catch (RuntimeException e) {
+            log.error("Could not update public profile for billing state tenant={}", event.getTenantId(), e);
+        }
     }
 
     @KafkaListener(topics = "billing.refund.initiated", groupId = "tenant-billing-consumer",
