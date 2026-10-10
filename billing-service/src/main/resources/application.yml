@@ -134,6 +134,12 @@ billing:
   # two without silently blocking a barely-over-budget project, while still guaranteeing a runaway
   # one (regenerating the same shot repeatedly) can't erase the platform's margin on a single deal.
   project-spend-cap-multiple: ${PROJECT_SPEND_CAP_MULTIPLE:1.5}
+  # One-off add-ons a creator buys from their wallet. Billing owns the price; tenant-service only
+  # asks for a code and grants what billing says was bought.
+  addons:
+    outreach-mail-pack:
+      price-inr: ${ADDON_OUTREACH_MAIL_PACK_PRICE_INR:499}
+      quantity: ${ADDON_OUTREACH_MAIL_PACK_QUANTITY:500}
 
 # Service URLs (for internal communication)
 services:

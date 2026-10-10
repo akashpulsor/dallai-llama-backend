@@ -7,5 +7,7 @@ public enum TransactionType {
     ADJUSTMENT_DEBIT,
     REFUND,
     DID_RENTAL,
-    SUBSCRIPTION
+    SUBSCRIPTION,
+    /** A one-off add-on bought from the wallet (e.g. a pack of outreach mails); see AddonService. */
+    ADDON
 }

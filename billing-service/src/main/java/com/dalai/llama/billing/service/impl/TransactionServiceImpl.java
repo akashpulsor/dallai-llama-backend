@@ -117,6 +117,7 @@ public class TransactionServiceImpl implements TransactionService {
             case REFUND -> "Payment refund";
             case DID_RENTAL -> "DID rental charge";
             case SUBSCRIPTION -> "Subscription fee";
+            case ADDON -> "Add-on purchase";
         };
     }
 }
