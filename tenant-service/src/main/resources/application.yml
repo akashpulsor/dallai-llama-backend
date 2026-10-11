@@ -318,6 +318,8 @@ audience-provider:
     search-cache-days: 30
     per-page: 25
     default-titles: [ "marketing manager", "brand manager", "head of marketing", "chief marketing officer", "founder", "marketing director" ]
+    # People search and email reveal need a paid Apollo plan (the free plan answers 403); companies work on free.
+    people-enabled: ${APOLLO_PEOPLE_ENABLED:false}
   hunter:
     api-key: ${HUNTER_API_KEY:}
     base-url: https://api.hunter.io/v2

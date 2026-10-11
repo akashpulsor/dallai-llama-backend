@@ -138,9 +138,14 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         profileService.ensureProfile(neha, "Neha Studio");
 
         var preview = outreach.preview(neha, new com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewRequest(
-                OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha"));
+                OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha", null, null));
 
         assertThat(preview.html()).contains("Your film appears here", "CREATOR STUDIO", "Neha Studio", "Hi Asha");
+        // Unsaved edits show live in the preview.
+        var edited = outreach.preview(neha, new com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewRequest(
+                OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha", "A film idea for {name}", "Loved your last launch."));
+        assertThat(edited.subject()).isEqualTo("A film idea for Asha");
+        assertThat(edited.html()).contains("Loved your last launch.");
         assertThat(preview.html()).contains(OutreachService.SAMPLE_THUMBNAIL);
     }
 

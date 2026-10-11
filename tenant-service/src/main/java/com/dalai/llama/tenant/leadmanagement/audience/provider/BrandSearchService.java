@@ -26,7 +26,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
-/** Rule 42: a shared brand directory filled from Hunter.io. Creators search by industry, country
+/** Rule 42: a shared brand directory, filled from Hunter.io when it has a key, else Apollo.io's free
+ * company search (no emails: creators add the contact on each lead). Creators search by industry, country
  * and keywords; a search reaches the provider only when nobody ran it in the last
  * {@code searchCacheDays} (company search is free). Adding companies to an audience looks up their
  * emails once (credits) and keeps them for every creator after; the monthly credit cap stops
@@ -42,6 +43,8 @@ public class BrandSearchService {
 
     private final HunterProperties properties;
     private final HunterClient hunter;
+    private final ApolloProperties apolloProperties;
+    private final ApolloClient apollo;
     private final BrandSearchStore store;
     private final AudienceStore audiences;
     private final RecipientHasher hasher;
@@ -76,21 +79,30 @@ public class BrandSearchService {
         if (store.freshSearch(key, now.minus(Duration.ofDays(properties.searchCacheDays())))) {
             return new SearchResult(views(store.searchResults(key)), true, credits());
         }
-        if (!properties.configured()) {
+        if (!properties.configured() && !apolloProperties.configured()) {
             // No provider yet: serve what the directory already knows.
             return new SearchResult(views(store.known(r.industry(), country, 50)), true, credits());
         }
         if (r.industry() == null && country == null && query == null) {
             throw new IllegalArgumentException("Choose an industry or a country, or type what you're looking for");
         }
-        List<String> industries = r.industry() == null ? List.of() : properties.industries().getOrDefault(r.industry(), List.of());
-        List<HunterClient.DiscoveredCompany> found = hunter.discover(industries, country, query);
         List<UUID> ids = new ArrayList<>();
-        for (HunterClient.DiscoveredCompany c : found) {
-            if (c.domain() == null || c.domain().isBlank()) continue;
-            ids.add(store.upsertCompany(c.domain(), c.organization(), r.industry(), country, c.emailsTotal(), PROVIDER));
+        if (properties.configured()) {
+            List<String> industries = r.industry() == null ? List.of() : properties.industries().getOrDefault(r.industry(), List.of());
+            for (HunterClient.DiscoveredCompany c : hunter.discover(industries, country, query)) {
+                if (c.domain() == null || c.domain().isBlank()) continue;
+                ids.add(store.upsertCompany(c.domain(), c.organization(), r.industry(), country, c.emailsTotal(), PROVIDER));
+            }
+        } else {
+            List<String> tags = new ArrayList<>();
+            if (r.industry() != null) tags.add(r.industry().name().replace('_', ' ').toLowerCase(Locale.ROOT));
+            if (query != null) tags.add(query);
+            for (ApolloClient.Organization o : apollo.searchOrganizations(tags, country == null ? null : PeopleSearchService.countryName(country),
+                    apolloProperties.perPage())) {
+                ids.add(store.upsertCompany(o.domain(), o.name(), r.industry(), country, 0, "APOLLO"));
+            }
         }
-        store.saveSearch(key, PROVIDER, describe(r.industry(), country, query), ids);
+        store.saveSearch(key, properties.configured() ? PROVIDER : "APOLLO", describe(r.industry(), country, query), ids);
         return new SearchResult(views(store.searchResults(key)), false, credits());
     }
 
@@ -103,15 +115,16 @@ public class BrandSearchService {
             List<CompanyContact> contacts = store.contacts(company.id());
             boolean stale = company.contactsFetchedAt() == null
                     || company.contactsFetchedAt().isBefore(now.minus(Duration.ofDays(properties.contactsCacheDays())));
-            if (contacts.isEmpty() && stale) {
-                if (!properties.configured() || credits().leftThisMonth() < properties.emailsPerCompany()) {
-                    skipped++;
-                    continue;
-                }
+            if (contacts.isEmpty() && stale && properties.configured() && credits().leftThisMonth() >= properties.emailsPerCompany()) {
                 fetchContacts(company, now);
                 contacts = store.contacts(company.id());
             }
             if (contacts.isEmpty()) {
+                // No email known (Apollo's free plan, or this month's lookups are used up): the company
+                // still joins the audience and the creator adds the contact on the lead.
+                UUID lead = audiences.createLead(tenantId, null, null, company.name(), company.industry(), "https://" + company.domain(), now);
+                audiences.addMember(audienceId, lead);
+                added++;
                 without++;
                 continue;
             }

@@ -80,7 +80,7 @@ public class PeopleSearchService {
         if (searches.freshSearch(key, clock.instant().minus(Duration.ofDays(properties.searchCacheDays())))) {
             return new SearchResult(views(people.results(key)), true, credits());
         }
-        if (!properties.configured()) return new SearchResult(List.of(), true, credits());
+        if (!properties.peopleConfigured()) return new SearchResult(List.of(), true, credits());
 
         List<String> titles = title == null ? properties.defaultTitles() : List.of(title);
         String keywords = String.join(" ", nonNull(r.industry() == null ? null : label(r.industry()), query)).trim();

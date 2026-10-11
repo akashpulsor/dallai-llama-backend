@@ -2,7 +2,6 @@ package com.dalai.llama.tenant.leadmanagement.brand;
 
 import com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.oauth2.jwt.BadJwtException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -31,11 +30,11 @@ public class BrandIdentityTest {
     private final BrandContactRepository contacts = mock(BrandContactRepository.class);
     private final ContactPointValidator validator = mock(ContactPointValidator.class);
     private final BrandSessionService sessions = new BrandSessionService(new BrandProperties("secret", 30, true, 30, 5, "", "", ""), CLOCK);
-    private final BrandIdentity identity = new BrandIdentity(provider(decoder), sessions, contacts, validator, CLOCK);
+    private final BrandIdentity identity = new BrandIdentity(() -> decoder, sessions, contacts, validator, CLOCK);
 
     /** For controller tests that only exercise the cookie. */
     public static BrandIdentity cookieOnly(BrandSessionService sessions) {
-        return new BrandIdentity(provider(null), sessions, mock(BrandContactRepository.class), mock(ContactPointValidator.class), CLOCK);
+        return new BrandIdentity(() -> null, sessions, mock(BrandContactRepository.class), mock(ContactPointValidator.class), CLOCK);
     }
 
     @Test
@@ -89,10 +88,4 @@ public class BrandIdentityTest {
         return Jwt.withTokenValue("t").header("alg", "RS256").claims(c -> c.putAll(claims)).subject("kc-1").build();
     }
 
-    @SuppressWarnings("unchecked")
-    private static ObjectProvider<JwtDecoder> provider(JwtDecoder decoder) {
-        ObjectProvider<JwtDecoder> p = mock(ObjectProvider.class);
-        when(p.getIfAvailable()).thenReturn(decoder);
-        return p;
-    }
 }

@@ -15,9 +15,15 @@ public record ApolloProperties(
         int searchCacheDays,
         int perPage,
         /* Who brands' decision makers are, when the creator doesn't say. */
-        List<String> defaultTitles
+        List<String> defaultTitles,
+        /* People search and email reveal need a paid Apollo plan; the free plan only searches companies. */
+        boolean peopleEnabled
 ) {
     public boolean configured() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    public boolean peopleConfigured() {
+        return configured() && peopleEnabled;
     }
 }

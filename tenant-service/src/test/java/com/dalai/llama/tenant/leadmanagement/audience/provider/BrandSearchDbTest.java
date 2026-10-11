@@ -54,7 +54,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "audience-provider.hunter.emails-per-company=2"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({BrandSearchService.class, BrandSearchStore.class, HunterClient.class, AudienceStore.class, AudienceService.class,
+@Import({BrandSearchService.class, BrandSearchStore.class, HunterClient.class, ApolloClient.class, AudienceStore.class, AudienceService.class,
         RecipientHasher.class, CreatorProfileService.class, HandlePolicy.class, BrandSearchDbTest.TestConfig.class})
 class BrandSearchDbTest extends ShowcaseDbTestSupport {
 
@@ -71,7 +71,7 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
     }
 
     @TestConfiguration
-    @EnableConfigurationProperties({HunterProperties.class, OutreachProperties.class, ShowcaseProperties.class})
+    @EnableConfigurationProperties({HunterProperties.class, ApolloProperties.class, OutreachProperties.class, ShowcaseProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -176,8 +176,10 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         jdbc.update("INSERT INTO lead_provider_usage (usage_month, provider, credits_used, calls) VALUES ('2026-10', 'HUNTER', 4, 2)");
 
         BrandSearchService.AddResult result = brands.addToAudience(riya, list, new BrandSearchService.AddRequest(ids));
-        assertThat(result.skippedNoCredits()).isEqualTo(2);
-        assertThat(result.companiesAdded()).isZero();
+        // Out of lookups: the companies still join, without an email, for the creator to fill in.
+        assertThat(result.companiesAdded()).isEqualTo(2);
+        assertThat(result.companiesWithoutContacts()).isEqualTo(2);
+        assertThat(result.skippedNoCredits()).isZero();
         assertThat(DOMAIN_SEARCHES.get()).isZero();
     }
 

@@ -71,7 +71,10 @@ public class OutreachService {
 
     public PreviewView preview(UUID tenantId, PreviewRequest request) {
         CreatorPublicProfile profile = profile(tenantId);
-        EmailTemplate template = templates.resolve(tenantId, request.templateId(), request.template());
+        EmailTemplate saved = templates.resolve(tenantId, request.templateId(), request.template());
+        EmailTemplate template = new EmailTemplate(saved.id(), saved.tenantId(), saved.name(), saved.layout(),
+                blank(request.subject()) ? saved.subject() : request.subject(), blank(request.intro()) ? saved.intro() : request.intro(),
+                saved.active());
         OutreachComposer.Mail mail = composer.creatorMail(template, previewFilms(tenantId, profile, template.layout(), request.publicId()),
                 profile.getDisplayName(), profile.getHandle(), request.recipientName(), request.note(), null);
         return new PreviewView(mail.subject(), mail.text(), mail.html());
@@ -229,6 +232,10 @@ public class OutreachService {
         if (!films.isEmpty()) return films;
         return List.of(new MailableFilm(null, null, "Your film appears here", SAMPLE_THUMBNAIL, null, "Sample", tenantId,
                 profile.getHandle(), profile.getDisplayName()));
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
     }
 
     public static final String SAMPLE_THUMBNAIL = "https://placehold.co/1080x608/09070f/c3acec/png?text=Your+film";

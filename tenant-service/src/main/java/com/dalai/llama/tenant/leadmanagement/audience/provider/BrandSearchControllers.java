@@ -43,7 +43,7 @@ public final class BrandSearchControllers {
         /** Which directories are switched on (an API key is set), so the page shows only those. */
         @GetMapping("/directories")
         public ResponseEntity<Directories> directories() {
-            return ResponseEntity.ok(new Directories(apollo.configured(), hunter.configured()));
+            return ResponseEntity.ok(new Directories(apollo.peopleConfigured(), hunter.configured() || apollo.configured()));
         }
 
         @GetMapping("/people-search")

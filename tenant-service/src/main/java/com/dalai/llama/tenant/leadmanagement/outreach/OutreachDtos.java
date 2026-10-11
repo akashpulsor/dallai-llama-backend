@@ -34,8 +34,10 @@ public final class OutreachDtos {
     ) {
     }
 
+    /** {@code subject}/{@code intro}: unsaved edits to show live; the template itself is untouched. */
     public record PreviewRequest(OutreachTemplate template, UUID templateId, @Size(max = 12) String publicId,
-                                 @Size(max = 500) String note, @Size(max = 80) String recipientName) {
+                                 @Size(max = 500) String note, @Size(max = 80) String recipientName,
+                                 @Size(max = 200) String subject, @Size(max = 1000) String intro) {
     }
 
     /** Rule 26: send to every lead in one of the creator's audiences, one email per lead. */

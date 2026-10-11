@@ -225,7 +225,7 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         EmailTemplateService.TemplateView mine = templates.create(riya, new EmailTemplateService.TemplateRequest("Festive",
                 OutreachTemplate.SIMILAR_BRAND_WORK, "{name}, a {industry} film for Diwali", "Made {film} for a {industry} brand.", null));
 
-        var preview = outreach.preview(riya, new PreviewRequest(null, mine.id(), "pubriya0001", null, "Asha"));
+        var preview = outreach.preview(riya, new PreviewRequest(null, mine.id(), "pubriya0001", null, "Asha", null, null));
         assertThat(preview.subject()).isEqualTo("Asha, a food beverage film for Diwali");
         assertThat(preview.text()).contains("Made Video riya0000001 for a food beverage brand.");
 

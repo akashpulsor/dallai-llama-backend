@@ -51,10 +51,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true", "outreach.hash-pepper=pepper",
         "audience-provider.apollo.api-key=apollo-key", "audience-provider.apollo.monthly-credits=1",
         "audience-provider.apollo.per-page=25", "audience-provider.apollo.search-cache-days=30",
-        "audience-provider.apollo.default-titles=marketing manager,founder"})
+        "audience-provider.apollo.default-titles=marketing manager,founder", "audience-provider.apollo.people-enabled=true",
+        "audience-provider.hunter.api-key=", "audience-provider.hunter.monthly-credits=50", "audience-provider.hunter.emails-per-company=3",
+        "audience-provider.hunter.search-cache-days=30", "audience-provider.hunter.contacts-cache-days=90"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({PeopleSearchService.class, PeopleDirectoryStore.class, BrandSearchStore.class, ApolloClient.class, AudienceStore.class,
+        BrandSearchService.class, HunterClient.class,
         AudienceService.class, RecipientHasher.class, CreatorProfileService.class, HandlePolicy.class, PeopleSearchDbTest.TestConfig.class})
 class PeopleSearchDbTest extends ShowcaseDbTestSupport {
 
@@ -71,7 +74,7 @@ class PeopleSearchDbTest extends ShowcaseDbTestSupport {
     }
 
     @TestConfiguration
-    @EnableConfigurationProperties({ApolloProperties.class, OutreachProperties.class, ShowcaseProperties.class})
+    @EnableConfigurationProperties({ApolloProperties.class, HunterProperties.class, OutreachProperties.class, ShowcaseProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -85,6 +88,7 @@ class PeopleSearchDbTest extends ShowcaseDbTestSupport {
     }
 
     @Autowired private PeopleSearchService people;
+    @Autowired private BrandSearchService brands;
     @Autowired private AudienceService audienceService;
     @Autowired private CreatorProfileService profileService;
     @Autowired private JdbcTemplate jdbc;
@@ -167,6 +171,26 @@ class PeopleSearchDbTest extends ShowcaseDbTestSupport {
         assertThat(MATCHES.get()).isEqualTo(1);
     }
 
+    @Test
+    void withoutHunterApolloFindsCompanies_andTheyJoinTheAudienceForTheCreatorToAddTheContact() {
+        UUID list = audienceService.create(riya, "Snacks").id();
+        BrandSearchService.SearchResult found = brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", "snacks"));
+        assertThat(found.companies()).extracting(BrandSearchService.CompanyView::domain).containsExactly("crunchco.example");
+        assertThat(ORG_BODIES.get(0)).contains("\"q_organization_keyword_tags\":[\"food beverage\",\"snacks\"]", "\"India\"");
+
+        BrandSearchService.AddResult added = brands.addToAudience(riya, list, new BrandSearchService.AddRequest(List.of(found.companies().get(0).id())));
+        assertThat(added.companiesAdded()).isEqualTo(1);
+        assertThat(added.companiesWithoutContacts()).isEqualTo(1);
+        LeadView lead = audienceService.leads(riya, list, null, 0).leads().get(0);
+        assertThat(lead.company()).isEqualTo("Crunch Co");
+        assertThat(lead.website()).isEqualTo("https://crunchco.example");
+        assertThat(lead.reachable()).isFalse();
+        audienceService.addContactPoint(riya, lead.id(), "hello@crunchco.example");
+        assertThat(audienceService.leads(riya, list, null, 0).leads().get(0).reachable()).isTrue();
+    }
+
+    private static final List<String> ORG_BODIES = new CopyOnWriteArrayList<>();
+
     private static HttpServer stub() {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -178,6 +202,10 @@ class PeopleSearchDbTest extends ShowcaseDbTestSupport {
                         + "\"has_email\":true,\"organization\":{\"name\":\"Hearth Foods\"}},"
                         + "{\"id\":\"p-vikram\",\"first_name\":\"Vikram\",\"last_name_obfuscated\":\"S***h\",\"title\":\"Brand Manager\","
                         + "\"has_email\":true,\"organization\":{\"name\":\"Bolt Motors\"}}]}");
+            });
+            server.createContext("/api/v1/organizations/search", e -> {
+                ORG_BODIES.add(new String(e.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                reply(e, "{\"organizations\":[{\"name\":\"Crunch Co\",\"primary_domain\":\"crunchco.example\",\"industry\":\"food & beverages\"}]}");
             });
             server.createContext("/api/v1/people/match", e -> {
                 MATCHES.incrementAndGet();

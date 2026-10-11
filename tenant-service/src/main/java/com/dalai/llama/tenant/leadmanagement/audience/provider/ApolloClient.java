@@ -41,6 +41,27 @@ public class ApolloClient {
                            String companyDomain) {
     }
 
+    public record Organization(String name, String domain, String industry) {
+    }
+
+    /** Organization search -- available on Apollo's free plan (people and emails are not). */
+    public List<Organization> searchOrganizations(List<String> keywordTags, String location, int perPage) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (keywordTags != null && !keywordTags.isEmpty()) body.put("q_organization_keyword_tags", keywordTags);
+        if (location != null && !location.isBlank()) body.put("organization_locations", List.of(location));
+        body.put("page", 1);
+        body.put("per_page", perPage);
+        JsonNode response = post("/organizations/search", body);
+        List<Organization> orgs = new ArrayList<>();
+        for (String field : List.of("organizations", "accounts")) {
+            response.path(field).forEach(o -> {
+                String domain = domain(o);
+                if (domain != null && !domain.isBlank()) orgs.add(new Organization(text(o, "name"), domain, text(o, "industry")));
+            });
+        }
+        return orgs;
+    }
+
     public List<Person> searchPeople(List<String> titles, String keywords, String location, int perPage) {
         Map<String, Object> body = new LinkedHashMap<>();
         if (titles != null && !titles.isEmpty()) body.put("person_titles", titles);

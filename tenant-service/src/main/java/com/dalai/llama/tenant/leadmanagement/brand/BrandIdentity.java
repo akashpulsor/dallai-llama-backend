@@ -2,7 +2,9 @@ package com.dalai.llama.tenant.leadmanagement.brand;
 
 import com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
@@ -17,7 +19,8 @@ import java.util.UUID;
 
 /**
  * Who the brand is on the brand endpoints (CREATOR_SHOWCASE.md rule 46): a Keycloak access token
- * (realm dalai-llama, signed in or registered on brands.dalaillama.in). No email step: a brand
+ * from the separate "brands" realm (signed in or registered on brands.dalaillama.in), so brand and
+ * creator accounts never share usernames or passwords; creator tokens are not accepted here. No email step: a brand
  * registers and is in. The first call creates the brand account for the token's email, or adopts
  * the one an earlier sign-in or ops import made; the address counts as verified only when Keycloak
  * says so. The old session cookie is still honoured until it expires.
@@ -26,14 +29,21 @@ import java.util.UUID;
 @Component
 public class BrandIdentity {
 
-    private final ObjectProvider<JwtDecoder> decoder;
+    private final java.util.function.Supplier<JwtDecoder> decoder;
     private final BrandSessionService sessions;
     private final BrandContactRepository contacts;
     private final ContactPointValidator contactPoints;
     private final Clock clock;
 
-    public BrandIdentity(ObjectProvider<JwtDecoder> decoder, BrandSessionService sessions, BrandContactRepository contacts,
-                         ContactPointValidator contactPoints, Clock clock) {
+    @Autowired
+    public BrandIdentity(@Value("${brands.keycloak-issuer-uri:https://auth.dalaillama.in/realms/brands}") String issuer,
+                         BrandSessionService sessions, BrandContactRepository contacts, ContactPointValidator contactPoints, Clock clock) {
+        // Not a JwtDecoder bean (that would replace the creators' one); built on first use, keys fetched lazily.
+        this(memoize(() -> NimbusJwtDecoder.withIssuerLocation(issuer).build()), sessions, contacts, contactPoints, clock);
+    }
+
+    BrandIdentity(java.util.function.Supplier<JwtDecoder> decoder, BrandSessionService sessions, BrandContactRepository contacts,
+                  ContactPointValidator contactPoints, Clock clock) {
         this.decoder = decoder;
         this.sessions = sessions;
         this.contacts = contacts;
@@ -69,14 +79,26 @@ public class BrandIdentity {
     }
 
     private Optional<Jwt> decode(String token) {
-        JwtDecoder jwtDecoder = decoder.getIfAvailable();
-        if (jwtDecoder == null) return Optional.empty();
         try {
+            JwtDecoder jwtDecoder = decoder.get();
+            if (jwtDecoder == null) return Optional.empty();
             return Optional.of(jwtDecoder.decode(token));
-        } catch (JwtException e) {
+        } catch (JwtException | IllegalArgumentException | IllegalStateException e) {
             log.debug("Brand token rejected: {}", e.getMessage());
             return Optional.empty();
         }
+    }
+
+    private static <T> java.util.function.Supplier<T> memoize(java.util.function.Supplier<T> make) {
+        java.util.concurrent.atomic.AtomicReference<T> ref = new java.util.concurrent.atomic.AtomicReference<>();
+        return () -> {
+            T v = ref.get();
+            if (v == null) {
+                v = make.get();
+                ref.compareAndSet(null, v);
+            }
+            return v;
+        };
     }
 
     private static String truncate(String s, int max) {
