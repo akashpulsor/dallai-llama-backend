@@ -254,6 +254,6 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
     private static VideoInfo video(String id, String channel, OffsetDateTime published, double seconds, String description) {
         return new VideoInfo(id, channel, "Film " + id, description, "https://i/" + id + ".jpg", published.toInstant(),
-                Duration.ofMillis((long) (seconds * 1000)), "public", true, false, false, 1080, 1920);
+                Duration.ofMillis((long) (seconds * 1000)), "public", true, false, false, 1080, 1920, true);
     }
 }

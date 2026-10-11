@@ -179,15 +179,19 @@ class YouTubeChannelDbTest {
     void refreshJob_refetchesDataOlderThanTheWindow_andHidesWhatYouTubeNoLongerServes() {
         UUID tenant = verifiedCreator(List.of(video("keep", Duration.ofSeconds(30), 1280, 720, true, false, false),
                 video("gone", Duration.ofSeconds(30), 1280, 720, true, false, false)));
+        // YouTube said nothing about AI at first.
+        assertThat(importService.listVideos(tenant)).extracting(YouTubeVideoView::aiDisclosed).containsOnly(false);
         clock.advance(Duration.ofDays(26));
         when(youTube.videos(anyList())).thenReturn(List.of(
                 new VideoInfo("keep", CHANNEL, "Renamed film", "", "https://i/k2.jpg", Instant.parse("2026-09-01T00:00:00Z"),
-                        Duration.ofSeconds(30), "public", true, false, false, 1280, 720)));
+                        Duration.ofSeconds(30), "public", true, false, false, 1280, 720, true)));
         when(youTube.findChannel(any(ChannelRef.ById.class))).thenReturn(Optional.of(channel("about")));
 
         refreshJob.run();
 
         assertThat(importService.listVideos(tenant)).extracting(YouTubeVideoView::title).containsExactly("Renamed film");
+        // The refresh picks up the creator's "altered or synthetic content" disclosure.
+        assertThat(importService.listVideos(tenant)).extracting(YouTubeVideoView::aiDisclosed).containsExactly(true);
         Instant fetched = jdbc.queryForObject("SELECT fetched_at FROM youtube_video WHERE video_id = 'keep'",
                 java.sql.Timestamp.class).toInstant();
         assertThat(fetched).isEqualTo(clock.instant());
@@ -220,7 +224,7 @@ class YouTubeChannelDbTest {
 
     private static VideoInfo video(String id, Duration duration, int w, int h, boolean embeddable, boolean kids, boolean age) {
         return new VideoInfo(id, CHANNEL, "Video " + id, "", "https://i/" + id + ".jpg", Instant.parse("2026-09-01T00:00:00Z"),
-                duration, "public", embeddable, kids, age, w, h);
+                duration, "public", embeddable, kids, age, w, h, null);
     }
 
     private static YouTubeVideoView byId(List<YouTubeVideoView> videos, String id) {

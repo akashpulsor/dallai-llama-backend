@@ -133,6 +133,18 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aCreatorWithNoMailableFilmYetStillSeesTheTemplateWithASampleCard() {
+        UUID neha = tenant(jdbc, "Neha Studio");
+        profileService.ensureProfile(neha, "Neha Studio");
+
+        var preview = outreach.preview(neha, new com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewRequest(
+                OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha"));
+
+        assertThat(preview.html()).contains("Your film appears here", "CREATOR STUDIO", "Neha Studio", "Hi Asha");
+        assertThat(preview.html()).contains(OutreachService.SAMPLE_THUMBNAIL);
+    }
+
+    @Test
     void theSameCreatorWaitsTwoWeeksBeforeMailingTheSamePersonAgain() {
         SendResult first = outreach.send(riya, new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, "pubriya0001", null,
                 List.of(new Recipient("a@x.example", null, null), new Recipient("A@x.example ", null, null))));

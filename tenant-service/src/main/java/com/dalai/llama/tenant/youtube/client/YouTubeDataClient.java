@@ -47,7 +47,9 @@ public class YouTubeDataClient {
      * links a platform film; it is never stored. */
     public record VideoInfo(String videoId, String channelId, String title, String description, String thumbnailUrl,
                             Instant publishedAt, Duration duration, String privacyStatus, boolean embeddable,
-                            boolean madeForKids, boolean ageRestricted, Integer embedWidth, Integer embedHeight) {
+                            boolean madeForKids, boolean ageRestricted, Integer embedWidth, Integer embedHeight,
+                            /* The creator's AI disclosure on YouTube; null when YouTube doesn't report it. */
+                            Boolean containsSyntheticMedia) {
     }
 
     public Optional<ChannelInfo> findChannel(ChannelRef ref) {
@@ -116,7 +118,8 @@ public class YouTubeDataClient {
                 status.path("madeForKids").asBoolean(false),
                 "ytAgeRestricted".equals(details.path("contentRating").path("ytRating").asText(null)),
                 positiveInt(player.path("embedWidth")),
-                positiveInt(player.path("embedHeight")));
+                positiveInt(player.path("embedHeight")),
+                status.has("containsSyntheticMedia") ? status.path("containsSyntheticMedia").asBoolean() : null);
     }
 
     private JsonNode get(String path, Function<UriBuilder, UriBuilder> query) {

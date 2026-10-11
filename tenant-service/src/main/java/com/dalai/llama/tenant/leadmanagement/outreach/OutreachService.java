@@ -72,7 +72,7 @@ public class OutreachService {
     public PreviewView preview(UUID tenantId, PreviewRequest request) {
         CreatorPublicProfile profile = profile(tenantId);
         EmailTemplate template = templates.resolve(tenantId, request.templateId(), request.template());
-        OutreachComposer.Mail mail = composer.creatorMail(template, films(tenantId, template.layout(), request.publicId()),
+        OutreachComposer.Mail mail = composer.creatorMail(template, previewFilms(tenantId, profile, template.layout(), request.publicId()),
                 profile.getDisplayName(), profile.getHandle(), request.recipientName(), request.note(), null);
         return new PreviewView(mail.subject(), mail.text(), mail.html());
     }
@@ -219,6 +219,19 @@ public class OutreachService {
         if (publicId == null) throw new IllegalArgumentException("Choose the film to send");
         return List.of(mailableFilms.byPublicId(tenantId, publicId).orElseThrow(() -> new IllegalStateException(NOTHING_MAILABLE)));
     }
+
+    /** Like {@link #films} but never refuses: with no film chosen or nothing mailable yet, a sample card
+     * shows where the film goes, so creators can see every template before their first paid film. */
+    private List<MailableFilm> previewFilms(UUID tenantId, CreatorPublicProfile profile, OutreachTemplate layout, String publicId) {
+        if (!layout.creatorSendable()) throw new IllegalArgumentException("That template isn't sent by creators");
+        List<MailableFilm> films = layout == OutreachTemplate.CREATOR_PORTFOLIO ? mailableFilms.forCreator(tenantId)
+                : publicId == null ? List.of() : mailableFilms.byPublicId(tenantId, publicId).map(List::of).orElse(List.of());
+        if (!films.isEmpty()) return films;
+        return List.of(new MailableFilm(null, null, "Your film appears here", SAMPLE_THUMBNAIL, null, "Sample", tenantId,
+                profile.getHandle(), profile.getDisplayName()));
+    }
+
+    public static final String SAMPLE_THUMBNAIL = "https://placehold.co/1080x608/09070f/c3acec/png?text=Your+film";
 
     private static final String OUTREACH_OFF = "Sending to brands isn't switched on yet. Please try again later.";
 

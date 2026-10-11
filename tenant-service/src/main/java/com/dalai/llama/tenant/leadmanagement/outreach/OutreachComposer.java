@@ -83,7 +83,7 @@ public class OutreachComposer {
     }
 
     private CardContext card(MailableFilm film, String subtitle, OutreachStore.Delivery delivery) {
-        String target = profileUrl(film.handle(), film.industry().name());
+        String target = profileUrl(film.handle(), film.industry() == null ? null : film.industry().name());
         String url = target;
         if (delivery != null) {
             // ?ref= carries the link token to the profile, so a request made from it is attributed.
@@ -123,6 +123,7 @@ public class OutreachComposer {
     }
 
     private static String industry(MailableFilm film) {
+        if (film.industry() == null) return "Your industry";
         String n = film.industry().name().replace('_', ' ').toLowerCase(Locale.ROOT);
         return Character.toUpperCase(n.charAt(0)) + n.substring(1);
     }

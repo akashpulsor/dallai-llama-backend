@@ -120,6 +120,7 @@ public class ChannelImportService {
                 vertical,
                 problem.isEmpty(),
                 problem.map(Enum::name).orElse(null),
-                YouTubeLinks.watch(v.getVideoId(), vertical, v.getDurationSeconds()));
+                YouTubeLinks.watch(v.getVideoId(), vertical, v.getDurationSeconds()),
+                Boolean.TRUE.equals(v.getContainsSyntheticMedia()));
     }
 }

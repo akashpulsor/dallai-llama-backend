@@ -43,6 +43,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Rule 42 on a real Postgres with Hunter.io stubbed: a search reaches the provider once and is then
  * served from the shared directory; a company's emails are looked up once (credits) and reused by
@@ -127,6 +128,15 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         clock.set(NOW.plus(Duration.ofDays(31)));
         brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", "tea"));
         assertThat(DISCOVERS.get()).isEqualTo(2);
+    }
+
+    @Test
+    void anyIndustrySearchesHunterWithoutAnIndustryFilter() {
+        BrandSearchService.SearchResult result = brands.search(new BrandSearchService.SearchRequest(null, "US", null));
+        assertThat(result.companies()).hasSize(2);
+        assertThat(DISCOVER_BODIES.get(0)).contains("\"country\":\"US\"").doesNotContain("industry");
+        assertThatThrownBy(() -> brands.search(new BrandSearchService.SearchRequest(null, null, " ")))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -8,7 +8,6 @@ import com.dalai.llama.tenant.leadmanagement.audience.provider.BrandSearchStore.
 import com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher;
 import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,7 +47,7 @@ public class BrandSearchService {
     private final RecipientHasher hasher;
     private final Clock clock;
 
-    public record SearchRequest(@NotNull ShowcaseIndustry industry, @Size(max = 2) String countryCode, @Size(max = 120) String query) {
+    public record SearchRequest(ShowcaseIndustry industry, @Size(max = 2) String countryCode, @Size(max = 120) String query) {
     }
 
     public record CompanyView(UUID id, String name, String domain, ShowcaseIndustry industry, String countryCode, Integer emailsAvailable,
@@ -81,7 +80,11 @@ public class BrandSearchService {
             // No provider yet: serve what the directory already knows.
             return new SearchResult(views(store.known(r.industry(), country, 50)), true, credits());
         }
-        List<HunterClient.DiscoveredCompany> found = hunter.discover(properties.industries().getOrDefault(r.industry(), List.of()), country, query);
+        if (r.industry() == null && country == null && query == null) {
+            throw new IllegalArgumentException("Choose an industry or a country, or type what you're looking for");
+        }
+        List<String> industries = r.industry() == null ? List.of() : properties.industries().getOrDefault(r.industry(), List.of());
+        List<HunterClient.DiscoveredCompany> found = hunter.discover(industries, country, query);
         List<UUID> ids = new ArrayList<>();
         for (HunterClient.DiscoveredCompany c : found) {
             if (c.domain() == null || c.domain().isBlank()) continue;
@@ -163,7 +166,8 @@ public class BrandSearchService {
     }
 
     private static String describe(ShowcaseIndustry industry, String country, String query) {
-        String d = industry + (country == null ? "" : " in " + country) + (query == null ? "" : " · " + query);
+        String d = (industry == null ? "Any industry" : industry.name()) + (country == null ? "" : " in " + country)
+                + (query == null ? "" : " · " + query);
         return d.length() > 300 ? d.substring(0, 300) : d;
     }
 

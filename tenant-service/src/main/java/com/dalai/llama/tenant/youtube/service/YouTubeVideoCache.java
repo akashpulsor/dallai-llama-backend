@@ -63,6 +63,7 @@ public class YouTubeVideoCache {
         video.setEmbeddable(info.embeddable());
         video.setAgeRestricted(info.ageRestricted());
         video.setMadeForKids(info.madeForKids());
+        video.setContainsSyntheticMedia(info.containsSyntheticMedia());
         video.setFetchedAt(now);
         video.setGoneAt(null);
     }

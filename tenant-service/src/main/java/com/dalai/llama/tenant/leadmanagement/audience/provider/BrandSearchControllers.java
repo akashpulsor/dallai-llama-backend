@@ -36,7 +36,7 @@ public final class BrandSearchControllers {
 
         @GetMapping("/brand-search")
         public ResponseEntity<BrandSearchService.SearchResult> search(@AuthenticationPrincipal Jwt jwt,
-                                                                      @RequestParam ShowcaseIndustry industry,
+                                                                      @RequestParam(required = false) ShowcaseIndustry industry,
                                                                       @RequestParam(required = false) String country,
                                                                       @RequestParam(required = false) String q) {
             if (country != null && country.length() > 2) throw new IllegalArgumentException("Use a two-letter country code");

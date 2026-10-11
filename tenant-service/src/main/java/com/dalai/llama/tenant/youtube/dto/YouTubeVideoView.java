@@ -16,6 +16,8 @@ public record YouTubeVideoView(
         boolean eligible,
         /* Null when eligible: NOT_PUBLIC, EMBEDDING_OFF, AGE_RESTRICTED, MADE_FOR_KIDS, TOO_SHORT, TOO_LONG. */
         String ineligibleReason,
-        String watchUrl
+        String watchUrl,
+        /* True when the creator marked it on YouTube as AI-made (altered or synthetic content). */
+        boolean aiDisclosed
 ) {
 }

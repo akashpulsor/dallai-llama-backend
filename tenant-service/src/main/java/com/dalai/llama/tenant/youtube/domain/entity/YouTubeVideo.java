@@ -65,6 +65,9 @@ public class YouTubeVideo {
     @Column(name = "made_for_kids")
     private Boolean madeForKids;
 
+    @Column(name = "contains_synthetic_media")
+    private Boolean containsSyntheticMedia;
+
     @Column(name = "fetched_at", nullable = false)
     private OffsetDateTime fetchedAt;
 
