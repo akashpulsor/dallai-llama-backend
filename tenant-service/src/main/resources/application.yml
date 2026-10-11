@@ -309,6 +309,15 @@ youtube-quota:
 # Rule 42: the shared brand directory, filled from Hunter.io (Discover is free; Domain Search costs
 # one credit per email found). Blank key = searches are served from the directory only.
 audience-provider:
+  # Rule 44: people directory from Apollo.io. Search is free; revealing an email costs a credit
+  # (free accounts get a monthly allowance). Blank key = searches serve the directory only.
+  apollo:
+    api-key: ${APOLLO_API_KEY:}
+    base-url: https://api.apollo.io/api/v1
+    monthly-credits: ${APOLLO_MONTHLY_CREDITS:75}
+    search-cache-days: 30
+    per-page: 25
+    default-titles: [ "marketing manager", "brand manager", "head of marketing", "chief marketing officer", "founder", "marketing director" ]
   hunter:
     api-key: ${HUNTER_API_KEY:}
     base-url: https://api.hunter.io/v2

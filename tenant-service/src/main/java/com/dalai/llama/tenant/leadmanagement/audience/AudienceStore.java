@@ -54,6 +54,11 @@ public class AudienceStore {
                         rs.getInt(4), rs.getInt(5)), tenantId);
     }
 
+    public boolean ownsLead(UUID tenantId, UUID leadId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM lead_creator_lead WHERE id = ? AND tenant_id = ?)",
+                Boolean.class, leadId, tenantId));
+    }
+
     public boolean owns(UUID tenantId, UUID audienceId) {
         return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM lead_saved_audience WHERE id = ? AND tenant_id = ?)",
                 Boolean.class, audienceId, tenantId));

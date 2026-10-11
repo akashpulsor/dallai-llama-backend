@@ -33,6 +33,36 @@ public final class BrandSearchControllers {
 
         private final TenantService tenantService;
         private final BrandSearchService brands;
+        private final PeopleSearchService people;
+        private final ApolloProperties apollo;
+        private final HunterProperties hunter;
+
+        public record Directories(boolean people, boolean companies) {
+        }
+
+        /** Which directories are switched on (an API key is set), so the page shows only those. */
+        @GetMapping("/directories")
+        public ResponseEntity<Directories> directories() {
+            return ResponseEntity.ok(new Directories(apollo.configured(), hunter.configured()));
+        }
+
+        @GetMapping("/people-search")
+        public ResponseEntity<PeopleSearchService.SearchResult> searchPeople(@AuthenticationPrincipal Jwt jwt,
+                                                                             @RequestParam(required = false) ShowcaseIndustry industry,
+                                                                             @RequestParam(required = false) String country,
+                                                                             @RequestParam(required = false) String title,
+                                                                             @RequestParam(required = false) String q) {
+            if (country != null && country.length() > 2) throw new IllegalArgumentException("Use a two-letter country code");
+            if ((title != null && title.length() > 80) || (q != null && q.length() > 120)) throw new IllegalArgumentException("Keep the search shorter");
+            return ResponseEntity.of(tenant(jwt).map(t -> people.search(new PeopleSearchService.SearchRequest(industry, country, title, q))));
+        }
+
+        /** Adds people to an audience, revealing emails while this month's free lookups last. */
+        @PostMapping("/audiences/{audienceId}/add-people")
+        public ResponseEntity<PeopleSearchService.AddResult> addPeople(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID audienceId,
+                                                                       @Valid @RequestBody PeopleSearchService.AddRequest request) {
+            return ResponseEntity.of(tenant(jwt).map(t -> people.addToAudience(t.getId(), audienceId, request)));
+        }
 
         @GetMapping("/brand-search")
         public ResponseEntity<BrandSearchService.SearchResult> search(@AuthenticationPrincipal Jwt jwt,
@@ -63,10 +93,16 @@ public final class BrandSearchControllers {
     public static class AdminBrandSearchController {
 
         private final BrandSearchService brands;
+        private final PeopleSearchService people;
 
         @GetMapping("/credits")
         public ResponseEntity<BrandSearchService.Credits> credits() {
             return ResponseEntity.ok(brands.credits());
+        }
+
+        @GetMapping("/people-credits")
+        public ResponseEntity<PeopleSearchService.Credits> peopleCredits() {
+            return ResponseEntity.ok(people.credits());
         }
     }
 }

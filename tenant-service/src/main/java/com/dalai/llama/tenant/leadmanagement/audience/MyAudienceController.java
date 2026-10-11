@@ -82,6 +82,19 @@ public class MyAudienceController {
         return ResponseEntity.noContent().build();
     }
 
+    public record AddContactPointRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 254) String value) {
+    }
+
+    /** The creator enriches a lead: an email or phone they found themselves. */
+    @org.springframework.web.bind.annotation.PostMapping("/leads/{leadId}/contact-points")
+    public ResponseEntity<Void> addContactPoint(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID leadId,
+                                                @Valid @RequestBody AddContactPointRequest request) {
+        Optional<Tenant> tenant = tenant(jwt);
+        if (tenant.isEmpty()) return ResponseEntity.notFound().build();
+        audiences.addContactPoint(tenant.get().getId(), leadId, request.value());
+        return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
     @DeleteMapping("/leads/{leadId}/contact-points/{contactPointId}")
     public ResponseEntity<Void> discardContactPoint(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID leadId,
                                                     @PathVariable UUID contactPointId) {

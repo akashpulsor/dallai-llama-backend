@@ -26,6 +26,7 @@ public class AudienceService {
     private static final Set<String> VALIDATED = Set.of("VERIFIED", "LIKELY_VALID");
 
     private final AudienceStore store;
+    private final com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher hasher;
 
     public List<AudienceView> audiences(UUID tenantId) {
         return store.audiences(tenantId).stream()
@@ -59,6 +60,27 @@ public class AudienceService {
     @Transactional
     public void removeFromAudience(UUID tenantId, UUID audienceId, UUID leadId) {
         if (store.removeMember(tenantId, audienceId, leadId) == 0) throw new IllegalArgumentException("Not in this audience");
+    }
+
+    /** The creator enriches a lead themselves (rule 44): an email or phone they found. Validated
+     * like uploaded ones; a lead already holding that contact point is merged into this one. */
+    @Transactional
+    public void addContactPoint(UUID tenantId, UUID leadId, String raw) {
+        if (!store.ownsLead(tenantId, leadId)) throw new IllegalArgumentException("Unknown lead");
+        String value = raw == null ? "" : raw.trim();
+        UUID point;
+        if (value.contains("@")) {
+            String email = ContactPointValues.normaliseEmail(value);
+            if (!ContactPointValues.validEmail(email)) throw new IllegalArgumentException("That doesn't look like an email address");
+            point = store.upsertContactPoint(Kind.EMAIL, email, hasher.configured() ? hasher.hash(email) : null, "UNVERIFIED", "CREATOR_ADDED");
+        } else {
+            String phone = ContactPointValues.normalisePhone(value)
+                    .orElseThrow(() -> new IllegalArgumentException("Enter an email address or a phone number with its country code"));
+            point = store.upsertContactPoint(Kind.PHONE, phone, null, "UNVERIFIED", "CREATOR_ADDED");
+        }
+        List<UUID> others = store.leadsOwning(tenantId, List.of(point)).stream().filter(id -> !id.equals(leadId)).toList();
+        if (!others.isEmpty()) store.merge(tenantId, leadId, others);
+        store.link(tenantId, leadId, point);
     }
 
     /** The creator says this contact point is wrong for this lead: unlink it from their lead. The

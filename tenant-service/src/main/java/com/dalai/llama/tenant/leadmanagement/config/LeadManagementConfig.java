@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties({LeadManagementProperties.class, com.dalai.llama.tenant.leadmanagement.brand.BrandProperties.class,
         com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
-        com.dalai.llama.tenant.leadmanagement.audience.provider.HunterProperties.class})
+        com.dalai.llama.tenant.leadmanagement.audience.provider.HunterProperties.class,
+        com.dalai.llama.tenant.leadmanagement.audience.provider.ApolloProperties.class})
 public class LeadManagementConfig {
 }
