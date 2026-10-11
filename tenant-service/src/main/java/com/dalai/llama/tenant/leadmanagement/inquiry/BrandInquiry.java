@@ -63,6 +63,25 @@ public class BrandInquiry {
     @Column(name = "message", nullable = false, length = 1000)
     private String message;
 
+    @Column(name = "product_name", length = 160)
+    private String productName;
+
+    @Column(name = "product_description", length = 1000)
+    private String productDescription;
+
+    @Column(name = "target_audience", length = 500)
+    private String targetAudience;
+
+    @Column(name = "campaign_direction", length = 1000)
+    private String campaignDirection;
+
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
+
+    /* Comma-separated, e.g. "English,Hindi". */
+    @Column(name = "languages", length = 200)
+    private String languages;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private Status status;

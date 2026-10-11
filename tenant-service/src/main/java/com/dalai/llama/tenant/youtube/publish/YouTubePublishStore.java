@@ -123,6 +123,17 @@ public class YouTubePublishStore {
         return jdbc.query("SELECT " + COLUMNS + " FROM youtube_publish_job WHERE status = 'SCHEDULED' AND publish_at <= ? ORDER BY publish_at LIMIT 50", ROW, ts(now));
     }
 
+    /** Finished uploads whose film never reached the profile: no item for the video at all (a removed one
+     * counts -- the creator decided) and no live item for the project. Oldest first, a few at a time. */
+    public List<Job> publishedNotOnProfile(int limit) {
+        return jdbc.query("SELECT " + COLUMNS + """
+                 FROM youtube_publish_job j
+                WHERE j.status = 'PUBLISHED' AND j.youtube_video_id IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM showcase_item i WHERE i.youtube_video_id = j.youtube_video_id)
+                  AND NOT EXISTS (SELECT 1 FROM showcase_item i WHERE i.source_project_id = j.source_project_id AND i.status <> 'REMOVED')
+                ORDER BY j.updated_at LIMIT ?""", ROW, limit);
+    }
+
     public void markPublished(UUID id) {
         jdbc.update("UPDATE youtube_publish_job SET status = 'PUBLISHED', updated_at = NOW() WHERE id = ? AND status = 'SCHEDULED'", id);
     }

@@ -204,6 +204,18 @@ public class YouTubePublishWorker {
         }
     }
 
+    /** Catch-up queue: finished uploads that never reached the profile (published before this existed,
+     * or the instant step failed) are added a few per round, so neither YouTube nor pre-production is
+     * hit in a burst. */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${youtube-publish.profile-catch-up-ms:300000}", initialDelayString = "PT4M")
+    public int catchUpProfiles() {
+        List<Job> due = store.publishedNotOnProfile(PROFILE_CATCH_UP_BATCH);
+        for (Job job : due) recordOnProfile(job.tenantId(), job.projectId(), job.videoId(), job.youtubePrivacy());
+        return due.size();
+    }
+
+    static final int PROFILE_CATCH_UP_BATCH = 5;
+
     /** Scheduled publishes: once their time passes, the video is public, so it can go on the profile. */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${youtube-publish.scheduled-check-ms:600000}", initialDelayString = "PT3M")
     public void scheduledNowPublic() {

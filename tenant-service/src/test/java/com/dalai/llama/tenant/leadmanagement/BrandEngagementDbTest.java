@@ -169,7 +169,9 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         UUID brand = signedInBrand("ask@hearth.example");
         clearInvocations(mailer);
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest("pub0000001", null,
-                BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee"));
+                BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee",
+                "A2 Desi Ghee", "Small-batch ghee from grass-fed cows", "Young parents in metros", "Warm, homely, morning kitchen",
+                30, java.util.List.of("English", "Hindi")));
 
         // The creator was alerted, and the film counted the brand's interest.
         verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
@@ -178,9 +180,13 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         CreatorInquiryView seen = inquiries.forCreator(creator).get(0);
         assertThat(seen.filmTitle()).isEqualTo("Video film0000001");
         assertThat(seen.brand().companyName()).isEqualTo("Hearth Foods");
+        assertThat(seen.brief().productName()).isEqualTo("A2 Desi Ghee");
+        assertThat(seen.brief().languages()).containsExactly("English", "Hindi");
 
         UUID requirement = UUID.randomUUID();
-        when(briefClient.createBrief(eq(creator), anyString(), eq("Hearth Foods"), eq("food beverage")))
+        when(briefClient.createBrief(eq(creator), anyString(), eq("Hearth Foods"), eq("food beverage"),
+                org.mockito.ArgumentMatchers.argThat(d -> d.durationSeconds() == 30 && "Young parents in metros".equals(d.targetAudience())
+                        && "A2 Desi Ghee".equals(d.productName()))))
                 .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "share-abc"));
         clearInvocations(mailer);
         CreatorInquiryView converted = inquiries.convert(creator, submitted.id());
@@ -197,9 +203,9 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     @Test
     void aCreatorCannotActOnAnotherCreatorsRequest() {
         UUID brand = signedInBrand("x@hearth.example");
-        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello"));
+        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null));
         assertThatThrownBy(() -> inquiries.convert(UUID.randomUUID(), submitted.id())).isInstanceOf(IllegalArgumentException.class);
-        verify(briefClient, never()).createBrief(any(), any(), any(), any());
+        verify(briefClient, never()).createBrief(any(), any(), any(), any(), any());
     }
 
     @Test

@@ -21,8 +21,24 @@ public final class InquiryDtos {
             @Size(max = 32) String attributionToken,
             BrandInquiry.BudgetBand budgetBand,
             BrandInquiry.Timeline timeline,
-            @NotBlank @Size(max = 1000) String message
+            @NotBlank @Size(max = 1000) String message,
+            @Size(max = 160) String productName,
+            @Size(max = 1000) String productDescription,
+            @Size(max = 500) String targetAudience,
+            @Size(max = 1000) String campaignDirection,
+            @jakarta.validation.constraints.Min(5) @jakarta.validation.constraints.Max(600) Integer durationSeconds,
+            @Size(max = 6) java.util.List<@Size(max = 30) String> languages
     ) {
+    }
+
+    /** The brief details a brand filled in (rule 48); null fields were left empty. */
+    public record BriefDetails(String productName, String productDescription, String targetAudience, String campaignDirection,
+                               Integer durationSeconds, java.util.List<String> languages) {
+        public static BriefDetails of(BrandInquiry i) {
+            return new BriefDetails(i.getProductName(), i.getProductDescription(), i.getTargetAudience(), i.getCampaignDirection(),
+                    i.getDurationSeconds(), i.getLanguages() == null || i.getLanguages().isBlank() ? java.util.List.of()
+                            : java.util.List.of(i.getLanguages().split(",")));
+        }
     }
 
     public record SubmittedInquiry(UUID id, BrandInquiry.Status status) {
@@ -41,7 +57,8 @@ public final class InquiryDtos {
             BrandInquiry.Status status,
             /* Set once the creator turned it into a brief. */
             String briefUrl,
-            OffsetDateTime createdAt
+            OffsetDateTime createdAt,
+            BriefDetails brief
     ) {
     }
 
@@ -57,7 +74,8 @@ public final class InquiryDtos {
             BrandInquiry.Status status,
             boolean cameFromMail,
             String briefUrl,
-            OffsetDateTime createdAt
+            OffsetDateTime createdAt,
+            BriefDetails brief
     ) {
         public record Brand(String contactName, String companyName, String email, String websiteUrl, ShowcaseIndustry industry) {
         }

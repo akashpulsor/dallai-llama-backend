@@ -32,14 +32,23 @@ public class CreativePlanningBriefClient {
     }
 
     /** Wire shape of creative-planning's CreateStandaloneRequirementRequest (no product, no files). */
-    record StandaloneBrief(String briefText, Integer durationSeconds, List<String> languages, String tenantType,
-                           Map<String, String> brandContext) {
+    record StandaloneBrief(String briefText, String targetAudience, String campaignDirection, Integer durationSeconds,
+                           List<String> languages, String tenantType, Map<String, String> brandContext, Map<String, String> productDetails) {
     }
 
-    public CreatedBrief createBrief(UUID tenantId, String briefText, String brandName, String industry) {
-        StandaloneBrief body = new StandaloneBrief(briefText, DEFAULT_DURATION_SECONDS, List.of("English"),
-                "AI_VIDEO_CREATOR", brandName == null ? null : industry == null
-                        ? Map.of("brandName", brandName) : Map.of("brandName", brandName, "industry", industry));
+    public CreatedBrief createBrief(UUID tenantId, String briefText, String brandName, String industry,
+                                    com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.BriefDetails details) {
+        Map<String, String> brand = brandName == null || brandName.isBlank() ? null : industry == null
+                ? Map.of("brandName", brandName) : Map.of("brandName", brandName, "industry", industry);
+        // A product needs a brand to belong to (creative-planning rule), so it only rides along with one.
+        Map<String, String> product = brand == null || details == null || details.productName() == null ? null
+                : details.productDescription() == null ? Map.of("name", details.productName())
+                : Map.of("name", details.productName(), "description", details.productDescription());
+        StandaloneBrief body = new StandaloneBrief(briefText,
+                details == null ? null : details.targetAudience(), details == null ? null : details.campaignDirection(),
+                details != null && details.durationSeconds() != null ? details.durationSeconds() : DEFAULT_DURATION_SECONDS,
+                details != null && !details.languages().isEmpty() ? details.languages() : List.of("English"),
+                "AI_VIDEO_CREATOR", brand, product);
         try {
             CreatedBrief created = webClient.post()
                     .uri("/api/v1/internal/tenants/{tenantId}/project-requirements/standalone", tenantId)

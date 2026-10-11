@@ -85,6 +85,13 @@ public class BrandInquiryService {
                 .budgetBand(request.budgetBand())
                 .timeline(request.timeline())
                 .message(request.message().trim())
+                .productName(blankToNull(request.productName()))
+                .productDescription(blankToNull(request.productDescription()))
+                .targetAudience(blankToNull(request.targetAudience()))
+                .campaignDirection(blankToNull(request.campaignDirection()))
+                .durationSeconds(request.durationSeconds())
+                .languages(request.languages() == null || request.languages().isEmpty() ? null
+                        : String.join(",", request.languages().stream().map(String::trim).filter(l -> !l.isEmpty()).toList()))
                 .status(BrandInquiry.Status.NEW)
                 .build());
         // Brand interest is a ranking signal for the film (rule 13).
@@ -103,7 +110,7 @@ public class BrandInquiryService {
             CreatorPublicProfile p = creators.get(i.getTenantId());
             return new BrandInquiryView(i.getId(), p.getHandle(), p.getDisplayName(), p.getAvatarUrl(),
                     titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(), i.getMessage(), i.getStatus(),
-                    briefUrl(i), i.getCreatedAt());
+                    briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i));
         }).toList();
     }
 
@@ -121,7 +128,8 @@ public class BrandInquiryService {
             return new CreatorInquiryView(i.getId(),
                     new CreatorInquiryView.Brand(b.getContactName(), b.getCompanyName(), b.getEmail(), b.getWebsiteUrl(), b.getIndustry()),
                     publicIds.get(i.getShowcaseItemId()), titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(),
-                    i.getMessage(), i.getStatus(), i.getAttributionToken() != null, briefUrl(i), i.getCreatedAt());
+                    i.getMessage(), i.getStatus(), i.getAttributionToken() != null, briefUrl(i), i.getCreatedAt(),
+                    InquiryDtos.BriefDetails.of(i));
         }).toList();
     }
 
@@ -148,7 +156,8 @@ public class BrandInquiryService {
         BrandContact brand = contactRepository.findById(inquiry.getBrandContactId()).orElseThrow();
         String brandName = firstNonBlank(brand.getCompanyName(), brand.getContactName(), brand.getEmail());
         CreativePlanningBriefClient.CreatedBrief brief = briefClient.createBrief(tenantId, briefText(brand, inquiry), brandName,
-                brand.getIndustry() == null ? null : brand.getIndustry().name().toLowerCase(Locale.ROOT).replace('_', ' '));
+                brand.getIndustry() == null ? null : brand.getIndustry().name().toLowerCase(Locale.ROOT).replace('_', ' '),
+                InquiryDtos.BriefDetails.of(inquiry));
         inquiry.setStatus(BrandInquiry.Status.CONVERTED);
         inquiry.setRequirementId(brief.requirementId());
         inquiry.setBriefShareToken(brief.shareToken());
@@ -200,6 +209,10 @@ public class BrandInquiryService {
         if (inquiry.getBudgetBand() != null) text.append("\nBudget: ").append(inquiry.getBudgetBand());
         if (inquiry.getTimeline() != null) text.append("\nTimeline: ").append(inquiry.getTimeline());
         return text.append("\n\n").append(inquiry.getMessage()).toString();
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private static String firstNonBlank(String... values) {
