@@ -171,7 +171,9 @@ public class ElevenLabsProvider implements LlmProvider {
                     }
                     MultipartBodyBuilder multipart = new MultipartBodyBuilder();
                     multipart.part("name", name);
-                    multipart.part("files[]", new ByteArrayResource(reference.bytes()) {
+                    // The field is "files" (repeatable), not "files[]": ElevenLabs answers 422
+                    // "body.files: Field required" to the bracketed name and no voice is cloned.
+                    multipart.part("files", new ByteArrayResource(reference.bytes()) {
                         @Override
                         public String getFilename() {
                             return reference.filename();
