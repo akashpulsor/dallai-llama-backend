@@ -205,7 +205,8 @@ showcase:
   public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
   public-data-max-age-days: 30
   picks:
-    min-initial-picks: 2
+    # Films a profile needs before it shows; 1 in production while profiles are bootstrapping.
+    min-initial-picks: ${SHOWCASE_MIN_INITIAL_PICKS:2}
     max-external-picks: 6
   # Rule 8: a client-locked project counts as funded only with real work done in the app.
   funding:
