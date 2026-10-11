@@ -51,7 +51,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({ShowcasePickService.class, PublicShowcaseService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class,
         PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
-        ShowcaseDbTest.TestConfig.class})
+        AutoShowcaseService.class, ShowcaseDbTest.TestConfig.class})
 class ShowcaseDbTest {
 
     @Container
@@ -75,6 +75,7 @@ class ShowcaseDbTest {
 
     @org.springframework.boot.test.mock.mockito.MockBean private com.dalai.llama.tenant.showcase.client.PreProductionShowcaseClient preProduction;
     @Autowired private ShowcasePickService pickService;
+    @Autowired private AutoShowcaseService autoShowcase;
     @Autowired private PublicShowcaseService publicService;
     @Autowired private ShowcaseEngagementService engagementService;
     @Autowired private CreatorProfileService profileService;
@@ -113,6 +114,32 @@ class ShowcaseDbTest {
         assertThat(vertical.watchUrl()).isEqualTo("https://www.youtube.com/shorts/short1");
         assertThat(vertical.creator().profileUrl()).isEqualTo("https://dalaillama.in/c/riya-motion");
         assertThat(profileService.findMine(tenant).orElseThrow().missing()).doesNotContain(ProfileChecklistItem.SHOWCASE_PICKS);
+    }
+
+    @Test
+    void aConnectedChannelFillsTheProfile_aiMarkedFirst_andNeverBringsBackWhatTheCreatorRemoved() {
+        UUID tenant = creatorWithChannel("Riya Motion", "UCriya");
+        jdbc.update("INSERT INTO creator_profile_industry (tenant_id, industry) VALUES (?, 'BEAUTY')", tenant);
+        video("noembed", "UCriya", 1280, 720, false);
+        for (int i = 1; i <= 7; i++) video("v" + i, "UCriya", 1280, 720, true);
+        video("tall", "UCriya", 405, 720, true);
+        jdbc.update("UPDATE youtube_video SET contains_synthetic_media = TRUE WHERE video_id IN ('v7', 'tall')");
+
+        assertThat(autoShowcase.fillAll()).isEqualTo(6);
+        List<MyShowcaseItemView> mine = pickService.listMine(tenant);
+        assertThat(mine).hasSize(6);
+        assertThat(mine).extracting(MyShowcaseItemView::youtubeVideoId).contains("v7", "tall").doesNotContain("noembed");
+        assertThat(mine).allSatisfy(i -> assertThat(i.industry()).isEqualTo(ShowcaseIndustry.BEAUTY));
+        assertThat(mine).filteredOn(i -> i.youtubeVideoId().equals("tall")).singleElement()
+                .satisfies(i -> assertThat(i.format()).isEqualTo(ShowcaseFormat.SOCIAL_SHORT));
+        assertThat(publicService.profile("riya-motion").orElseThrow().ready()).isTrue();
+
+        // Full: nothing more. The creator removes one: the slot refills, but never with the removed video.
+        assertThat(autoShowcase.fill(tenant)).isZero();
+        MyShowcaseItemView removed = mine.get(0);
+        pickService.remove(tenant, removed.id());
+        assertThat(autoShowcase.fill(tenant)).isEqualTo(1);
+        assertThat(pickService.listMine(tenant)).extracting(MyShowcaseItemView::youtubeVideoId).doesNotContain(removed.youtubeVideoId());
     }
 
     @Test

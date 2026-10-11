@@ -51,6 +51,7 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
     private final CredentialEncryptor encryptor;
     private final ChannelImportService importService;
     private final CreatorProfileService profileService;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.showcase.service.AutoShowcaseService> autoShowcase;
     private final JdbcTemplate jdbc;
     private final Clock clock;
     private final Map<UUID, CachedToken> tokens = new ConcurrentHashMap<>();
@@ -159,6 +160,8 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
         cache(id, granted.accessToken(), granted.expiresInSeconds());
         try {
             importService.importAll(tenantId);
+            // Bootstrapping (rule 45): the profile shows their videos straight away.
+            autoShowcase.ifAvailable(a -> a.fill(tenantId));
         } catch (RuntimeException e) {
             log.warn("Connected tenant {} but the first import failed: {}", tenantId, e.getMessage());
         }
