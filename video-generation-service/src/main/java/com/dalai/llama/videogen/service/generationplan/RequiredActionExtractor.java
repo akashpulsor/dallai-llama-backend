@@ -122,10 +122,9 @@ public class RequiredActionExtractor {
     }
 
     private String cameraMovement(Camera camera) {
-        if (camera == null || camera.movementType() == null || camera.movementType().isBlank()) {
-            return null;
-        }
-        return "Camera: " + joined(camera.movementType(), camera.movementTrajectory(), camera.movementSpeed());
+        String movement = camera == null || joined(camera.movementType()) == null ? null
+                : joined(camera.movementType(), camera.movementTrajectory(), camera.movementSpeed());
+        return movement == null ? null : "Camera: " + movement;
     }
 
     /** How the frame stands at 0.0s, in the plan's own fields. */
@@ -144,7 +143,8 @@ public class RequiredActionExtractor {
     private static String joined(String... parts) {
         List<String> present = new ArrayList<>();
         for (String part : parts) {
-            if (part != null && !part.isBlank()) {
+            // Planner fields sometimes hold the text "null" rather than no value.
+            if (part != null && !part.isBlank() && !"null".equalsIgnoreCase(part.strip())) {
                 present.add(part.strip());
             }
         }

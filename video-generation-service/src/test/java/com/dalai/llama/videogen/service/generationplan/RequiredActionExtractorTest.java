@@ -113,4 +113,18 @@ class RequiredActionExtractorTest {
         assertThat(ids(actions)).containsExactly("OPEN", "END");
         assertThat(actions.get(1).dependsOnActionId()).isEqualTo("OPEN");
     }
+
+    @Test
+    void theTextNullInPlannerFieldsIsTreatedAsNoValue() {
+        Camera camera = mock(Camera.class);
+        when(camera.movementType()).thenReturn("null");
+        when(camera.movementTrajectory()).thenReturn("null");
+        when(camera.framing()).thenReturn("null");
+        when(camera.subjectPlacement()).thenReturn(" null ");
+
+        List<RequiredActionView> actions = extractor.extract(shot("A vignette appears.", null, null, camera));
+
+        assertThat(actions).extracting(RequiredActionView::description).noneMatch(d -> d.contains("null"));
+        assertThat(actions).extracting(RequiredActionView::actionId).doesNotContain("C1");
+    }
 }

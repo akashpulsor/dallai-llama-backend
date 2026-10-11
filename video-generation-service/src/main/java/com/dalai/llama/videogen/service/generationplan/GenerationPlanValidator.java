@@ -118,7 +118,7 @@ public final class GenerationPlanValidator {
             if (!entry.preserved()) {
                 issues.add(issue("ACTION_NOT_PRESERVED", entry.actionId(), "The assessment says this action is not preserved."));
             }
-            if (recommended != null) {
+            if (recommended != null && !instant(entry, seconds(recommended))) {
                 timestamps(issues, entry.actionId(), entry.startSeconds(), entry.endSeconds(), seconds(recommended));
             }
         }
@@ -288,6 +288,16 @@ public final class GenerationPlanValidator {
             issues.add(issue("INVALID_TIMESTAMP", actionId, "%ss-%ss does not fit inside 0-%ss."
                     .formatted(plain(start), plain(end), plain(duration))));
         }
+    }
+
+    /** The opening and final states are moments, not spans: OPEN at 0s and END at the last frame may
+     * be timed as a single instant. */
+    private static boolean instant(ActionCoverageView entry, BigDecimal duration) {
+        if (entry.startSeconds() == null || entry.endSeconds() == null || ms(entry.startSeconds()).compareTo(ms(entry.endSeconds())) != 0) {
+            return false;
+        }
+        return RequiredActionExtractor.OPEN.equals(entry.actionId()) && ms(entry.startSeconds()).signum() == 0
+                || RequiredActionExtractor.END.equals(entry.actionId()) && ms(entry.endSeconds()).compareTo(ms(duration)) == 0;
     }
 
     private static Map<String, RequiredActionView> index(List<RequiredActionView> actions) {

@@ -63,6 +63,18 @@ class GenerationPlanValidatorTest {
     }
 
     @Test
+    void theOpeningAndFinalStatesMayBeTimedAsInstants_butOtherActionsMayNot() {
+        List<ActionCoverageView> instants = List.of(cover("OPEN", "0", "0"), cover("A1", "0", "2"), cover("A2", "2", "4.5"),
+                cover("D1", "1", "3.5"), cover("END", "6", "6"));
+        assertThat(GenerationPlanValidator.assessment(ACTIONS, assessment(6, 24, instants), SEEDANCE)).isEmpty();
+
+        List<ActionCoverageView> zeroLengthAction = new ArrayList<>(instants);
+        zeroLengthAction.set(1, cover("A1", "2", "2"));
+        assertThat(codes(GenerationPlanValidator.assessment(ACTIONS, assessment(6, 24, zeroLengthAction), SEEDANCE)))
+                .contains("INVALID_TIMESTAMP");
+    }
+
+    @Test
     void aMissingActionIsReportedEvenWhenTheModelSaysCoverageIsComplete() {
         List<ActionCoverageView> withoutA2 = new ArrayList<>(fullCoverage());
         withoutA2.removeIf(c -> c.actionId().equals("A2"));
