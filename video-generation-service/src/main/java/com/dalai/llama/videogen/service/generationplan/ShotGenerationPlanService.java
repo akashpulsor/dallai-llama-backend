@@ -156,7 +156,7 @@ public class ShotGenerationPlanService {
         variables.put("durationSeconds", plannedText(shot));
         variables.put("videoModelCapabilities", VideoModelCapabilityService.describe(capabilities));
         variables.put("requiredActions", actionsText(actions));
-        GenerationPlanLlm.AssessmentAnswer answer = llm.assess(tenantId, projectId, variables);
+        GenerationPlanLlm.AssessmentAnswer answer = withDialogueFloor(llm.assess(tenantId, projectId, variables), actions, capabilities);
 
         ShotGenerationPlanStore.PlanState state = ensure(tenantId, projectId, shotId, shot, model, actions);
         state = store.saveAssessment(state.plan().getPlanId(), shot.shotRef(), model, planned(shot), actions, answer);
@@ -354,6 +354,63 @@ public class ShotGenerationPlanService {
                 shotId, submitted.job().getJobId(), plan.getGenerationDurationSeconds(), plan.getGenerationFps(),
                 prompt.length(), continuation != null);
         return new PlanGenerationView(submitted.prompt().getPromptId(), orchestrator.getJob(tenantId, submitted.job().getJobId()));
+    }
+
+    /**
+     * Prepare (one shot or all of them) runs the studio's own steps in order, so there is one prompt
+     * flow, not two: analyse the shot (actions + suggested seconds), keep the creator's chosen
+     * settings or take the suggestion, build the second-by-second timeline for them, and write the
+     * prompt from it. Returns what to prepare the shot with.
+     */
+    public ShotGenerationOrchestrator.PlannedExecution prepare(UUID tenantId, UUID projectId, UUID shotId) {
+        analyze(tenantId, projectId, shotId);
+        ShotGenerationPlan plan = store.require(tenantId, shotId).plan();
+        if (plan.getGenerationDurationSeconds() == null) {
+            throw VideoGenException.upstream("The analysis suggested no duration for this shot -- choose one in the video studio.");
+        }
+        BigDecimal spoken = spokenSeconds(actionViews(store.require(tenantId, shotId).actions()));
+        if (spoken.compareTo(BigDecimal.valueOf(plan.getGenerationDurationSeconds())) > 0
+                && plan.getRecommendedDurationSeconds() != null && plan.getRecommendedDurationSeconds() > plan.getGenerationDurationSeconds()) {
+            // A clip shorter than its own lines can only cut them off: take the suggested length.
+            selectSettings(tenantId, projectId, shotId, plan.getRecommendedDurationSeconds(), plan.getRecommendedFps());
+        }
+        buildTimeline(tenantId, projectId, shotId);
+        composePrompt(tenantId, projectId, shotId);
+        plan = store.require(tenantId, shotId).plan();
+        if (plan.getAiRecommendedPrompt() == null || plan.getAiRecommendedPrompt().isBlank()) {
+            throw VideoGenException.upstream("The video prompt came back empty -- try again.");
+        }
+        return new ShotGenerationOrchestrator.PlannedExecution(plan.getModelId(), plan.getGenerationDurationSeconds(), plan.getGenerationFps(),
+                plan.getAiRecommendedPrompt());
+    }
+
+    /**
+     * The suggested duration is never shorter than the shot's measured lines take to say: a 2s clip
+     * cannot hold a 4s line. Raised to the shortest length the model renders that fits them.
+     */
+    static GenerationPlanLlm.AssessmentAnswer withDialogueFloor(GenerationPlanLlm.AssessmentAnswer answer,
+                                                                 List<RequiredActionView> actions,
+                                                                 VideoModelCapabilitiesView capabilities) {
+        BigDecimal spoken = spokenSeconds(actions);
+        if (spoken.signum() == 0) return answer;
+        int floor = spoken.setScale(0, RoundingMode.CEILING).intValue();
+        Integer recommended = answer.recommendedDurationSeconds();
+        if (recommended != null && recommended >= floor) return answer;
+        List<Integer> durations = capabilities == null || capabilities.supportedDurationsSeconds() == null
+                ? List.of() : capabilities.supportedDurationsSeconds();
+        int suggested = durations.stream().filter(d -> d >= floor).min(Integer::compare)
+                .orElse(durations.isEmpty() ? floor : durations.stream().max(Integer::compare).orElseThrow());
+        return new GenerationPlanLlm.AssessmentAnswer(answer.shorterGenerationSuitable(), answer.minimumViableDurationSeconds(),
+                suggested, answer.recommendedGenerationFps(),
+                answer.reasoning() + " (Raised to " + suggested + "s: the spoken lines take " + spoken.stripTrailingZeros().toPlainString() + "s.)",
+                answer.actionCoverage(), answer.risks());
+    }
+
+    /** How long the shot's measured lines take to say, one after another. */
+    static BigDecimal spokenSeconds(List<RequiredActionView> actions) {
+        return actions.stream()
+                .filter(a -> a.kind() == com.dalai.llama.videogen.domain.ShotActionKind.DIALOGUE && a.fixedSeconds() != null)
+                .map(RequiredActionView::fixedSeconds).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     // ------------------------------------------------------------------ helpers

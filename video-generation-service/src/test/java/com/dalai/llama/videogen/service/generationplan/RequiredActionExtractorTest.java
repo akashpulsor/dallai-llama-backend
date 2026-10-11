@@ -127,4 +127,28 @@ class RequiredActionExtractorTest {
         assertThat(actions).extracting(RequiredActionView::description).noneMatch(d -> d.contains("null"));
         assertThat(actions).extracting(RequiredActionView::actionId).doesNotContain("C1");
     }
+
+    @Test
+    void aRestatedActionAndTheSpokenLineInTheActionTextAreNotExtraActions() {
+        String text = "Abstract lines and geometric forms, predominantly in cool blues and grays, slowly animate and coalesce, "
+                + "hinting at an incomplete architectural structure. The video opens with abstract lines and geometric forms, "
+                + "hinting at an incomplete structure against a cool blue and grey background. A calm yet enthusiastic voiceover "
+                + "begins, posing a thought-provoking question: \"Har smarak ke peeche, ek adrishya yojana hoti hai. "
+                + "Kya azaadi bhi aisi hi thi?\"";
+        DialogueBeat beat = new DialogueBeat(BigDecimal.ZERO, new BigDecimal("4"), "हर स्मारक",
+                "narrator_vo", null, null, null, null, null, "hi", new BigDecimal("4"));
+
+        List<RequiredActionView> actions = extractor.extract(shot(text, null, List.of(beat), null));
+
+        assertThat(ids(actions)).containsExactly("OPEN", "A1", "D1", "END");
+        assertThat(actions.get(1).description()).startsWith("Abstract lines");
+    }
+
+    @Test
+    void withoutDialogueAQuotedSentenceStaysOneActionAndIsNotSplitAtItsQuestionMark() {
+        List<RequiredActionView> actions = extractor.extract(shot(
+                "She looks up and asks \"Is it ready? Now?\" while holding the cup. He nods.", null, null, null));
+        assertThat(ids(actions)).containsExactly("OPEN", "A1", "A2", "END");
+        assertThat(actions.get(1).description()).endsWith("holding the cup.");
+    }
 }

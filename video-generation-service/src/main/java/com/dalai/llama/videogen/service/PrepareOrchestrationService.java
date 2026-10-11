@@ -44,6 +44,7 @@ public class PrepareOrchestrationService {
     private final ShotPromptRepository shotPromptRepository;
     private final PreProductionServiceClient preProductionClient;
     private final com.dalai.llama.videogen.service.dialoguefit.DialogueAudioIndex dialogueAudioIndex;
+    private final com.dalai.llama.videogen.service.generationplan.ShotGenerationPlanService planService;
 
     /**
      * Prepares the given shots, or -- when {@code shotIds} is null/empty -- every shot the project
@@ -136,7 +137,7 @@ public class PrepareOrchestrationService {
                             projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
                     ShotGenerationOrchestrator.PreparedShot preparedShot =
                             shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources(),
-                                    videoModelCatalog, maxPromptLengthCache);
+                                    videoModelCatalog, maxPromptLengthCache, planned(ctx.tenantId(), projectId, shotId));
                     ShotPromptView view = shotGenerationOrchestrator.getPrompt(ctx.tenantId(), preparedShot.prompt().getPromptId());
                     prepared.add(view);
                     log.info("prepare-batch shot OK projectId={} shotId={} promptId={} elapsedMs={}",
@@ -165,6 +166,22 @@ public class PrepareOrchestrationService {
             throw ex;
         }
         return new BatchResult(prepared, failed);
+    }
+
+    /**
+     * The shot's generation plan, run step by step (analyse, suggested seconds, timeline, prompt) --
+     * the one prompt flow Prepare and the video studio share. Null when a step fails: the shot is
+     * then prepared the older way, so Prepare never ends a shot without a prompt, and the failed
+     * step shows in the studio to retry.
+     */
+    public ShotGenerationOrchestrator.PlannedExecution planned(UUID tenantId, UUID projectId, UUID shotId) {
+        try {
+            return planService.prepare(tenantId, projectId, shotId);
+        } catch (RuntimeException ex) {
+            log.warn("prepare: generation plan failed, using the direct prompt projectId={} shotId={}: {}",
+                    projectId, shotId, ex.getMessage());
+            return null;
+        }
     }
 
     /** Every shot id in the bundle, ordered by shotNumber so the batch prepares in shooting order

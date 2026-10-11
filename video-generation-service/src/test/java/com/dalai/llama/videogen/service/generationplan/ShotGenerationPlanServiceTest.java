@@ -1,5 +1,7 @@
 package com.dalai.llama.videogen.service.generationplan;
 
+import com.dalai.llama.videogen.dto.generationplan.RequiredActionView;
+
 import com.dalai.llama.videogen.domain.FlagState;
 import com.dalai.llama.videogen.domain.ReferenceKind;
 import com.dalai.llama.videogen.domain.ShotActionKind;
@@ -193,6 +195,45 @@ class ShotGenerationPlanServiceTest {
         assertThatThrownBy(() -> service.generate(context, project, shotId, "0-6s: he stands."))
                 .hasMessageContaining("already being generated");
         verify(orchestrator, never()).submitReviewedPrompt(any(), any(), any(), any());
+    }
+
+    @Test
+    void prepareRunsAnalyseTimelineAndPromptInOrder_andReturnsThePlansPromptAndSettings() {
+        when(llm.assess(any(), any(), any())).thenReturn(new GenerationPlanLlm.AssessmentAnswer(
+                true, new BigDecimal("5"), 6, 24, "fits", List.of(), List.of()));
+        when(store.saveAssessment(any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
+        when(llm.timeline(any(), any(), any())).thenReturn(List.of());
+        when(store.saveTimeline(any(), anyInt(), any(), any())).thenReturn(state(List.of()));
+        when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("0-6s: the planned prompt");
+
+        ShotGenerationOrchestrator.PlannedExecution planned = service.prepare(tenant, project, shotId);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(llm, promptWriter);
+        order.verify(llm).assess(any(), any(), any());
+        order.verify(llm).timeline(any(), any(), any());
+        order.verify(promptWriter).composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any());
+        assertThat(planned.prompt()).isEqualTo("0-6s: the planned prompt");
+        assertThat(planned.generationDurationSeconds()).isEqualTo(6);
+        assertThat(planned.modelId()).isEqualTo(MODEL);
+        verify(orchestrator, never()).submitReviewedPrompt(any(), any(), any(), any());
+    }
+
+    @Test
+    void theSuggestedDurationIsNeverShorterThanTheSpokenLines() {
+        List<RequiredActionView> actions = List.of(
+                new RequiredActionView("OPEN", ShotActionKind.OPENING_STATE, "open", null, null),
+                new RequiredActionView("D1", ShotActionKind.DIALOGUE, "narrator says", new BigDecimal("4"), "OPEN"),
+                new RequiredActionView("END", ShotActionKind.ENDING_STATE, "end", null, "D1"));
+        VideoModelCapabilitiesView renders = new VideoModelCapabilitiesView(MODEL, List.of(2, 3, 5, 8), List.of(30), true);
+
+        GenerationPlanLlm.AssessmentAnswer raised = ShotGenerationPlanService.withDialogueFloor(
+                new GenerationPlanLlm.AssessmentAnswer(true, new BigDecimal("2"), 2, 30, "short", List.of(), List.of()), actions, renders);
+        assertThat(raised.recommendedDurationSeconds()).isEqualTo(5);
+        assertThat(raised.reasoning()).contains("Raised to 5s");
+
+        GenerationPlanLlm.AssessmentAnswer kept = ShotGenerationPlanService.withDialogueFloor(
+                new GenerationPlanLlm.AssessmentAnswer(true, new BigDecimal("5"), 8, 30, "long", List.of(), List.of()), actions, renders);
+        assertThat(kept.recommendedDurationSeconds()).isEqualTo(8);
     }
 
     @Test

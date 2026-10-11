@@ -45,9 +45,10 @@ public class RequiredActionExtractor {
         List<RequiredActionView> actions = new ArrayList<>();
         actions.add(new RequiredActionView(OPEN, ShotActionKind.OPENING_STATE, openingState(shot), null, null));
 
+        List<Line> lines = lines(shot);
         String previous = OPEN;
         int n = 1;
-        for (String sentence : actionSentences(shot)) {
+        for (String sentence : actionSentences(shot, !lines.isEmpty())) {
             String id = "A" + n++;
             actions.add(new RequiredActionView(id, ShotActionKind.ACTION, sentence, null, previous));
             previous = id;
@@ -56,7 +57,7 @@ public class RequiredActionExtractor {
 
         String previousLine = OPEN;
         int d = 1;
-        for (Line line : lines(shot)) {
+        for (Line line : lines) {
             String id = "D" + d++;
             actions.add(new RequiredActionView(id, ShotActionKind.DIALOGUE, line.description(), line.seconds(), previousLine));
             previousLine = id;
@@ -78,23 +79,77 @@ public class RequiredActionExtractor {
         return actions;
     }
 
-    /** The plan's action sentences in order, each once. Repeating a sentence restates an action;
-     * it does not add one. */
-    private List<String> actionSentences(ShotContext shot) {
+    /**
+     * The plan's action sentences in order, each once. A sentence that restates an earlier one --
+     * the same words, or mostly the same content words ("The video opens with abstract lines..."
+     * after "Abstract lines ... coalesce") -- restates an action; it does not add one. A quotation
+     * is never split at its own "?" or ".", and when the shot has lines of dialogue a sentence that
+     * quotes speech is that dialogue (its D action), not a visual action of its own.
+     */
+    private List<String> actionSentences(ShotContext shot, boolean hasDialogue) {
         String text = shot.narrative() == null ? null : shot.narrative().scriptLine();
         if (text == null || text.isBlank()) {
             return List.of();
         }
-        Set<String> seen = new LinkedHashSet<>();
         List<String> sentences = new ArrayList<>();
-        for (String raw : SENTENCE_BREAK.split(text.strip())) {
-            String sentence = raw.strip();
-            String key = sentence.replaceAll("[\\s.!?]+$", "").replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
-            if (!key.isEmpty() && seen.add(key)) {
-                sentences.add(sentence);
+        List<Set<String>> seen = new ArrayList<>();
+        for (String sentence : splitOutsideQuotes(text.strip())) {
+            if (hasDialogue && QUOTE.matcher(sentence).find()) {
+                continue;
             }
+            Set<String> words = contentWords(sentence);
+            if (words.isEmpty() || seen.stream().anyMatch(earlier -> restates(earlier, words))) {
+                continue;
+            }
+            seen.add(words);
+            sentences.add(sentence);
         }
         return sentences;
+    }
+
+    private static final Pattern QUOTE = Pattern.compile("[\"“”]");
+
+    private static final Set<String> STOP_WORDS = Set.of("a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "with",
+            "as", "is", "are", "it", "its", "this", "that", "by", "for", "from", "into", "against", "video", "open", "opens", "begins");
+
+    /** {@link #SENTENCE_BREAK}, applied only where no quotation is open. */
+    static List<String> splitOutsideQuotes(String text) {
+        List<String> out = new ArrayList<>();
+        int start = 0;
+        boolean quoted = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '“') quoted = true;
+            else if (c == '”') quoted = false;
+            else if (c == '"') quoted = !quoted;
+            if (quoted || !(c == '.' || c == '!' || c == '?' || c == '"' || c == '”')) continue;
+            java.util.regex.Matcher next = SENTENCE_BREAK.matcher(text);
+            if (next.find(i + 1) && next.start() == i + 1 && (c != '"' && c != '”' || ".!?".indexOf(text.charAt(i - 1)) >= 0)) {
+                out.add(text.substring(start, i + 1).strip());
+                start = next.end();
+                i = next.end() - 1;
+            }
+        }
+        if (start < text.length() && !text.substring(start).isBlank()) out.add(text.substring(start).strip());
+        return out;
+    }
+
+    private static Set<String> contentWords(String sentence) {
+        Set<String> words = new LinkedHashSet<>();
+        for (String w : sentence.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (w.isBlank() || STOP_WORDS.contains(w)) continue;
+            words.add(w.equals("grey") ? "gray" : w.length() > 3 && w.endsWith("s") ? w.substring(0, w.length() - 1) : w);
+        }
+        return words;
+    }
+
+    /** At least 60% of the shorter sentence's content words appear in the other (short ones must match exactly). */
+    private static boolean restates(Set<String> a, Set<String> b) {
+        Set<String> smaller = a.size() <= b.size() ? a : b;
+        Set<String> larger = smaller == a ? b : a;
+        if (smaller.size() < 4) return larger.containsAll(smaller) && smaller.size() == larger.size();
+        long shared = smaller.stream().filter(larger::contains).count();
+        return shared * 10 >= smaller.size() * 6L;
     }
 
     private record Line(String description, BigDecimal seconds) {

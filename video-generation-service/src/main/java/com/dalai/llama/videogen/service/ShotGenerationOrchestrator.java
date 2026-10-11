@@ -166,6 +166,21 @@ public class ShotGenerationOrchestrator {
                                     ShotContextAssemblyService.ShotPromptSources sources,
                                     List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog,
                                     Map<String, Integer> maxPromptLengthCache) {
+        return prepareShot(tenantContext, request, sources, videoModelCatalog, maxPromptLengthCache, null);
+    }
+
+    /**
+     * What the shot's generation plan settled (video studio steps, run by Prepare): the duration and
+     * frame rate to generate at and the prompt written from its second-by-second timeline.
+     */
+    public record PlannedExecution(String modelId, int generationDurationSeconds, Integer generationFps, String prompt) {}
+
+    /** As above; with {@code planned}, the plan's prompt and settings are the prepared ones (no
+     * second prompt is written), so Prepare and the studio produce one prompt, not two. */
+    public PreparedShot prepareShot(TenantContext tenantContext, GenerateShotRequest request,
+                                    ShotContextAssemblyService.ShotPromptSources sources,
+                                    List<com.dalai.llama.videogen.service.llmgateway.LlmGatewayModelSummary> videoModelCatalog,
+                                    Map<String, Integer> maxPromptLengthCache, PlannedExecution planned) {
         UUID tenantId = tenantContext.tenantId();
         UUID projectId = request.projectId();
         ShotContext shotContext = request.shotContext();
@@ -173,7 +188,9 @@ public class ShotGenerationOrchestrator {
         FeatureFlags effectiveFlags = projectConfigService.getEffectiveFlags(tenantId, projectId)
                 .withOverride(request.featureFlagOverrides());
 
-        String pinnedModel = shotContext.technical() != null ? shotContext.technical().targetModel() : null;
+        // A planned shot is prepared on the model its plan (settings, timeline, prompt) was made for.
+        String pinnedModel = planned != null ? planned.modelId()
+                : shotContext.technical() != null ? shotContext.technical().targetModel() : null;
         ModelRecommendation recommendation = null;
         String modelId = pinnedModel;
         if (modelId == null || modelId.isBlank()) {
@@ -208,7 +225,7 @@ public class ShotGenerationOrchestrator {
         // live: the writer picks a task key, llm-gateway holds a template per key. Null means the
         // gateway could not answer or came back over budget, and the composed prompt stands
         // exactly as it did before.
-        String writtenPrompt = videoShotPromptService.writePrompt(
+        String writtenPrompt = planned != null ? planned.prompt() : videoShotPromptService.writePrompt(
                 tenantId, projectId, shotContext, builtPrompt.positive(), maxPromptLength,
                 sources == null ? null : sources.approvedCreativeDirection());
         if (writtenPrompt != null) {
@@ -217,14 +234,19 @@ public class ShotGenerationOrchestrator {
         List<DerivedFoleyCue> cues = resolveFoleyCues(projectId, shotContext, sources);
         CompressionResult compression = promptCompressionService.compressIfNeeded(
                 projectId, builtPrompt.positive(), maxPromptLength, modelId);
+        Integer seconds = planned != null ? Integer.valueOf(planned.generationDurationSeconds())
+                : shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
+        Integer fps = planned != null ? planned.generationFps()
+                : shotContext.technical() != null ? shotContext.technical().fps() : null;
         CostEstimate estimate = costEstimationService.estimate(
-                compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId,
-                shotContext.technical() == null ? null : shotContext.technical().durationSeconds());
+                compression.compressionApplied() ? compression.compressedPrompt() : builtPrompt.positive(), modelId, seconds);
 
         VideoGenJob job = createJob(tenantContext, projectId, sources == null ? null : sources.shotId(), shotContext, modelId,
-                shotContext.technical() != null ? shotContext.technical().durationSeconds() : null,
-                shotContext.technical() != null ? shotContext.technical().fps() : null,
-                estimate);
+                seconds, fps, estimate);
+        // Every prepare is a new version of the shot's prompt, linked to the one it replaces.
+        UUID previousPromptId = sources == null || sources.shotId() == null ? null
+                : shotPromptRepository.findByShotIdOrderByCreatedAtDesc(sources.shotId()).stream()
+                        .filter(p -> tenantId.equals(p.getTenantId())).findFirst().map(ShotPrompt::getPromptId).orElse(null);
 
         ShotPrompt prompt = ShotPrompt.builder()
                 .promptId(UUID.randomUUID())
@@ -232,6 +254,8 @@ public class ShotGenerationOrchestrator {
                 .tenantId(tenantId)
                 .projectId(projectId)
                 .createdBy(tenantContext.userId())
+                .parentPromptId(previousPromptId)
+                .variantLabel(planned != null ? "planned" : null)
                 .promptOriginal(builtPrompt.positive())
                 .promptCompressed(compression.compressionApplied() ? compression.compressedPrompt() : null)
                 .compressionApplied(compression.compressionApplied())

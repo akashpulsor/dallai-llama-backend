@@ -144,7 +144,8 @@ public class PrepareSceneController {
                 shotContextAssemblyService.assemble(ctx.tenantId(), projectId, shotId, overrides);
         GenerateShotRequest generateRequest = new GenerateShotRequest(
                 projectId, assembled.shotContext(), assembled.featureFlagOverrides(), false);
-        ShotGenerationOrchestrator.PreparedShot prepared = shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources());
+        ShotGenerationOrchestrator.PreparedShot prepared = shotGenerationOrchestrator.prepareShot(ctx, generateRequest, assembled.sources(),
+                null, null, prepareOrchestrationService.planned(ctx.tenantId(), projectId, shotId));
         return ResponseEntity.ok(shotGenerationOrchestrator.getPrompt(ctx.tenantId(), prepared.prompt().getPromptId()));
     }
 
