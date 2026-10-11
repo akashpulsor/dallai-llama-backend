@@ -30,7 +30,7 @@ public final class AudienceDtos {
     }
 
     /** Rule 25: per kind, validated contact points if there are any, else the unvalidated ones. */
-    public record LeadView(UUID id, String name, String company, ShowcaseIndustry industry, String website,
+    public record LeadView(UUID id, String name, String designation, String company, ShowcaseIndustry industry, String website,
                            List<ContactPointView> emails, List<ContactPointView> phones, int discarded, boolean reachable) {
     }
 

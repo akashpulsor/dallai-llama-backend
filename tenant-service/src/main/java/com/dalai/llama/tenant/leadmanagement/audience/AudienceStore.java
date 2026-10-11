@@ -23,7 +23,7 @@ public class AudienceStore {
     public record AudienceRow(UUID id, String name, Instant createdAt, int leads, int reachable) {
     }
 
-    public record LeadRow(UUID id, String name, String company, ShowcaseIndustry industry, String website, Instant createdAt) {
+    public record LeadRow(UUID id, String name, String designation, String company, ShowcaseIndustry industry, String website, Instant createdAt) {
     }
 
     public record PointRow(UUID leadId, UUID contactPointId, Kind kind, String value, String status, boolean unsubscribed) {
@@ -121,21 +121,23 @@ public class AudienceStore {
                 )) ORDER BY l.created_order""", UUID.class, args);
     }
 
-    public UUID createLead(UUID tenantId, String name, String company, ShowcaseIndustry industry, String website, Instant now) {
+    public UUID createLead(UUID tenantId, String name, String designation, String company, ShowcaseIndustry industry, String website,
+                           Instant now) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                INSERT INTO lead_creator_lead (id, tenant_id, display_name, company_name, industry, website_url, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", id, tenantId, name, company, industry == null ? null : industry.name(), website,
+                INSERT INTO lead_creator_lead (id, tenant_id, display_name, designation, company_name, industry, website_url, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", id, tenantId, name, designation, company, industry == null ? null : industry.name(), website,
                 Timestamp.from(now), Timestamp.from(now));
         return id;
     }
 
     /** Fills only what the lead doesn't have yet: a later row never wipes earlier details. */
-    public void fillBlanks(UUID leadId, String name, String company, ShowcaseIndustry industry, String website) {
+    public void fillBlanks(UUID leadId, String name, String designation, String company, ShowcaseIndustry industry, String website) {
         jdbc.update("""
-                UPDATE lead_creator_lead SET display_name = COALESCE(display_name, ?), company_name = COALESCE(company_name, ?),
-                    industry = COALESCE(industry, ?), website_url = COALESCE(website_url, ?), updated_at = NOW()
-                WHERE id = ?""", name, company, industry == null ? null : industry.name(), website, leadId);
+                UPDATE lead_creator_lead SET display_name = COALESCE(display_name, ?), designation = COALESCE(designation, ?),
+                    company_name = COALESCE(company_name, ?), industry = COALESCE(industry, ?), website_url = COALESCE(website_url, ?),
+                    updated_at = NOW()
+                WHERE id = ?""", name, designation, company, industry == null ? null : industry.name(), website, leadId);
     }
 
     /** Folds {@code others} into {@code keep}: contact points, audiences, source rows and intents move;
@@ -148,8 +150,8 @@ public class AudienceStore {
                     SELECT audience_id, ?, added_at FROM lead_saved_audience_member WHERE lead_id = ? ON CONFLICT DO NOTHING""", keep, other);
             jdbc.update("UPDATE lead_creator_lead_source SET lead_id = ? WHERE lead_id = ?", keep, other);
             jdbc.update("UPDATE lead_outreach_intent SET lead_id = ? WHERE lead_id = ?", keep, other);
-            jdbc.queryForList("SELECT display_name, company_name, industry, website_url FROM lead_creator_lead WHERE id = ?", other)
-                    .forEach(r -> fillBlanks(keep, (String) r.get("display_name"), (String) r.get("company_name"),
+            jdbc.queryForList("SELECT display_name, designation, company_name, industry, website_url FROM lead_creator_lead WHERE id = ?", other)
+                    .forEach(r -> fillBlanks(keep, (String) r.get("display_name"), (String) r.get("designation"), (String) r.get("company_name"),
                             r.get("industry") == null ? null : ShowcaseIndustry.valueOf((String) r.get("industry")),
                             (String) r.get("website_url")));
             jdbc.update("DELETE FROM lead_creator_lead WHERE id = ? AND tenant_id = ?", other, tenantId);
@@ -212,11 +214,11 @@ public class AudienceStore {
         System.arraycopy(base, 0, args, 0, base.length);
         args[base.length] = size;
         args[base.length + 1] = page * size;
-        return jdbc.query("SELECT l.id, l.display_name, l.company_name, l.industry, l.website_url, l.created_at " + leadsFrom(q)
+        return jdbc.query("SELECT l.id, l.display_name, l.designation, l.company_name, l.industry, l.website_url, l.created_at " + leadsFrom(q)
                         + " ORDER BY l.created_at DESC, l.id LIMIT ? OFFSET ?",
-                (rs, n) -> new LeadRow(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
-                        rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5),
-                        rs.getTimestamp(6).toInstant()), args);
+                (rs, n) -> new LeadRow(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getString(5) == null ? null : ShowcaseIndustry.valueOf(rs.getString(5)), rs.getString(6),
+                        rs.getTimestamp(7).toInstant()), args);
     }
 
     private static String leadsFrom(String q) {

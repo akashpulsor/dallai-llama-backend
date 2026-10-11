@@ -142,6 +142,8 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         assertThat(riyaAdd.credits().usedThisMonth()).isEqualTo(2);
         LeadView lead = audienceService.leads(riya, riyaList, null, 0).leads().get(0);
         assertThat(lead.company()).isEqualTo("Hearth Foods");
+        assertThat(lead.name()).isEqualTo("Asha Rao");
+        assertThat(lead.designation()).isEqualTo("Marketing Head");
         // Hunter verified Asha's address, so (rule 25) only the validated one shows; Ravi's is kept behind it.
         assertThat(lead.emails()).singleElement().satisfies(e -> {
             assertThat(e.value()).isEqualTo("asha@hearthfoods.example");

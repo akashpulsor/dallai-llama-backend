@@ -35,6 +35,15 @@ class LeadCsvParserTest {
     }
 
     @Test
+    void readsTheDesignationUnderItsCommonNames() {
+        for (String header : new String[]{"Designation", "Job Title", "position", "Role"}) {
+            ParsedRow row = LeadCsvParser.parse("name," + header + ",company,email\nAsha Rao,Marketing Head,Hearth Foods,asha@hearth.example\n").get(0);
+            assertThat(row.designation()).as(header).isEqualTo("Marketing Head");
+            assertThat(row.company()).isEqualTo("Hearth Foods");
+        }
+    }
+
+    @Test
     void needsAHeaderWithAnEmailOrPhoneColumn() {
         assertThatThrownBy(() -> LeadCsvParser.parse("name,company\nAsha,Hearth\n")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> LeadCsvParser.parse("")).isInstanceOf(IllegalArgumentException.class);

@@ -15,8 +15,8 @@ public final class LeadCsvParser {
 
     public static final int MAX_ROWS = 5_000;
 
-    public record ParsedRow(int rowNumber, String raw, List<String> emails, List<String> phones, String name, String company,
-                            ShowcaseIndustry industry, String website) {
+    public record ParsedRow(int rowNumber, String raw, List<String> emails, List<String> phones, String name, String designation,
+                            String company, ShowcaseIndustry industry, String website) {
         public boolean hasContact() {
             return !emails.isEmpty() || !phones.isEmpty();
         }
@@ -25,7 +25,7 @@ public final class LeadCsvParser {
     private record Record(String raw, List<String> fields) {
     }
 
-    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, COMPANY, INDUSTRY, WEBSITE, IGNORED }
+    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, DESIGNATION, COMPANY, INDUSTRY, WEBSITE, IGNORED }
 
     private LeadCsvParser() {
     }
@@ -45,7 +45,7 @@ public final class LeadCsvParser {
             if (record.fields().stream().allMatch(String::isBlank)) continue;
             Set<String> emails = new LinkedHashSet<>();
             Set<String> phones = new LinkedHashSet<>();
-            String name = null, first = null, last = null, company = null, website = null;
+            String name = null, first = null, last = null, designation = null, company = null, website = null;
             ShowcaseIndustry industry = null;
             for (int c = 0; c < columns.size() && c < record.fields().size(); c++) {
                 String value = record.fields().get(c).trim();
@@ -56,6 +56,7 @@ public final class LeadCsvParser {
                     case NAME -> name = value;
                     case FIRST_NAME -> first = value;
                     case LAST_NAME -> last = value;
+                    case DESIGNATION -> designation = value;
                     case COMPANY -> company = value;
                     case INDUSTRY -> industry = industry(value);
                     case WEBSITE -> website = value;
@@ -63,7 +64,7 @@ public final class LeadCsvParser {
                 }
             }
             if (name == null && (first != null || last != null)) name = ((first == null ? "" : first) + " " + (last == null ? "" : last)).trim();
-            rows.add(new ParsedRow(r + 1, record.raw(), List.copyOf(emails), List.copyOf(phones), cap(name, 120), cap(company, 160),
+            rows.add(new ParsedRow(r + 1, record.raw(), List.copyOf(emails), List.copyOf(phones), cap(name, 120), cap(designation, 120), cap(company, 160),
                     industry, website != null && website.startsWith("http") ? cap(website, 255) : null));
         }
         return rows;
@@ -76,6 +77,7 @@ public final class LeadCsvParser {
         if (h.matches("name|fullname|contactname|contact")) return Column.NAME;
         if (h.matches("firstname|givenname")) return Column.FIRST_NAME;
         if (h.matches("lastname|surname|familyname")) return Column.LAST_NAME;
+        if (h.matches("designation|title|jobtitle|position|role")) return Column.DESIGNATION;
         if (h.matches("company|companyname|organi[sz]ation|brand|business")) return Column.COMPANY;
         if (h.matches("industry|sector|category")) return Column.INDUSTRY;
         if (h.matches("website|url|site|web")) return Column.WEBSITE;

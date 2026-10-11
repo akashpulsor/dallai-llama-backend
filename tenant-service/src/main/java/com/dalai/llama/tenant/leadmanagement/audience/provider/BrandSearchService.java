@@ -115,13 +115,15 @@ public class BrandSearchService {
             Set<UUID> points = new LinkedHashSet<>();
             contacts.forEach(c -> points.add(c.contactPointId()));
             List<UUID> owners = audiences.leadsOwning(tenantId, points);
+            CompanyContact best = contacts.get(0);
             UUID lead;
             if (owners.isEmpty()) {
-                lead = audiences.createLead(tenantId, null, company.name(), company.industry(), "https://" + company.domain(), now);
+                lead = audiences.createLead(tenantId, best.fullName(), best.position(), company.name(), company.industry(),
+                        "https://" + company.domain(), now);
             } else {
                 lead = owners.get(0);
                 if (owners.size() > 1) audiences.merge(tenantId, lead, owners.subList(1, owners.size()));
-                audiences.fillBlanks(lead, null, company.name(), company.industry(), "https://" + company.domain());
+                audiences.fillBlanks(lead, best.fullName(), best.position(), company.name(), company.industry(), "https://" + company.domain());
             }
             for (UUID point : points) if (audiences.link(tenantId, lead, point)) contactsAdded++;
             audiences.addMember(audienceId, lead);

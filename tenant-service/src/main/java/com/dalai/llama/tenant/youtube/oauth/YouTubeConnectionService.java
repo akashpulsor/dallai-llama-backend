@@ -7,6 +7,7 @@ import com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionStore.Connection;
 import com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionStore.OwnerType;
 import com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionStore.PendingState;
 import com.dalai.llama.tenant.youtube.oauth.YouTubeConnectionStore.Status;
+import com.dalai.llama.tenant.showcase.service.CreatorProfileService;
 import com.dalai.llama.tenant.youtube.service.ChannelImportService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +50,7 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
     private final YouTubeConnectionStore store;
     private final CredentialEncryptor encryptor;
     private final ChannelImportService importService;
+    private final CreatorProfileService profileService;
     private final JdbcTemplate jdbc;
     private final Clock clock;
     private final Map<UUID, CachedToken> tokens = new ConcurrentHashMap<>();
@@ -188,8 +190,7 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
     /** Signing in as the channel proves ownership: the channel becomes the creator's verified
      * channel (rule 33), replacing any unverified claim. */
     private void verifyChannel(UUID tenantId, GoogleOAuthClient.Channel channel) {
-        Integer profiles = jdbc.queryForObject("SELECT COUNT(*) FROM creator_public_profile WHERE tenant_id = ?", Integer.class, tenantId);
-        if (profiles == null || profiles == 0) return;
+        if (profileService.ensureProfile(tenantId).isEmpty()) return;
         Timestamp now = Timestamp.from(clock.instant());
         jdbc.update("DELETE FROM creator_youtube_channel WHERE channel_id = ? AND tenant_id <> ? AND status = 'PENDING'",
                 channel.channelId(), tenantId);

@@ -51,12 +51,12 @@ public class LeadImportService {
             List<UUID> owners = store.leadsOwning(tenantId, points);
             UUID lead;
             if (owners.isEmpty()) {
-                lead = store.createLead(tenantId, row.name(), row.company(), row.industry(), row.website(), now);
+                lead = store.createLead(tenantId, row.name(), row.designation(), row.company(), row.industry(), row.website(), now);
                 created++;
             } else {
                 lead = owners.get(0);
                 if (owners.size() > 1) store.merge(tenantId, lead, owners.subList(1, owners.size()));
-                store.fillBlanks(lead, row.name(), row.company(), row.industry(), row.website());
+                store.fillBlanks(lead, row.name(), row.designation(), row.company(), row.industry(), row.website());
                 merged++;
             }
             for (UUID point : points) if (store.link(tenantId, lead, point)) added++;

@@ -140,6 +140,19 @@ class YouTubeConnectionDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aCreatorWithoutAProfileYetGetsOneAndTheirChannelIsVerifiedOnConnect() {
+        UUID akash = tenant(jdbc, "Akash Films");
+        CHANNEL.set("UCakash00000000000000000");
+
+        String back = connections.complete(param(connections.startForCreator(akash, "kc-akash"), "state"), "auth-code", null);
+
+        assertThat(back).endsWith("youtube=connected");
+        assertThat(jdbc.queryForObject("SELECT handle FROM creator_public_profile WHERE tenant_id = ?", String.class, akash)).isEqualTo("akash-films");
+        assertThat(jdbc.queryForMap("SELECT status, verified_via FROM creator_youtube_channel WHERE tenant_id = ?", akash))
+                .containsEntry("status", "VERIFIED").containsEntry("verified_via", "OAUTH");
+    }
+
+    @Test
     void aChannelAnotherCreatorOwnsCannotBeConnectedAndTheGrantIsRevoked() {
         UUID arjun = tenant(jdbc, "Arjun");
         profileService.ensureProfile(arjun, "Arjun");

@@ -73,7 +73,7 @@ public class AudienceService {
         List<ContactPointView> phones = visible(points, Kind.PHONE);
         int discarded = (int) points.stream().filter(p -> "INVALID".equals(p.status())).count();
         boolean reachable = emails.stream().anyMatch(e -> !e.unsubscribed());
-        return new LeadView(lead.id(), lead.name(), lead.company(), lead.industry(), lead.website(), emails, phones, discarded, reachable);
+        return new LeadView(lead.id(), lead.name(), lead.designation(), lead.company(), lead.industry(), lead.website(), emails, phones, discarded, reachable);
     }
 
     /** Validated ones if there are any, otherwise the unvalidated ones; never INVALID. */

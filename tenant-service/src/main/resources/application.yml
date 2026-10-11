@@ -295,7 +295,7 @@ google-oauth:
   scopes:
     - https://www.googleapis.com/auth/youtube
     - https://www.googleapis.com/auth/yt-analytics.readonly
-  creator-return-url: ${GOOGLE_OAUTH_CREATOR_RETURN_URL:https://creator.dalaillama.in/marketing}
+  creator-return-url: ${GOOGLE_OAUTH_CREATOR_RETURN_URL:https://creator.dalaillama.in/profile}
   platform-return-url: ${GOOGLE_OAUTH_PLATFORM_RETURN_URL:https://ops.dalaillama.in/admin}
   state-minutes: 10
 
