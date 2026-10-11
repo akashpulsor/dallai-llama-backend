@@ -65,7 +65,8 @@ public class ShowcaseSourceService {
                 reviewSessionRepository.countByProjectId(projectId),
                 reviewCommentRepository.countByProjectId(projectId),
                 creativeDirectionRepository.countByProjectIdAndApprovedVia(projectId, ReviewActor.CLIENT),
-                film.map(PostProductionFilmClient.PublishedFilm::videoUrl).orElse(null));
+                film.map(PostProductionFilmClient.PublishedFilm::videoUrl).orElse(null),
+                film.map(PostProductionFilmClient.PublishedFilm::stampedVideoUrl).orElse(null));
     }
 
     /** How many recent projects {@link #films} looks at; each needs one post-production lookup. */
@@ -112,7 +113,10 @@ public class ShowcaseSourceService {
             long clientReviewSessions,
             long clientComments,
             long clientApprovals,
-            String downloadUrl
+            String downloadUrl,
+            /* The same film with the Dalaillama mark: what every upload from the platform uses. Null
+             * until post-production has stamped it (shortly after publishing). */
+            String stampedDownloadUrl
     ) {
     }
 }

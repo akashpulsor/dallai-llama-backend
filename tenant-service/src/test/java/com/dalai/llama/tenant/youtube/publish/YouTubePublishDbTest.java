@@ -182,6 +182,30 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void anUploadWaitsForTheDalaillamaStampWithoutCountingAnAttempt() {
+        PreProductionShowcaseClient.ShowcaseSource stamped = source(project, true);
+        PreProductionShowcaseClient.ShowcaseSource unstamped = new PreProductionShowcaseClient.ShowcaseSource(stamped.projectId(),
+                stamped.projectName(), stamped.projectStatus(), true, stamped.renderedAt(), stamped.durationSeconds(), stamped.width(),
+                stamped.height(), stamped.clientLockedAt(), stamped.marketingTermsVersion(), stamped.marketingTermsAcceptedAt(),
+                stamped.shotImages(), stamped.clientReviewSessions(), stamped.clientComments(), stamped.clientApprovals(),
+                stamped.downloadUrl(), null);
+        when(preProduction.source(riya, project)).thenReturn(unstamped);
+        JobView job = publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "stamp-1"), "WEB");
+
+        assertThat(worker.runOnce()).isTrue();
+        JobView waiting = publishing.job(riya, job.id());
+        assertThat(waiting.status()).isEqualTo(Status.QUEUED);
+        assertThat(waiting.lastError()).contains("Dalaillama stamp");
+        assertThat(waiting.attempts()).isZero();
+        assertThat(quota.view().unitsUsed()).as("no quota spent while waiting").isZero();
+
+        when(preProduction.source(riya, project)).thenReturn(stamped);
+        clock.set(clock.instant().plus(Duration.ofMinutes(3)));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(publishing.job(riya, job.id()).status()).isEqualTo(Status.PUBLISHED);
+    }
+
+    @Test
     void whenTodaysSharedQuotaIsUsedUpTheNextUploadWaitsForTheReset() {
         quota.setBudget(1600, 1600);
         UUID other = UUID.randomUUID();
@@ -277,6 +301,8 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
         OffsetDateTime at = OffsetDateTime.parse("2026-10-01T10:00:00Z");
         return new ShowcaseSource(projectId, "Masala chai launch", "CLIENT_LOCKED", true, at, new BigDecimal("30"), 1920, 1080, at,
                 consent ? "2026-10" : null, consent ? at : null, 10, 1, 1, 1,
+                // The unstamped original is never what gets uploaded: only the stamped copy is served.
+                "http://localhost:" + STUB.getAddress().getPort() + "/original",
                 "http://localhost:" + STUB.getAddress().getPort() + "/film");
     }
 

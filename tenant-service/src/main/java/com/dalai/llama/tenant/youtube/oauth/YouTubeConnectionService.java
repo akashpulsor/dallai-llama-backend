@@ -244,6 +244,11 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
         return store.platformConnection().filter(c -> c.status() == Status.ACTIVE).map(this::accessToken);
     }
 
+    @Override
+    public boolean platformConnected() {
+        return store.platformConnection().filter(c -> c.status() == Status.ACTIVE).isPresent();
+    }
+
     // ---- views and disconnect ----
 
     public ConnectionView creatorView(UUID tenantId) {

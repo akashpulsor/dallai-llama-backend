@@ -24,6 +24,7 @@ public class VideoHostHealth {
     private final YouTubeDataClient youTube;
     private final YouTubeProperties youTubeProperties;
     private final VideoHostProperties hostProperties;
+    private final OfficialChannelAccess officialChannel;
     private final Clock clock;
 
     @Value("${video-host.health.probe-video-id:}")
@@ -66,7 +67,7 @@ public class VideoHostHealth {
     }
 
     public HealthView view() {
-        return new HealthView(youTubeProperties.configured(), hostProperties.officialChannel().configured(),
+        return new HealthView(youTubeProperties.configured(), officialChannel.ready(),
                 hostProperties.platformFilms().name(), last);
     }
 }

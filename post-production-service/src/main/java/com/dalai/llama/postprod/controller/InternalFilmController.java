@@ -30,6 +30,7 @@ import java.util.UUID;
 public class InternalFilmController {
 
     private final FilmAssemblyService filmAssemblyService;
+    private final com.dalai.llama.postprod.service.clip.FilmStampService filmStampService;
     private final com.dalai.llama.postprod.service.clip.ShotClipVersionService clipVersionService;
 
     /** The shots a creator has chosen to show on their own, ahead of any film. Same gate as the
@@ -61,7 +62,8 @@ public class InternalFilmController {
                 render.getWidth(),
                 render.getHeight(),
                 render.getPublishedAt(),
-                render.getCompletedAt());
+                render.getCompletedAt(),
+                filmStampService.stampedUrl(render));
     }
 
     /** @param available false when this project has no published film -- a normal state, not an
@@ -73,10 +75,12 @@ public class InternalFilmController {
                                      Integer width,
                                      Integer height,
                                      OffsetDateTime publishedAt,
-                                     OffsetDateTime completedAt) {
+                                     OffsetDateTime completedAt,
+                                     /* The Dalaillama-stamped copy for uploads; null until it's ready. */
+                                     String stampedVideoUrl) {
 
         static PublishedFilmView none() {
-            return new PublishedFilmView(false, null, null, null, null, null, null, null);
+            return new PublishedFilmView(false, null, null, null, null, null, null, null, null);
         }
     }
 }

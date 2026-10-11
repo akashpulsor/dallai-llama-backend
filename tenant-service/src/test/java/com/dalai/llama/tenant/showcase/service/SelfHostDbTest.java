@@ -75,7 +75,7 @@ class SelfHostDbTest extends ShowcaseDbTestSupport {
         item(creator, "pub0000003", "external001", "EXTERNAL", null);
         jdbc.update("UPDATE youtube_video SET gone_at = ?", Timestamp.from(NOW));
         when(preProduction.source(creator, project)).thenReturn(new ShowcaseSource(project, "Film", "CLIENT_LOCKED", true,
-                null, new BigDecimal("30"), 1080, 1920, null, null, null, 0, 0, 0, 0, "https://minio/film.mp4?sig"));
+                null, new BigDecimal("30"), 1080, 1920, null, null, null, 0, 0, 0, 0, "https://minio/film.mp4?sig", null));
 
         List<PublicShowcaseCard> cards = publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items();
 

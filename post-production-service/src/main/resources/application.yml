@@ -158,6 +158,11 @@ post-production:
   film:
     requested-topic: ${POST_PROD_FILM_REQUESTED_TOPIC:postprod.film.requested}
     requested-consumer-group: ${POST_PROD_FILM_REQUESTED_GROUP:post-production-service-film}
+  # The Dalaillama-stamped copy of each published film, used for every upload from the platform.
+  film-stamp:
+    requested-topic: ${POST_PROD_FILM_STAMP_REQUESTED_TOPIC:postprod.film-stamp.requested}
+    requested-consumer-group: ${POST_PROD_FILM_STAMP_REQUESTED_GROUP:post-production-service-film-stamp}
+    sweep-ms: ${POST_PROD_FILM_STAMP_SWEEP_MS:60000}
   # A separate, dedicated service with its own DB (not creator-service, per explicit direction).
   pre-production-service:
     base-url: ${PRE_PRODUCTION_SERVICE_BASE_URL:http://pre-production-service.apps.svc.cluster.local:8080}

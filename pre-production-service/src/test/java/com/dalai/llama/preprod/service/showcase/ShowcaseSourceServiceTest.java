@@ -49,7 +49,7 @@ class ShowcaseSourceServiceTest {
         when(projects.findByIdAndTenantId(projectId, tenant)).thenReturn(Optional.of(project));
         when(films.getPublishedFilm(tenant, projectId)).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
                 true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("45.20"), 1080, 1920,
-                locked, locked.minusHours(1))));
+                locked, locked.minusHours(1), "https://minio/film-stamped.mp4?sig")));
         when(shotImages.countForProject(projectId)).thenReturn(12L);
         when(sessions.countByProjectId(projectId)).thenReturn(2L);
         when(comments.countByProjectId(projectId)).thenReturn(5L);
@@ -58,6 +58,7 @@ class ShowcaseSourceServiceTest {
         ShowcaseSourceService.ShowcaseSourceView view = service.source(tenant, projectId);
 
         assertThat(view.filmReady()).isTrue();
+        assertThat(view.stampedDownloadUrl()).isEqualTo("https://minio/film-stamped.mp4?sig");
         assertThat(view.width()).isEqualTo(1080);
         assertThat(view.height()).isEqualTo(1920);
         assertThat(view.durationSeconds()).isEqualByComparingTo("45.20");
@@ -83,7 +84,7 @@ class ShowcaseSourceServiceTest {
         OffsetDateTime at = OffsetDateTime.parse("2026-10-01T10:00:00Z");
         when(projects.findByTenantIdOrderByCreatedAtDesc(tenant)).thenReturn(java.util.List.of(done, wip));
         when(films.getPublishedFilm(tenant, done.getId())).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
-                true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("30"), 1920, 1080, at, at)));
+                true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("30"), 1920, 1080, at, at, null)));
         when(films.getPublishedFilm(tenant, wip.getId())).thenReturn(Optional.empty());
 
         assertThat(service.films(tenant)).singleElement().satisfies(f -> {

@@ -37,6 +37,8 @@ public class YouTubePublishWorker {
     static final long CHUNK = 8L * 1024 * 1024;
     static final Duration LEASE = Duration.ofMinutes(15);
     static final int MAX_ATTEMPTS = 6;
+    static final Duration STAMP_WAIT = Duration.ofMinutes(2);
+    static final String STAMP_NOTE = "Adding the Dalaillama stamp to the film; the upload starts right after.";
     private static final Duration[] BACKOFF = {Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15),
             Duration.ofHours(1), Duration.ofHours(1), Duration.ofHours(1)};
 
@@ -78,8 +80,14 @@ public class YouTubePublishWorker {
 
     private void process(Job job) {
         Connection connection = connectionStore.find(job.connectionId()).orElseThrow(() -> new IllegalStateException("Channel removed"));
-        String sourceUrl = preProduction.source(job.tenantId(), job.projectId()).downloadUrl();
-        if (sourceUrl == null) throw new IllegalStateException("The film is no longer available");
+        PreProductionShowcaseClient.ShowcaseSource source = preProduction.source(job.tenantId(), job.projectId());
+        if (!source.filmReady()) throw new IllegalStateException("The film is no longer available");
+        String sourceUrl = source.stampedDownloadUrl();
+        if (sourceUrl == null) {
+            // Every upload carries the Dalaillama mark; post-production adds it shortly after publishing.
+            store.waitForQuota(job.id(), clock.instant().plus(STAMP_WAIT), STAMP_NOTE);
+            return;
+        }
 
         String session = job.uploadUrlEnc() == null ? null : encryptor.decrypt(job.uploadUrlEnc());
         long total = job.bytesTotal() == null ? 0 : job.bytesTotal();

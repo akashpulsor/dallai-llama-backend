@@ -15,4 +15,6 @@ public interface OfficialUploadJobRepository extends JpaRepository<OfficialUploa
     Optional<OfficialUploadJob> findFirstByStatusOrderByCreatedAtAsc(OfficialUploadStatus status);
 
     List<OfficialUploadJob> findByStatusIn(List<OfficialUploadStatus> statuses);
+
+    List<OfficialUploadJob> findTop10ByStatusOrderByCreatedAtAsc(OfficialUploadStatus status);
 }

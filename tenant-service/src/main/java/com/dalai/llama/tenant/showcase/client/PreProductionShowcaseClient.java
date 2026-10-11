@@ -93,7 +93,10 @@ public class PreProductionShowcaseClient {
             long clientReviewSessions,
             long clientComments,
             long clientApprovals,
-            String downloadUrl
+            String downloadUrl,
+            /* The same film with the Dalaillama mark; every upload from the platform uses only this.
+             * Null until post-production has stamped it (about a minute after publishing). */
+            String stampedDownloadUrl
     ) {
     }
 }

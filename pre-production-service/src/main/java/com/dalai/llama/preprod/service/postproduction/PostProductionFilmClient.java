@@ -88,6 +88,8 @@ public class PostProductionFilmClient {
                                 Integer width,
                                 Integer height,
                                 OffsetDateTime publishedAt,
-                                OffsetDateTime completedAt) {
+                                OffsetDateTime completedAt,
+                                /* The Dalaillama-stamped copy for uploads; null until post-production made it. */
+                                String stampedVideoUrl) {
     }
 }

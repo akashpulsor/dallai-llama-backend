@@ -51,6 +51,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Publishing films made on Dalaillama: the upload kit, linking a pasted video, and uploads to
@@ -64,7 +67,8 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({PlatformPublishService.class, OfficialUploadWorker.class, FundingVerifier.class, ShowcasePickService.class,
         PublicShowcaseService.class, PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class,
-        VideoEligibility.class, YouTubeVideoCache.class, PlatformFilmDbTest.TestConfig.class})
+        VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class,
+        com.dalai.llama.tenant.youtube.publish.YouTubeQuotaService.class, PlatformFilmDbTest.TestConfig.class})
 class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-09T10:00:00Z");
@@ -90,6 +94,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     @Autowired private PublicShowcaseService publicService;
     @Autowired private CreatorProfileService profileService;
     @Autowired private OfficialUploadJobRepository jobs;
+    @Autowired private AutoOfficialUploadJob autoQueue;
     @Autowired private JdbcTemplate jdbc;
 
     private UUID creator;
@@ -205,6 +210,54 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void theOfficialUploadIsTheStampedCopy_andWaitsForItWithoutUsingAnAttempt() {
+        ShowcaseSource ready = source(true, true);
+        ShowcaseSource unstamped = new ShowcaseSource(ready.projectId(), ready.projectName(), ready.projectStatus(), true, ready.renderedAt(),
+                ready.durationSeconds(), ready.width(), ready.height(), ready.clientLockedAt(), ready.marketingTermsVersion(),
+                ready.marketingTermsAcceptedAt(), ready.shotImages(), ready.clientReviewSessions(), ready.clientComments(),
+                ready.clientApprovals(), ready.downloadUrl(), null);
+        when(preProduction.source(creator, project)).thenReturn(ready);
+        publishService.requestOfficialUpload(creator, project, official());
+
+        when(preProduction.source(creator, project)).thenReturn(unstamped);
+        worker.runOnce();
+        var waiting = jobs.findByProjectId(project).orElseThrow();
+        assertThat(waiting.getStatus()).isEqualTo(OfficialUploadStatus.QUEUED);
+        assertThat(waiting.getAttempts()).isZero();
+        assertThat(waiting.getError()).isEqualTo(OfficialUploadWorker.STAMP_NOTE);
+        verify(uploadClient, never()).upload(any());
+
+        when(preProduction.source(creator, project)).thenReturn(ready);
+        when(uploadClient.upload(any())).thenReturn(new YouTubeUploadClient.UploadResult("stampedVid1", "public"));
+        when(youTube.videos(List.of("stampedVid1"))).thenReturn(List.of());
+        worker.runOnce();
+        verify(uploadClient).upload(argThat(r -> r.sourceUrl().equals("https://minio/film-stamped.mp4?sig")));
+        assertThat(jobs.findByProjectId(project).orElseThrow().getStatus()).isEqualTo(OfficialUploadStatus.DONE);
+    }
+
+    @Test
+    void eligibleFilmsAreQueuedForOurChannelAutomatically_once() {
+        jdbc.update("INSERT INTO creator_profile_industry (tenant_id, industry) VALUES (?, 'BEAUTY')", creator);
+        UUID unpaid = UUID.randomUUID();
+        when(preProduction.films(creator)).thenReturn(List.of(
+                new PreProductionShowcaseClient.FilmSummary(project, "Serum", RENDERED, null, 1080, 1920, RENDERED, RENDERED),
+                new PreProductionShowcaseClient.FilmSummary(unpaid, "Draft", RENDERED, null, 1920, 1080, null, RENDERED),
+                new PreProductionShowcaseClient.FilmSummary(UUID.randomUUID(), "No consent", RENDERED, null, 1920, 1080, RENDERED, null)));
+        when(preProduction.source(creator, project)).thenReturn(source(true, true));
+        when(preProduction.source(creator, unpaid)).thenReturn(source(false, true));
+
+        assertThat(autoQueue.run()).isEqualTo(1);
+        var job = jobs.findByProjectId(project).orElseThrow();
+        assertThat(job.getStatus()).isEqualTo(OfficialUploadStatus.QUEUED);
+        assertThat(job.getIndustry()).isEqualTo(ShowcaseIndustry.BEAUTY);
+        assertThat(job.getFormat()).isEqualTo(ShowcaseFormat.SOCIAL_SHORT);
+        assertThat(jobs.findByProjectId(unpaid)).isEmpty();
+
+        assertThat(autoQueue.run()).isZero();
+        assertThat(jobs.count()).isEqualTo(1);
+    }
+
+    @Test
     void forcedPrivateNeedsAPerson_andRepeatedFailuresStop() {
         when(preProduction.source(creator, project)).thenReturn(source(true, true));
         publishService.requestOfficialUpload(creator, project, official());
@@ -249,7 +302,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
         OffsetDateTime locked = funded ? RENDERED.plusDays(2) : null;
         return new ShowcaseSource(project, "GlowLabs serum launch", "CLIENT_LOCKED", true, RENDERED,
                 new BigDecimal("45.20"), 1080, 1920, locked, consent ? "2026-10" : null, consent ? RENDERED.plusDays(2) : null,
-                funded ? 12 : 0, funded ? 2 : 0, funded ? 3 : 0, 0, "https://minio/film.mp4?sig");
+                funded ? 12 : 0, funded ? 2 : 0, funded ? 3 : 0, 0, "https://minio/film.mp4?sig", "https://minio/film-stamped.mp4?sig");
     }
 
     private static VideoInfo video(String id, String channel, OffsetDateTime published, double seconds, String description) {

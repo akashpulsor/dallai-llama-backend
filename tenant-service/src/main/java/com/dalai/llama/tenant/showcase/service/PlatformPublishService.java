@@ -57,6 +57,7 @@ public class PlatformPublishService {
 
     private final PreProductionShowcaseClient preProduction;
     private final FundingVerifier fundingVerifier;
+    private final OfficialChannelAccess officialChannel;
     private final ShowcaseItemRepository itemRepository;
     private final OfficialUploadJobRepository uploadJobRepository;
     private final CreatorPublicProfileRepository profileRepository;
@@ -123,7 +124,7 @@ public class PlatformPublishService {
     /** Path 1: queue an upload to Dalaillama's channel. Re-requesting after a failure re-queues it. */
     @Transactional
     public OfficialUploadView requestOfficialUpload(UUID tenantId, UUID projectId, OfficialUploadRequest request) {
-        if (!hostProperties.officialChannel().configured()) {
+        if (!officialChannel.ready()) {
             throw new IllegalStateException("Publishing on Dalaillama's channel isn't available yet");
         }
         ensureNotPublished(projectId);
@@ -148,6 +149,25 @@ public class PlatformPublishService {
         return toView(uploadJobRepository.save(job));
     }
 
+    /**
+     * Queues the Dalaillama-channel upload on the creator's behalf (automatic; the creator only ever
+     * uploads to their own channel). Same rules as {@link #requestOfficialUpload}: Dalaillama's channel
+     * connected, film published, fully paid and the client's marketing consent. False when it isn't
+     * eligible or a job already exists for the film.
+     */
+    @Transactional
+    public boolean autoQueueOfficialUpload(CreatorPublicProfile profile, UUID projectId) {
+        if (uploadJobRepository.findByProjectId(projectId).isPresent()) return false;
+        ShowcaseSource source = preProduction.source(profile.getTenantId(), projectId);
+        if (officialBlockReason(source, fundingVerifier.verified(source), source.marketingTermsAcceptedAt() != null).isPresent()) return false;
+        boolean vertical = source.width() != null && source.height() != null && source.height() > source.width();
+        uploadJobRepository.save(OfficialUploadJob.builder().id(UUID.randomUUID()).tenantId(profile.getTenantId()).projectId(projectId)
+                .industry(profile.getIndustries().stream().findFirst().orElse(ShowcaseIndustry.OTHER))
+                .format(vertical ? ShowcaseFormat.SOCIAL_SHORT : ShowcaseFormat.BRAND_FILM)
+                .status(OfficialUploadStatus.QUEUED).attempts(0).build());
+        return true;
+    }
+
     public Optional<OfficialUploadView> officialUpload(UUID tenantId, UUID projectId) {
         return uploadJobRepository.findByProjectId(projectId)
                 .filter(j -> j.getTenantId().equals(tenantId))
@@ -157,6 +177,9 @@ public class PlatformPublishService {
     /** Called by the worker once YouTube accepted the upload. */
     @Transactional
     public ShowcaseItem completeOfficialUpload(OfficialUploadJob job, ShowcaseSource source, String videoId) {
+        Optional<ShowcaseItem> shown = itemRepository.findBySourceProjectId(job.getProjectId())
+                .filter(i -> i.getStatus() != ShowcaseItemStatus.REMOVED && !videoId.equals(i.getYoutubeVideoId()));
+        if (shown.isPresent()) return shown.get();
         OffsetDateTime now = OffsetDateTime.now(clock);
         ShowcaseItem item = platformItem(itemRepository.findByYoutubeVideoId(videoId).orElse(null), job.getTenantId(), source,
                 videoId, job.getIndustry(), job.getFormat(), job.getClientLabel(), PlatformProof.UPLOADED, VideoChannel.OFFICIAL, now);
@@ -227,7 +250,7 @@ public class PlatformPublishService {
     }
 
     private Optional<String> officialBlockReason(ShowcaseSource source, boolean funded, boolean consent) {
-        if (!hostProperties.officialChannel().configured()) return Optional.of("Dalaillama's channel isn't connected yet");
+        if (!officialChannel.ready()) return Optional.of("Dalaillama's channel isn't connected yet");
         if (!source.filmReady()) return Optional.of("Publish the finished film in the project first");
         if (!hostProperties.officialChannel().requireFundedAndConsent()) return Optional.empty();
         if (!funded) return Optional.of("Only films the client paid for in full, with their review on Dalaillama, go on our channel");

@@ -7,4 +7,7 @@ import java.util.Optional;
 public interface PlatformYouTubeTokens {
 
     Optional<String> platformAccessToken();
+
+    /** Ops connected Dalaillama's channel and it is still usable; no token refresh. */
+    boolean platformConnected();
 }

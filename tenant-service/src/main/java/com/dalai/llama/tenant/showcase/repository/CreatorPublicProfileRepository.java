@@ -11,4 +11,6 @@ public interface CreatorPublicProfileRepository extends JpaRepository<CreatorPub
     Optional<CreatorPublicProfile> findByHandle(String handle);
 
     boolean existsByHandle(String handle);
+
+    java.util.List<CreatorPublicProfile> findByStatus(com.dalai.llama.tenant.showcase.domain.ProfileStatus status);
 }

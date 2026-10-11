@@ -297,6 +297,31 @@ public class FfmpegClipProcessor {
     }
 
     /** The picture untouched, carrying silence instead of whatever it decided to say. */
+    /**
+     * Burns the Dalaillama mark into the bottom-right corner of a film: {@code stampWidth} pixels
+     * wide, inset by 3% of the film's width. Video is re-encoded (an overlay can't be copied), audio
+     * copied untouched. Two threads and a fast preset, because this can share the pod with a join.
+     */
+    public void stamp(String film, Path stamp, int stampWidth, int margin, Path output) {
+        run(List.of("ffmpeg", "-y", "-i", film, "-i", stamp.toString(),
+                "-filter_complex", stampFilter(stampWidth, margin),
+                "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "copy", "-movflags", "+faststart",
+                output.toString()));
+    }
+
+    /** About a fifth of the width (never under 160px), inset 3%; both even for H.264. */
+    static int[] stampGeometry(int filmWidth) {
+        int width = Math.max(160, (int) Math.round(filmWidth * 0.22));
+        int margin = Math.max(8, (int) Math.round(filmWidth * 0.03));
+        return new int[]{width - (width % 2), margin - (margin % 2)};
+    }
+
+    static String stampFilter(int stampWidth, int margin) {
+        return "[1:v]scale=" + stampWidth + ":-2[mark];[0:v][mark]overlay=main_w-overlay_w-" + margin
+                + ":main_h-overlay_h-" + margin + ":format=auto[v]";
+    }
+
     public void stripAudio(Path clip, Path output) {
         run(List.of("ffmpeg", "-y", "-i", clip.toString(),
                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",

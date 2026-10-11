@@ -37,6 +37,6 @@ class FundingVerifierTest {
 
     private static ShowcaseSource source(OffsetDateTime locked, long images, long sessions, long comments, long approvals) {
         return new ShowcaseSource(UUID.randomUUID(), "Film", "CLIENT_LOCKED", true, LOCKED.minusDays(1),
-                new BigDecimal("30"), 1080, 1920, locked, null, null, images, sessions, comments, approvals, null);
+                new BigDecimal("30"), 1080, 1920, locked, null, null, images, sessions, comments, approvals, null, null);
     }
 }

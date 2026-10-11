@@ -43,29 +43,52 @@ public class OfficialUploadWorker {
     private final YouTubeVideoCache videoCache;
     private final YouTubeVideoRepository videoRepository;
     private final VideoHostProperties hostProperties;
+    private final OfficialChannelAccess officialChannel;
+    private final com.dalai.llama.tenant.youtube.publish.YouTubeQuotaService quota;
     private final Clock clock;
 
     @Scheduled(fixedDelayString = "${video-host.official-channel.poll-ms:30000}")
     public void runOnce() {
-        if (!hostProperties.officialChannel().configured()) return;
+        if (!officialChannel.ready()) return;
         requeueStuck();
-        jobRepository.findFirstByStatusOrderByCreatedAtAsc(OfficialUploadStatus.QUEUED).ifPresent(this::process);
+        // The oldest job whose stamped film is ready; one still being stamped never holds up the rest.
+        for (OfficialUploadJob job : jobRepository.findTop10ByStatusOrderByCreatedAtAsc(OfficialUploadStatus.QUEUED)) {
+            ShowcaseSource source;
+            try {
+                source = preProduction.source(job.getTenantId(), job.getProjectId());
+            } catch (RuntimeException e) {
+                log.warn("Official upload project={}: film lookup failed: {}", job.getProjectId(), e.getMessage());
+                continue;
+            }
+            if (source.filmReady() && source.stampedDownloadUrl() == null) {
+                if (!STAMP_NOTE.equals(job.getError())) {
+                    job.setError(STAMP_NOTE);
+                    jobRepository.save(job);
+                }
+                continue;
+            }
+            // The same project quota as creator uploads (rule 41): wait for the reset when it's spent.
+            if (source.filmReady() && !quota.tryReserveUpload()) return;
+            process(job, source);
+            return;
+        }
     }
 
-    void process(OfficialUploadJob job) {
+    static final String STAMP_NOTE = "Adding the Dalaillama stamp to the film; the upload starts right after.";
+
+    void process(OfficialUploadJob job, ShowcaseSource source) {
         job.setStatus(OfficialUploadStatus.UPLOADING);
         job.setAttempts(job.getAttempts() + 1);
         jobRepository.saveAndFlush(job);
         try {
             CreatorPublicProfile profile = profileRepository.findById(job.getTenantId()).orElseThrow();
-            ShowcaseSource source = preProduction.source(job.getTenantId(), job.getProjectId());
-            if (!source.filmReady() || source.downloadUrl() == null) throw new IllegalStateException("The film isn't published any more");
+            if (!source.filmReady() || source.stampedDownloadUrl() == null) throw new IllegalStateException("The film isn't published any more");
 
             YouTubeUploadClient.UploadResult result = uploadClient.upload(new YouTubeUploadClient.UploadRequest(
                     publishService.officialTitle(profile, job.getClientLabel()),
                     publishService.officialDescription(profile),
                     publishService.tags(job.getIndustry()),
-                    source.downloadUrl()));
+                    source.stampedDownloadUrl()));
             job.setYoutubeVideoId(result.videoId());
 
             String asked = hostProperties.officialChannel().privacy();

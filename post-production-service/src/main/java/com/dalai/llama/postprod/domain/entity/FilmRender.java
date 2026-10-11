@@ -75,6 +75,23 @@ public class FilmRender {
     @Column(name = "last_error")
     private String lastError;
 
+    /** The copy stamped with the Dalaillama mark (V16), used for every upload from the platform. */
+    @Column(name = "stamped_object_key", length = 1024)
+    private String stampedObjectKey;
+
+    @Column(name = "stamp_status", length = 16)
+    private String stampStatus;
+
+    @Column(name = "stamp_error")
+    private String stampError;
+
+    @Column(name = "stamp_attempts", nullable = false)
+    @Builder.Default
+    private int stampAttempts = 0;
+
+    @Column(name = "stamp_requested_at")
+    private OffsetDateTime stampRequestedAt;
+
     @Column(name = "created_by")
     private UUID createdBy;
 

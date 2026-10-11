@@ -124,7 +124,8 @@ public class YouTubePublishStore {
                 WHERE id = ?""", attempts, ts(nextAttemptAt), abbreviate(error), id);
     }
 
-    /** Back to the queue until YouTube's daily quota resets (rule 41); not a failed attempt. */
+    /** Back to the queue until {@code until} -- YouTube's daily reset (rule 41) or the film's stamp
+     * being ready; not a failed attempt. */
     public void waitForQuota(UUID id, Instant until, String note) {
         jdbc.update("""
                 UPDATE youtube_publish_job SET status = 'QUEUED', next_attempt_at = ?, locked_until = NULL, last_error = ?, updated_at = NOW()
