@@ -298,8 +298,8 @@ public class FfmpegClipProcessor {
 
     /** The picture untouched, carrying silence instead of whatever it decided to say. */
     /**
-     * Burns the Dalaillama mark into the bottom-right corner of a film: {@code stampWidth} pixels
-     * wide, inset by 3% of the film's width. Video is re-encoded (an overlay can't be copied), audio
+     * Burns the Dalaillama mark (company logo with www.dalaillama.in below it) into the top-right
+     * corner of a film: {@code stampWidth} pixels wide, inset by 3% of the film's width. Video is re-encoded (an overlay can't be copied), audio
      * copied untouched. Two threads and a fast preset, because this can share the pod with a join.
      */
     public void stamp(String film, Path stamp, int stampWidth, int margin, Path output) {
@@ -310,16 +310,16 @@ public class FfmpegClipProcessor {
                 output.toString()));
     }
 
-    /** About a fifth of the width (never under 160px), inset 3%; both even for H.264. */
+    /** About 18% of the width (never under 140px), inset 3%; both even for H.264. */
     static int[] stampGeometry(int filmWidth) {
-        int width = Math.max(160, (int) Math.round(filmWidth * 0.22));
+        int width = Math.max(140, (int) Math.round(filmWidth * 0.18));
         int margin = Math.max(8, (int) Math.round(filmWidth * 0.03));
         return new int[]{width - (width % 2), margin - (margin % 2)};
     }
 
     static String stampFilter(int stampWidth, int margin) {
-        return "[1:v]scale=" + stampWidth + ":-2[mark];[0:v][mark]overlay=main_w-overlay_w-" + margin
-                + ":main_h-overlay_h-" + margin + ":format=auto[v]";
+        return "[1:v]scale=" + stampWidth + ":-2:flags=lanczos[mark];[0:v][mark]overlay=main_w-overlay_w-" + margin
+                + ":" + margin + ":format=auto[v]";
     }
 
     public void stripAudio(Path clip, Path output) {

@@ -49,12 +49,12 @@ class FilmStampServiceTest {
     }
 
     @Test
-    void theMarkIsAboutAFifthOfTheWidthInsetThreePercentAndEven() {
-        assertThat(FfmpegClipProcessor.stampGeometry(1080)).containsExactly(238, 32);
-        assertThat(FfmpegClipProcessor.stampGeometry(1920)).containsExactly(422, 58);
-        assertThat(FfmpegClipProcessor.stampGeometry(400)).containsExactly(160, 12);
-        assertThat(FfmpegClipProcessor.stampFilter(238, 32))
-                .isEqualTo("[1:v]scale=238:-2[mark];[0:v][mark]overlay=main_w-overlay_w-32:main_h-overlay_h-32:format=auto[v]");
+    void theMarkSitsTopRightAtAboutAFifthOfTheWidth_insetThreePercentAndEven() {
+        assertThat(FfmpegClipProcessor.stampGeometry(1080)).containsExactly(194, 32);
+        assertThat(FfmpegClipProcessor.stampGeometry(1920)).containsExactly(346, 58);
+        assertThat(FfmpegClipProcessor.stampGeometry(400)).containsExactly(140, 12);
+        assertThat(FfmpegClipProcessor.stampFilter(194, 32))
+                .isEqualTo("[1:v]scale=194:-2:flags=lanczos[mark];[0:v][mark]overlay=main_w-overlay_w-32:32:format=auto[v]");
     }
 
     @Test
@@ -75,7 +75,7 @@ class FilmStampServiceTest {
     void stampingStoresTheCopyNextToTheFilmAndMarksItDone() {
         service.stamp(film.getRenderId());
 
-        verify(ffmpeg).stamp(eq("http://minio/film"), eq(work.resolve("stamp.png")), eq(238), eq(32), eq(work.resolve("stamped.mp4")));
+        verify(ffmpeg).stamp(eq("http://minio/film"), eq(work.resolve("stamp.png")), eq(194), eq(32), eq(work.resolve("stamped.mp4")));
         assertThat(Files.exists(work.resolve("stamp.png"))).as("the mark ships in the jar").isTrue();
         String key = "films/" + film.getProjectId() + "/" + film.getRenderId() + "-stamped.mp4";
         verify(store).upload(key, work.resolve("stamped.mp4"), "video/mp4");
