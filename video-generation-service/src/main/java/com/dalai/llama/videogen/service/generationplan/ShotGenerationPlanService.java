@@ -457,7 +457,7 @@ public class ShotGenerationPlanService {
         boolean current = !state.intervals().isEmpty()
                 && Objects.equals(plan.getTimelineDurationSeconds(), plan.getGenerationDurationSeconds())
                 && Objects.equals(plan.getTimelineFps(), plan.getGenerationFps());
-        return current ? timelineText(state.intervals(), plan.getGenerationFps()) : VideoShotPromptService.SourceExecution.NO_TIMELINE;
+        return current ? timelineText(state.intervals(), frameRate(plan)) : VideoShotPromptService.SourceExecution.NO_TIMELINE;
     }
 
     private UUID previousShotId(UUID tenantId, UUID projectId, UUID shotId) {
@@ -575,6 +575,13 @@ public class ShotGenerationPlanService {
             text.append('\n');
         }
         return text.toString().strip();
+    }
+
+    /** The selected frame rate, or the model's only one (a model with one rate takes no fps setting). */
+    private Integer frameRate(ShotGenerationPlan plan) {
+        if (plan.getGenerationFps() != null) return plan.getGenerationFps();
+        List<Integer> rates = capabilityService.capabilities(plan.getModelId()).supportedFps();
+        return rates != null && rates.size() == 1 ? rates.get(0) : null;
     }
 
     private static int frame(BigDecimal seconds, int fps) {

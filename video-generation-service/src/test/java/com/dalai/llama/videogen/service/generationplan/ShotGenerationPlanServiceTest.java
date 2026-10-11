@@ -250,6 +250,23 @@ class ShotGenerationPlanServiceTest {
         assertThat(ShotGenerationPlanService.timelineUsable(current)).isTrue();
     }
 
+    @Test
+    void aModelWithOneFrameRateStillGetsFrameNumbersInTheTimeline() {
+        // The model renders at 24 fps only, so no fps was selected; frames are counted at 24.
+        plan.setGenerationFps(null);
+        plan.setTimelineDurationSeconds(6);
+        plan.setTimelineFps(null);
+        stubPlan(List.of(ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(new BigDecimal("6"))
+                .actionId("OPEN,END").action("held").build()));
+        when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("text");
+
+        service.composePrompt(tenant, project, shotId);
+
+        ArgumentCaptor<VideoShotPromptService.SourceExecution> execution = ArgumentCaptor.forClass(VideoShotPromptService.SourceExecution.class);
+        verify(promptWriter).composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), execution.capture());
+        assertThat(execution.getValue().sourceActionTimeline()).startsWith("0.0-6.0s (frames 0-144) [OPEN,END]");
+    }
+
     private ShotContext assemblyShot() {
         return assembly.assemble(tenant, project, shotId, null).shotContext();
     }
