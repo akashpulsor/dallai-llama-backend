@@ -28,6 +28,7 @@ import com.dalai.llama.tenant.youtube.client.YouTubeDataClient.VideoInfo;
 import com.dalai.llama.tenant.youtube.client.YouTubeVideoUrl;
 import com.dalai.llama.tenant.youtube.domain.ChannelStatus;
 import com.dalai.llama.tenant.youtube.domain.entity.CreatorYouTubeChannel;
+import com.dalai.llama.tenant.youtube.domain.entity.YouTubeVideo;
 import com.dalai.llama.tenant.youtube.repository.CreatorYouTubeChannelRepository;
 import com.dalai.llama.tenant.youtube.repository.YouTubeVideoRepository;
 import com.dalai.llama.tenant.youtube.service.YouTubeVideoCache;
@@ -119,6 +120,39 @@ public class PlatformPublishService {
         item = platformItem(item, tenantId, source, videoId, request.industry(), request.format(), request.clientLabel(),
                 PlatformProof.LINK_MATCH, VideoChannel.CREATOR, now);
         return ShowcasePickService.toView(itemRepository.save(item), videoRepository.findById(videoId).orElse(null));
+    }
+
+    /**
+     * Path 3: the creator published the film to their own channel from Dalai Llama ("Publish to my
+     * profile"): we uploaded it, so it goes on their profile as a film made on Dalaillama, with the
+     * project's funding and consent facts. Nothing to do if the project is already on the profile.
+     */
+    @Transactional
+    public Optional<ShowcaseItem> recordCreatorUpload(UUID tenantId, UUID projectId, String videoId, String privacy) {
+        if (itemRepository.findBySourceProjectId(projectId).filter(i -> i.getStatus() != ShowcaseItemStatus.REMOVED).isPresent()) {
+            return Optional.empty();
+        }
+        CreatorPublicProfile profile = profile(tenantId);
+        ShowcaseSource source = preProduction.source(tenantId, projectId);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        List<VideoInfo> listed = youTube.videos(List.of(videoId));
+        if (!listed.isEmpty()) {
+            videoCache.store(List.of(videoId), listed, now);
+        } else if (videoRepository.findById(videoId).isEmpty()) {
+            // YouTube may still be processing a fresh upload; the film's own facts stand in until the refresh.
+            String channelId = channelRepository.findById(tenantId).map(CreatorYouTubeChannel::getChannelId).orElse("CREATOR");
+            videoRepository.save(YouTubeVideo.builder().videoId(videoId).channelId(channelId).title(source.projectName())
+                    .durationSeconds(source.durationSeconds() == null ? java.math.BigDecimal.ZERO : source.durationSeconds())
+                    .aspectW(source.width()).aspectH(source.height()).privacyStatus(privacy == null ? "private" : privacy.toLowerCase(java.util.Locale.ROOT))
+                    .embeddable(true).ageRestricted(false).madeForKids(false).publishedAt(now).fetchedAt(now).build());
+        }
+        ShowcaseItem existing = itemRepository.findByYoutubeVideoId(videoId).orElse(null);
+        if (existing != null && !existing.getTenantId().equals(tenantId)) return Optional.empty();
+        boolean vertical = source.width() != null && source.height() != null && source.height() > source.width();
+        ShowcaseItem item = platformItem(existing, tenantId, source, videoId,
+                profile.getIndustries().stream().findFirst().orElse(ShowcaseIndustry.OTHER),
+                vertical ? ShowcaseFormat.SOCIAL_SHORT : ShowcaseFormat.BRAND_FILM, null, PlatformProof.UPLOADED, VideoChannel.CREATOR, now);
+        return Optional.of(itemRepository.save(item));
     }
 
     /** Path 1: queue an upload to Dalaillama's channel. Re-requesting after a failure re-queues it. */

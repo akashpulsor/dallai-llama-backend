@@ -258,6 +258,21 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aFilmPublishedToTheCreatorsChannelGoesOnTheProfileAsADalaillamaFilm_once() {
+        when(preProduction.source(creator, project)).thenReturn(source(true, true));
+        when(youTube.videos(List.of("creatorVid1"))).thenReturn(List.of());
+
+        assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid1", "public")).isPresent();
+        assertThat(jdbc.queryForObject("SELECT origin || '/' || channel || '/' || platform_proof || '/' || (funded_verified_at IS NOT NULL)"
+                + " FROM showcase_item WHERE youtube_video_id = 'creatorVid1'", String.class)).isEqualTo("PLATFORM/CREATOR/UPLOADED/true");
+        assertThat(jdbc.queryForObject("SELECT aspect_w || 'x' || aspect_h FROM youtube_video WHERE video_id = 'creatorVid1'", String.class))
+                .isEqualTo("1080x1920");
+
+        assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid1", "public")).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void forcedPrivateNeedsAPerson_andRepeatedFailuresStop() {
         when(preProduction.source(creator, project)).thenReturn(source(true, true));
         publishService.requestOfficialUpload(creator, project, official());

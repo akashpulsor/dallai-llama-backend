@@ -52,6 +52,7 @@ public class YouTubePublishWorker {
     private final YouTubeQuotaService quota;
     private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.youtube.service.ChannelImportService> channelImport;
     private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.showcase.service.AutoShowcaseService> autoShowcase;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.showcase.service.PlatformPublishService> platformFilms;
     private final Clock clock;
 
     @Scheduled(fixedDelayString = "${youtube-publish.poll-ms:20000}", initialDelayString = "${youtube-publish.poll-ms:20000}")
@@ -141,6 +142,7 @@ public class YouTubePublishWorker {
             }
         });
         store.complete(job.id(), state.videoId(), state.privacyStatus(), job.publishAt() != null ? Status.SCHEDULED : Status.PUBLISHED);
+        recordOnProfile(job.tenantId(), job.projectId(), state.videoId(), state.privacyStatus());
         if (job.publishAt() == null) showOnProfile(job.tenantId());
         if (store.thumbnail(job.id()).isPresent()) store.noteError(job.id(), "Uploaded, but YouTube refused the thumbnail; try setting it again.");
         log.info("Published job {} as YouTube video {}", job.id(), state.videoId());
@@ -178,6 +180,16 @@ public class YouTubePublishWorker {
         List<String> tags = job.tags() == null ? List.of() : Arrays.asList(job.tags().split(","));
         return new YouTubeApiClient.Metadata(job.title(), job.description(), tags, job.categoryId(),
                 job.privacy().name().toLowerCase(), job.publishAt());
+    }
+
+    /** The film is a Dalaillama film: it goes on the profile as one ("Made on Dalaillama"), whatever its
+     * privacy -- the profile only shows it once it is public on YouTube. Best-effort. */
+    void recordOnProfile(UUID tenantId, UUID projectId, String videoId, String privacy) {
+        try {
+            platformFilms.ifAvailable(p -> p.recordCreatorUpload(tenantId, projectId, videoId, privacy));
+        } catch (RuntimeException e) {
+            log.warn("Published, but couldn't record project {} on tenant {}'s profile: {}", projectId, tenantId, e.getMessage());
+        }
     }
 
     /** A film published to the creator's channel shows on their profile right away (public videos
