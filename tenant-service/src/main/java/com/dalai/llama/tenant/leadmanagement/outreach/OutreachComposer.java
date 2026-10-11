@@ -26,7 +26,7 @@ public class OutreachComposer {
     public record DigestCard(MailableFilm film, OutreachTemplate template) {
     }
 
-    record CreatorMailContext(String greeting, String intro, String note, String filmsHtml, String filmsText,
+    record CreatorMailContext(String headline, String greeting, String intro, String note, String filmsHtml, String filmsText,
                               String creatorName, String profileUrl, String unsubscribeUrl) {
     }
 
@@ -54,10 +54,11 @@ public class OutreachComposer {
         }
         String profileUrl = profileUrl(handle, null);
         String unsubscribe = unsubscribeUrl(delivery);
-        CreatorMailContext context = new CreatorMailContext(greeting(recipientName),
+        String subject = fill(template.subject(), films, creatorName, recipientName);
+        CreatorMailContext context = new CreatorMailContext(subject, greeting(recipientName),
                 fill(template.intro(), films, creatorName, recipientName), blank(note),
                 html.toString(), text.toString(), creatorName, profileUrl, unsubscribe);
-        return new Mail(fill(template.subject(), films, creatorName, recipientName), renderer.text("creator_mail", context),
+        return new Mail(subject, renderer.text("creator_mail", context),
                 renderer.html("creator_mail", context), unsubscribeHeaders(unsubscribe));
     }
 
