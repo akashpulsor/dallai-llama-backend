@@ -60,10 +60,12 @@ public class GenerationPlanLlm {
     public record TimelineAnswer(List<RawInterval> intervals) {
     }
 
-    /** As the model writes it: {@code actionId} is usually one id, but sometimes a list when it times
-     * several actions in one interval. */
+    /** As the model writes it: {@code actionIds} lists every action happening in the interval (the
+     * visual action, the line being spoken, the camera move run side by side). {@code actionId}, one
+     * id or a list, is the older shape and is still read. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record RawInterval(BigDecimal startSeconds, BigDecimal endSeconds, com.fasterxml.jackson.databind.JsonNode actionId,
+    public record RawInterval(BigDecimal startSeconds, BigDecimal endSeconds, com.fasterxml.jackson.databind.JsonNode actionIds,
+                              com.fasterxml.jackson.databind.JsonNode actionId,
                               String action, String subjectState, String cameraBehavior, Boolean holdRequired) {
     }
 
@@ -88,28 +90,21 @@ public class GenerationPlanLlm {
         return answer.intervals().stream().flatMap(i -> normalise(i).stream()).toList();
     }
 
-    /** One action per interval: an interval naming several is split evenly across its span, in the order
-     * given, so the validator times each one (a squeezed spoken line is then flagged, not lost). */
+    /** One interval, its actions stored together as "A1,D1,C1" (each is credited with the whole span). */
     static List<IntervalAnswer> normalise(RawInterval raw) {
         List<String> ids = new java.util.ArrayList<>();
-        if (raw.actionId() != null && raw.actionId().isArray()) {
-            raw.actionId().forEach(n -> { if (!n.isNull() && !n.asText().isBlank()) ids.add(n.asText()); });
-        } else if (raw.actionId() != null && !raw.actionId().isNull()) {
-            ids.add(raw.actionId().asText());
+        for (com.fasterxml.jackson.databind.JsonNode node : new com.fasterxml.jackson.databind.JsonNode[]{raw.actionIds(), raw.actionId()}) {
+            if (node == null || node.isNull()) continue;
+            if (node.isArray()) node.forEach(n -> add(ids, n.asText()));
+            else for (String part : node.asText().split(",")) add(ids, part);
         }
-        if (ids.size() <= 1 || raw.startSeconds() == null || raw.endSeconds() == null) {
-            return List.of(new IntervalAnswer(raw.startSeconds(), raw.endSeconds(), ids.isEmpty() ? null : String.join(",", ids),
-                    raw.action(), raw.subjectState(), raw.cameraBehavior(), raw.holdRequired()));
-        }
-        BigDecimal step = raw.endSeconds().subtract(raw.startSeconds())
-                .divide(BigDecimal.valueOf(ids.size()), 3, java.math.RoundingMode.HALF_UP);
-        List<IntervalAnswer> parts = new java.util.ArrayList<>();
-        for (int k = 0; k < ids.size(); k++) {
-            BigDecimal start = raw.startSeconds().add(step.multiply(BigDecimal.valueOf(k)));
-            BigDecimal end = k == ids.size() - 1 ? raw.endSeconds() : start.add(step);
-            parts.add(new IntervalAnswer(start, end, ids.get(k), raw.action(), raw.subjectState(), raw.cameraBehavior(), raw.holdRequired()));
-        }
-        return parts;
+        return List.of(new IntervalAnswer(raw.startSeconds(), raw.endSeconds(), ids.isEmpty() ? null : String.join(",", ids),
+                raw.action(), raw.subjectState(), raw.cameraBehavior(), raw.holdRequired()));
+    }
+
+    private static void add(List<String> ids, String id) {
+        String clean = id == null ? "" : id.strip();
+        if (!clean.isEmpty() && !"null".equals(clean) && !ids.contains(clean)) ids.add(clean);
     }
 
     public List<PromptReviewFindingView> review(UUID tenantId, UUID projectId, Map<String, String> variables) {

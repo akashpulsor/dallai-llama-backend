@@ -194,15 +194,17 @@ public final class GenerationPlanValidator {
         Set<String> reported = new HashSet<>();
         for (int i = 0; i < intervals.size(); i++) {
             SourceTemporalActionView interval = intervals.get(i);
-            String id = interval.actionId();
-            if (!byId.containsKey(id)) {
-                if (reported.add(id)) {
-                    issues.add(issue("UNKNOWN_ACTION", id, "The timeline names an action the plan does not contain."));
+            // Every action named in an interval happens across all of it (a line spoken while the camera moves).
+            for (String id : ids(interval)) {
+                if (!byId.containsKey(id)) {
+                    if (reported.add(id)) {
+                        issues.add(issue("UNKNOWN_ACTION", id, "The timeline names an action the plan does not contain."));
+                    }
+                    continue;
                 }
-                continue;
+                firstSeen.putIfAbsent(id, i);
+                secondsGiven.merge(id, length(interval.startSeconds(), interval.endSeconds()), BigDecimal::add);
             }
-            firstSeen.putIfAbsent(id, i);
-            secondsGiven.merge(id, length(interval.startSeconds(), interval.endSeconds()), BigDecimal::add);
         }
         for (RequiredActionView action : actions) {
             Integer at = firstSeen.get(action.actionId());
@@ -221,10 +223,10 @@ public final class GenerationPlanValidator {
                         .formatted(plain(secondsGiven.get(action.actionId())), plain(action.fixedSeconds()))));
             }
         }
-        if (!RequiredActionExtractor.OPEN.equals(first.actionId())) {
+        if (!ids(first).contains(RequiredActionExtractor.OPEN)) {
             issues.add(issue("OPENING_STATE_NOT_FIRST", RequiredActionExtractor.OPEN, "The first interval must carry the opening state."));
         }
-        if (!RequiredActionExtractor.END.equals(last.actionId())) {
+        if (!ids(last).contains(RequiredActionExtractor.END)) {
             issues.add(issue("ENDING_STATE_NOT_LAST", RequiredActionExtractor.END, "The last interval must reach the final state."));
         }
         return issues;
@@ -298,6 +300,12 @@ public final class GenerationPlanValidator {
         }
         return RequiredActionExtractor.OPEN.equals(entry.actionId()) && ms(entry.startSeconds()).signum() == 0
                 || RequiredActionExtractor.END.equals(entry.actionId()) && ms(entry.endSeconds()).compareTo(ms(duration)) == 0;
+    }
+
+    /** The actions an interval names, stored together as "A1,D1". */
+    static List<String> ids(SourceTemporalActionView interval) {
+        if (interval.actionId() == null || interval.actionId().isBlank()) return List.of();
+        return java.util.Arrays.stream(interval.actionId().split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
     }
 
     private static Map<String, RequiredActionView> index(List<RequiredActionView> actions) {

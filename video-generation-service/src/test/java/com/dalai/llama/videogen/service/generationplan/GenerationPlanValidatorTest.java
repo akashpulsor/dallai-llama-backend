@@ -154,6 +154,18 @@ class GenerationPlanValidatorTest {
     }
 
     @Test
+    void actionsRunningSideBySideInFifthOfASecondIntervalsAreEachCreditedWithTheWholeSpan() {
+        // The line (D1, 1.8s fixed) is spoken while the spanner work happens: 0.6-2.6 credits D1 with 2.0s.
+        List<SourceTemporalActionView> concurrent = List.of(interval("0", "0.6", "OPEN,A1"), interval("0.6", "2.6", "A1,D1"),
+                interval("2.6", "4.8", "A2"), interval("4.8", "6", "A2,END"));
+        assertThat(GenerationPlanValidator.timeline(ACTIONS, concurrent, 6)).isEmpty();
+
+        List<SourceTemporalActionView> squeezed = List.of(interval("0", "0.6", "OPEN,A1"), interval("0.6", "1.4", "A1,D1"),
+                interval("1.4", "4.8", "A2"), interval("4.8", "6", "A2,END"));
+        assertThat(codes(GenerationPlanValidator.timeline(ACTIONS, squeezed, 6))).containsExactly("FIXED_TIMING_SHORTENED");
+    }
+
+    @Test
     void aTimelineEndingOnAHalfSecondIsShortOfAWholeSecondDuration() {
         assertThat(codes(GenerationPlanValidator.timeline(ACTIONS, continuousTimeline(), 6))).contains("TIMELINE_NOT_TO_END");
     }

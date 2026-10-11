@@ -219,21 +219,17 @@ class ShotGenerationPlanServiceTest {
     }
 
     @Test
-    void theSuggestedDurationIsNeverShorterThanTheSpokenLines() {
-        List<RequiredActionView> actions = List.of(
-                new RequiredActionView("OPEN", ShotActionKind.OPENING_STATE, "open", null, null),
-                new RequiredActionView("D1", ShotActionKind.DIALOGUE, "narrator says", new BigDecimal("4"), "OPEN"),
-                new RequiredActionView("END", ShotActionKind.ENDING_STATE, "end", null, "D1"));
-        VideoModelCapabilitiesView renders = new VideoModelCapabilitiesView(MODEL, List.of(2, 3, 5, 8), List.of(30), true);
+    void thePromptWriterReadsTheTimelineWithFrameNumbers() {
+        String text = ShotGenerationPlanService.timelineText(List.of(
+                ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(new BigDecimal("0.6"))
+                        .actionId("OPEN,C1").action("Lines draw on").build(),
+                ShotGenerationPlanInterval.builder().startSeconds(new BigDecimal("0.6")).endSeconds(new BigDecimal("2"))
+                        .actionId("A1,END").action("Forms settle").holdRequired(true).build()), 30);
 
-        GenerationPlanLlm.AssessmentAnswer raised = ShotGenerationPlanService.withDialogueFloor(
-                new GenerationPlanLlm.AssessmentAnswer(true, new BigDecimal("2"), 2, 30, "short", List.of(), List.of()), actions, renders);
-        assertThat(raised.recommendedDurationSeconds()).isEqualTo(5);
-        assertThat(raised.reasoning()).contains("Raised to 5s");
-
-        GenerationPlanLlm.AssessmentAnswer kept = ShotGenerationPlanService.withDialogueFloor(
-                new GenerationPlanLlm.AssessmentAnswer(true, new BigDecimal("5"), 8, 30, "long", List.of(), List.of()), actions, renders);
-        assertThat(kept.recommendedDurationSeconds()).isEqualTo(8);
+        assertThat(text).isEqualTo("0.0-0.6s (frames 0-18) [OPEN,C1] Lines draw on\n0.6-2.0s (frames 18-60) [A1,END] Forms settle (hold)");
+        assertThat(ShotGenerationPlanService.timelineText(List.of(
+                ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(BigDecimal.ONE).actionId("OPEN").action("x").build()),
+                null)).isEqualTo("0.0-1.0s [OPEN] x");
     }
 
     @Test
@@ -306,7 +302,7 @@ class ShotGenerationPlanServiceTest {
                 ArgumentCaptor.forClass(VideoShotPromptService.SourceExecution.class);
         verify(promptWriter).composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), execution.capture());
         assertThat(execution.getValue().sourceActionTimeline())
-                .isEqualTo("0.0-1.0s [OPEN] Ravi kneels.\n1.0-6.0s [END] Water stops. Camera: static (hold)");
+                .isEqualTo("0.0-1.0s (frames 0-24) [OPEN] Ravi kneels.\n1.0-6.0s (frames 24-144) [END] Water stops. Camera: static (hold)");
     }
 
     @Test
