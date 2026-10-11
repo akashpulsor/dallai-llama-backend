@@ -30,7 +30,7 @@ class PublicBrandControllerTest {
     private final BrandSessionService sessions = new BrandSessionService(
             new BrandProperties("secret", 30, true, 30, 5, "", "", ""), Clock.fixed(Instant.parse("2026-10-10T10:00:00Z"), ZoneOffset.UTC));
     private final MockMvc mvc = MockMvcBuilders
-            .standaloneSetup(new PublicBrandController(accounts, sessions, mock(BrandInquiryService.class)))
+            .standaloneSetup(new PublicBrandController(accounts, sessions, BrandIdentityTest.cookieOnly(sessions), mock(BrandInquiryService.class)))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
 

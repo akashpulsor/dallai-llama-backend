@@ -41,7 +41,8 @@ class PublicEngagementControllerTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new PublicEngagementController(engagement, follows, inquiries, sessions))
+        mvc = MockMvcBuilders.standaloneSetup(new PublicEngagementController(engagement, follows, inquiries, sessions,
+                com.dalai.llama.tenant.leadmanagement.brand.BrandIdentityTest.cookieOnly(sessions)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

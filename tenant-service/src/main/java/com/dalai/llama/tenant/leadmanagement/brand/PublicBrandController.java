@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,6 +31,7 @@ public class PublicBrandController {
 
     private final BrandAccountService accounts;
     private final BrandSessionService sessions;
+    private final com.dalai.llama.tenant.leadmanagement.brand.BrandIdentity identity;
     private final BrandInquiryService inquiries;
 
     /** Sign up and sign in are one step: we email a one-time link. Always 202. */
@@ -55,19 +57,22 @@ public class PublicBrandController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<BrandMeView> me(@CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
-        return ResponseEntity.ok(accounts.me(sessions.require(session)));
+    public ResponseEntity<BrandMeView> me(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
+        return ResponseEntity.ok(accounts.me(identity.require(authorization, session)));
     }
 
     @PatchMapping("/me/preferences")
-    public ResponseEntity<BrandMeView> preferences(@CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
+    public ResponseEntity<BrandMeView> preferences(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
                                                    @Valid @RequestBody PreferencesRequest request) {
-        return ResponseEntity.ok(accounts.updatePreferences(sessions.require(session), request));
+        return ResponseEntity.ok(accounts.updatePreferences(identity.require(authorization, session), request));
     }
 
     @GetMapping("/me/inquiries")
     public ResponseEntity<List<BrandInquiryView>> myInquiries(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
-        return ResponseEntity.ok(inquiries.forBrand(sessions.require(session)));
+        return ResponseEntity.ok(inquiries.forBrand(identity.require(authorization, session)));
     }
 }

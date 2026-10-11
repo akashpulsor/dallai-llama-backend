@@ -8,6 +8,7 @@ import com.dalai.llama.tenant.showcase.service.FollowService;
 import com.dalai.llama.tenant.showcase.service.ShowcaseEngagementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -31,6 +32,7 @@ public class PublicEngagementController {
     private final FollowService followService;
     private final BrandInquiryService inquiryService;
     private final BrandSessionService sessions;
+    private final com.dalai.llama.tenant.leadmanagement.brand.BrandIdentity identity;
 
     @PutMapping("/api/v1/public/showcase/{publicId}/like")
     public ResponseEntity<ShowcaseEngagementService.LikeState> like(@PathVariable String publicId,
@@ -46,20 +48,23 @@ public class PublicEngagementController {
 
     @PutMapping("/api/v1/public/creators/{handle}/follow")
     public ResponseEntity<FollowService.FollowState> follow(@PathVariable String handle,
-                                                            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
-        return ResponseEntity.ok(followService.follow(sessions.require(session), handle));
+                                                            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
+        return ResponseEntity.ok(followService.follow(identity.require(authorization, session), handle));
     }
 
     @DeleteMapping("/api/v1/public/creators/{handle}/follow")
     public ResponseEntity<FollowService.FollowState> unfollow(@PathVariable String handle,
-                                                              @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
-        return ResponseEntity.ok(followService.unfollow(sessions.require(session), handle));
+                                                              @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session) {
+        return ResponseEntity.ok(followService.unfollow(identity.require(authorization, session), handle));
     }
 
     @PostMapping("/api/v1/public/creators/{handle}/inquiries")
     public ResponseEntity<SubmittedInquiry> request(@PathVariable String handle,
-                                                    @CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
+                                                    @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
                                                     @Valid @RequestBody SubmitInquiryRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submit(sessions.require(session), handle, request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submit(identity.require(authorization, session), handle, request));
     }
 }
