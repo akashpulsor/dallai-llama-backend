@@ -50,6 +50,10 @@ public record ShotPromptView(
          * <p>Both prompts are on this view and only one of them gets sent, so without this a caller
          * editing "the prompt" has to guess which. Swapping a rephrased line into the wrong one
          * edits text nobody uses and looks exactly like success. */
-        boolean compressionApplied
+        boolean compressionApplied,
+        /** Where this version came from: "planned" (Prepare, from the shot's generation plan),
+         * "studio-reviewed" (generated from the video studio), an edit's label, or null (older prepare). */
+        String variantLabel,
+        java.time.OffsetDateTime createdAt
 ) {
 }

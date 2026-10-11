@@ -767,7 +767,9 @@ public class ShotGenerationOrchestrator {
                 job.map(VideoGenJob::getEstimatedCost).orElse(null),
                 job.map(VideoGenJob::getCostCurrency).orElse(null),
                 job.map(VideoGenJob::getDurationSeconds).orElse(null),
-                Boolean.TRUE.equals(prompt.getCompressionApplied())
+                Boolean.TRUE.equals(prompt.getCompressionApplied()),
+                prompt.getVariantLabel(),
+                prompt.getCreatedAt()
         );
     }
 
