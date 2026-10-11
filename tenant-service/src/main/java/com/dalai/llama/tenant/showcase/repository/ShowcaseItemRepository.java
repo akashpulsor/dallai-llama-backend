@@ -36,14 +36,16 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
      * video aliased {@code v}: live, not hidden by ops, and its YouTube video still served, showable
      * and fetched recently enough for YouTube's 30-day rule. With {@code :platformSelf} (the SELF
      * host fallback, rule 5) platform films play from our own copy, so YouTube's state no longer
-     * matters for them. */
+     * matters for them. Unlisted counts as showable: it plays wherever it is embedded but is not
+     * promoted in YouTube search -- the setting for a film meant for the profile, not the channel.
+     * (Channel imports stay public-only: VideoEligibility.) */
     String ITEM_SHOWABLE = """
             i.status = com.dalai.llama.tenant.showcase.domain.ShowcaseItemStatus.LIVE
             AND i.hiddenByOps = false
             AND ((:platformSelf = true AND i.origin = com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM)
                  OR (v.goneAt IS NULL
                      AND v.fetchedAt > :freshAfter
-                     AND v.privacyStatus = 'public'
+                     AND v.privacyStatus IN ('public', 'unlisted')
                      AND v.embeddable = true
                      AND v.ageRestricted = false
                      AND v.madeForKids = false))
@@ -56,7 +58,7 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
             AND ((:platformSelf = true AND x.origin = com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM)
                  OR (xv.goneAt IS NULL
                      AND xv.fetchedAt > :freshAfter
-                     AND xv.privacyStatus = 'public'
+                     AND xv.privacyStatus IN ('public', 'unlisted')
                      AND xv.embeddable = true
                      AND xv.ageRestricted = false
                      AND xv.madeForKids = false))

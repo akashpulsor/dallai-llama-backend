@@ -30,8 +30,36 @@ class ShowcaseSourceServiceTest {
     private final ClientReviewSessionRepository sessions = mock(ClientReviewSessionRepository.class);
     private final ReviewCommentRepository comments = mock(ReviewCommentRepository.class);
     private final CreativeDirectionRepository directions = mock(CreativeDirectionRepository.class);
+    private final com.dalai.llama.preprod.repository.ShotRepository shots = mock(com.dalai.llama.preprod.repository.ShotRepository.class);
+    private final io.minio.MinioClient minio = mock(io.minio.MinioClient.class);
     private final ShowcaseSourceService service =
-            new ShowcaseSourceService(projects, films, shotImages, sessions, comments, directions);
+            new ShowcaseSourceService(projects, films, shotImages, sessions, comments, directions, shots, minio);
+
+    @Test
+    void thePosterIsTheFirstShotsFinishedFrame_signed() throws Exception {
+        UUID projectId = UUID.randomUUID();
+        com.dalai.llama.preprod.domain.entity.Shot first = new com.dalai.llama.preprod.domain.entity.Shot();
+        first.setId(UUID.randomUUID());
+        com.dalai.llama.preprod.domain.entity.Shot second = new com.dalai.llama.preprod.domain.entity.Shot();
+        second.setId(UUID.randomUUID());
+        when(shots.findByProjectIdOrderByShotNumberAsc(projectId)).thenReturn(java.util.List.of(first, second));
+        when(shotImages.findByShotId(first.getId())).thenReturn(java.util.List.of(
+                image(com.dalai.llama.preprod.domain.ShotImageKind.STORYBOARD, "sketch.png"),
+                image(com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION, "frame.png")));
+        when(minio.getPresignedObjectUrl(org.mockito.ArgumentMatchers.argThat(a -> "frame.png".equals(a.object()))))
+                .thenReturn("https://minio/frame.png?sig");
+
+        assertThat(service.posterUrl(projectId)).isEqualTo("https://minio/frame.png?sig");
+        assertThat(service.posterUrl(UUID.randomUUID())).isNull();
+    }
+
+    private static com.dalai.llama.preprod.domain.entity.ShotImage image(com.dalai.llama.preprod.domain.ShotImageKind kind, String key) {
+        com.dalai.llama.preprod.domain.entity.ShotImage i = new com.dalai.llama.preprod.domain.entity.ShotImage();
+        i.setKind(kind);
+        i.setBucket("shots");
+        i.setObjectKey(key);
+        return i;
+    }
 
     @Test
     void reportsTheFilmTheLockTheConsentAndTheEvidence() {

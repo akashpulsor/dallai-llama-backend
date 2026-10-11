@@ -183,6 +183,14 @@ class ShowcaseDbTest {
         assertThat(publicService.feed(PublicShowcaseService.FeedTab.NEW, ShowcaseIndustry.FOOD_BEVERAGE, null, 0).items())
                 .extracting(PublicShowcaseCard::youtubeVideoId).containsExactlyInAnyOrder("r1", "k1", "k2");
 
+        // Unlisted plays where it is embedded, so it shows; private does not (and Riya drops below the minimum).
+        jdbc.update("UPDATE youtube_video SET privacy_status = 'unlisted' WHERE video_id = 'r1'");
+        assertThat(publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items()).hasSize(4);
+        jdbc.update("UPDATE youtube_video SET privacy_status = 'private' WHERE video_id = 'r1'");
+        assertThat(publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items()).extracting(PublicShowcaseCard::youtubeVideoId)
+                .containsExactlyInAnyOrder("k1", "k2");
+        jdbc.update("UPDATE youtube_video SET privacy_status = 'public' WHERE video_id = 'r1'");
+
         // Ops kill switch on one item drops Kabir below the minimum, so all his work leaves.
         jdbc.update("UPDATE showcase_item SET hidden_by_ops = TRUE WHERE youtube_video_id = 'k2'");
         assertThat(publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items()).extracting(PublicShowcaseCard::youtubeVideoId)

@@ -54,6 +54,12 @@ public class ProjectController extends BaseController {
         return ResponseEntity.ok(projectService.get(tenant().tenantId(), projectId));
     }
 
+    /** The creator records that they have the client's permission to use this film for marketing. */
+    @PostMapping("/v1/projects/{projectId}/marketing-consent")
+    public ResponseEntity<ProjectView> recordMarketingConsent(@PathVariable UUID projectId) {
+        return ResponseEntity.ok(projectService.recordCreatorAttestedConsent(tenant().tenantId(), projectId));
+    }
+
     @GetMapping("/v1/projects")
     public ResponseEntity<List<ProjectView>> list() {
         return ResponseEntity.ok(projectService.list(tenant().tenantId()));

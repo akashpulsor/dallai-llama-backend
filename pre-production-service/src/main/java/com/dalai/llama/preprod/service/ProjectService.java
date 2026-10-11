@@ -151,6 +151,27 @@ public class ProjectService {
         projectRepository.save(project);
     }
 
+    /** Recorded as {@code marketing_terms_version} when the creator, not the client's lock, records consent. */
+    public static final String CREATOR_ATTESTED = "creator-attest";
+
+    /**
+     * The creator confirms they have their client's permission to use this film for marketing (or
+     * that the film is their own). Recorded with its own version so it is never mistaken for the
+     * client ticking the box at lock; a consent already on the project is kept as it is.
+     */
+    @Transactional
+    public ProjectView recordCreatorAttestedConsent(UUID tenantId, UUID projectId) {
+        Project project = requireProject(tenantId, projectId);
+        if (project.getMarketingTermsAcceptedAt() == null) {
+            OffsetDateTime now = OffsetDateTime.now();
+            project.setMarketingTermsVersion(CREATOR_ATTESTED);
+            project.setMarketingTermsAcceptedAt(now);
+            project.setUpdatedAt(now);
+            projectRepository.save(project);
+        }
+        return get(tenantId, projectId);
+    }
+
     /** Called by creative-planning-service after it creates a new LockedIdea for this project (a
      * creator picking a different idea) -- see ProjectIdeaService#switchToOption there. Just a
      * pointer update: repoints which idea is "current" for this project. Script/Screenplay/Shot

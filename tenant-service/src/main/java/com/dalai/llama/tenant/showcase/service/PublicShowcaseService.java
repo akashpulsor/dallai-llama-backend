@@ -173,7 +173,7 @@ public class PublicShowcaseService {
                 i.getPublicId(),
                 i.getYoutubeVideoId(),
                 i.getTitleOverride() != null ? i.getTitleOverride() : v.getTitle(),
-                v.getThumbnailUrl(),
+                thumbnail(i, v),
                 shape.width(),
                 shape.height(),
                 shape.vertical(),
@@ -189,6 +189,25 @@ public class PublicShowcaseService {
                         properties.publicBaseUrl() + "/c/" + p.getHandle()));
     }
 
+    @org.springframework.beans.factory.annotation.Value("${showcase.public-api-base-url:https://api.dalaillama.in/api/v1/public}")
+    private String publicApiBaseUrl;
+
+    /** YouTube's thumbnail, except for a platform film that is private on YouTube (YouTube shows
+     * nobody its picture): that one's poster is its own first frame, served by {@link #poster}. */
+    private String thumbnail(ShowcaseItem i, YouTubeVideo v) {
+        boolean privateOnYouTube = v.getPrivacyStatus() == null || "private".equals(v.getPrivacyStatus());
+        return i.getOrigin() == ShowcaseOrigin.PLATFORM && privateOnYouTube
+                ? publicApiBaseUrl + "/showcase/" + i.getPublicId() + "/poster"
+                : v.getThumbnailUrl();
+    }
+
+    /** A fresh link to a platform film's poster (its first shot's frame). */
+    public Optional<String> poster(String publicId) {
+        return itemRepository.findByPublicId(publicId)
+                .filter(i -> i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null && !i.isHiddenByOps())
+                .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()).posterUrl());
+    }
+
     /** A short-lived link to our own copy of a platform film, for the SELF host. Empty unless the
      * item is a publicly visible platform film and the SELF fallback is switched on. */
     public Optional<SelfSourceView> selfSource(String publicId) {
@@ -197,7 +216,9 @@ public class PublicShowcaseService {
                 .filter(i -> i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null)
                 .filter(i -> itemRepository.findPublicForCreator(i.getTenantId(), freshAfter(), minItems(), true).stream()
                         .anyMatch(visible -> visible.getId().equals(i.getId())))
-                .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()).downloadUrl())
+                .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()))
+                // The stamped copy (with the Dalaillama mark) once post-production has made it.
+                .map(s -> s.stampedDownloadUrl() != null ? s.stampedDownloadUrl() : s.downloadUrl())
                 .map(SelfSourceView::new);
     }
 

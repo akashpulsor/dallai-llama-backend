@@ -30,13 +30,19 @@ public class ShowcaseSourceService {
     private final ClientReviewSessionRepository reviewSessionRepository;
     private final ReviewCommentRepository reviewCommentRepository;
     private final CreativeDirectionRepository creativeDirectionRepository;
+    private final com.dalai.llama.preprod.repository.ShotRepository shotRepository;
+    private final io.minio.MinioClient publicMinioClient;
 
     public ShowcaseSourceService(ProjectRepository projectRepository,
                                  PostProductionFilmClient filmClient,
                                  ShotImageRepository shotImageRepository,
                                  ClientReviewSessionRepository reviewSessionRepository,
                                  ReviewCommentRepository reviewCommentRepository,
-                                 CreativeDirectionRepository creativeDirectionRepository) {
+                                 CreativeDirectionRepository creativeDirectionRepository,
+                                 com.dalai.llama.preprod.repository.ShotRepository shotRepository,
+                                 @org.springframework.beans.factory.annotation.Qualifier("publicMinioClient") io.minio.MinioClient publicMinioClient) {
+        this.shotRepository = shotRepository;
+        this.publicMinioClient = publicMinioClient;
         this.projectRepository = projectRepository;
         this.filmClient = filmClient;
         this.shotImageRepository = shotImageRepository;
@@ -66,7 +72,28 @@ public class ShowcaseSourceService {
                 reviewCommentRepository.countByProjectId(projectId),
                 creativeDirectionRepository.countByProjectIdAndApprovedVia(projectId, ReviewActor.CLIENT),
                 film.map(PostProductionFilmClient.PublishedFilm::videoUrl).orElse(null),
-                film.map(PostProductionFilmClient.PublishedFilm::stampedVideoUrl).orElse(null));
+                film.map(PostProductionFilmClient.PublishedFilm::stampedVideoUrl).orElse(null),
+                posterUrl(projectId));
+    }
+
+    /** The first shot's finished frame (else its storyboard), presigned for an hour: the film's poster
+     * where YouTube has no thumbnail to give (a private upload). Null when the project has none. */
+    String posterUrl(UUID projectId) {
+        for (var shot : shotRepository.findByProjectIdOrderByShotNumberAsc(projectId)) {
+            var images = shotImageRepository.findByShotId(shot.getId());
+            var frame = images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION).findFirst()
+                    .or(() -> images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.STORYBOARD).findFirst());
+            if (frame.isPresent() && frame.get().getBucket() != null && frame.get().getObjectKey() != null) {
+                try {
+                    return publicMinioClient.getPresignedObjectUrl(io.minio.GetPresignedObjectUrlArgs.builder()
+                            .method(io.minio.http.Method.GET).bucket(frame.get().getBucket()).object(frame.get().getObjectKey())
+                            .expiry(1, java.util.concurrent.TimeUnit.HOURS).build());
+                } catch (Exception ex) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     /** How many recent projects {@link #films} looks at; each needs one post-production lookup. */
@@ -116,7 +143,9 @@ public class ShowcaseSourceService {
             String downloadUrl,
             /* The same film with the Dalaillama mark: what every upload from the platform uses. Null
              * until post-production has stamped it (shortly after publishing). */
-            String stampedDownloadUrl
+            String stampedDownloadUrl,
+            /* The first shot's frame, presigned for an hour; null when there is none. */
+            String posterUrl
     ) {
     }
 }

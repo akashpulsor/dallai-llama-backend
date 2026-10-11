@@ -81,6 +81,18 @@ public class PublicShowcaseController {
         return ResponseEntity.of(showcaseService.selfSource(publicId));
     }
 
+    /** A platform film's poster where YouTube has no thumbnail for it (private): a redirect to a
+     * short-lived link to its first shot's frame. */
+    @GetMapping("/api/v1/public/showcase/{publicId}/poster")
+    public ResponseEntity<Void> poster(@PathVariable String publicId) {
+        return showcaseService.poster(publicId)
+                .map(url -> ResponseEntity.status(org.springframework.http.HttpStatus.FOUND)
+                        .header(org.springframework.http.HttpHeaders.LOCATION, url)
+                        .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, "public, max-age=1800")
+                        .<Void>build())
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     /** {@code X-Visitor-Id} is a random UUID the browser keeps in local storage; it identifies
      * nobody and only stops one visitor's reloads from counting twice. */
     @PostMapping("/api/v1/public/showcase/{publicId}/plays")

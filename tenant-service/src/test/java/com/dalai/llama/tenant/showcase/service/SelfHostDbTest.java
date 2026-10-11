@@ -86,6 +86,34 @@ class SelfHostDbTest extends ShowcaseDbTestSupport {
         assertThat(publicService.selfSource("pub0000003")).isEmpty();
     }
 
+    @Test
+    void aPrivateUploadStillShows_playsTheStampedCopy_withItsOwnFrameAsPoster() {
+        wipe(jdbc);
+        UUID creator = tenant(jdbc, "Riya Motion");
+        profileService.ensureProfile(creator, "Riya Motion");
+        verifiedChannel(jdbc, creator, "UCriya", NOW);
+        UUID project = UUID.randomUUID();
+        video(jdbc, "private0001", "UCriya", 1080, 1920, NOW);
+        video(jdbc, "public00001", "UCriya", 1080, 1920, NOW);
+        jdbc.update("UPDATE youtube_video SET privacy_status = 'private' WHERE video_id = 'private0001'");
+        item(creator, "pub0000011", "private0001", "PLATFORM", project);
+        item(creator, "pub0000012", "public00001", "PLATFORM", UUID.randomUUID());
+        when(preProduction.source(creator, project)).thenReturn(new ShowcaseSource(project, "Film", "SHOT_LIST_READY", true,
+                null, new BigDecimal("30"), 1080, 1920, null, null, null, 0, 0, 0, 0, "https://minio/film.mp4?sig",
+                "https://minio/film-stamped.mp4?sig", "https://minio/frame.png?sig"));
+
+        List<PublicShowcaseCard> cards = publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items();
+
+        assertThat(cards).extracting(PublicShowcaseCard::publicId).containsExactlyInAnyOrder("pub0000011", "pub0000012");
+        PublicShowcaseCard privateCard = cards.stream().filter(c -> c.publicId().equals("pub0000011")).findFirst().orElseThrow();
+        assertThat(privateCard.thumbnailUrl()).endsWith("/showcase/pub0000011/poster");
+        assertThat(cards.stream().filter(c -> c.publicId().equals("pub0000012")).findFirst().orElseThrow().thumbnailUrl())
+                .isEqualTo("https://i/public00001.jpg");
+        assertThat(publicService.poster("pub0000011")).contains("https://minio/frame.png?sig");
+        assertThat(publicService.selfSource("pub0000011")).get()
+                .extracting(PublicShowcaseService.SelfSourceView::url).isEqualTo("https://minio/film-stamped.mp4?sig");
+    }
+
     private void item(UUID tenant, String publicId, String videoId, String origin, UUID project) {
         jdbc.update("""
                 INSERT INTO showcase_item (id, public_id, tenant_id, youtube_video_id, origin, source_project_id, platform_proof,

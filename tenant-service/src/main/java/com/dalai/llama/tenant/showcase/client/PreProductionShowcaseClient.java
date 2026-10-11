@@ -96,7 +96,18 @@ public class PreProductionShowcaseClient {
             String downloadUrl,
             /* The same film with the Dalaillama mark; every upload from the platform uses only this.
              * Null until post-production has stamped it (about a minute after publishing). */
-            String stampedDownloadUrl
+            String stampedDownloadUrl,
+            /* The first shot's frame, presigned for an hour: the poster where YouTube gives none. */
+            String posterUrl
     ) {
+        public ShowcaseSource(UUID projectId, String projectName, String projectStatus, boolean filmReady, OffsetDateTime renderedAt,
+                              BigDecimal durationSeconds, Integer width, Integer height, OffsetDateTime clientLockedAt,
+                              String marketingTermsVersion, OffsetDateTime marketingTermsAcceptedAt, long shotImages,
+                              long clientReviewSessions, long clientComments, long clientApprovals, String downloadUrl,
+                              String stampedDownloadUrl) {
+            this(projectId, projectName, projectStatus, filmReady, renderedAt, durationSeconds, width, height, clientLockedAt,
+                    marketingTermsVersion, marketingTermsAcceptedAt, shotImages, clientReviewSessions, clientComments, clientApprovals,
+                    downloadUrl, stampedDownloadUrl, null);
+        }
     }
 }
