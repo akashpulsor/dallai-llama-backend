@@ -368,12 +368,21 @@ public class ShotGenerationPlanService {
      * the dialogue-fit report's -- so nothing here lengthens a clip to hold a line.
      */
     public ShotGenerationOrchestrator.PlannedExecution prepare(UUID tenantId, UUID projectId, UUID shotId) {
-        analyze(tenantId, projectId, shotId);
-        ShotGenerationPlan plan = store.require(tenantId, shotId).plan();
+        // Only what is out of date is redone: a changed shot is re-analysed, a timeline for other
+        // seconds (or one failing its checks) is rebuilt; then the prompt is written from it.
+        ShotGenerationPlanStore.PlanState state = store.find(tenantId, shotId).orElse(null);
+        List<RequiredActionView> current = actionExtractor.extract(assemble(tenantId, projectId, shotId).shotContext());
+        if (state == null || state.plan().getAssessedAt() == null || !current.equals(actionViews(state.actions()))) {
+            analyze(tenantId, projectId, shotId);
+            state = store.require(tenantId, shotId);
+        }
+        ShotGenerationPlan plan = state.plan();
         if (plan.getGenerationDurationSeconds() == null) {
             throw VideoGenException.upstream("The analysis suggested no duration for this shot -- choose one in the video studio.");
         }
-        buildTimeline(tenantId, projectId, shotId);
+        if (!timelineUsable(state)) {
+            buildTimeline(tenantId, projectId, shotId);
+        }
         composePrompt(tenantId, projectId, shotId);
         plan = store.require(tenantId, shotId).plan();
         if (plan.getAiRecommendedPrompt() == null || plan.getAiRecommendedPrompt().isBlank()) {
@@ -381,6 +390,21 @@ public class ShotGenerationPlanService {
         }
         return new ShotGenerationOrchestrator.PlannedExecution(plan.getModelId(), plan.getGenerationDurationSeconds(), plan.getGenerationFps(),
                 plan.getAiRecommendedPrompt());
+    }
+
+    /** Built for the selected seconds and frame rate, after the latest analysis, and passing its checks. */
+    static boolean timelineUsable(ShotGenerationPlanStore.PlanState state) {
+        ShotGenerationPlan plan = state.plan();
+        if (state.intervals().isEmpty() || plan.getTimelineBuiltAt() == null
+                || !Objects.equals(plan.getTimelineDurationSeconds(), plan.getGenerationDurationSeconds())
+                || !Objects.equals(plan.getTimelineFps(), plan.getGenerationFps())
+                || plan.getAssessedAt() != null && plan.getTimelineBuiltAt().isBefore(plan.getAssessedAt())) {
+            return false;
+        }
+        List<SourceTemporalActionView> timeline = state.intervals().stream().map(i -> new SourceTemporalActionView(
+                i.getStartSeconds(), i.getEndSeconds(), i.getActionId(), i.getAction(), i.getSubjectState(),
+                i.getCameraBehavior(), Boolean.TRUE.equals(i.getHoldRequired()))).toList();
+        return GenerationPlanValidator.timeline(actionViews(state.actions()), timeline, plan.getTimelineDurationSeconds()).isEmpty();
     }
 
     // ------------------------------------------------------------------ helpers

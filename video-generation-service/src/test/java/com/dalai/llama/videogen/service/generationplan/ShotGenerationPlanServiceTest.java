@@ -219,6 +219,42 @@ class ShotGenerationPlanServiceTest {
     }
 
     @Test
+    void regeneratingWithNothingOutOfDateOnlyRewritesThePrompt_andAFailingTimelineIsRebuilt() {
+        // The stored actions are exactly what the shot gives today, and the timeline is for 6s at 24 fps.
+        List<ShotGenerationPlanAction> rows = new RequiredActionExtractor().extract(assemblyShot()).stream()
+                .map(a -> ShotGenerationPlanAction.builder().actionId(a.actionId()).kind(a.kind()).description(a.description())
+                        .fixedSeconds(a.fixedSeconds()).dependsOnActionId(a.dependsOnActionId()).build()).toList();
+        plan.setAssessedAt(OffsetDateTime.now().minusMinutes(5));
+        plan.setTimelineBuiltAt(OffsetDateTime.now());
+        plan.setTimelineDurationSeconds(6);
+        plan.setTimelineFps(24);
+        List<ShotGenerationPlanInterval> good = List.of(
+                ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(new BigDecimal("2")).actionId("OPEN,A1").action("kneels").build(),
+                ShotGenerationPlanInterval.builder().startSeconds(new BigDecimal("2")).endSeconds(new BigDecimal("6")).actionId("A2,END").action("valve").build());
+        ShotGenerationPlanStore.PlanState current = new ShotGenerationPlanStore.PlanState(plan, rows, List.of(), List.of(), good);
+        when(store.find(tenant, shotId)).thenReturn(Optional.of(current));
+        when(store.require(tenant, shotId)).thenReturn(current);
+        when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("rewritten");
+        plan.setAiRecommendedPrompt("rewritten");
+
+        service.prepare(tenant, project, shotId);
+
+        verify(llm, never()).assess(any(), any(), any());
+        verify(llm, never()).timeline(any(), any(), any());
+        verify(promptWriter).composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any());
+
+        // The same timeline without the final state fails its checks, so it is rebuilt first.
+        List<ShotGenerationPlanInterval> failing = List.of(
+                ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(new BigDecimal("6")).actionId("OPEN,A1,A2").action("all").build());
+        assertThat(ShotGenerationPlanService.timelineUsable(new ShotGenerationPlanStore.PlanState(plan, rows, List.of(), List.of(), failing))).isFalse();
+        assertThat(ShotGenerationPlanService.timelineUsable(current)).isTrue();
+    }
+
+    private ShotContext assemblyShot() {
+        return assembly.assemble(tenant, project, shotId, null).shotContext();
+    }
+
+    @Test
     void thePromptWriterReadsTheTimelineWithFrameNumbers() {
         String text = ShotGenerationPlanService.timelineText(List.of(
                 ShotGenerationPlanInterval.builder().startSeconds(BigDecimal.ZERO).endSeconds(new BigDecimal("0.6"))
