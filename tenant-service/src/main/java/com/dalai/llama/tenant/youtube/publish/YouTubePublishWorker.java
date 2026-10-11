@@ -50,6 +50,8 @@ public class YouTubePublishWorker {
     private final YouTubeApiClient youTube;
     private final CredentialEncryptor encryptor;
     private final YouTubeQuotaService quota;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.youtube.service.ChannelImportService> channelImport;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.showcase.service.AutoShowcaseService> autoShowcase;
     private final Clock clock;
 
     @Scheduled(fixedDelayString = "${youtube-publish.poll-ms:20000}", initialDelayString = "${youtube-publish.poll-ms:20000}")
@@ -139,6 +141,7 @@ public class YouTubePublishWorker {
             }
         });
         store.complete(job.id(), state.videoId(), state.privacyStatus(), job.publishAt() != null ? Status.SCHEDULED : Status.PUBLISHED);
+        if (job.publishAt() == null) showOnProfile(job.tenantId());
         if (store.thumbnail(job.id()).isPresent()) store.noteError(job.id(), "Uploaded, but YouTube refused the thumbnail; try setting it again.");
         log.info("Published job {} as YouTube video {}", job.id(), state.videoId());
     }
@@ -175,5 +178,26 @@ public class YouTubePublishWorker {
         List<String> tags = job.tags() == null ? List.of() : Arrays.asList(job.tags().split(","));
         return new YouTubeApiClient.Metadata(job.title(), job.description(), tags, job.categoryId(),
                 job.privacy().name().toLowerCase(), job.publishAt());
+    }
+
+    /** A film published to the creator's channel shows on their profile right away (public videos
+     * only: the profile never shows private or unlisted ones). Best-effort: the profile fill job and
+     * the channel refresh catch up later if YouTube hasn't listed it yet. */
+    void showOnProfile(UUID tenantId) {
+        try {
+            channelImport.ifAvailable(i -> i.importAll(tenantId));
+            autoShowcase.ifAvailable(a -> a.fill(tenantId));
+        } catch (RuntimeException e) {
+            log.warn("Published, but couldn't put it on tenant {}'s profile yet: {}", tenantId, e.getMessage());
+        }
+    }
+
+    /** Scheduled publishes: once their time passes, the video is public, so it can go on the profile. */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${youtube-publish.scheduled-check-ms:600000}", initialDelayString = "PT3M")
+    public void scheduledNowPublic() {
+        for (Job job : store.scheduledDue(clock.instant())) {
+            store.markPublished(job.id());
+            showOnProfile(job.tenantId());
+        }
     }
 }

@@ -60,7 +60,11 @@ public class BrandSearchService {
     public record Credits(boolean configured, int monthlyCredits, int usedThisMonth, int leftThisMonth) {
     }
 
-    public record SearchResult(List<CompanyView> companies, boolean fromDirectory, Credits credits) {
+    /** {@code notice}: set when the outside provider couldn't answer; results then come from the directory. */
+    public record SearchResult(List<CompanyView> companies, boolean fromDirectory, Credits credits, String notice) {
+        public SearchResult(List<CompanyView> companies, boolean fromDirectory, Credits credits) {
+            this(companies, fromDirectory, credits, null);
+        }
     }
 
     public record AddRequest(@NotEmpty @Size(max = MAX_ADD) List<UUID> companyIds) {
@@ -76,16 +80,35 @@ public class BrandSearchService {
         String key = PublicTokens.sha256Hex(PROVIDER + "|" + r.industry() + "|" + country + "|"
                 + (query == null ? "" : query.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ")));
         Instant now = clock.instant();
-        if (store.freshSearch(key, now.minus(Duration.ofDays(properties.searchCacheDays())))) {
-            return new SearchResult(views(store.searchResults(key)), true, credits());
-        }
-        if (!properties.configured() && !apolloProperties.configured()) {
-            // No provider yet: serve what the directory already knows.
-            return new SearchResult(views(store.known(r.industry(), country, 50)), true, credits());
-        }
         if (r.industry() == null && country == null && query == null) {
             throw new IllegalArgumentException("Choose an industry or a country, or type what you're looking for");
         }
+        List<Company> directory = store.directory(r.industry(), country, query, 25);
+        if (store.freshSearch(key, now.minus(Duration.ofDays(properties.searchCacheDays())))) {
+            return new SearchResult(views(merge(directory, store.searchResults(key))), true, credits());
+        }
+        if (!properties.configured() && !apolloProperties.configured()) {
+            return new SearchResult(views(directory), true, credits());
+        }
+        try {
+            fromProvider(key, r, country, query);
+        } catch (RuntimeException e) {
+            log.warn("Brand search provider failed ({}); serving the directory", e.getMessage());
+            return new SearchResult(views(directory), true, credits(),
+                    "Brand search outside Dalai Llama is unavailable right now; showing brands we already have.");
+        }
+        return new SearchResult(views(merge(directory, store.searchResults(key))), false, credits());
+    }
+
+    /** Directory brands first (they usually come with contacts), then the provider's, without repeats. */
+    private static List<Company> merge(List<Company> first, List<Company> second) {
+        java.util.Map<UUID, Company> byId = new java.util.LinkedHashMap<>();
+        first.forEach(c -> byId.put(c.id(), c));
+        second.forEach(c -> byId.putIfAbsent(c.id(), c));
+        return List.copyOf(byId.values());
+    }
+
+    private void fromProvider(String key, SearchRequest r, String country, String query) {
         List<UUID> ids = new ArrayList<>();
         if (properties.configured()) {
             List<String> industries = r.industry() == null ? List.of() : properties.industries().getOrDefault(r.industry(), List.of());
@@ -103,7 +126,6 @@ public class BrandSearchService {
             }
         }
         store.saveSearch(key, properties.configured() ? PROVIDER : "APOLLO", describe(r.industry(), country, query), ids);
-        return new SearchResult(views(store.searchResults(key)), false, credits());
     }
 
     @Transactional

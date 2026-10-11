@@ -118,6 +118,15 @@ public class YouTubePublishStore {
                 WHERE id = ?""", status.name(), videoId, youtubePrivacy, id);
     }
 
+    /** Scheduled publishes whose time has come: YouTube made them public by now. */
+    public List<Job> scheduledDue(Instant now) {
+        return jdbc.query("SELECT " + COLUMNS + " FROM youtube_publish_job WHERE status = 'SCHEDULED' AND publish_at <= ? ORDER BY publish_at LIMIT 50", ROW, ts(now));
+    }
+
+    public void markPublished(UUID id) {
+        jdbc.update("UPDATE youtube_publish_job SET status = 'PUBLISHED', updated_at = NOW() WHERE id = ? AND status = 'SCHEDULED'", id);
+    }
+
     public void retryLater(UUID id, int attempts, Instant nextAttemptAt, String error) {
         jdbc.update("""
                 UPDATE youtube_publish_job SET attempts = ?, next_attempt_at = ?, locked_until = NULL, last_error = ?, updated_at = NOW()

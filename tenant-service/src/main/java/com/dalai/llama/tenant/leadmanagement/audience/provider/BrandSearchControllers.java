@@ -94,6 +94,14 @@ public final class BrandSearchControllers {
 
         private final BrandSearchService brands;
         private final PeopleSearchService people;
+        private final BrandDirectoryImportService directoryImport;
+
+        /** Bootstrapping: upload brand contacts into the shared directory (creator CSV columns + country). */
+        @org.springframework.web.bind.annotation.PostMapping(path = "/import", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+        public ResponseEntity<BrandDirectoryImportService.ImportReport> importDirectory(
+                @org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {
+            return ResponseEntity.ok(directoryImport.importCsv(file.getBytes()));
+        }
 
         @GetMapping("/credits")
         public ResponseEntity<BrandSearchService.Credits> credits() {

@@ -54,7 +54,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "audience-provider.hunter.emails-per-company=2"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({BrandSearchService.class, BrandSearchStore.class, HunterClient.class, ApolloClient.class, AudienceStore.class, AudienceService.class,
+@Import({BrandSearchService.class, BrandSearchStore.class, BrandDirectoryImportService.class, HunterClient.class, ApolloClient.class, AudienceStore.class, AudienceService.class,
         RecipientHasher.class, CreatorProfileService.class, HandlePolicy.class, BrandSearchDbTest.TestConfig.class})
 class BrandSearchDbTest extends ShowcaseDbTestSupport {
 
@@ -85,6 +85,7 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
     }
 
     @Autowired private BrandSearchService brands;
+    @Autowired private BrandDirectoryImportService directoryImport;
     @Autowired private AudienceService audienceService;
     @Autowired private CreatorProfileService profileService;
     @Autowired private JdbcTemplate jdbc;
@@ -102,6 +103,7 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         profileService.ensureProfile(riya, "Riya");
         profileService.ensureProfile(arjun, "Arjun");
         DISCOVERS.set(0);
+        FAIL_DISCOVER.set(false);
         DOMAIN_SEARCHES.set(0);
         DISCOVER_BODIES.clear();
         API_KEYS.clear();
@@ -138,6 +140,39 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         assertThatThrownBy(() -> brands.search(new BrandSearchService.SearchRequest(null, null, " ")))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void opsUploadedContactsComeFirst_withTheirEmails_andAProviderOutageNeverFailsTheSearch() {
+        BrandDirectoryImportService.ImportReport report = directoryImport.importCsv((
+                "name,designation,company,email,phone,industry,website,country\n"
+                + "Meera Shah,Brand Head,Tea Leaf Co,meera@tealeaf.example,+91 98765 43210,FOOD_BEVERAGE,https://www.tealeaf.example,India\n"
+                + "No Domain,,Someone,someone@gmail.com,,FOOD_BEVERAGE,,IN\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(report.companies()).isEqualTo(1);
+        assertThat(report.contacts()).isEqualTo(2);
+        assertThat(report.rejected()).isEqualTo(1);
+
+        FAIL_DISCOVER.set(true);
+        BrandSearchService.SearchResult result = brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", null));
+        assertThat(result.notice()).contains("unavailable");
+        assertThat(result.companies()).extracting(BrandSearchService.CompanyView::domain).containsExactly("tealeaf.example");
+        assertThat(result.companies().get(0).contactsKnown()).isEqualTo(2);
+
+        UUID list = audienceService.create(riya, "Tea").id();
+        BrandSearchService.AddResult added = brands.addToAudience(riya, list, new BrandSearchService.AddRequest(List.of(result.companies().get(0).id())));
+        assertThat(added.contactsAdded()).isEqualTo(2);
+        assertThat(DOMAIN_SEARCHES.get()).as("known contacts need no lookup").isZero();
+        LeadView lead = audienceService.leads(riya, list, null, 0).leads().get(0);
+        assertThat(lead.name()).isEqualTo("Meera Shah");
+        assertThat(lead.designation()).isEqualTo("Brand Head");
+        assertThat(lead.reachable()).isTrue();
+
+        // Once the provider is back, its brands follow the directory's.
+        FAIL_DISCOVER.set(false);
+        assertThat(brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", "tea")).companies())
+                .extracting(BrandSearchService.CompanyView::domain).startsWith("tealeaf.example");
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean FAIL_DISCOVER = new java.util.concurrent.atomic.AtomicBoolean();
 
     @Test
     void emailsAreLookedUpOnceAndReusedByTheNextCreator() {
@@ -190,6 +225,13 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
                 API_KEYS.add(e.getRequestHeaders().getFirst("X-API-KEY"));
                 DISCOVER_BODIES.add(new String(e.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 DISCOVERS.incrementAndGet();
+                if (FAIL_DISCOVER.get()) {
+                    byte[] err = "{\"errors\":[{\"details\":\"boom\"}]}".getBytes(StandardCharsets.UTF_8);
+                    e.sendResponseHeaders(500, err.length);
+                    try (OutputStream out = e.getResponseBody()) { out.write(err); }
+                    e.close();
+                    return;
+                }
                 reply(e, "{\"data\":[{\"domain\":\"hearthfoods.example\",\"organization\":\"Hearth Foods\",\"emails_count\":{\"total\":12}},"
                         + "{\"domain\":\"chaico.example\",\"organization\":\"Chai Co\",\"emails_count\":{\"total\":3}}],\"meta\":{\"results\":2}}");
             });

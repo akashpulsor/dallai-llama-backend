@@ -54,6 +54,17 @@ public class BrandSearchStore {
                 ROW, industry == null ? null : industry.name(), industry == null ? null : industry.name(), countryCode, countryCode, limit);
     }
 
+    /** Directory companies for a search: matching industry/country/keywords, ones with known
+     * contacts first. Serves bootstrapping (ops uploads) and any provider outage. */
+    public List<Company> directory(ShowcaseIndustry industry, String countryCode, String query, int limit) {
+        String like = query == null ? null : "%" + query.toLowerCase(java.util.Locale.ROOT) + "%";
+        return jdbc.query(COMPANY + " WHERE (?::text IS NULL OR c.industry = ?) AND (?::text IS NULL OR c.country_code = ?)"
+                        + " AND (?::text IS NULL OR LOWER(c.name) LIKE ? OR c.domain LIKE ?)"
+                        + " ORDER BY (SELECT COUNT(*) FROM lead_company_contact cc WHERE cc.company_id = c.id) DESC, c.last_seen_at DESC LIMIT ?",
+                ROW, industry == null ? null : industry.name(), industry == null ? null : industry.name(), countryCode, countryCode,
+                like, like, like, limit);
+    }
+
     public UUID upsertCompany(String domain, String name, ShowcaseIndustry industry, String countryCode, int emailsAvailable, String provider) {
         return jdbc.queryForObject("""
                 INSERT INTO lead_company (id, domain, name, industry, country_code, emails_available, provider)

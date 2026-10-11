@@ -113,6 +113,7 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private PreProductionShowcaseClient preProduction;
     @MockBean private ChannelImportService importService;
+    @MockBean private com.dalai.llama.tenant.showcase.service.AutoShowcaseService autoShowcase;
     @Autowired private YouTubePublishService publishing;
     @Autowired private YouTubePublishWorker worker;
     @Autowired private ExtensionTokenService extensionTokens;
@@ -171,6 +172,9 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
         JobView done = publishing.job(riya, job.id());
         assertThat(done.status()).isEqualTo(Status.PUBLISHED);
         assertThat(done.youtubeVideoId()).isEqualTo("vid123");
+        // Published: the channel is re-read and the profile filled straight away.
+        org.mockito.Mockito.verify(importService).importAll(riya);
+        org.mockito.Mockito.verify(autoShowcase).fill(riya);
         assertThat(done.progressPercent()).isEqualTo(100);
         assertThat(SESSIONS.get()).isEqualTo(1);
         assertThat(CHUNK_RANGES).containsExactly("bytes 0-8388607/9437184", "bytes 8388608-9437183/9437184",
