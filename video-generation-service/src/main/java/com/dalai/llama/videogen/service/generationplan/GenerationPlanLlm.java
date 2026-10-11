@@ -57,7 +57,14 @@ public class GenerationPlanLlm {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record TimelineAnswer(List<IntervalAnswer> intervals) {
+    public record TimelineAnswer(List<RawInterval> intervals) {
+    }
+
+    /** As the model writes it: {@code actionId} is usually one id, but sometimes a list when it times
+     * several actions in one interval. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RawInterval(BigDecimal startSeconds, BigDecimal endSeconds, com.fasterxml.jackson.databind.JsonNode actionId,
+                              String action, String subjectState, String cameraBehavior, Boolean holdRequired) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -78,7 +85,31 @@ public class GenerationPlanLlm {
         if (answer.intervals() == null || answer.intervals().isEmpty()) {
             throw VideoGenException.upstream("The action timeline came back empty -- try again.");
         }
-        return answer.intervals();
+        return answer.intervals().stream().flatMap(i -> normalise(i).stream()).toList();
+    }
+
+    /** One action per interval: an interval naming several is split evenly across its span, in the order
+     * given, so the validator times each one (a squeezed spoken line is then flagged, not lost). */
+    static List<IntervalAnswer> normalise(RawInterval raw) {
+        List<String> ids = new java.util.ArrayList<>();
+        if (raw.actionId() != null && raw.actionId().isArray()) {
+            raw.actionId().forEach(n -> { if (!n.isNull() && !n.asText().isBlank()) ids.add(n.asText()); });
+        } else if (raw.actionId() != null && !raw.actionId().isNull()) {
+            ids.add(raw.actionId().asText());
+        }
+        if (ids.size() <= 1 || raw.startSeconds() == null || raw.endSeconds() == null) {
+            return List.of(new IntervalAnswer(raw.startSeconds(), raw.endSeconds(), ids.isEmpty() ? null : String.join(",", ids),
+                    raw.action(), raw.subjectState(), raw.cameraBehavior(), raw.holdRequired()));
+        }
+        BigDecimal step = raw.endSeconds().subtract(raw.startSeconds())
+                .divide(BigDecimal.valueOf(ids.size()), 3, java.math.RoundingMode.HALF_UP);
+        List<IntervalAnswer> parts = new java.util.ArrayList<>();
+        for (int k = 0; k < ids.size(); k++) {
+            BigDecimal start = raw.startSeconds().add(step.multiply(BigDecimal.valueOf(k)));
+            BigDecimal end = k == ids.size() - 1 ? raw.endSeconds() : start.add(step);
+            parts.add(new IntervalAnswer(start, end, ids.get(k), raw.action(), raw.subjectState(), raw.cameraBehavior(), raw.holdRequired()));
+        }
+        return parts;
     }
 
     public List<PromptReviewFindingView> review(UUID tenantId, UUID projectId, Map<String, String> variables) {
