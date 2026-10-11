@@ -61,6 +61,7 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
+        com.dalai.llama.tenant.leadmanagement.inquiry.InquiryImageStore.class,
         FollowService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class, CreatorProfileService.class,
         HandlePolicy.class, com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class,
         com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher.class, BrandEngagementDbTest.TestConfig.class})
@@ -171,7 +172,9 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest("pub0000001", null,
                 BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee",
                 "A2 Desi Ghee", "Small-batch ghee from grass-fed cows", "Young parents in metros", "Warm, homely, morning kitchen",
-                30, java.util.List.of("English", "Hindi")));
+                30, java.util.List.of("English", "Hindi")),
+                java.util.List.of(new org.springframework.mock.web.MockMultipartFile("productImages", "jar.png", "image/png", new byte[]{1, 2, 3})),
+                java.util.List.of(new org.springframework.mock.web.MockMultipartFile("referenceImages", "mood.jpg", "image/jpeg", new byte[]{4})));
 
         // The creator was alerted, and the film counted the brand's interest.
         verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
@@ -182,11 +185,17 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         assertThat(seen.brand().companyName()).isEqualTo("Hearth Foods");
         assertThat(seen.brief().productName()).isEqualTo("A2 Desi Ghee");
         assertThat(seen.brief().languages()).containsExactly("English", "Hindi");
+        assertThat(seen.brief().images()).extracting(com.dalai.llama.tenant.leadmanagement.inquiry.InquiryImageStore.ImageRef::fileName)
+                .containsExactly("jar.png", "mood.jpg");
+        var img = inquiries.image(creator, submitted.id(), seen.brief().images().get(0).id()).orElseThrow();
+        assertThat(img.contentType()).isEqualTo("image/png");
+        assertThat(img.bytes()).containsExactly(1, 2, 3);
 
         UUID requirement = UUID.randomUUID();
         when(briefClient.createBrief(eq(creator), anyString(), eq("Hearth Foods"), eq("food beverage"),
                 org.mockito.ArgumentMatchers.argThat(d -> d.durationSeconds() == 30 && "Young parents in metros".equals(d.targetAudience())
-                        && "A2 Desi Ghee".equals(d.productName()))))
+                        && "A2 Desi Ghee".equals(d.productName())),
+                org.mockito.ArgumentMatchers.argThat(images -> images.size() == 2)))
                 .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "share-abc"));
         clearInvocations(mailer);
         CreatorInquiryView converted = inquiries.convert(creator, submitted.id());
@@ -201,11 +210,24 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void attachmentsMustBeSmallImages_andNothingIsSavedWhenOneIsRefused() {
+        UUID brand = signedInBrand("img@hearth.example");
+        var big = new org.springframework.mock.web.MockMultipartFile("productImages", "big.png", "image/png", new byte[3 * 1024 * 1024 + 1]);
+        var pdf = new org.springframework.mock.web.MockMultipartFile("referenceImages", "deck.pdf", "application/pdf", new byte[]{1});
+        var request = new SubmitInquiryRequest(null, null, null, null, "Hi", null, null, null, null, null, null);
+        assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(big), java.util.List.of()))
+                .hasMessageContaining("3 MB");
+        assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(), java.util.List.of(pdf)))
+                .hasMessageContaining("Only images");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_brand_inquiry", Integer.class)).isZero();
+    }
+
+    @Test
     void aCreatorCannotActOnAnotherCreatorsRequest() {
         UUID brand = signedInBrand("x@hearth.example");
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null));
         assertThatThrownBy(() -> inquiries.convert(UUID.randomUUID(), submitted.id())).isInstanceOf(IllegalArgumentException.class);
-        verify(briefClient, never()).createBrief(any(), any(), any(), any(), any());
+        verify(briefClient, never()).createBrief(any(), any(), any(), any(), any(), any());
     }
 
     @Test

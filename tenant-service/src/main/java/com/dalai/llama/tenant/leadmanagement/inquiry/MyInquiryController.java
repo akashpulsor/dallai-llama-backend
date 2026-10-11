@@ -45,6 +45,19 @@ public class MyInquiryController {
     }
 
     /** Turns the request into a brief and emails the brand its link. */
+    /** An image the brand attached, for the creator who received the request. */
+    @GetMapping("/{inquiryId}/images/{imageId}")
+    public ResponseEntity<byte[]> image(@AuthenticationPrincipal Jwt jwt, @PathVariable java.util.UUID inquiryId,
+                                        @PathVariable java.util.UUID imageId) {
+        return tenantService.findByAdminUserId(jwt == null ? "" : jwt.getSubject())
+                .flatMap(t -> inquiryService.image(t.getId(), inquiryId, imageId))
+                .map(img -> ResponseEntity.ok()
+                        .contentType(org.springframework.http.MediaType.parseMediaType(img.contentType()))
+                        .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
+                        .body(img.bytes()))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @PostMapping("/{inquiryId}/convert")
     public ResponseEntity<CreatorInquiryView> convert(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID inquiryId) {
         return ResponseEntity.of(tenant(jwt).map(t -> inquiryService.convert(t.getId(), inquiryId)));

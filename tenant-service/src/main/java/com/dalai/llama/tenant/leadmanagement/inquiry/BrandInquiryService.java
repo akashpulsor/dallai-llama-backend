@@ -48,6 +48,7 @@ public class BrandInquiryService {
     static final int MAX_REQUESTS_PER_BRAND_PER_DAY = 10;
 
     private final BrandInquiryRepository inquiryRepository;
+    private final InquiryImageStore images;
     private final BrandContactRepository contactRepository;
     private final CreatorPublicProfileRepository profileRepository;
     private final ShowcaseItemRepository itemRepository;
@@ -61,6 +62,16 @@ public class BrandInquiryService {
 
     @Transactional
     public SubmittedInquiry submit(UUID brandContactId, String handle, SubmitInquiryRequest request) {
+        return submit(brandContactId, handle, request, java.util.List.of(), java.util.List.of());
+    }
+
+    /** With the brand's product and reference images (checked before anything is saved). */
+    @Transactional
+    public SubmittedInquiry submit(UUID brandContactId, String handle, SubmitInquiryRequest request,
+                                   java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+                                   java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        InquiryImageStore.validate(productImages);
+        InquiryImageStore.validate(referenceImages);
         BrandContact brand = contactRepository.findById(brandContactId).orElseThrow(BrandNotSignedInException::new);
         CreatorPublicProfile creator = profileRepository.findByHandle(handle)
                 .filter(p -> p.getStatus() == ProfileStatus.ACTIVE)
@@ -76,7 +87,8 @@ public class BrandInquiryService {
                 .flatMap(itemRepository::findByPublicId)
                 .filter(i -> i.getTenantId().equals(creator.getTenantId()) && i.getStatus() == ShowcaseItemStatus.LIVE);
 
-        BrandInquiry inquiry = inquiryRepository.save(BrandInquiry.builder()
+        // Flushed now: the image rows below are written with JDBC and reference this row.
+        BrandInquiry inquiry = inquiryRepository.saveAndFlush(BrandInquiry.builder()
                 .id(UUID.randomUUID())
                 .tenantId(creator.getTenantId())
                 .brandContactId(brandContactId)
@@ -96,6 +108,7 @@ public class BrandInquiryService {
                 .build());
         // Brand interest is a ranking signal for the film (rule 13).
         film.ifPresent(i -> jdbc.update("UPDATE showcase_item SET inquiry_count = inquiry_count + 1 WHERE id = ?", i.getId()));
+        images.save(inquiry.getId(), productImages, referenceImages);
         notifyCreator(creator, brand, inquiry);
         return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
     }
@@ -129,7 +142,7 @@ public class BrandInquiryService {
                     new CreatorInquiryView.Brand(b.getContactName(), b.getCompanyName(), b.getEmail(), b.getWebsiteUrl(), b.getIndustry()),
                     publicIds.get(i.getShowcaseItemId()), titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(),
                     i.getMessage(), i.getStatus(), i.getAttributionToken() != null, briefUrl(i), i.getCreatedAt(),
-                    InquiryDtos.BriefDetails.of(i));
+                    InquiryDtos.BriefDetails.of(i, images.refs(i.getId())));
         }).toList();
     }
 
@@ -157,7 +170,7 @@ public class BrandInquiryService {
         String brandName = firstNonBlank(brand.getCompanyName(), brand.getContactName(), brand.getEmail());
         CreativePlanningBriefClient.CreatedBrief brief = briefClient.createBrief(tenantId, briefText(brand, inquiry), brandName,
                 brand.getIndustry() == null ? null : brand.getIndustry().name().toLowerCase(Locale.ROOT).replace('_', ' '),
-                InquiryDtos.BriefDetails.of(inquiry));
+                InquiryDtos.BriefDetails.of(inquiry), images.all(inquiry.getId()));
         inquiry.setStatus(BrandInquiry.Status.CONVERTED);
         inquiry.setRequirementId(brief.requirementId());
         inquiry.setBriefShareToken(brief.shareToken());
@@ -195,6 +208,12 @@ public class BrandInquiryService {
 
     private String briefUrl(BrandInquiry inquiry) {
         return inquiry.getBriefShareToken() == null ? null : brandProperties.briefPageUrl() + inquiry.getBriefShareToken();
+    }
+
+    /** One attached image, for the creator who received the request. */
+    public Optional<InquiryImageStore.Image> image(UUID tenantId, UUID inquiryId, UUID imageId) {
+        owned(tenantId, inquiryId);
+        return images.one(inquiryId, imageId);
     }
 
     private BrandInquiry owned(UUID tenantId, UUID inquiryId) {

@@ -67,4 +67,16 @@ public class PublicEngagementController {
                                                     @Valid @RequestBody SubmitInquiryRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submit(identity.require(authorization, session), handle, request));
     }
+
+    /** The same request with product and reference images attached (the brief form on a creator's page). */
+    @PostMapping(path = "/api/v1/public/creators/{handle}/inquiries", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<SubmittedInquiry> requestWithImages(@PathVariable String handle,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+            @CookieValue(value = BrandSessionService.COOKIE, required = false) String session,
+            @Valid @org.springframework.web.bind.annotation.RequestPart("data") SubmitInquiryRequest request,
+            @org.springframework.web.bind.annotation.RequestPart(value = "productImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+            @org.springframework.web.bind.annotation.RequestPart(value = "referenceImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submit(identity.require(authorization, session), handle, request,
+                productImages, referenceImages));
+    }
 }

@@ -33,11 +33,17 @@ public final class InquiryDtos {
 
     /** The brief details a brand filled in (rule 48); null fields were left empty. */
     public record BriefDetails(String productName, String productDescription, String targetAudience, String campaignDirection,
-                               Integer durationSeconds, java.util.List<String> languages) {
+                               Integer durationSeconds, java.util.List<String> languages,
+                               /* Attached images (for the creator's view); empty for the brand's own. */
+                               java.util.List<InquiryImageStore.ImageRef> images) {
         public static BriefDetails of(BrandInquiry i) {
+            return of(i, java.util.List.of());
+        }
+
+        public static BriefDetails of(BrandInquiry i, java.util.List<InquiryImageStore.ImageRef> images) {
             return new BriefDetails(i.getProductName(), i.getProductDescription(), i.getTargetAudience(), i.getCampaignDirection(),
                     i.getDurationSeconds(), i.getLanguages() == null || i.getLanguages().isBlank() ? java.util.List.of()
-                            : java.util.List.of(i.getLanguages().split(",")));
+                            : java.util.List.of(i.getLanguages().split(",")), images);
         }
     }
 

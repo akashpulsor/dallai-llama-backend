@@ -3,7 +3,8 @@ spring:
     multipart:
       # Audience CSV uploads (rule 21) are at most 2 MB; a little headroom for the form wrapper.
       max-file-size: 3MB
-      max-request-size: 3MB
+      # A brand's brief can carry up to 8 images of 3 MB each (rule 48); single files stay at 3 MB.
+      max-request-size: 25MB
   application:
     name: tenant-service
 
