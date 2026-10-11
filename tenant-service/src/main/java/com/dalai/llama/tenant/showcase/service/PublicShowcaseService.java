@@ -85,8 +85,7 @@ public class PublicShowcaseService {
         boolean self = hostProperties.platformFilmsSelfHosted();
         List<ShowcaseItem> rows = switch (tab == null ? FeedTab.NEW : tab) {
             case NEW -> itemRepository.findPublicFeed(industry, format, freshAfter(), minItems(), self, pageRequest);
-            case TOP -> itemRepository.findPublicByScore(industry, format, freshAfter(), minItems(), self,
-                    levelsFrom(currentFloors().top()), pageRequest);
+            case TOP -> topOrEveryone(industry, format, self, safePage, pageRequest);
             case ALL -> itemRepository.findPublicByScore(industry, format, freshAfter(), minItems(), self,
                     EnumSet.allOf(CreatorLevel.class), pageRequest);
         };
@@ -117,6 +116,17 @@ public class PublicShowcaseService {
     }
 
     /** Loads the videos, profiles and channels behind a page of items in three queries. */
+    /** Top is the creators at the top floor and above -- but while there are only a few of them
+     * (bootstrapping: new creators start at L0 until the nightly run), a first page that can't fill
+     * shows everyone's public films, still by score, instead of an empty tab. */
+    private List<ShowcaseItem> topOrEveryone(ShowcaseIndustry industry, ShowcaseFormat format, boolean self, int page,
+                                             PageRequest pageRequest) {
+        List<ShowcaseItem> top = itemRepository.findPublicByScore(industry, format, freshAfter(), minItems(), self,
+                levelsFrom(currentFloors().top()), pageRequest);
+        if (page > 0 || top.size() >= PAGE_SIZE) return top;
+        return itemRepository.findPublicByScore(industry, format, freshAfter(), minItems(), self, EnumSet.allOf(CreatorLevel.class), pageRequest);
+    }
+
     /** The floors the last ranking run chose; L1 (everyone ready) before any run has happened. */
     Floors currentFloors() {
         return runRepository.findFirstByOrderByRunAtDesc()

@@ -133,6 +133,8 @@ class ShowcaseDbTest {
         assertThat(mine).filteredOn(i -> i.youtubeVideoId().equals("tall")).singleElement()
                 .satisfies(i -> assertThat(i.format()).isEqualTo(ShowcaseFormat.SOCIAL_SHORT));
         assertThat(publicService.profile("riya-motion").orElseThrow().ready()).isTrue();
+        // A brand-new creator is L0 until the nightly run; Top still shows their films while it can't fill a page.
+        assertThat(publicService.feed(PublicShowcaseService.FeedTab.TOP, null, null, 0).items()).hasSize(6);
 
         // Full: nothing more. The creator removes one: the slot refills, but never with the removed video.
         assertThat(autoShowcase.fill(tenant)).isZero();

@@ -30,6 +30,8 @@ import java.util.UUID;
  * showcase has films from day one instead of filter tags over empty pages. Eligible videos are added
  * up to the external-pick limit, ones the creator marked as AI-made on YouTube first, newest next.
  * A video the creator removed (or hid) is never added back; they stay in control from the profile.
+ * {@code showcase.auto-fill.mode}: ANY while bootstrapping; AI_ONLY once there are enough films made
+ * on Dalaillama (only videos the creator marked as AI-made on YouTube).
  */
 @Slf4j
 @Service
@@ -46,6 +48,8 @@ public class AutoShowcaseService {
     private final ShowcasePickService picks;
     private final VideoEligibility eligibility;
     private final ShowcaseProperties properties;
+    @org.springframework.beans.factory.annotation.Value("${showcase.auto-fill.mode:ANY}")
+    private String mode = "ANY";
 
     /** Adds eligible channel videos to the profile; returns how many were added. */
     public int fill(UUID tenantId) {
@@ -58,6 +62,7 @@ public class AutoShowcaseService {
         ShowcaseIndustry industry = profile.get().getIndustries().stream().findFirst().orElse(ShowcaseIndustry.OTHER);
         List<YouTubeVideo> candidates = videos.findByChannelIdAndGoneAtIsNullOrderByPublishedAtDesc(channel.get().getChannelId()).stream()
                 .filter(v -> eligibility.problem(v).isEmpty())
+                .filter(v -> !"AI_ONLY".equalsIgnoreCase(mode) || Boolean.TRUE.equals(v.getContainsSyntheticMedia()))
                 // Any item for the video -- live, hidden or removed -- means the creator already decided.
                 .filter(v -> items.findByYoutubeVideoId(v.getVideoId()).isEmpty())
                 .sorted(Comparator.comparing((YouTubeVideo v) -> !Boolean.TRUE.equals(v.getContainsSyntheticMedia())))
