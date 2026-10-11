@@ -66,6 +66,11 @@ public class YouTubePublishService {
         }
         ShowcaseSource film = preProduction.source(tenantId, r.projectId());
         if (!film.filmReady()) throw new IllegalStateException("This film isn't finished yet");
+        // Publishing is idempotent per render: this cut already on this channel is answered with that
+        // upload, not a second copy. A re-rendered film (rendered after that upload) can go up again.
+        var published = store.latestPublishedFor(tenantId, r.projectId(), connection.id())
+                .filter(j -> film.renderedAt() == null || !j.createdAt().isBefore(film.renderedAt().toInstant()));
+        if (published.isPresent()) return view(published.get());
         if (r.privacy() != Privacy.PRIVATE && film.marketingTermsAcceptedAt() == null) {
             throw new IllegalStateException("Your client hasn't agreed to marketing use of this film, so it can only be uploaded as private");
         }

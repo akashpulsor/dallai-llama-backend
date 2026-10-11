@@ -260,6 +260,22 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aFilmAlreadyOnTheChannelIsNotUploadedAgain_untilItIsReRendered() {
+        JobView first = publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "click-1"), "WEB");
+        worker.runOnce();
+        assertThat(publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "click-2"), "WEB").id()).isEqualTo(first.id());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM youtube_publish_job", Integer.class)).isEqualTo(1);
+
+        ShowcaseSource reRendered = source(project, true);
+        when(preProduction.source(any(), any())).thenReturn(new ShowcaseSource(reRendered.projectId(), reRendered.projectName(),
+                reRendered.projectStatus(), true, OffsetDateTime.now(java.time.ZoneOffset.UTC).plusHours(1),
+                reRendered.durationSeconds(), reRendered.width(), reRendered.height(), reRendered.clientLockedAt(),
+                reRendered.marketingTermsVersion(), reRendered.marketingTermsAcceptedAt(), 10, 1, 1, 1,
+                reRendered.downloadUrl(), reRendered.stampedDownloadUrl()));
+        assertThat(publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "click-3"), "WEB").id()).isNotEqualTo(first.id());
+    }
+
+    @Test
     void publishedVideosCanBeEditedAndACancelledJobIsLeftAlone() {
         JobView job = publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "k"), "WEB");
         worker.runOnce();

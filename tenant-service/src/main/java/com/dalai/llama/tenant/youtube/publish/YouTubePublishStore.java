@@ -69,6 +69,13 @@ public class YouTubePublishStore {
                 + " AND connection_id = ? AND status IN ('QUEUED', 'UPLOADING')", ROW, tenantId, projectId, connectionId).stream().findFirst();
     }
 
+    /** The latest finished upload of this film to this channel. */
+    public Optional<Job> latestPublishedFor(UUID tenantId, UUID projectId, UUID connectionId) {
+        return jdbc.query("SELECT " + COLUMNS + " FROM youtube_publish_job WHERE tenant_id = ? AND source_project_id = ?"
+                + " AND connection_id = ? AND status = 'PUBLISHED' ORDER BY created_at DESC LIMIT 1", ROW, tenantId, projectId, connectionId)
+                .stream().findFirst();
+    }
+
     public Optional<Job> find(UUID tenantId, UUID id) {
         return jdbc.query("SELECT " + COLUMNS + " FROM youtube_publish_job WHERE tenant_id = ? AND id = ?", ROW, tenantId, id)
                 .stream().findFirst();

@@ -141,7 +141,9 @@ public class PlatformPublishService {
         } else if (videoRepository.findById(videoId).isEmpty()) {
             // YouTube may still be processing a fresh upload; the film's own facts stand in until the refresh.
             String channelId = channelRepository.findById(tenantId).map(CreatorYouTubeChannel::getChannelId).orElse("CREATOR");
+            // YouTube's standard thumbnail address for the video, so the card has a picture before the refresh.
             videoRepository.save(YouTubeVideo.builder().videoId(videoId).channelId(channelId).title(source.projectName())
+                    .thumbnailUrl("https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg")
                     .durationSeconds(source.durationSeconds() == null ? java.math.BigDecimal.ZERO : source.durationSeconds())
                     .aspectW(source.width()).aspectH(source.height()).privacyStatus(privacy == null ? "private" : privacy.toLowerCase(java.util.Locale.ROOT))
                     .embeddable(true).ageRestricted(false).madeForKids(false).publishedAt(now).fetchedAt(now).build());
