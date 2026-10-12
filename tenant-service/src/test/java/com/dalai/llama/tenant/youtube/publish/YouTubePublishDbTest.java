@@ -113,6 +113,7 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private PreProductionShowcaseClient preProduction;
     @MockBean private ChannelImportService importService;
+    @MockBean private com.dalai.llama.tenant.showcase.service.PlatformPublishService platformFilms;
     @MockBean private com.dalai.llama.tenant.showcase.service.AutoShowcaseService autoShowcase;
     @Autowired private YouTubePublishService publishing;
     @Autowired private YouTubePublishWorker worker;
@@ -265,6 +266,10 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
         worker.runOnce();
         assertThat(publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "click-2"), "WEB").id()).isEqualTo(first.id());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM youtube_publish_job", Integer.class)).isEqualTo(1);
+        // ...but the repeat puts the film back on the profile (it may have been removed from there).
+        org.mockito.Mockito.verify(platformFilms, org.mockito.Mockito.atLeastOnce())
+                .recordCreatorUpload(org.mockito.ArgumentMatchers.eq(riya), org.mockito.ArgumentMatchers.eq(project),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
 
         ShowcaseSource reRendered = source(project, true);
         when(preProduction.source(any(), any())).thenReturn(new ShowcaseSource(reRendered.projectId(), reRendered.projectName(),

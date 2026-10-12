@@ -270,6 +270,12 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
         assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid1", "public")).isEmpty();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
+
+        // Removed from the profile, then published again: the same item comes back live.
+        jdbc.update("UPDATE showcase_item SET status = 'REMOVED' WHERE youtube_video_id = 'creatorVid1'");
+        assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid1", "private")).isPresent();
+        assertThat(jdbc.queryForObject("SELECT status FROM showcase_item WHERE youtube_video_id = 'creatorVid1'", String.class)).isEqualTo("LIVE");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
     }
 
     @Test

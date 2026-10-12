@@ -26,6 +26,7 @@ import java.util.UUID;
 
 /** Rule 34 and 36: a creator publishing their finished Dalaillama films to their own connected
  * channel, and editing what was published. The upload itself is {@link YouTubePublishWorker}'s. */
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class YouTubePublishService {
@@ -41,6 +42,7 @@ public class YouTubePublishService {
     private final PreProductionShowcaseClient preProduction;
     private final YouTubeApiClient youTube;
     private final YouTubeQuotaService quota;
+    private final org.springframework.beans.factory.ObjectProvider<com.dalai.llama.tenant.showcase.service.PlatformPublishService> platformFilms;
     private final Clock clock;
 
     public List<PublishableFilm> publishableFilms(UUID tenantId) {
@@ -70,7 +72,17 @@ public class YouTubePublishService {
         // upload, not a second copy. A re-rendered film (rendered after that upload) can go up again.
         var published = store.latestPublishedFor(tenantId, r.projectId(), connection.id())
                 .filter(j -> film.renderedAt() == null || !j.createdAt().isBefore(film.renderedAt().toInstant()));
-        if (published.isPresent()) return view(published.get());
+        if (published.isPresent()) {
+            // Publishing it again means "this film on my profile": one taken off the profile comes back
+            // (the upload itself is not repeated). Best-effort, like the profile step after an upload.
+            Job done = published.get();
+            try {
+                platformFilms.ifAvailable(p -> p.recordCreatorUpload(tenantId, done.projectId(), done.videoId(), done.youtubePrivacy()));
+            } catch (RuntimeException e) {
+                log.warn("Couldn't put project {} back on tenant {}'s profile: {}", done.projectId(), tenantId, e.getMessage());
+            }
+            return view(done);
+        }
         if (r.privacy() != Privacy.PRIVATE && film.marketingTermsAcceptedAt() == null) {
             throw new IllegalStateException("Your client hasn't agreed to marketing use of this film, so it can only be uploaded as private");
         }
