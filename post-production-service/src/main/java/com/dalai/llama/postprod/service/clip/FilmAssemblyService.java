@@ -323,6 +323,12 @@ public class FilmAssemblyService {
 
     /** The newest assembly the creator chose to show the client. */
     @Transactional(readOnly = true)
+    /** The film a creator's profile plays and shares: the project's newest finished one, whether
+     * joined, their own edit or upscaled -- not whichever was last published to the client. */
+    public Optional<FilmRender> latestFinished(UUID projectId) {
+        return filmRenderRepository.findTopByProjectIdAndStatusOrderByCreatedAtDesc(projectId, FilmRenderStatus.COMPLETED);
+    }
+
     public Optional<FilmRender> latestPublished(UUID projectId) {
         return filmRenderRepository.findTopByProjectIdAndPublishedIsTrueOrderByCreatedAtDesc(projectId);
     }

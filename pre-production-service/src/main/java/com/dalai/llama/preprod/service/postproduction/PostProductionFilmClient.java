@@ -40,17 +40,28 @@ public class PostProductionFilmClient {
         this.timeoutMs = timeoutMs;
     }
 
+    /** The film the client's review page shows: the newest one published to it. */
     public Optional<PublishedFilm> getPublishedFilm(UUID tenantId, UUID projectId) {
+        return film(tenantId, projectId, "published");
+    }
+
+    /** The film the creator's profile plays and shares: the newest finished one (joined, their own
+     * edit, or upscaled), whatever was last published to the client. */
+    public Optional<PublishedFilm> getShowcaseFilm(UUID tenantId, UUID projectId) {
+        return film(tenantId, projectId, "showcase");
+    }
+
+    private Optional<PublishedFilm> film(UUID tenantId, UUID projectId, String which) {
         try {
             PublishedFilm film = webClient.get()
-                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/film/published",
-                            tenantId, projectId)
+                    .uri("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/film/{which}",
+                            tenantId, projectId, which)
                     .retrieve()
                     .bodyToMono(PublishedFilm.class)
                     .block(Duration.ofMillis(timeoutMs));
             return film != null && film.available() ? Optional.of(film) : Optional.empty();
         } catch (RuntimeException ex) {
-            log.warn("Could not read the published film for project {}: {}", projectId, ex.getMessage());
+            log.warn("Could not read the {} film for project {}: {}", which, projectId, ex.getMessage());
             return Optional.empty();
         }
     }

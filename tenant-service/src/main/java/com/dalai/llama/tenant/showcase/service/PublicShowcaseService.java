@@ -211,10 +211,9 @@ public class PublicShowcaseService {
                 .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()).posterUrl());
     }
 
-    /** A short-lived link to our own copy of a platform film, for the SELF host. Empty unless the
-     * item is a publicly visible platform film and the SELF fallback is switched on. */
+    /** A short-lived link to our own copy of a platform film -- the newest finished film of its
+     * project, stamped -- for our own player. Empty unless the item is a publicly visible platform film. */
     public Optional<SelfSourceView> selfSource(String publicId) {
-        if (!hostProperties.platformFilmsSelfHosted()) return Optional.empty();
         return itemRepository.findByPublicId(publicId)
                 .filter(i -> i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null)
                 .filter(i -> itemRepository.findPublicForCreator(i.getTenantId(), freshAfter(), minItems(), true).stream()
@@ -228,9 +227,11 @@ public class PublicShowcaseService {
     public record SelfSourceView(String url) {
     }
 
-    private VideoHostType hostFor(ShowcaseItem item) {
-        return item.getOrigin() == ShowcaseOrigin.PLATFORM && hostProperties.platformFilmsSelfHosted()
-                ? VideoHostType.SELF : VideoHostType.YOUTUBE;
+    /** A film made on Dalaillama always plays from our own copy in our own player -- it may not be on
+     * YouTube at all (published straight to the profile). Only a pick from the creator's channel
+     * plays through YouTube. */
+    private static VideoHostType hostFor(ShowcaseItem item) {
+        return item.getOrigin() == ShowcaseOrigin.PLATFORM ? VideoHostType.SELF : VideoHostType.YOUTUBE;
     }
 
     private OffsetDateTime freshAfter() {

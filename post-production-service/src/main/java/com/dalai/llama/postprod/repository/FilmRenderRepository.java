@@ -21,6 +21,9 @@ public interface FilmRenderRepository extends JpaRepository<FilmRender, UUID> {
      * currently looking at until they publish it. */
     Optional<FilmRender> findTopByProjectIdAndPublishedIsTrueOrderByCreatedAtDesc(UUID projectId);
 
+    /** The project's newest finished film: joined, the creator's own edit, or an upscaled copy. */
+    Optional<FilmRender> findTopByProjectIdAndStatusOrderByCreatedAtDesc(UUID projectId, FilmRenderStatus status);
+
     /**
      * How many films are ahead of this one.
      *
@@ -39,16 +42,21 @@ public interface FilmRenderRepository extends JpaRepository<FilmRender, UUID> {
             """)
     List<FilmRender> recentFinished(FilmRenderStatus status, org.springframework.data.domain.Pageable pageable);
 
-    /** Published films still without a stamped copy that are due for (another) try: never asked,
-     * stuck queued past {@code stuckBefore}, or failed fewer than {@code maxAttempts} times and not
-     * retried since {@code retryBefore}. Oldest first, bounded by the caller. */
+    /** Films still without a stamped copy that are due for (another) try -- every film published to
+     * a review page, and each project's newest finished film (what its creator's profile plays and
+     * shares): never asked, stuck queued past {@code stuckBefore}, or failed fewer than
+     * {@code maxAttempts} times and not retried since {@code retryBefore}. Bounded by the caller. */
     @Query(value = """
-            SELECT * FROM film_render
-            WHERE published = true AND object_key IS NOT NULL AND stamped_object_key IS NULL
-              AND (stamp_status IS NULL
-                   OR (stamp_status = 'PENDING' AND stamp_requested_at < :stuckBefore)
-                   OR (stamp_status = 'FAILED' AND stamp_attempts < :maxAttempts AND stamp_requested_at < :retryBefore))
-            ORDER BY published_at NULLS LAST
+            SELECT * FROM film_render f
+            WHERE (f.published = true
+                   OR f.render_id = (SELECT x.render_id FROM film_render x
+                                     WHERE x.project_id = f.project_id AND x.status = 'COMPLETED'
+                                     ORDER BY x.created_at DESC LIMIT 1))
+              AND f.object_key IS NOT NULL AND f.stamped_object_key IS NULL
+              AND (f.stamp_status IS NULL
+                   OR (f.stamp_status = 'PENDING' AND f.stamp_requested_at < :stuckBefore)
+                   OR (f.stamp_status = 'FAILED' AND f.stamp_attempts < :maxAttempts AND f.stamp_requested_at < :retryBefore))
+            ORDER BY f.published_at NULLS LAST, f.created_at DESC
             LIMIT :limit""", nativeQuery = true)
     java.util.List<FilmRender> findDueForStamp(@org.springframework.data.repository.query.Param("stuckBefore") OffsetDateTime stuckBefore,
                                                @org.springframework.data.repository.query.Param("retryBefore") OffsetDateTime retryBefore,

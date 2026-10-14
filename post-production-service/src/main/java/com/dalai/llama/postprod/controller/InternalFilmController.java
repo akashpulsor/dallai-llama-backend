@@ -43,10 +43,23 @@ public class InternalFilmController {
                 .toList());
     }
 
+    /** The film the client's review page shows: the newest one the creator published to it. */
     @GetMapping("/film/published")
     public ResponseEntity<PublishedFilmView> published(@PathVariable UUID tenantId,
                                                         @PathVariable UUID projectId) {
         return filmAssemblyService.latestPublished(projectId)
+                .filter(render -> tenantId.equals(render.getTenantId()))
+                .map(this::toView)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.ok(PublishedFilmView.none()));
+    }
+
+    /** The film the creator's profile plays and their YouTube shares upload: the newest finished one
+     * (joined, their own edit, or upscaled), with its Dalaillama-stamped copy once made. */
+    @GetMapping("/film/showcase")
+    public ResponseEntity<PublishedFilmView> showcase(@PathVariable UUID tenantId,
+                                                       @PathVariable UUID projectId) {
+        return filmAssemblyService.latestFinished(projectId)
                 .filter(render -> tenantId.equals(render.getTenantId()))
                 .map(this::toView)
                 .map(ResponseEntity::ok)

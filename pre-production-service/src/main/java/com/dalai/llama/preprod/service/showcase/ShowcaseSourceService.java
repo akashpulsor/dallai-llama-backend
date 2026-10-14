@@ -55,7 +55,7 @@ public class ShowcaseSourceService {
     public ShowcaseSourceView source(UUID tenantId, UUID projectId) {
         Project project = projectRepository.findByIdAndTenantId(projectId, tenantId)
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
-        Optional<PostProductionFilmClient.PublishedFilm> film = filmClient.getPublishedFilm(tenantId, projectId);
+        Optional<PostProductionFilmClient.PublishedFilm> film = filmClient.getShowcaseFilm(tenantId, projectId);
         return new ShowcaseSourceView(
                 project.getId(),
                 project.getName(),
@@ -151,7 +151,7 @@ public class ShowcaseSourceService {
     public List<FilmSummary> films(UUID tenantId) {
         return projectRepository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream()
                 .limit(FILM_LOOKBACK)
-                .flatMap(project -> filmClient.getPublishedFilm(tenantId, project.getId()).stream()
+                .flatMap(project -> filmClient.getShowcaseFilm(tenantId, project.getId()).stream()
                         .map(film -> new FilmSummary(project.getId(), project.getName(), film.completedAt(), film.durationSeconds(),
                                 film.width(), film.height(), project.getClientLockedAt(), project.getMarketingTermsAcceptedAt())))
                 .toList();

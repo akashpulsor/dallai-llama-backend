@@ -355,16 +355,22 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
-    void publicCardsSayYouTubeHost() {
+    void aPlatformFilmPlaysInOurOwnPlayer_andAChannelPickThroughYouTube() {
         when(preProduction.source(creator, project)).thenReturn(source(true, true));
         when(youTube.videos(List.of("filmLink003"))).thenReturn(List.of(video("filmLink003", CHANNEL, RENDERED.plusDays(1), 45, "Made on Dalaillama")));
         publishService.link(creator, project, link("filmLink003"));
         video(jdbc, "extra000001", CHANNEL, 1280, 720, NOW);
         pickService.pick(creator, new PickVideoRequest("extra000001", ShowcaseIndustry.FOOD_BEVERAGE, ShowcaseFormat.UGC, null, null, true));
 
-        assertThat(publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items()).extracting(PublicShowcaseCard::host)
-                .containsOnly(VideoHostType.YOUTUBE);
-        assertThat(publicService.selfSource(publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items().get(0).publicId())).isEmpty();
+        var cards = publicService.feed(PublicShowcaseService.FeedTab.NEW, null, null, 0).items();
+        // Made on Dalaillama: our own copy in our own player, whether or not it is also on YouTube.
+        var film = cards.stream().filter(c -> c.origin() == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM).findFirst().orElseThrow();
+        assertThat(film.host()).isEqualTo(VideoHostType.SELF);
+        assertThat(publicService.selfSource(film.publicId())).get()
+                .extracting(PublicShowcaseService.SelfSourceView::url).isEqualTo("https://minio/film-stamped.mp4?sig");
+        // A pick from the creator's channel plays through YouTube.
+        assertThat(cards.stream().filter(c -> c.origin() == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.EXTERNAL))
+                .extracting(PublicShowcaseCard::host).containsOnly(VideoHostType.YOUTUBE);
     }
 
     private static LinkPlatformFilmRequest link(String url) {

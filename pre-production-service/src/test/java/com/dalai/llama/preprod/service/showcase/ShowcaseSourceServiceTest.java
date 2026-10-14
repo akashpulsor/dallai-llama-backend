@@ -114,7 +114,7 @@ class ShowcaseSourceServiceTest {
         project.setMarketingTermsVersion("2026-10");
         project.setMarketingTermsAcceptedAt(locked);
         when(projects.findByIdAndTenantId(projectId, tenant)).thenReturn(Optional.of(project));
-        when(films.getPublishedFilm(tenant, projectId)).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
+        when(films.getShowcaseFilm(tenant, projectId)).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
                 true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("45.20"), 1080, 1920,
                 locked, locked.minusHours(1), "https://minio/film-stamped.mp4?sig")));
         when(shotImages.countForProject(projectId)).thenReturn(12L);
@@ -150,9 +150,9 @@ class ShowcaseSourceServiceTest {
         wip.setName("Still making");
         OffsetDateTime at = OffsetDateTime.parse("2026-10-01T10:00:00Z");
         when(projects.findByTenantIdOrderByCreatedAtDesc(tenant)).thenReturn(java.util.List.of(done, wip));
-        when(films.getPublishedFilm(tenant, done.getId())).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
+        when(films.getShowcaseFilm(tenant, done.getId())).thenReturn(Optional.of(new PostProductionFilmClient.PublishedFilm(
                 true, UUID.randomUUID(), "https://minio/film.mp4?sig", new BigDecimal("30"), 1920, 1080, at, at, null)));
-        when(films.getPublishedFilm(tenant, wip.getId())).thenReturn(Optional.empty());
+        when(films.getShowcaseFilm(tenant, wip.getId())).thenReturn(Optional.empty());
 
         assertThat(service.films(tenant)).singleElement().satisfies(f -> {
             assertThat(f.projectId()).isEqualTo(done.getId());
@@ -168,7 +168,7 @@ class ShowcaseSourceServiceTest {
         project.setId(projectId);
         project.setStatus(ProjectStatus.IN_PRODUCTION);
         when(projects.findByIdAndTenantId(projectId, tenant)).thenReturn(Optional.of(project));
-        when(films.getPublishedFilm(tenant, projectId)).thenReturn(Optional.empty());
+        when(films.getShowcaseFilm(tenant, projectId)).thenReturn(Optional.empty());
 
         assertThat(service.source(tenant, projectId).filmReady()).isFalse();
         assertThatThrownBy(() -> service.source(UUID.randomUUID(), projectId)).isInstanceOf(PreProductionException.class);
