@@ -109,8 +109,10 @@ public class CreatorProfileService {
         if (request.industries().size() > properties.profile().maxIndustries()) {
             throw new IllegalArgumentException("Choose at most " + properties.profile().maxIndustries() + " industries");
         }
-        if (!request.handle().equals(profile.getHandle())) {
-            changeHandle(profile, request.handle());
+        // Handles are lower case, so "Akash" and "akash" are one handle and can never belong to two creators.
+        String handle = request.handle().trim().toLowerCase(Locale.ROOT);
+        if (!handle.equals(profile.getHandle())) {
+            changeHandle(profile, handle);
         }
         profile.setDisplayName(request.displayName().trim());
         profile.setHeadline(blankToNull(request.headline()));

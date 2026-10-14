@@ -32,6 +32,7 @@ import java.time.OffsetDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -61,7 +62,7 @@ public class PublicShowcaseService {
 
     /** Empty (404) for unknown handles and for suspended or hidden profiles. */
     public Optional<PublicCreatorProfileView> profile(String handle) {
-        return profileRepository.findByHandle(handle)
+        return profileRepository.findByHandle(handle.toLowerCase(Locale.ROOT))
                 .filter(p -> p.getStatus() == ProfileStatus.ACTIVE)
                 .map(this::toProfileView);
     }

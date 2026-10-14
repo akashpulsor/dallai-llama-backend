@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /** A signed-in brand following a creator. Idempotent both ways; the profile's follower count moves
@@ -56,7 +57,7 @@ public class FollowService {
     }
 
     private CreatorPublicProfile activeProfile(String handle) {
-        return profileRepository.findByHandle(handle)
+        return profileRepository.findByHandle(handle.toLowerCase(Locale.ROOT))
                 .filter(p -> p.getStatus() == ProfileStatus.ACTIVE)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown creator"));
     }

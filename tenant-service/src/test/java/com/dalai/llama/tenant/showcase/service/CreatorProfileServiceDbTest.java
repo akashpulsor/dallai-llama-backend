@@ -165,6 +165,19 @@ class CreatorProfileServiceDbTest {
     }
 
     @Test
+    void update_lowerCasesTheHandle_soCaseCanNeverMakeTwoCreatorsShareOne() {
+        UUID owner = newTenant();
+        UUID other = newTenant();
+        service.ensureProfile(owner, "Someone");
+        service.ensureProfile(other, "Someone Else");
+
+        assertThat(service.update(owner, request("Akash", null, Set.of())).handle()).isEqualTo("akash");
+        assertThat(service.checkHandle(other, "AKASH").reason()).isEqualTo(CreatorProfileService.TAKEN);
+        assertThatThrownBy(() -> jdbc.update("UPDATE creator_public_profile SET handle = 'Akash' WHERE tenant_id = ?", owner))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
     void checkHandle_normalisesInputAndReportsFormatProblems() {
         UUID tenant = newTenant();
         service.ensureProfile(tenant, "Meera");
