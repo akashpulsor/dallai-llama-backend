@@ -184,6 +184,7 @@ public class CreatorProfileService {
                 p.getHandle(),
                 properties.publicBaseUrl() + "/c/" + p.getHandle(),
                 p.getDisplayName(),
+                companyName(p.getTenantId()),
                 p.getHeadline(),
                 p.getBio(),
                 avatar,
@@ -212,5 +213,11 @@ public class CreatorProfileService {
 
     private static String truncate(String s, int max) {
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    /** The account's company -- the tenant's own name. Fixed with the account, unlike the creator's
+     * name and handle, which are theirs to change; read from the tenant, never copied. */
+    public String companyName(UUID tenantId) {
+        return tenantRepository.findById(tenantId).map(com.dalai.llama.tenant.domain.entity.Tenant::getName).orElse(null);
     }
 }

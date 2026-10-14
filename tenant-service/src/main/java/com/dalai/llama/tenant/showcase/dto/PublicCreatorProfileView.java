@@ -11,6 +11,7 @@ import java.util.Set;
 public record PublicCreatorProfileView(
         String handle,
         String displayName,
+        String companyName,
         String headline,
         String bio,
         String avatarUrl,

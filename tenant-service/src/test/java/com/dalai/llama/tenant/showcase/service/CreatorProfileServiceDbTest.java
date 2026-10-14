@@ -118,6 +118,9 @@ class CreatorProfileServiceDbTest {
         assertThat(updated.missing()).containsExactly(
                 ProfileChecklistItem.YOUTUBE_CHANNEL, ProfileChecklistItem.SHOWCASE_PICKS, ProfileChecklistItem.AVATAR);
         assertThat(updated.publicUrl()).isEqualTo("https://dalaillama.in/c/sana-reels");
+        // The name and handle are the creator's; the company is the account's own, read from it.
+        assertThat(updated.displayName()).isEqualTo("Display Name");
+        assertThat(updated.companyName()).isEqualTo("Tenant " + tenant);
         assertThat(service.findMine(tenant).orElseThrow().industries())
                 .containsExactlyInAnyOrder(ShowcaseIndustry.FOOD_BEVERAGE, ShowcaseIndustry.ECOMMERCE);
     }

@@ -56,6 +56,7 @@ public class PublicShowcaseService {
     private final PreProductionShowcaseClient preProduction;
     private final ShowcaseRankingRunRepository runRepository;
     private final com.dalai.llama.tenant.showcase.repository.CreatorHandleHistoryRepository handleHistoryRepository;
+    private final com.dalai.llama.tenant.repository.TenantRepository tenantRepository;
     private final Clock clock;
 
     /** Empty (404) for unknown handles and for suspended or hidden profiles. */
@@ -103,6 +104,8 @@ public class PublicShowcaseService {
         return new PublicCreatorProfileView(
                 p.getHandle(),
                 p.getDisplayName(),
+                // The account's company, fixed with the account -- not a profile field.
+                tenantRepository.findById(p.getTenantId()).map(com.dalai.llama.tenant.domain.entity.Tenant::getName).orElse(null),
                 p.getHeadline(),
                 p.getBio(),
                 CreatorAvatar.of(p, channel),

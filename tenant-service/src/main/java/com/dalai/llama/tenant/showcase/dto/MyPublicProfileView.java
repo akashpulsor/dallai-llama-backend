@@ -13,6 +13,7 @@ public record MyPublicProfileView(
         String handle,
         String publicUrl,
         String displayName,
+        String companyName,
         String headline,
         String bio,
         String avatarUrl,
