@@ -125,11 +125,18 @@ public class PlatformPublishService {
     /**
      * Path 3: the creator published the film to their own channel from Dalai Llama ("Publish to my
      * profile"): we uploaded it, so it goes on their profile as a film made on Dalaillama, with the
-     * project's funding and consent facts. Nothing to do if the project is already on the profile.
+     * project's funding and consent facts. Nothing to do if the project is already on the profile
+     * with this upload.
+     *
+     * <p>A project has one item, so its existing row is reused whatever its state: one removed from
+     * the profile comes back, and a re-rendered film uploaded again moves the item to the newest
+     * video. Looking the row up by the new video instead found nothing and inserted a second item for
+     * the project, which showcase_item_project_uk refused on every retry -- the film never showed.
      */
     @Transactional
     public Optional<ShowcaseItem> recordCreatorUpload(UUID tenantId, UUID projectId, String videoId, String privacy) {
-        if (itemRepository.findBySourceProjectId(projectId).filter(i -> i.getStatus() != ShowcaseItemStatus.REMOVED).isPresent()) {
+        Optional<ShowcaseItem> forProject = itemRepository.findBySourceProjectId(projectId);
+        if (forProject.filter(i -> i.getStatus() != ShowcaseItemStatus.REMOVED && videoId.equals(i.getYoutubeVideoId())).isPresent()) {
             return Optional.empty();
         }
         CreatorPublicProfile profile = profile(tenantId);
@@ -148,8 +155,9 @@ public class PlatformPublishService {
                     .aspectW(source.width()).aspectH(source.height()).privacyStatus(privacy == null ? "private" : privacy.toLowerCase(java.util.Locale.ROOT))
                     .embeddable(true).ageRestricted(false).madeForKids(false).publishedAt(now).fetchedAt(now).build());
         }
-        ShowcaseItem existing = itemRepository.findByYoutubeVideoId(videoId).orElse(null);
-        if (existing != null && !existing.getTenantId().equals(tenantId)) return Optional.empty();
+        ShowcaseItem byVideo = itemRepository.findByYoutubeVideoId(videoId).orElse(null);
+        if (byVideo != null && !byVideo.getTenantId().equals(tenantId)) return Optional.empty();
+        ShowcaseItem existing = forProject.orElse(byVideo);
         boolean vertical = source.width() != null && source.height() != null && source.height() > source.width();
         ShowcaseItem item = platformItem(existing, tenantId, source, videoId,
                 profile.getIndustries().stream().findFirst().orElse(ShowcaseIndustry.OTHER),
@@ -247,6 +255,8 @@ public class PlatformPublishService {
                 .youtubeVideoId(videoId)
                 .publishedAt(now)
                 .build();
+        // A reused item follows the upload it is being recorded for.
+        item.setYoutubeVideoId(videoId);
         item.setOrigin(ShowcaseOrigin.PLATFORM);
         item.setPlatformProof(proof);
         item.setChannel(channel);

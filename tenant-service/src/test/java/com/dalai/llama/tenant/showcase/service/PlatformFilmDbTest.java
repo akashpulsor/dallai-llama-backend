@@ -279,6 +279,34 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aReRenderedFilmUploadedAgainIsTheProjectsOneItem_evenAfterItWasRemoved() {
+        when(preProduction.source(creator, project)).thenReturn(source(true, true));
+        when(youTube.videos(any())).thenReturn(List.of());
+        publishService.recordCreatorUpload(creator, project, "creatorVid1", "public");
+        jdbc.update("UPDATE showcase_item SET status = 'REMOVED'");
+
+        // The re-rendered film is a new YouTube video. It used to be inserted as a second item for
+        // the project, refused by showcase_item_project_uk on every retry, so it never showed.
+        assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid2", "private")).isPresent();
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id || '/' || status FROM showcase_item", String.class))
+                .isEqualTo("creatorVid2/LIVE");
+    }
+
+    @Test
+    void aReRenderedFilmOnTheProfileMovesToItsNewestUpload() {
+        when(preProduction.source(creator, project)).thenReturn(source(true, true));
+        when(youTube.videos(any())).thenReturn(List.of());
+        publishService.recordCreatorUpload(creator, project, "creatorVid1", "public");
+
+        assertThat(publishService.recordCreatorUpload(creator, project, "creatorVid2", "public")).isPresent();
+
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM showcase_item", String.class)).isEqualTo("creatorVid2");
+    }
+
+    @Test
     void forcedPrivateNeedsAPerson_andRepeatedFailuresStop() {
         when(preProduction.source(creator, project)).thenReturn(source(true, true));
         publishService.requestOfficialUpload(creator, project, official());
