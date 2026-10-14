@@ -64,6 +64,15 @@ public class ShotGenerationPlanController {
         return ResponseEntity.ok(service.buildTimeline(tenant().tenantId(), projectId, shotId));
     }
 
+    /** The creator's own corrections to the timeline. The prompt is then older than it; the next
+     * write (Update) reads this timeline. */
+    @PutMapping("/timeline")
+    public ResponseEntity<ShotGenerationPlanView> editTimeline(
+            @PathVariable UUID projectId, @PathVariable UUID shotId,
+            @Valid @RequestBody GenerationPlanRequests.EditTimeline request) {
+        return ResponseEntity.ok(service.editTimeline(tenant().tenantId(), shotId, request.intervals()));
+    }
+
     /** Writes, or rewrites, the AI recommendation. Never touches the creator's saved draft. */
     @PostMapping("/prompt")
     public ResponseEntity<ShotGenerationPlanView> composePrompt(@PathVariable UUID projectId, @PathVariable UUID shotId) {

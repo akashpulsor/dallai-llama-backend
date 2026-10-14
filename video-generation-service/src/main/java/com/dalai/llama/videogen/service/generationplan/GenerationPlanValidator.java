@@ -44,6 +44,21 @@ public final class GenerationPlanValidator {
 
     // ---------------------------------------------------------------- settings
 
+    /**
+     * The clip length that holds the whole shot: the shortest length the model renders that is at
+     * least the shot's planned length, else its longest. The clip is then trimmed to the shot, never
+     * slowed -- slowing a clip under a line spoken at normal speed puts the lips out of sync. Null
+     * when the shot has no planned length or the model declares no lengths.
+     */
+    public static Integer shotLengthClip(VideoModelCapabilitiesView capabilities, BigDecimal plannedSeconds) {
+        if (plannedSeconds == null || capabilities == null || capabilities.supportedDurationsSeconds().isEmpty()) {
+            return null;
+        }
+        int needed = plannedSeconds.setScale(0, RoundingMode.CEILING).intValueExact();
+        return capabilities.supportedDurationsSeconds().stream().filter(d -> d >= needed).min(Integer::compare)
+                .orElseGet(() -> capabilities.supportedDurationsSeconds().stream().max(Integer::compare).orElseThrow());
+    }
+
     public static List<ValidationIssueView> settingsErrors(VideoModelCapabilitiesView capabilities,
                                                            Integer durationSeconds, Integer fps) {
         List<ValidationIssueView> errors = new ArrayList<>();

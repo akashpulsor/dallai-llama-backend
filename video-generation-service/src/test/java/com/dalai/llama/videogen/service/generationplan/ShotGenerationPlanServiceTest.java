@@ -201,7 +201,7 @@ class ShotGenerationPlanServiceTest {
     void prepareRunsAnalyseTimelineAndPromptInOrder_andReturnsThePlansPromptAndSettings() {
         when(llm.assess(any(), any(), any())).thenReturn(new GenerationPlanLlm.AssessmentAnswer(
                 true, new BigDecimal("5"), 6, 24, "fits", List.of(), List.of()));
-        when(store.saveAssessment(any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
+        when(store.saveAssessment(any(), any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
         when(llm.timeline(any(), any(), any())).thenReturn(List.of());
         when(store.saveTimeline(any(), anyInt(), any(), any())).thenReturn(state(List.of()));
         when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("0-6s: the planned prompt");
@@ -289,7 +289,7 @@ class ShotGenerationPlanServiceTest {
     void noOtherStepEverStartsARender() {
         when(llm.assess(any(), any(), any())).thenReturn(new GenerationPlanLlm.AssessmentAnswer(
                 true, new BigDecimal("5"), 6, 24, "fits", List.of(), List.of()));
-        when(store.saveAssessment(any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
+        when(store.saveAssessment(any(), any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
         when(llm.timeline(any(), any(), any())).thenReturn(List.of());
         when(store.saveTimeline(any(), anyInt(), any(), any())).thenReturn(state(List.of()));
         when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("0-6s: ...");
@@ -375,7 +375,7 @@ class ShotGenerationPlanServiceTest {
     void theAssessmentIsAskedWithNumberedActionsTheModelsRealOptionsAndTheCreativeDirection() {
         when(llm.assess(any(), any(), any())).thenReturn(new GenerationPlanLlm.AssessmentAnswer(
                 true, new BigDecimal("5"), 6, 24, "fits", List.of(), List.of()));
-        when(store.saveAssessment(any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
+        when(store.saveAssessment(any(), any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
 
         service.analyze(tenant, project, shotId);
 
@@ -512,5 +512,49 @@ class ShotGenerationPlanServiceTest {
             return new PreProductionViews.ShotBundleView(view, List.of(), null, null, List.of(), null, null);
         }).toList();
         return new PreProductionViews.PrepareBundleView(null, null, null, List.of(), List.of(), shots);
+    }
+
+    @Test
+    void aHandCorrectedTimelineIsSavedOnItsOwnClockAndChecked() {
+        plan.setTimelineDurationSeconds(6);
+        plan.setTimelineFps(24);
+        when(store.saveTimeline(any(), anyInt(), any(), any())).thenReturn(state(List.of()));
+
+        service.editTimeline(tenant, shotId, List.of(
+                new com.dalai.llama.videogen.dto.generationplan.GenerationPlanRequests.TimelineInterval(
+                        BigDecimal.ZERO, new BigDecimal("2.5"), " OPEN ", "kneels", null, null, false),
+                new com.dalai.llama.videogen.dto.generationplan.GenerationPlanRequests.TimelineInterval(
+                        new BigDecimal("2.5"), new BigDecimal("6"), "END", "stands", null, null, true)));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<GenerationPlanLlm.IntervalAnswer>> saved = ArgumentCaptor.forClass(List.class);
+        verify(store).saveTimeline(eq(plan.getPlanId()), eq(6), eq(24), saved.capture());
+        assertThat(saved.getValue()).extracting(GenerationPlanLlm.IntervalAnswer::actionId).containsExactly("OPEN", "END");
+        assertThat(saved.getValue().get(1).holdRequired()).isTrue();
+        // Nothing is rewritten for them: the prompt waits for Update.
+        verify(promptWriter, never()).composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any());
+        verify(llm, never()).timeline(any(), any(), any());
+    }
+
+    @Test
+    void updateReanalysesAShotWhoseLengthChanged() {
+        ShotContext shot = assemblyShot();
+        com.dalai.llama.videogen.dto.shotcontext.Technical technical = mock(com.dalai.llama.videogen.dto.shotcontext.Technical.class);
+        when(technical.durationSeconds()).thenReturn(7);
+        when(shot.technical()).thenReturn(technical);
+        plan.setPlannedDurationSeconds(new BigDecimal("5.000"));
+        plan.setAssessedAt(OffsetDateTime.now());
+        when(llm.assess(any(), any(), any())).thenReturn(new GenerationPlanLlm.AssessmentAnswer(
+                true, new BigDecimal("5"), 6, 24, "fits", List.of(), List.of()));
+        when(store.saveAssessment(any(), any(), any(), any(), any(), any(), any())).thenReturn(state(List.of()));
+        when(llm.timeline(any(), any(), any())).thenReturn(List.of());
+        when(store.saveTimeline(any(), anyInt(), any(), any())).thenReturn(state(List.of()));
+        when(promptWriter.composeSourcePrompt(any(), any(), any(), anyString(), anyInt(), any())).thenReturn("for 7s");
+        plan.setAiRecommendedPrompt("for 7s");
+
+        service.prepare(tenant, project, shotId);
+
+        // The shot is 7s now: the clip follows it (7s is a length this model renders).
+        verify(store).saveAssessment(any(), any(), any(), eq(new BigDecimal("7.000")), eq(7), any(), any());
     }
 }

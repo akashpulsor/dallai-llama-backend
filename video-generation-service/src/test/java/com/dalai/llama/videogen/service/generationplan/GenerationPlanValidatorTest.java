@@ -241,4 +241,16 @@ class GenerationPlanValidatorTest {
         assertThat(codes).contains("TIME_BEYOND_DURATION", "POST_PRODUCTION_INSTRUCTION");
         assertThat(codes(GenerationPlanValidator.promptWarnings("He kneels and stands.", 6))).contains("NO_TIMESTAMPS");
     }
+
+    @Test
+    void theClipHoldsTheWholeShotAtTheShortestLengthTheModelRenders() {
+        VideoModelCapabilitiesView model = new VideoModelCapabilitiesView("m", List.of(4, 6, 8), List.of(24), true);
+
+        assertThat(GenerationPlanValidator.shotLengthClip(model, new BigDecimal("5.000"))).isEqualTo(6);
+        assertThat(GenerationPlanValidator.shotLengthClip(model, new BigDecimal("4.000"))).isEqualTo(4);
+        assertThat(GenerationPlanValidator.shotLengthClip(model, new BigDecimal("4.2"))).isEqualTo(6);
+        // Longer than anything the model renders: its longest, and the shot is the creator's to shorten.
+        assertThat(GenerationPlanValidator.shotLengthClip(model, new BigDecimal("12"))).isEqualTo(8);
+        assertThat(GenerationPlanValidator.shotLengthClip(model, null)).isNull();
+    }
 }

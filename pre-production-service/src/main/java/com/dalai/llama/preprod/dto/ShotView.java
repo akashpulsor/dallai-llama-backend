@@ -25,6 +25,8 @@ public record ShotView(
         TimeOfDay timeOfDay,
         MoodProfile lightingMood,
         Integer durationSeconds,
+        /** What the shot list planned; differs from durationSeconds once the creator changes it. */
+        Integer originalDurationSeconds,
         AspectRatio aspectRatio,
         ShotStatus status,
         String cameraAngle,

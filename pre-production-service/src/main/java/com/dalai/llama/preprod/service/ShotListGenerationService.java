@@ -743,7 +743,7 @@ public class ShotListGenerationService {
                 shot.getId(), shot.getLockedIdeaId(), shot.getShotRef(), shot.getShotNumber(), shot.getScreenplaySceneId(),
                 shot.getShotType(), shot.getScriptLine(), shot.getPrimaryCharacterKey(),
                 shot.getCameraShotSize(), shot.getCameraNote(), shot.getLocation(), shot.getTimeOfDay(),
-                shot.getLightingMood(), shot.getDurationSeconds(), shot.getAspectRatio(), shot.getStatus(),
+                shot.getLightingMood(), shot.getDurationSeconds(), shot.getOriginalDurationSeconds(), shot.getAspectRatio(), shot.getStatus(),
                 shot.getCameraAngle(), shot.getCameraMovement(), shot.getLensSuggestion(), shot.getFps(),
                 shot.getComposition(), shot.getExpression(), shot.getEmotion(), shot.getBodyLanguage(),
                 shot.getAction(), shot.getVoiceOver(), shot.getDubVoiceId(), shot.getTextOverlay(), shot.getSoundDesign(),

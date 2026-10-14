@@ -96,14 +96,21 @@ public class ShotGenerationPlanStore {
      * would let a timeline describe actions the plan no longer numbers that way. The prompt and the
      * creator's draft are kept -- they are work, and the page shows them as older than the analysis.
      *
-     * <p>The creator's selected settings are kept if they made a selection; only an empty selection
-     * takes the recommendation, so re-analysing never silently changes a choice they made.
+     * <p>The clip is generated at the shot's own length ({@code shotLengthClipSeconds}), not at the
+     * assessment's shorter recommendation: a prompt timed for 3s inside a 5s shot describes a film
+     * the creator did not plan, and slowing it to fit puts a spoken line out of sync. The shorter
+     * length stays on the plan as a recommendation the creator can choose. A selection the creator
+     * made is kept until the shot's length or model changes -- then the old clip length no longer
+     * belongs to this shot.
      */
     @Transactional
     public PlanState saveAssessment(UUID planId, String shotRef, String modelId, BigDecimal plannedDurationSeconds,
+                                    Integer shotLengthClipSeconds,
                                     List<RequiredActionView> actions, GenerationPlanLlm.AssessmentAnswer answer) {
         ShotGenerationPlan plan = planRepository.findById(planId).orElseThrow();
         boolean modelChanged = !Objects.equals(plan.getModelId(), modelId);
+        boolean lengthChanged = plannedDurationSeconds != null && (plan.getPlannedDurationSeconds() == null
+                || plan.getPlannedDurationSeconds().compareTo(plannedDurationSeconds) != 0);
         plan.setShotRef(shotRef);
         plan.setModelId(modelId);
         plan.setPlannedDurationSeconds(plannedDurationSeconds);
@@ -114,8 +121,11 @@ public class ShotGenerationPlanStore {
         plan.setRecommendedFps(answer.recommendedGenerationFps() == null || answer.recommendedGenerationFps() <= 0
                 ? null : answer.recommendedGenerationFps());
         plan.setAssessmentReasoning(answer.reasoning());
-        if (modelChanged || plan.getGenerationDurationSeconds() == null) {
-            plan.setGenerationDurationSeconds(plan.getRecommendedDurationSeconds());
+        if (modelChanged || lengthChanged || plan.getGenerationDurationSeconds() == null) {
+            plan.setGenerationDurationSeconds(shotLengthClipSeconds != null
+                    ? shotLengthClipSeconds : plan.getRecommendedDurationSeconds());
+        }
+        if (modelChanged || plan.getGenerationFps() == null) {
             plan.setGenerationFps(plan.getRecommendedFps());
         }
         plan.setTimelineDurationSeconds(null);

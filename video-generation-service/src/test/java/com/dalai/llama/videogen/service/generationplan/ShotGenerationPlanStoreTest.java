@@ -78,7 +78,7 @@ class ShotGenerationPlanStoreTest {
         plan.setGenerationDurationSeconds(8);
         plan.setGenerationFps(24);
 
-        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, ACTIONS, recommends(6));
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, null, ACTIONS, recommends(6));
 
         assertThat(plan.getRecommendedDurationSeconds()).isEqualTo(6);
         assertThat(plan.getGenerationDurationSeconds()).isEqualTo(8);
@@ -88,7 +88,7 @@ class ShotGenerationPlanStoreTest {
     void aFirstAnalysisPreselectsTheRecommendationAndClearsTheOldTimeline() {
         plan.setTimelineDurationSeconds(10);
 
-        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, ACTIONS, recommends(6));
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, null, ACTIONS, recommends(6));
 
         assertThat(plan.getGenerationDurationSeconds()).isEqualTo(6);
         assertThat(plan.getGenerationFps()).isEqualTo(24);
@@ -100,7 +100,7 @@ class ShotGenerationPlanStoreTest {
     @Test
     @SuppressWarnings("unchecked")
     void coverageIsStoredAsAnsweredSoValidationCanNameWhatWasWrong() {
-        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, ACTIONS, recommends(6));
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", null, null, ACTIONS, recommends(6));
 
         ArgumentCaptor<List<ShotGenerationPlanCoverage>> saved = ArgumentCaptor.forClass(List.class);
         verify(coverage).saveAll(saved.capture());
@@ -109,5 +109,37 @@ class ShotGenerationPlanStoreTest {
             // An unstated "preserved" is not read as a refusal.
             assertThat(row.getPreserved()).isTrue();
         });
+    }
+
+    @Test
+    void aFirstAnalysisGeneratesAtTheShotsLengthNotTheShorterRecommendation() {
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", new BigDecimal("5.000"), 5, ACTIONS, recommends(3));
+
+        assertThat(plan.getRecommendedDurationSeconds()).isEqualTo(3);
+        assertThat(plan.getGenerationDurationSeconds()).isEqualTo(5);
+    }
+
+    @Test
+    void aChosenClipLengthIsKeptWhileTheShotKeepsItsLength() {
+        plan.setPlannedDurationSeconds(new BigDecimal("5.000"));
+        plan.setGenerationDurationSeconds(3);
+        plan.setGenerationFps(24);
+
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", new BigDecimal("5"), 5, ACTIONS, recommends(3));
+
+        assertThat(plan.getGenerationDurationSeconds()).isEqualTo(3);
+    }
+
+    @Test
+    void changingTheShotsLengthMovesTheClipToTheNewLength() {
+        plan.setPlannedDurationSeconds(new BigDecimal("5.000"));
+        plan.setGenerationDurationSeconds(5);
+        plan.setGenerationFps(24);
+
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", new BigDecimal("7.000"), 8, ACTIONS, recommends(3));
+
+        assertThat(plan.getGenerationDurationSeconds()).isEqualTo(8);
+        // The frame rate was the creator's and has nothing to do with the length.
+        assertThat(plan.getGenerationFps()).isEqualTo(24);
     }
 }

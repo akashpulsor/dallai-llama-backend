@@ -15,6 +15,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -91,6 +92,12 @@ public class Shot {
 
     @Column(name = "duration_seconds")
     private Integer durationSeconds;
+
+    /** The length the shot list planned, before anyone changed it. Set once, on insert; the studio
+     * shows it beside the current length so a shot stretched to fit its line still says what the
+     * plan was. */
+    @Column(name = "original_duration_seconds", updatable = false)
+    private Integer originalDurationSeconds;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "aspect_ratio", length = 16)
@@ -415,4 +422,11 @@ public class Shot {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void rememberOriginalDuration() {
+        if (originalDurationSeconds == null) {
+            originalDurationSeconds = durationSeconds;
+        }
+    }
 }

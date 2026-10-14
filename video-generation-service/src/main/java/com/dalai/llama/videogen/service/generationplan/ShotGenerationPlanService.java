@@ -159,7 +159,8 @@ public class ShotGenerationPlanService {
         GenerationPlanLlm.AssessmentAnswer answer = llm.assess(tenantId, projectId, variables);
 
         ShotGenerationPlanStore.PlanState state = ensure(tenantId, projectId, shotId, shot, model, actions);
-        state = store.saveAssessment(state.plan().getPlanId(), shot.shotRef(), model, planned(shot), actions, answer);
+        state = store.saveAssessment(state.plan().getPlanId(), shot.shotRef(), model, planned(shot),
+                GenerationPlanValidator.shotLengthClip(capabilities, planned(shot)), actions, answer);
         return view(autoAttachContinuation(tenantId, projectId, shotId, state));
     }
 
@@ -198,6 +199,24 @@ public class ShotGenerationPlanService {
         variables.put("requiredActions", actionsText(actionViews(state.actions())));
         List<GenerationPlanLlm.IntervalAnswer> intervals = llm.timeline(tenantId, projectId, variables);
         return view(store.saveTimeline(plan.getPlanId(), plan.getGenerationDurationSeconds(), plan.getGenerationFps(), intervals));
+    }
+
+    /**
+     * Saves the timeline as the creator corrected it, on the clock it was built for, and checks it
+     * the same way as one the AI built -- the view carries any problems. Nothing else moves: the
+     * prompt is now older than the timeline, and the next write reads this one. A corrected timeline
+     * that passes its checks is kept by Prepare; one that still fails them is rebuilt.
+     */
+    public ShotGenerationPlanView editTimeline(UUID tenantId, UUID shotId,
+                                               List<com.dalai.llama.videogen.dto.generationplan.GenerationPlanRequests.TimelineInterval> intervals) {
+        ShotGenerationPlan plan = store.require(tenantId, shotId).plan();
+        requireSettings(plan);
+        int seconds = plan.getTimelineDurationSeconds() != null ? plan.getTimelineDurationSeconds() : plan.getGenerationDurationSeconds();
+        Integer fps = plan.getTimelineDurationSeconds() != null ? plan.getTimelineFps() : plan.getGenerationFps();
+        List<GenerationPlanLlm.IntervalAnswer> rows = intervals.stream().map(i -> new GenerationPlanLlm.IntervalAnswer(
+                i.startSeconds(), i.endSeconds(), i.actionId().trim(), i.action(), i.subjectState(), i.cameraBehavior(),
+                i.holdRequired())).toList();
+        return view(store.saveTimeline(plan.getPlanId(), seconds, fps, rows));
     }
 
     /**
@@ -372,7 +391,13 @@ public class ShotGenerationPlanService {
         // seconds (or one failing its checks) is rebuilt; then the prompt is written from it.
         ShotGenerationPlanStore.PlanState state = store.find(tenantId, shotId).orElse(null);
         List<RequiredActionView> current = actionExtractor.extract(assemble(tenantId, projectId, shotId).shotContext());
-        if (state == null || state.plan().getAssessedAt() == null || !current.equals(actionViews(state.actions()))) {
+        // A shot whose length changed is re-analysed too: the plan's length, its clip length and
+        // its shorter-clip suggestion all belong to the old one.
+        BigDecimal shotSeconds = planned(assemble(tenantId, projectId, shotId).shotContext());
+        boolean lengthChanged = state != null && shotSeconds != null && (state.plan().getPlannedDurationSeconds() == null
+                || state.plan().getPlannedDurationSeconds().compareTo(shotSeconds) != 0);
+        if (state == null || state.plan().getAssessedAt() == null || lengthChanged
+                || !current.equals(actionViews(state.actions()))) {
             analyze(tenantId, projectId, shotId);
             state = store.require(tenantId, shotId);
         }
@@ -633,7 +658,7 @@ public class ShotGenerationPlanService {
                 plan.getPlannedDurationSeconds(), capabilities, actions, assessment,
                 GenerationPlanValidator.assessment(actions, assessment, capabilities),
                 settingsView(capabilities, plan.getGenerationDurationSeconds(), plan.getGenerationFps(), assessment),
-                plan.getTimelineDurationSeconds(), plan.getTimelineFps(), timeline,
+                plan.getTimelineDurationSeconds(), plan.getTimelineFps(), plan.getTimelineBuiltAt(), timeline,
                 GenerationPlanValidator.timeline(actions, timeline, plan.getTimelineDurationSeconds()),
                 new VideoPromptDraftView(plan.getAiRecommendedPrompt(), plan.getUserEditedPrompt(), plan.getDraftRevision(),
                         plan.getPromptDurationSeconds(), plan.getPromptFps(), plan.getPromptContinuationObjectKey(),
@@ -662,7 +687,7 @@ public class ShotGenerationPlanService {
                                                List<RequiredActionView> actions) {
         VideoModelCapabilitiesView capabilities = capabilityService.capabilities(model);
         return new ShotGenerationPlanView(null, projectId, shotId, shot.shotRef(), model, planned(shot), capabilities,
-                actions, null, List.of(), settingsView(capabilities, null, null, null), null, null, List.of(), List.of(),
+                actions, null, List.of(), settingsView(capabilities, null, null, null), null, null, null, List.of(), List.of(),
                 new VideoPromptDraftView(null, null, 0, null, null, null, null, null,
                         promptBuilderService.maxPromptLengthFor(model)),
                 null, null, null);

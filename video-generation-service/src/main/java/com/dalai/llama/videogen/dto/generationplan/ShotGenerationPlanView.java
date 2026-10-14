@@ -27,6 +27,7 @@ public record ShotGenerationPlanView(
         VideoGenerationSettingsView settings,
         Integer timelineDurationSeconds,
         Integer timelineFps,
+        OffsetDateTime timelineBuiltAt,
         List<SourceTemporalActionView> timeline,
         List<ValidationIssueView> timelineIssues,
         VideoPromptDraftView prompt,
