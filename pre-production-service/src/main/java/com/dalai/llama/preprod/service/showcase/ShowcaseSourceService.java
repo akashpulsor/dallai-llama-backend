@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -76,24 +77,70 @@ public class ShowcaseSourceService {
                 posterUrl(projectId));
     }
 
-    /** The first shot's finished frame (else its storyboard), presigned for an hour: the film's poster
-     * where YouTube has no thumbnail to give (a private upload). Null when the project has none. */
+    /** The film's poster on the public profile, presigned for an hour: the frame the creator chose,
+     * else the first shot's finished frame (else its storyboard). Null when the project has none. */
     String posterUrl(UUID projectId) {
+        List<com.dalai.llama.preprod.domain.entity.ShotImage> frames = posterFrames(projectId);
+        UUID chosen = projectRepository.findById(projectId).map(com.dalai.llama.preprod.domain.entity.Project::getPosterImageId).orElse(null);
+        return frames.stream().filter(f -> java.util.Objects.equals(f.getId(), chosen) && chosen != null).findFirst()
+                .or(() -> frames.stream().findFirst())
+                .map(this::presigned).orElse(null);
+    }
+
+    /** The frames a film's thumbnail can be chosen from, in shot order: each shot's finished frames
+     * (its storyboard where none is finished yet) and any motion-graphic frame. */
+    List<com.dalai.llama.preprod.domain.entity.ShotImage> posterFrames(UUID projectId) {
+        List<com.dalai.llama.preprod.domain.entity.ShotImage> frames = new java.util.ArrayList<>();
         for (var shot : shotRepository.findByProjectIdOrderByShotNumberAsc(projectId)) {
-            var images = shotImageRepository.findByShotId(shot.getId());
-            var frame = images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION).findFirst()
-                    .or(() -> images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.STORYBOARD).findFirst());
-            if (frame.isPresent() && frame.get().getBucket() != null && frame.get().getObjectKey() != null) {
-                try {
-                    return publicMinioClient.getPresignedObjectUrl(io.minio.GetPresignedObjectUrlArgs.builder()
-                            .method(io.minio.http.Method.GET).bucket(frame.get().getBucket()).object(frame.get().getObjectKey())
-                            .expiry(1, java.util.concurrent.TimeUnit.HOURS).build());
-                } catch (Exception ex) {
-                    return null;
-                }
-            }
+            var images = shotImageRepository.findByShotId(shot.getId()).stream()
+                    .filter(i -> i.getBucket() != null && i.getObjectKey() != null).toList();
+            var finished = images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION
+                    || i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.MOTION_GRAPHIC).toList();
+            frames.addAll(finished.isEmpty()
+                    ? images.stream().filter(i -> i.getKind() == com.dalai.llama.preprod.domain.ShotImageKind.STORYBOARD).toList()
+                    : finished);
         }
-        return null;
+        return frames;
+    }
+
+    /** The frames to choose the thumbnail from, the chosen one marked. */
+    public List<PosterFrameView> posterFrameViews(UUID tenantId, UUID projectId) {
+        var project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        Map<UUID, Integer> shotNumbers = new java.util.HashMap<>();
+        shotRepository.findByProjectIdOrderByShotNumberAsc(projectId).forEach(s -> shotNumbers.put(s.getId(), s.getShotNumber()));
+        List<com.dalai.llama.preprod.domain.entity.ShotImage> frames = posterFrames(projectId);
+        UUID chosen = project.getPosterImageId() != null && frames.stream().anyMatch(f -> project.getPosterImageId().equals(f.getId()))
+                ? project.getPosterImageId() : frames.stream().findFirst().map(com.dalai.llama.preprod.domain.entity.ShotImage::getId).orElse(null);
+        return frames.stream().map(f -> new PosterFrameView(f.getId(), shotNumbers.get(f.getShotId()), f.getKind().name(),
+                presigned(f), java.util.Objects.equals(f.getId(), chosen))).toList();
+    }
+
+    /** Chooses the film's thumbnail; null goes back to the default (the first shot's frame). */
+    @org.springframework.transaction.annotation.Transactional
+    public List<PosterFrameView> choosePoster(UUID tenantId, UUID projectId, UUID imageId) {
+        var project = projectRepository.findByIdAndTenantId(projectId, tenantId)
+                .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
+        if (imageId != null && posterFrames(projectId).stream().noneMatch(f -> imageId.equals(f.getId()))) {
+            throw PreProductionException.badRequest("That frame isn't one of this film's shots");
+        }
+        project.setPosterImageId(imageId);
+        projectRepository.save(project);
+        return posterFrameViews(tenantId, projectId);
+    }
+
+    /** One frame offered as the thumbnail. */
+    public record PosterFrameView(UUID imageId, Integer shotNumber, String kind, String url, boolean chosen) {
+    }
+
+    private String presigned(com.dalai.llama.preprod.domain.entity.ShotImage frame) {
+        try {
+            return publicMinioClient.getPresignedObjectUrl(io.minio.GetPresignedObjectUrlArgs.builder()
+                    .method(io.minio.http.Method.GET).bucket(frame.getBucket()).object(frame.getObjectKey())
+                    .expiry(1, java.util.concurrent.TimeUnit.HOURS).build());
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     /** How many recent projects {@link #films} looks at; each needs one post-production lookup. */

@@ -53,6 +53,45 @@ class ShowcaseSourceServiceTest {
         assertThat(service.posterUrl(UUID.randomUUID())).isNull();
     }
 
+    @Test
+    void theCreatorChoosesTheThumbnailFromTheFilmsFrames_andAFrameFromElsewhereIsRefused() throws Exception {
+        UUID tenant = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        com.dalai.llama.preprod.domain.entity.Project project = new com.dalai.llama.preprod.domain.entity.Project();
+        project.setId(projectId);
+        when(projects.findByIdAndTenantId(projectId, tenant)).thenReturn(java.util.Optional.of(project));
+        when(projects.findById(projectId)).thenReturn(java.util.Optional.of(project));
+        com.dalai.llama.preprod.domain.entity.Shot first = new com.dalai.llama.preprod.domain.entity.Shot();
+        first.setId(UUID.randomUUID());
+        first.setShotNumber(1);
+        com.dalai.llama.preprod.domain.entity.Shot third = new com.dalai.llama.preprod.domain.entity.Shot();
+        third.setId(UUID.randomUUID());
+        third.setShotNumber(3);
+        when(shots.findByProjectIdOrderByShotNumberAsc(projectId)).thenReturn(java.util.List.of(first, third));
+        var opening = image(com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION, "opening.png");
+        opening.setId(UUID.randomUUID());
+        opening.setShotId(first.getId());
+        var hero = image(com.dalai.llama.preprod.domain.ShotImageKind.PRODUCTION, "hero.png");
+        hero.setId(UUID.randomUUID());
+        hero.setShotId(third.getId());
+        when(shotImages.findByShotId(first.getId())).thenReturn(java.util.List.of(opening));
+        when(shotImages.findByShotId(third.getId())).thenReturn(java.util.List.of(hero));
+        when(minio.getPresignedObjectUrl(org.mockito.ArgumentMatchers.any())).thenAnswer(call ->
+                "https://minio/" + call.<io.minio.GetPresignedObjectUrlArgs>getArgument(0).object() + "?sig");
+
+        // Until one is chosen, the first shot's frame is the thumbnail.
+        assertThat(service.posterFrameViews(tenant, projectId)).extracting(ShowcaseSourceService.PosterFrameView::chosen)
+                .containsExactly(true, false);
+
+        var after = service.choosePoster(tenant, projectId, hero.getId());
+
+        assertThat(after).extracting(ShowcaseSourceService.PosterFrameView::chosen).containsExactly(false, true);
+        assertThat(after.get(1).shotNumber()).isEqualTo(3);
+        assertThat(service.posterUrl(projectId)).isEqualTo("https://minio/hero.png?sig");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.choosePoster(tenant, projectId, UUID.randomUUID()))
+                .hasMessageContaining("isn't one of this film's shots");
+    }
+
     private static com.dalai.llama.preprod.domain.entity.ShotImage image(com.dalai.llama.preprod.domain.ShotImageKind kind, String key) {
         com.dalai.llama.preprod.domain.entity.ShotImage i = new com.dalai.llama.preprod.domain.entity.ShotImage();
         i.setKind(kind);

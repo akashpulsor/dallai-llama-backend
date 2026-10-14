@@ -100,6 +100,10 @@ public class Project {
     @Column(name = "marketing_terms_accepted_at")
     private OffsetDateTime marketingTermsAcceptedAt;
 
+    /** The shot frame chosen as the film's thumbnail on the public profile; null for the default. */
+    @Column(name = "poster_image_id")
+    private UUID posterImageId;
+
     /** chat-service session id, created once the client locks the package -- null until then. */
     @Column(name = "chat_session_id")
     private UUID chatSessionId;

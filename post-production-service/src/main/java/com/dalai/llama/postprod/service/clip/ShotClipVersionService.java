@@ -467,9 +467,14 @@ public class ShotClipVersionService {
     public ShotClipVersion storeConformed(Context context, UUID sourceJobId, Path generated, ClipProbe generatedProbe,
                                           Path conformed, ClipProbe conformedProbe, boolean activate) {
         repository.lockByShotId(context.shotId());
-        // The clip as generated is kept once per render, not again with every slow-down of it.
+        // The clip as generated is kept once per render, not again with every slow-down of it. With
+        // no version in use yet it IS the one in use -- what the shot plays until a cut is chosen --
+        // not one more preview to decide on beside the slowed cut.
         if (!repository.existsByShotIdAndSourceJobIdAndOrigin(context.shotId(), sourceJobId, ClipOrigin.GENERATED)) {
-            addVersion(context, sourceJobId, ClipOrigin.GENERATED, generated, generatedProbe);
+            ShotClipVersion asGenerated = addVersion(context, sourceJobId, ClipOrigin.GENERATED, generated, generatedProbe);
+            if (repository.findByShotIdAndStatus(context.shotId(), ClipVersionStatus.ACTIVE).isEmpty()) {
+                accept(context.tenantId(), context.shotId(), asGenerated.getVersionId());
+            }
         }
         ShotClipVersion cut = addVersion(context, sourceJobId, ClipOrigin.CONFORMED, conformed, conformedProbe);
         return activate ? accept(context.tenantId(), context.shotId(), cut.getVersionId()) : cut;

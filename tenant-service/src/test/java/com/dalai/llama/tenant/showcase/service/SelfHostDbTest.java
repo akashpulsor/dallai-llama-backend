@@ -107,8 +107,9 @@ class SelfHostDbTest extends ShowcaseDbTestSupport {
         assertThat(cards).extracting(PublicShowcaseCard::publicId).containsExactlyInAnyOrder("pub0000011", "pub0000012");
         PublicShowcaseCard privateCard = cards.stream().filter(c -> c.publicId().equals("pub0000011")).findFirst().orElseThrow();
         assertThat(privateCard.thumbnailUrl()).endsWith("/showcase/pub0000011/poster");
+        // Public on YouTube too, but a platform film shows the frame its creator chose, not YouTube's picture.
         assertThat(cards.stream().filter(c -> c.publicId().equals("pub0000012")).findFirst().orElseThrow().thumbnailUrl())
-                .isEqualTo("https://i/public00001.jpg");
+                .endsWith("/showcase/pub0000012/poster");
         assertThat(publicService.poster("pub0000011")).contains("https://minio/frame.png?sig");
         assertThat(publicService.selfSource("pub0000011")).get()
                 .extracting(PublicShowcaseService.SelfSourceView::url).isEqualTo("https://minio/film-stamped.mp4?sig");

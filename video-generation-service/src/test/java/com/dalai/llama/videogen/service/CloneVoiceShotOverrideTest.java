@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -174,5 +175,14 @@ class CloneVoiceShotOverrideTest {
 
         assertThat(service.cloneVoice(tenant, project, shotId, "Theek hai.").providerVoiceId()).isEqualTo("voice-ravi");
         assertThat(service.cloneVoice(tenant, project, shotId, "Ho gaya?").providerVoiceId()).isEqualTo("voice-meera");
+        // Recording the shot's whole line records each line on its own, in its own speaker's voice.
+        when(shot.voiceOver()).thenReturn("Ho gaya? Theek hai.");
+        org.mockito.Mockito.clearInvocations(gateway, audio);
+        service.cloneVoice(tenant, project, shotId, "Ho gaya? Theek hai.");
+        ArgumentCaptor<LlmGatewayChatRequest> sent = ArgumentCaptor.forClass(LlmGatewayChatRequest.class);
+        verify(gateway, org.mockito.Mockito.times(2)).chat(anyString(), anyString(), sent.capture());
+        assertThat(sent.getAllValues()).extracting(r -> r.params().get("voice_id")).containsExactly("voice-meera", "voice-ravi");
+        verify(audio).save(any(), any(), any(), eq(askBeat), eq("Ho gaya?"), anyString(), eq("voice-meera"), anyString());
+        verify(audio).save(any(), any(), any(), eq(answerBeat), eq("Theek hai."), anyString(), eq("voice-ravi"), anyString());
     }
 }

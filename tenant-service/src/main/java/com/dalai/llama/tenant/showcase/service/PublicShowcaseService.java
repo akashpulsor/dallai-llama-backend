@@ -197,8 +197,9 @@ public class PublicShowcaseService {
     /** YouTube's thumbnail, except for a platform film that is private on YouTube (YouTube shows
      * nobody its picture): that one's poster is its own first frame, served by {@link #poster}. */
     private String thumbnail(ShowcaseItem i, YouTubeVideo v) {
-        boolean privateOnYouTube = v == null || v.getPrivacyStatus() == null || "private".equals(v.getPrivacyStatus());
-        return i.getOrigin() == ShowcaseOrigin.PLATFORM && privateOnYouTube
+        // A film made on Dalaillama shows the frame its creator chose (else its first shot's), whatever
+        // YouTube has -- the profile plays our own copy of it, and the creator picks how it looks.
+        return i.getOrigin() == ShowcaseOrigin.PLATFORM
                 ? publicApiBaseUrl + "/showcase/" + i.getPublicId() + "/poster"
                 : v.getThumbnailUrl();
     }

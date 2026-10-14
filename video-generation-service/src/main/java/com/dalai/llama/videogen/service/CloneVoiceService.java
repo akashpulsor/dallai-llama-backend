@@ -83,6 +83,26 @@ public class CloneVoiceService {
         String clonedLine = text == null || text.isBlank() ? defaultLineFor(shotBundle.shot()) : text.trim();
         List<PreProductionViews.ShotDialogueBeatView> beats = shotBundle.dialogueBeats() == null
                 ? List.of() : shotBundle.dialogueBeats();
+
+        // The shot's whole line, asked for from the shot, in a shot with several lines: each line is
+        // recorded on its own, in its own speaker's voice, so it can be laid at its planned moment.
+        // One recording of everything put every line in one voice with no gaps between them.
+        List<PreProductionViews.ShotDialogueBeatView> lines = beats.stream()
+                .filter(beat -> beat.text() != null && !beat.text().isBlank())
+                .sorted(java.util.Comparator.comparing(b -> b.startSeconds() == null ? java.math.BigDecimal.ZERO : b.startSeconds()))
+                .toList();
+        boolean wholeLine = clonedLine.equals(defaultLineFor(shotBundle.shot()))
+                && lines.stream().noneMatch(beat -> clonedLine.equals(beat.text().trim()));
+        if (wholeLine && lines.size() > 1) {
+            CloneVoiceResult last = null;
+            for (PreProductionViews.ShotDialogueBeatView beat : lines) {
+                last = cloneVoice(tenantId, projectId, shotBundle, beat.text().trim(), bundle, beat.id());
+                preProductionServiceClient.saveBeatClonedVoice(tenantId, shotId, beat.id(), last.providerVoiceId());
+            }
+            log.info("clone-voice recorded each line of the shot projectId={} shotId={} lines={} elapsedMs={}",
+                    projectId, shotId, lines.size(), System.currentTimeMillis() - startMs);
+            return last;
+        }
         List<PreProductionViews.ShotDialogueBeatView> matchingBeats = beats.stream()
                 .filter(beat -> beat.text() != null && clonedLine.equals(beat.text().trim())).toList();
         if (matchingBeats.isEmpty() && beats.size() == 1) {
