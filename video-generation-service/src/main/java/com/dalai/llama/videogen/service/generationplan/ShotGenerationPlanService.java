@@ -1,5 +1,6 @@
 package com.dalai.llama.videogen.service.generationplan;
 
+import com.dalai.llama.videogen.service.render.ClipFinishing;
 import com.dalai.llama.videogen.domain.JobStatus;
 import com.dalai.llama.videogen.domain.ReferenceKind;
 import com.dalai.llama.videogen.domain.entity.ShotGenerationPlan;
@@ -196,7 +197,7 @@ public class ShotGenerationPlanService {
         variables.put("durationSeconds", plannedText(assembled.shotContext()));
         variables.put("generationDurationSeconds", String.valueOf(plan.getGenerationDurationSeconds()));
         variables.put("generationFps", fpsText(plan.getGenerationFps()));
-        variables.put("requiredActions", actionsText(actionViews(state.actions())));
+        variables.put("requiredActions", actionsText(clipActions(state, plan.getGenerationDurationSeconds())));
         List<GenerationPlanLlm.IntervalAnswer> intervals = llm.timeline(tenantId, projectId, variables);
         return view(store.saveTimeline(plan.getPlanId(), plan.getGenerationDurationSeconds(), plan.getGenerationFps(), intervals));
     }
@@ -285,7 +286,7 @@ public class ShotGenerationPlanService {
             Map<String, String> variables = new LinkedHashMap<>();
             variables.put("approvedCreativeDirection", creativeDirection(assembled));
             variables.put("shotJson", videoShotPromptService.shotJson(assembled.shotContext()));
-            variables.put("requiredActions", actionsText(actionViews(state.actions())));
+            variables.put("requiredActions", actionsText(clipActions(state, plan.getGenerationDurationSeconds())));
             variables.put("sourceActionTimeline", timelineForCurrentSettings(state));
             variables.put("generationDurationSeconds", plan.getGenerationDurationSeconds() == null
                     ? plannedText(assembled.shotContext()) : String.valueOf(plan.getGenerationDurationSeconds()));
@@ -405,7 +406,7 @@ public class ShotGenerationPlanService {
         if (plan.getGenerationDurationSeconds() == null) {
             throw VideoGenException.upstream("The analysis suggested no duration for this shot -- choose one in the video studio.");
         }
-        if (!timelineUsable(state)) {
+        if (!timelineUsable(state, clipPerShotSecond(state, state.plan().getGenerationDurationSeconds()))) {
             buildTimeline(tenantId, projectId, shotId);
         }
         composePrompt(tenantId, projectId, shotId);
@@ -419,6 +420,10 @@ public class ShotGenerationPlanService {
 
     /** Built for the selected seconds and frame rate, after the latest analysis, and passing its checks. */
     static boolean timelineUsable(ShotGenerationPlanStore.PlanState state) {
+        return timelineUsable(state, BigDecimal.ONE);
+    }
+
+    static boolean timelineUsable(ShotGenerationPlanStore.PlanState state, BigDecimal clipPerShotSecond) {
         ShotGenerationPlan plan = state.plan();
         if (state.intervals().isEmpty() || plan.getTimelineBuiltAt() == null
                 || !Objects.equals(plan.getTimelineDurationSeconds(), plan.getGenerationDurationSeconds())
@@ -429,7 +434,8 @@ public class ShotGenerationPlanService {
         List<SourceTemporalActionView> timeline = state.intervals().stream().map(i -> new SourceTemporalActionView(
                 i.getStartSeconds(), i.getEndSeconds(), i.getActionId(), i.getAction(), i.getSubjectState(),
                 i.getCameraBehavior(), Boolean.TRUE.equals(i.getHoldRequired()))).toList();
-        return GenerationPlanValidator.timeline(actionViews(state.actions()), timeline, plan.getTimelineDurationSeconds()).isEmpty();
+        return GenerationPlanValidator.timeline(GenerationPlanValidator.inClipSeconds(actionViews(state.actions()), clipPerShotSecond),
+                timeline, plan.getTimelineDurationSeconds()).isEmpty();
     }
 
     // ------------------------------------------------------------------ helpers
@@ -652,6 +658,8 @@ public class ShotGenerationPlanService {
                 i.getCameraBehavior(), Boolean.TRUE.equals(i.getHoldRequired()))).toList();
 
         ContinuationFrameView continuation = continuationView(plan);
+        BigDecimal timelineRatio = clipPerShotSecond(state, plan.getTimelineDurationSeconds() != null
+                ? plan.getTimelineDurationSeconds() : plan.getGenerationDurationSeconds());
 
         return new ShotGenerationPlanView(
                 plan.getPlanId(), plan.getProjectId(), plan.getShotId(), plan.getShotRef(), plan.getModelId(),
@@ -659,7 +667,9 @@ public class ShotGenerationPlanService {
                 GenerationPlanValidator.assessment(actions, assessment, capabilities),
                 settingsView(capabilities, plan.getGenerationDurationSeconds(), plan.getGenerationFps(), assessment),
                 plan.getTimelineDurationSeconds(), plan.getTimelineFps(), plan.getTimelineBuiltAt(), timeline,
-                GenerationPlanValidator.timeline(actions, timeline, plan.getTimelineDurationSeconds()),
+                GenerationPlanValidator.timeline(GenerationPlanValidator.inClipSeconds(actions, timelineRatio), timeline,
+                        plan.getTimelineDurationSeconds()),
+                timelineRatio,
                 new VideoPromptDraftView(plan.getAiRecommendedPrompt(), plan.getUserEditedPrompt(), plan.getDraftRevision(),
                         plan.getPromptDurationSeconds(), plan.getPromptFps(), plan.getPromptContinuationObjectKey(),
                         plan.getPromptComposedAt(), plan.getDraftSavedAt(),
@@ -688,6 +698,7 @@ public class ShotGenerationPlanService {
         VideoModelCapabilitiesView capabilities = capabilityService.capabilities(model);
         return new ShotGenerationPlanView(null, projectId, shotId, shot.shotRef(), model, planned(shot), capabilities,
                 actions, null, List.of(), settingsView(capabilities, null, null, null), null, null, null, List.of(), List.of(),
+                BigDecimal.ONE,
                 new VideoPromptDraftView(null, null, 0, null, null, null, null, null,
                         promptBuilderService.maxPromptLengthFor(model)),
                 null, null, null);
@@ -698,6 +709,18 @@ public class ShotGenerationPlanService {
         return new VideoGenerationSettingsView(duration, fps,
                 duration == null ? List.of() : GenerationPlanValidator.settingsErrors(capabilities, duration, fps),
                 GenerationPlanValidator.settingsWarnings(duration, assessment));
+    }
+
+    /** How much of a clip of {@code clipSeconds} one second of this shot takes -- the conform step's
+     * answer, so planning never decides for itself whether a clip is slowed. */
+    private BigDecimal clipPerShotSecond(ShotGenerationPlanStore.PlanState state, Integer clipSeconds) {
+        ShotGenerationPlan plan = state.plan();
+        return ClipFinishing.clipSecondsPerShotSecond(clipSeconds, plan.getPlannedDurationSeconds());
+    }
+
+    /** The plan's actions with fixed lengths in seconds of a clip of {@code clipSeconds}. */
+    private List<RequiredActionView> clipActions(ShotGenerationPlanStore.PlanState state, Integer clipSeconds) {
+        return GenerationPlanValidator.inClipSeconds(actionViews(state.actions()), clipPerShotSecond(state, clipSeconds));
     }
 
     private static List<RequiredActionView> actionViews(List<ShotGenerationPlanAction> rows) {

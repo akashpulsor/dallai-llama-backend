@@ -99,9 +99,13 @@ public class ShotGenerationPlanStore {
      * <p>The clip is generated at the shot's own length ({@code shotLengthClipSeconds}), not at the
      * assessment's shorter recommendation: a prompt timed for 3s inside a 5s shot describes a film
      * the creator did not plan, and slowing it to fit puts a spoken line out of sync. The shorter
-     * length stays on the plan as a recommendation the creator can choose. A selection the creator
-     * made is kept until the shot's length or model changes -- then the old clip length no longer
-     * belongs to this shot.
+     * length stays on the plan as a recommendation the creator can choose.
+     *
+     * <p>That is only the starting point. The clip length and the shot's length are separate
+     * decisions -- one is what the model renders, the other is how long the shot runs in the film --
+     * so a clip length the creator chose is kept when the shot's length changes. Resetting it used
+     * to replace a creator's 3s clip with 7s behind their back. Only a new model, whose lengths may
+     * not include the old one, starts the clip again.
      */
     @Transactional
     public PlanState saveAssessment(UUID planId, String shotRef, String modelId, BigDecimal plannedDurationSeconds,
@@ -109,8 +113,6 @@ public class ShotGenerationPlanStore {
                                     List<RequiredActionView> actions, GenerationPlanLlm.AssessmentAnswer answer) {
         ShotGenerationPlan plan = planRepository.findById(planId).orElseThrow();
         boolean modelChanged = !Objects.equals(plan.getModelId(), modelId);
-        boolean lengthChanged = plannedDurationSeconds != null && (plan.getPlannedDurationSeconds() == null
-                || plan.getPlannedDurationSeconds().compareTo(plannedDurationSeconds) != 0);
         plan.setShotRef(shotRef);
         plan.setModelId(modelId);
         plan.setPlannedDurationSeconds(plannedDurationSeconds);
@@ -121,7 +123,7 @@ public class ShotGenerationPlanStore {
         plan.setRecommendedFps(answer.recommendedGenerationFps() == null || answer.recommendedGenerationFps() <= 0
                 ? null : answer.recommendedGenerationFps());
         plan.setAssessmentReasoning(answer.reasoning());
-        if (modelChanged || lengthChanged || plan.getGenerationDurationSeconds() == null) {
+        if (modelChanged || plan.getGenerationDurationSeconds() == null) {
             plan.setGenerationDurationSeconds(shotLengthClipSeconds != null
                     ? shotLengthClipSeconds : plan.getRecommendedDurationSeconds());
         }

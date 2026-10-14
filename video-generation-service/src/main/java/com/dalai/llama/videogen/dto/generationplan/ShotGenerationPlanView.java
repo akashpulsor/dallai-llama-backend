@@ -30,6 +30,9 @@ public record ShotGenerationPlanView(
         OffsetDateTime timelineBuiltAt,
         List<SourceTemporalActionView> timeline,
         List<ValidationIssueView> timelineIssues,
+        /** Seconds of the clip one second of the shot takes: below 1 when a shorter clip is slowed to
+         * the shot afterwards. Fixed lengths in {@code timelineIssues} are in clip seconds by it. */
+        BigDecimal clipSecondsPerShotSecond,
         VideoPromptDraftView prompt,
         ContinuationFrameView continuationFrame,
         UUID submittedJobId,

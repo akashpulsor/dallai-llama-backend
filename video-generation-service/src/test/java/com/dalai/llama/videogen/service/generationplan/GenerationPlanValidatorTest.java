@@ -166,6 +166,26 @@ class GenerationPlanValidatorTest {
     }
 
     @Test
+    void aLineInAShorterClipThatIsSlowedAfterwardsIsCheckedInClipSeconds() {
+        // A 7s shot made from a 3s clip slowed 7/3x: the 6.084s line needs 6.084 x 3/7 = 2.607s of clip.
+        List<RequiredActionView> line = List.of(
+                new RequiredActionView("OPEN", ShotActionKind.OPENING_STATE, "Opening state", null, null),
+                new RequiredActionView("D1", ShotActionKind.DIALOGUE, "Ravi says it.", new BigDecimal("6.084"), "OPEN"),
+                new RequiredActionView("END", ShotActionKind.ENDING_STATE, "Final state", null, "D1"));
+        List<SourceTemporalActionView> threeSeconds = List.of(interval("0", "0.2", "OPEN"),
+                interval("0.2", "2.85", "D1"), interval("2.85", "3", "END"));
+
+        // In shot seconds a 6s line can never fit 3s -- the check that would not clear.
+        assertThat(codes(GenerationPlanValidator.timeline(line, threeSeconds, 3))).containsExactly("FIXED_TIMING_SHORTENED");
+
+        List<RequiredActionView> inClip = GenerationPlanValidator.inClipSeconds(line, new BigDecimal("0.428571"));
+        assertThat(inClip.get(1).fixedSeconds()).isEqualByComparingTo("2.607");
+        assertThat(GenerationPlanValidator.timeline(inClip, threeSeconds, 3)).isEmpty();
+        // Not slowed: unchanged.
+        assertThat(GenerationPlanValidator.inClipSeconds(line, BigDecimal.ONE)).isSameAs(line);
+    }
+
+    @Test
     void aTimelineEndingOnAHalfSecondIsShortOfAWholeSecondDuration() {
         assertThat(codes(GenerationPlanValidator.timeline(ACTIONS, continuousTimeline(), 6))).contains("TIMELINE_NOT_TO_END");
     }

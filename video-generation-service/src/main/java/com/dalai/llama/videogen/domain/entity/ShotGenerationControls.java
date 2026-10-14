@@ -33,14 +33,8 @@ public class ShotGenerationControls {
     @Column(name = "project_id", nullable = false)
     private UUID projectId;
 
-    @Column(name = "fit_duration_to_dialogue", nullable = false)
-    private boolean fitDurationToDialogue;
 
-    @Column(name = "auto_dub_dialogue", nullable = false)
-    private boolean autoDubDialogue;
 
-    @Column(name = "mix_background_music", nullable = false)
-    private boolean mixBackgroundMusic;
 
     @Column(name = "prevent_duplicate_renders", nullable = false)
     private boolean preventDuplicateRenders;
@@ -48,11 +42,7 @@ public class ShotGenerationControls {
     @Column(name = "attach_previous_last_frame", nullable = false)
     private boolean attachPreviousLastFrame;
 
-    @Column(name = "conform_to_planned_duration", nullable = false)
-    private boolean conformToPlannedDuration;
 
-    @Column(name = "interpolate_when_slowing", nullable = false)
-    private boolean interpolateWhenSlowing;
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;

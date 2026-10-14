@@ -2,7 +2,6 @@ package com.dalai.llama.videogen.kafka;
 
 import com.dalai.llama.videogen.domain.entity.VideoGenJob;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 import com.dalai.llama.videogen.service.ShotGenerationOrchestrator;
 import com.dalai.llama.videogen.web.TenantContext;
 import com.dalai.llama.videogen.web.TenantContextHolder;
@@ -75,8 +74,7 @@ public class VideoGenerationRequestedConsumer {
         TenantContext ctx = new TenantContext(UUID.fromString(event.tenantId()), event.userId());
         TenantContextHolder.set(ctx);
         try {
-            DialogueFitChoice fit = event.fitChoice() == null ? DialogueFitChoice.EXTEND : event.fitChoice();
-            orchestrator.runGeneration(ctx, event.jobId(), fit);
+            orchestrator.runGeneration(ctx, event.jobId());
         } catch (RuntimeException ex) {
             // runGeneration already records the failure on the job row, which is what the page
             // polls; this is the operator-facing line.

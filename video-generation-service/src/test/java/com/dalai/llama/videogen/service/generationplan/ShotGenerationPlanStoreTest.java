@@ -131,14 +131,17 @@ class ShotGenerationPlanStoreTest {
     }
 
     @Test
-    void changingTheShotsLengthMovesTheClipToTheNewLength() {
-        plan.setPlannedDurationSeconds(new BigDecimal("5.000"));
-        plan.setGenerationDurationSeconds(5);
+    void changingTheShotsLengthKeepsTheClipLengthTheCreatorChose() {
+        // A 2s shot lengthened to 7s: the 3s clip is the creator's choice, not a copy of the shot's
+        // length, so it stays. Update builds for it; the studio offers 7s as "whole shot".
+        plan.setPlannedDurationSeconds(new BigDecimal("2.000"));
+        plan.setGenerationDurationSeconds(3);
         plan.setGenerationFps(24);
 
-        store.saveAssessment(plan.getPlanId(), "shot-1", "m", new BigDecimal("7.000"), 8, ACTIONS, recommends(3));
+        store.saveAssessment(plan.getPlanId(), "shot-1", "m", new BigDecimal("7.000"), 7, ACTIONS, recommends(3));
 
-        assertThat(plan.getGenerationDurationSeconds()).isEqualTo(8);
+        assertThat(plan.getGenerationDurationSeconds()).isEqualTo(3);
+        assertThat(plan.getPlannedDurationSeconds()).isEqualByComparingTo("7");
         // The frame rate was the creator's and has nothing to do with the length.
         assertThat(plan.getGenerationFps()).isEqualTo(24);
     }

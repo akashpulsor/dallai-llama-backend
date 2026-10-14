@@ -35,7 +35,7 @@ class GenerationControlsServiceTest {
         GenerationControlsView controls = service.forProject(tenant, project);
 
         assertThat(controls).isEqualTo(GenerationControlsView.DEFAULTS);
-        assertThat(controls.fitDurationToDialogue()).isFalse();
+        assertThat(controls.preventDuplicateRenders()).isTrue();
         assertThat(controls.attachPreviousLastFrame()).isFalse();
     }
 
@@ -47,9 +47,9 @@ class GenerationControlsServiceTest {
         when(repository.findById(project)).thenReturn(Optional.of(row));
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 
-        GenerationControlsView saved = service.update(tenant, project, new GenerationControlsView(true, false, false, false, true, true, true));
+        GenerationControlsView saved = service.update(tenant, project, new GenerationControlsView(false, true));
 
-        assertThat(saved).isEqualTo(new GenerationControlsView(true, false, false, false, true, true, true));
+        assertThat(saved).isEqualTo(new GenerationControlsView(false, true));
         assertThat(row.getPreferredVoiceCloneModel()).isEqualTo("fal-ai/minimax/voice-clone");
         assertThat(row.getAutoApprove()).isTrue();
     }
@@ -76,21 +76,21 @@ class GenerationControlsServiceTest {
     void aShotWithoutItsOwnSetFollowsTheProjectDefaults() {
         when(shotRepository.findByShotIdAndTenantId(shot, tenant)).thenReturn(Optional.empty());
         when(repository.findById(project)).thenReturn(Optional.of(ProjectConfig.builder().projectId(project).tenantId(tenant)
-                .mixBackgroundMusic(false).build()));
+                .attachPreviousLastFrame(true).build()));
 
         ShotGenerationControlsView view = service.shotView(tenant, project, shot);
 
         assertThat(view.custom()).isFalse();
-        assertThat(view.controls().mixBackgroundMusic()).isFalse();
+        assertThat(view.controls().attachPreviousLastFrame()).isTrue();
     }
 
     @Test
     void aShotsOwnSetReplacesTheDefaultsForThatShotOnly() {
         when(shotRepository.findByShotIdAndTenantId(shot, tenant)).thenReturn(Optional.of(ShotGenerationControls.builder()
-                .shotId(shot).tenantId(tenant).projectId(project).mixBackgroundMusic(true).conformToPlannedDuration(false).build()));
+                .shotId(shot).tenantId(tenant).projectId(project).preventDuplicateRenders(false).build()));
         when(repository.findById(project)).thenReturn(Optional.empty());
 
-        assertThat(service.forShot(tenant, project, shot).conformToPlannedDuration()).isFalse();
+        assertThat(service.forShot(tenant, project, shot).preventDuplicateRenders()).isFalse();
         assertThat(service.shotView(tenant, project, shot).custom()).isTrue();
         // Another shot in the same project still gets the defaults.
         assertThat(service.forShot(tenant, project, UUID.randomUUID())).isEqualTo(GenerationControlsView.DEFAULTS);

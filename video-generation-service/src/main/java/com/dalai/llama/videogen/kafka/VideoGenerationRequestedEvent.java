@@ -1,6 +1,5 @@
 package com.dalai.llama.videogen.kafka;
 
-import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 
 import java.util.UUID;
 
@@ -11,17 +10,11 @@ import java.util.UUID;
  * {@link PrepareBatchRequestedEvent} does -- everything else about the shot lives on the
  * video_gen_job and shot_prompt rows, so a replayed or late event reads the request as recorded
  * rather than a stale copy baked into the payload.
- *
- * <p>{@code fitChoice} is the exception, and has to be here: it is a decision made at the moment of
- * approving -- give the shot the seconds its line needs, or generate as planned and accept the line
- * being hurried -- and it is not written to any row. Losing it would silently fall back to a
- * default the creator did not choose.
  */
 public record VideoGenerationRequestedEvent(
         UUID jobId,
         String tenantId,
         UUID projectId,
-        UUID userId,
-        DialogueFitChoice fitChoice
+        UUID userId
 ) {
 }

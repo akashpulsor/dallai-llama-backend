@@ -54,17 +54,8 @@ public class ProjectConfig {
     // ---- Generation controls (V39). Each switches one step of the render path; the defaults are
     // the path that always lets a shot be generated. See GenerationControlsService.
 
-    @Builder.Default
-    @Column(name = "fit_duration_to_dialogue", nullable = false)
-    private Boolean fitDurationToDialogue = false;
 
-    @Builder.Default
-    @Column(name = "auto_dub_dialogue", nullable = false)
-    private Boolean autoDubDialogue = true;
 
-    @Builder.Default
-    @Column(name = "mix_background_music", nullable = false)
-    private Boolean mixBackgroundMusic = true;
 
     @Builder.Default
     @Column(name = "prevent_duplicate_renders", nullable = false)
@@ -74,13 +65,7 @@ public class ProjectConfig {
     @Column(name = "attach_previous_last_frame", nullable = false)
     private Boolean attachPreviousLastFrame = false;
 
-    @Builder.Default
-    @Column(name = "conform_to_planned_duration", nullable = false)
-    private Boolean conformToPlannedDuration = true;
 
-    @Builder.Default
-    @Column(name = "interpolate_when_slowing", nullable = false)
-    private Boolean interpolateWhenSlowing = true;
 
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;

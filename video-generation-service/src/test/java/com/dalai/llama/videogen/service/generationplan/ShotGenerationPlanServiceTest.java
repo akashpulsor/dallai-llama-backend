@@ -456,7 +456,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnTheFirstShotStillGeneratesWithoutAFrame() {
         orchestratorAccepts();
-        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(true, true));
         PreProductionViews.PrepareBundleView bundle = bundle(shotId, UUID.randomUUID());
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
 
@@ -469,7 +469,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withAutoAttachOnAReadyFrameFromThePreviousShotIsSentWithTheRender() {
         orchestratorAccepts();
-        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, true, true, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(true, true));
         UUID previous = UUID.randomUUID();
         PreProductionViews.PrepareBundleView bundle = bundle(previous, shotId);
         when(preProduction.getPrepareBundle(tenant, project)).thenReturn(Optional.of(bundle));
@@ -486,7 +486,7 @@ class ShotGenerationPlanServiceTest {
     @Test
     void withDuplicateProtectionSwitchedOffTheCreatorMayQueueAgain() {
         orchestratorAccepts();
-        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, false));
         plan.setSubmittedJobId(UUID.randomUUID());
         when(orchestrator.getJob(tenant, plan.getSubmittedJobId())).thenReturn(jobView("PROCESSING"));
 

@@ -5,6 +5,7 @@ import com.dalai.llama.videogen.domain.ShotSize;
 import com.dalai.llama.videogen.dto.generationplan.RequiredActionView;
 import com.dalai.llama.videogen.dto.shotcontext.Camera;
 import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
+import com.dalai.llama.videogen.dto.shotcontext.MotionGraphic;
 import com.dalai.llama.videogen.dto.shotcontext.Narrative;
 import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import org.junit.jupiter.api.Test;
@@ -150,5 +151,34 @@ class RequiredActionExtractorTest {
                 "She looks up and asks \"Is it ready? Now?\" while holding the cup. He nods.", null, null, null));
         assertThat(ids(actions)).containsExactly("OPEN", "A1", "A2", "END");
         assertThat(actions.get(1).description()).endsWith("holding the cup.");
+    }
+
+    @Test
+    void aMotionGraphicIsPlannedFromItsAnimationNotesAndItsWordsMustAppear() {
+        ShotContext graphic = shot("A sleek reveal of the AstroNext.ai app.", null, List.of(), null);
+        when(graphic.isPlannedMotionGraphic()).thenReturn(true);
+        when(graphic.motionGraphic()).thenReturn(new MotionGraphic("App reveal", "Your stars, decoded.", "Flat neon",
+                "The logo fades in at centre. The tagline wipes in from the left. Both hold to the end."));
+
+        List<RequiredActionView> actions = new RequiredActionExtractor().extract(graphic);
+
+        assertThat(ids(actions)).containsExactly("OPEN", "A1", "A2", "A3", "A4", "END");
+        assertThat(actions.get(1).description()).isEqualTo("The logo fades in at centre.");
+        assertThat(actions.get(2).dependsOnActionId()).isEqualTo("A1");
+        // The words, verbatim, on a track of their own.
+        assertThat(actions.get(4).description()).isEqualTo("On-screen text appears, exactly as written: \"Your stars, decoded.\"");
+        assertThat(actions.get(4).dependsOnActionId()).isEqualTo("OPEN");
+        // The animation, not the text, is what the final state waits for.
+        assertThat(actions.get(5).dependsOnActionId()).isEqualTo("A3");
+    }
+
+    @Test
+    void aMotionGraphicWithoutAnimationNotesFallsBackToItsScriptLine() {
+        ShotContext graphic = shot("Abstract lines coalesce into the logo.", null, List.of(), null);
+        when(graphic.isPlannedMotionGraphic()).thenReturn(true);
+        when(graphic.motionGraphic()).thenReturn(new MotionGraphic("Logo", null, null, null));
+
+        assertThat(new RequiredActionExtractor().extract(graphic).get(1).description())
+                .isEqualTo("Abstract lines coalesce into the logo.");
     }
 }

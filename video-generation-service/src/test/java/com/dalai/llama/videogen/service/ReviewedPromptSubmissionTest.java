@@ -18,7 +18,6 @@ import com.dalai.llama.videogen.repository.ShotPromptReferenceRepository;
 import com.dalai.llama.videogen.repository.ShotPromptRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 import com.dalai.llama.videogen.web.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +56,6 @@ class ReviewedPromptSubmissionTest {
     private final ShotPromptReferenceRepository references = mock(ShotPromptReferenceRepository.class);
     private final FoleyCueService foley = mock(FoleyCueService.class);
     private final VideoGenJobPersistenceService jobPersistence = mock(VideoGenJobPersistenceService.class);
-    private final BeatDubbingService dubbing = mock(BeatDubbingService.class);
     private final VideoShotPromptService promptWriter = mock(VideoShotPromptService.class);
     private final VideoGenerationRequestedPublisher publisher = mock(VideoGenerationRequestedPublisher.class);
     private final GenerationControlsService controls = mock(GenerationControlsService.class);
@@ -76,8 +74,8 @@ class ReviewedPromptSubmissionTest {
         orchestrator = new ShotGenerationOrchestrator(mock(ModelRecommendationService.class), promptBuilder,
                 mock(DialogueFitService.class), compression, foley, costs, mock(VideoGenDispatchService.class),
                 projectConfig, jobs, prompts, references, mock(VideoGenJobDialogueBeatRepository.class),
-                mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence, dubbing,
-                durationPolicy, new com.dalai.llama.videogen.service.render.ClipFinishing(dubbing,
+                mock(FoleyCueRepository.class), mock(VideoAssetPersistenceService.class), jobPersistence,
+                durationPolicy, new com.dalai.llama.videogen.service.render.ClipFinishing(
                         jobs, mock(com.dalai.llama.videogen.service.postproduction.PostProductionClient.class)),
                 promptWriter, publisher, controls, "bytedance/seedance-2.0/fast");
         when(durationPolicy.clamp(anyString(), any())).thenAnswer(call -> call.getArgument(1));
@@ -143,8 +141,7 @@ class ReviewedPromptSubmissionTest {
         verify(costs).estimate("0-6s he stands.", "bytedance/seedance-2.0/fast", 6);
         ArgumentCaptor<VideoGenerationRequestedEvent> event = ArgumentCaptor.forClass(VideoGenerationRequestedEvent.class);
         verify(publisher).publish(event.capture());
-        // The creator settled the length in the studio; the render must not resize it afterwards.
-        assertThat(event.getValue().fitChoice()).isEqualTo(DialogueFitChoice.KEEP_PLANNED);
+        assertThat(event.getValue().jobId()).isEqualTo(submitted.job().getJobId());
     }
 
     @Test
@@ -181,7 +178,7 @@ class ReviewedPromptSubmissionTest {
     }
 
     private void approve(VideoGenJob job) {
-        orchestrator.approve(new TenantContext(tenant, UUID.randomUUID()), job.getJobId(), DialogueFitChoice.KEEP_PLANNED);
+        orchestrator.approve(new TenantContext(tenant, UUID.randomUUID()), job.getJobId());
     }
 
     @Test
@@ -202,7 +199,7 @@ class ReviewedPromptSubmissionTest {
 
     @Test
     void withDuplicateProtectionOffTheCreatorDecides() {
-        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, true, true, false, false, true, true));
+        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, false));
 
         approve(existingJob(JobStatus.COMPLETED));
 
@@ -210,9 +207,7 @@ class ReviewedPromptSubmissionTest {
     }
 
     @Test
-    void withAutoDubOffTheModelPerformsTheLineItself() {
-        when(controls.forShot(any(), any(), any())).thenReturn(new GenerationControlsView(false, false, true, true, false, true, true));
-        when(dubbing.canAutoDub(any())).thenReturn(true);
+    void aShotWithALineIsRenderedSilentForItsRecordedTake() {
         ShotContextAssemblyService.AssembledShot assembled = shot();
         when(assembled.shotContext().dialogueBeats()).thenReturn(List.of(new com.dalai.llama.videogen.dto.shotcontext.DialogueBeat(
                 BigDecimal.ZERO, BigDecimal.ONE, "Ho gaya.", "ravi", null, "voice-1", "elevenlabs", null, null, "hi")));
@@ -220,7 +215,7 @@ class ReviewedPromptSubmissionTest {
         orchestrator.submitReviewedPrompt(new TenantContext(tenant, UUID.randomUUID()), project, assembled,
                 new ShotGenerationOrchestrator.ReviewedSubmission("bytedance/seedance-2.0/fast", 6, 24, "0-6s.", null));
 
-        // Not muted: with auto-dub off there is no cloned voice coming, so the clip carries its own.
-        assertThat(savedJob.get().isMuteAudio()).isFalse();
+        // The model never voices the line: the take the creator recorded is laid on afterwards.
+        assertThat(savedJob.get().isMuteAudio()).isTrue();
     }
 }

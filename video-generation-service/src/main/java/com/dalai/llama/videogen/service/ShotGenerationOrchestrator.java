@@ -29,7 +29,6 @@ import com.dalai.llama.videogen.repository.ShotPromptReferenceRepository;
 import com.dalai.llama.videogen.repository.ShotPromptRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobDialogueBeatRepository;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.dialoguefit.DialogueFitChoice;
 import com.dalai.llama.videogen.web.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,7 +61,6 @@ public class ShotGenerationOrchestrator {
     private final FoleyCueRepository foleyCueRepository;
     private final VideoAssetPersistenceService videoAssetPersistenceService;
     private final VideoGenJobPersistenceService jobPersistenceService;
-    private final BeatDubbingService beatDubbingService;
     private final com.dalai.llama.videogen.service.render.RenderDurationPolicy durationPolicy;
     private final com.dalai.llama.videogen.service.render.ClipFinishing clipFinishing;
     private final VideoShotPromptService videoShotPromptService;
@@ -86,7 +84,6 @@ public class ShotGenerationOrchestrator {
             FoleyCueRepository foleyCueRepository,
             VideoAssetPersistenceService videoAssetPersistenceService,
             VideoGenJobPersistenceService jobPersistenceService,
-            BeatDubbingService beatDubbingService,
             com.dalai.llama.videogen.service.render.RenderDurationPolicy durationPolicy,
             com.dalai.llama.videogen.service.render.ClipFinishing clipFinishing,
             VideoShotPromptService videoShotPromptService,
@@ -109,7 +106,6 @@ public class ShotGenerationOrchestrator {
         this.foleyCueRepository = foleyCueRepository;
         this.videoAssetPersistenceService = videoAssetPersistenceService;
         this.jobPersistenceService = jobPersistenceService;
-        this.beatDubbingService = beatDubbingService;
         this.durationPolicy = durationPolicy;
         this.clipFinishing = clipFinishing;
         this.videoShotPromptService = videoShotPromptService;
@@ -374,7 +370,7 @@ public class ShotGenerationOrchestrator {
         saveReferences(prompt.getPromptId(), shotContext, submission.continuationFrame());
         saveFoleyCues(prompt.getPromptId(), cues);
 
-        approve(tenantContext, job.getJobId(), DialogueFitChoice.KEEP_PLANNED);
+        approve(tenantContext, job.getJobId());
         VideoGenJob queued = requireJob(tenantId, job.getJobId());
         return new PreparedShot(queued, prompt, effectiveFlags, estimate.estimatedCost(), cues, modelId, null);
     }
@@ -382,13 +378,12 @@ public class ShotGenerationOrchestrator {
     /**
      * A new job at PENDING_APPROVAL for one shot, with its dialogue beats snapshotted. The length
      * asked of the model is always one it accepts; the planned length is kept beside it so the clip
-     * can be conformed afterwards. Whether the model makes its own audio is ClipFinishing's call.
+     * can be finished afterwards. The model never makes its own audio -- see ClipFinishing.
      */
     private VideoGenJob createJob(TenantContext tenantContext, UUID projectId, UUID shotId, ShotContext shotContext,
                                   String modelId, Integer durationSeconds, Integer fps, CostEstimate estimate) {
         Integer planned = shotContext.technical() == null ? null : shotContext.technical().durationSeconds();
         int seconds = durationPolicy.clamp(modelId, durationSeconds);
-        var controls = generationControls.forShot(tenantContext.tenantId(), projectId, shotId);
         VideoGenJob job = VideoGenJob.builder()
                 .jobId(UUID.randomUUID())
                 .tenantId(tenantContext.tenantId())
@@ -406,7 +401,7 @@ public class ShotGenerationOrchestrator {
                         ? shotContext.technical().resolution().wireValue() : null)
                 .voiceCloneModel(shotContext.technical() != null ? shotContext.technical().voiceCloneModel() : null)
                 .ttsModel(shotContext.technical() != null ? shotContext.technical().ttsModel() : null)
-                .muteAudio(clipFinishing.muteAudio(shotContext, seconds, planned, controls))
+                .muteAudio(true)
                 .status(JobStatus.PENDING_APPROVAL)
                 .approvalStatus(ApprovalStatus.PENDING)
                 .estimatedCost(estimate.estimatedCost())
@@ -497,13 +492,6 @@ public class ShotGenerationOrchestrator {
         return toJobView(requireJob(tenantId, jobId));
     }
 
-    public VideoGenJobView approve(TenantContext tenantContext, UUID jobId) {
-        return approve(tenantContext, jobId, DialogueFitChoice.EXTEND);
-    }
-
-    /** {@code fitChoice}: what to do if the shot's line does not fit the clip it was planned for --
-     * give it the seconds it needs, or generate as planned and accept the line being hurried or cut.
-     * See {@link DialogueFitChoice} and RenderDurationPolicy. */
     /**
      * Accepts the cost and queues the render. Returns as soon as it is queued, not when it is done.
      *
@@ -522,20 +510,20 @@ public class ShotGenerationOrchestrator {
      * A publish that fails takes the job to FAILED with it: a PROCESSING row with no event behind
      * it is a shot that will never render and never fail, which is the worst of both.
      */
-    public VideoGenJobView approve(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
+    public VideoGenJobView approve(TenantContext tenantContext, UUID jobId) {
         VideoGenJob job = requireJob(tenantContext.tenantId(), jobId);
         refuseDuplicateRender(job);
         job = jobPersistenceService.markQueued(jobId);
         try {
             generationRequestedPublisher.publish(new VideoGenerationRequestedEvent(
                     jobId, tenantContext.tenantId().toString(), job.getProjectId(),
-                    tenantContext.userId(), fitChoice));
+                    tenantContext.userId()));
         } catch (RuntimeException ex) {
             job = jobPersistenceService.finishFailure(jobId, "Could not queue for generation: " + ex.getMessage());
             throw ex;
         }
-        log.info("Queued a shot for generation jobId={} shotRef={} fitChoice={} estimatedCost={}",
-                jobId, job.getShotRef(), fitChoice, job.getEstimatedCost());
+        log.info("Queued a shot for generation jobId={} shotRef={} estimatedCost={}",
+                jobId, job.getShotRef(), job.getEstimatedCost());
         return toJobView(job);
     }
 
@@ -547,24 +535,21 @@ public class ShotGenerationOrchestrator {
      * all of it would hold a pooled connection for that whole window and leave every intermediate
      * state invisible to the page polling for it. Each transition commits on its own.
      */
-    public VideoGenJobView runGeneration(TenantContext tenantContext, UUID jobId, DialogueFitChoice fitChoice) {
+    public VideoGenJobView runGeneration(TenantContext tenantContext, UUID jobId) {
         requireJob(tenantContext.tenantId(), jobId);
         VideoGenJob job = jobPersistenceService.markProcessing(jobId);
         ShotPrompt prompt = latestPrompt(jobId);
         try {
-            var controls = generationControls.forShot(job.getTenantId(), job.getProjectId(), prompt.getShotId());
-            List<DialogueBeat> beats = loadDialogueBeats(jobId);
-            job.setDurationSeconds(durationPolicy.secondsToRender(job.getModelId(), job.getDurationSeconds(), beats, fitChoice, controls));
+            boolean hasLine = !loadDialogueBeats(jobId).isEmpty();
             job.setSeedUsed(deriveSeed(job.getProjectId()));
             videoGenJobRepository.save(job);
 
             DispatchResult result = videoGenDispatchService.dispatch(job, sentPrompt(prompt), prompt.getNegativePrompt(), dispatchParams(job, prompt));
-            var finished = clipFinishing.finish(job, prompt, beats, result, controls);
-            var asset = videoAssetPersistenceService.persist(jobId, finished.outputUri());
+            var asset = videoAssetPersistenceService.persist(jobId, result.outputUri());
             job = jobPersistenceService.finishSuccess(jobId,
                     result.llmGatewayJobId() == null ? null : result.llmGatewayJobId().toString(),
-                    finished.outputUri(), finished.cost(), asset.bucket(), asset.objectKey());
-            clipFinishing.requestConform(job, prompt, controls);
+                    result.outputUri(), result.actualCost(), asset.bucket(), asset.objectKey());
+            clipFinishing.requestFinish(job, prompt, hasLine);
         } catch (RuntimeException ex) {
             log.warn("Generation failed jobId={}: {}", jobId, ex.getMessage());
             job = jobPersistenceService.finishFailure(jobId, ex.getMessage());

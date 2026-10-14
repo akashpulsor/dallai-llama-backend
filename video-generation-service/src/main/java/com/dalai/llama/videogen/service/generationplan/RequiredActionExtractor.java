@@ -30,6 +30,11 @@ import java.util.regex.Pattern;
  * action sentences in order; {@code D1..Dn} its lines of dialogue (FIXED timing when the line has a
  * measured or planned length); {@code C1} the planned camera movement. Each action depends on the
  * one before it in its own track, so the order the plan wrote is the order every check enforces.
+ *
+ * <p>A motion graphic's actions are its animation notes -- how each element arrives, holds and
+ * leaves -- not the script line, which for a graphic only names what it is. Its on-screen text is an
+ * action of its own, quoted exactly, so the timeline gives it a moment and the checks notice a
+ * graphic whose words never appear.
  */
 @Component
 public class RequiredActionExtractor {
@@ -52,6 +57,13 @@ public class RequiredActionExtractor {
             String id = "A" + n++;
             actions.add(new RequiredActionView(id, ShotActionKind.ACTION, sentence, null, previous));
             previous = id;
+        }
+        String text = onScreenText(shot);
+        if (text != null) {
+            // Its own track: the words can land at any point of the animation, so they are not
+            // forced after the last element -- only required to appear.
+            actions.add(new RequiredActionView("A" + n, ShotActionKind.ACTION,
+                    "On-screen text appears, exactly as written: \"" + text + "\"", null, OPEN));
         }
         String lastAction = previous;
 
@@ -87,7 +99,10 @@ public class RequiredActionExtractor {
      * quotes speech is that dialogue (its D action), not a visual action of its own.
      */
     private List<String> actionSentences(ShotContext shot, boolean hasDialogue) {
-        String text = shot.narrative() == null ? null : shot.narrative().scriptLine();
+        String text = animationNotes(shot);
+        if (text == null) {
+            text = shot.narrative() == null ? null : shot.narrative().scriptLine();
+        }
         if (text == null || text.isBlank()) {
             return List.of();
         }
@@ -105,6 +120,20 @@ public class RequiredActionExtractor {
             sentences.add(sentence);
         }
         return sentences;
+    }
+
+    /** A motion graphic's animation notes, or null for any other shot or a graphic without them. */
+    private static String animationNotes(ShotContext shot) {
+        if (!shot.isPlannedMotionGraphic()) return null;
+        String notes = shot.motionGraphic().animationNotes();
+        return notes == null || notes.isBlank() ? null : notes.strip();
+    }
+
+    /** A motion graphic's on-screen words, verbatim -- they are rendered as glyphs, so never reworded. */
+    private static String onScreenText(ShotContext shot) {
+        if (!shot.isPlannedMotionGraphic()) return null;
+        String words = shot.motionGraphic().onScreenText();
+        return words == null || words.isBlank() ? null : words.strip();
     }
 
     private static final Pattern QUOTE = Pattern.compile("[\"“”]");

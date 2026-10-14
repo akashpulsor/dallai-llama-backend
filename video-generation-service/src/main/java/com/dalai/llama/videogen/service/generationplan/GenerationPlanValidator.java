@@ -171,6 +171,22 @@ public final class GenerationPlanValidator {
 
     // ---------------------------------------------------------------- timeline
 
+    /**
+     * The actions with each fixed length in clip seconds, given how much clip one second of the shot
+     * takes ({@code ClipFinishing.clipSecondsPerShotSecond}). A 6s line in a 7s shot made from a 3s
+     * clip that is slowed afterwards needs 6 x 3/7 of the clip, not 6 -- asking for 6 inside 3 can
+     * never pass. At 1 nothing changes.
+     */
+    public static List<RequiredActionView> inClipSeconds(List<RequiredActionView> actions, BigDecimal clipPerShotSecond) {
+        if (clipPerShotSecond == null || clipPerShotSecond.compareTo(BigDecimal.ONE) == 0) {
+            return actions;
+        }
+        return actions.stream().map(action -> action.fixedSeconds() == null ? action : new RequiredActionView(
+                action.actionId(), action.kind(), action.description(),
+                action.fixedSeconds().multiply(clipPerShotSecond).setScale(3, RoundingMode.HALF_UP),
+                action.dependsOnActionId())).toList();
+    }
+
     public static List<ValidationIssueView> timeline(List<RequiredActionView> actions,
                                                      List<SourceTemporalActionView> intervals,
                                                      Integer durationSeconds) {
@@ -234,8 +250,8 @@ public final class GenerationPlanValidator {
             }
             if (action.fixedSeconds() != null
                     && secondsGiven.get(action.actionId()).add(FIXED_TOLERANCE).compareTo(action.fixedSeconds()) < 0) {
-                issues.add(issue("FIXED_TIMING_SHORTENED", action.actionId(), "Given %ss; the line takes %ss to say."
-                        .formatted(plain(secondsGiven.get(action.actionId())), plain(action.fixedSeconds()))));
+                issues.add(issue("FIXED_TIMING_SHORTENED", action.actionId(), "Given %ss of the %ds clip; the line needs %ss of it."
+                        .formatted(plain(secondsGiven.get(action.actionId())), durationSeconds, plain(action.fixedSeconds()))));
             }
         }
         if (!ids(first).contains(RequiredActionExtractor.OPEN)) {

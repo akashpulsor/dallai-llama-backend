@@ -58,13 +58,8 @@ public class GenerationControlsService {
     public ShotGenerationControlsView updateShot(UUID tenantId, UUID projectId, UUID shotId, GenerationControlsView controls) {
         ShotGenerationControls row = shotControlsRepository.findByShotIdAndTenantId(shotId, tenantId)
                 .orElseGet(() -> ShotGenerationControls.builder().shotId(shotId).tenantId(tenantId).projectId(projectId).build());
-        row.setFitDurationToDialogue(controls.fitDurationToDialogue());
-        row.setAutoDubDialogue(controls.autoDubDialogue());
-        row.setMixBackgroundMusic(controls.mixBackgroundMusic());
         row.setPreventDuplicateRenders(controls.preventDuplicateRenders());
         row.setAttachPreviousLastFrame(controls.attachPreviousLastFrame());
-        row.setConformToPlannedDuration(controls.conformToPlannedDuration());
-        row.setInterpolateWhenSlowing(controls.interpolateWhenSlowing());
         row.setUpdatedAt(OffsetDateTime.now());
         return new ShotGenerationControlsView(view(shotControlsRepository.save(row)), true);
     }
@@ -87,31 +82,19 @@ public class GenerationControlsService {
                         .defaultCaptionsFlag(FlagState.OFF)
                         .autoApprove(false)
                         .build());
-        config.setFitDurationToDialogue(controls.fitDurationToDialogue());
-        config.setAutoDubDialogue(controls.autoDubDialogue());
-        config.setMixBackgroundMusic(controls.mixBackgroundMusic());
         config.setPreventDuplicateRenders(controls.preventDuplicateRenders());
         config.setAttachPreviousLastFrame(controls.attachPreviousLastFrame());
-        config.setConformToPlannedDuration(controls.conformToPlannedDuration());
-        config.setInterpolateWhenSlowing(controls.interpolateWhenSlowing());
         config.setUpdatedAt(OffsetDateTime.now());
         return view(projectConfigRepository.save(config));
     }
 
     private static GenerationControlsView view(ProjectConfig config) {
         return new GenerationControlsView(
-                Boolean.TRUE.equals(config.getFitDurationToDialogue()),
-                !Boolean.FALSE.equals(config.getAutoDubDialogue()),
-                !Boolean.FALSE.equals(config.getMixBackgroundMusic()),
                 !Boolean.FALSE.equals(config.getPreventDuplicateRenders()),
-                Boolean.TRUE.equals(config.getAttachPreviousLastFrame()),
-                !Boolean.FALSE.equals(config.getConformToPlannedDuration()),
-                !Boolean.FALSE.equals(config.getInterpolateWhenSlowing()));
+                Boolean.TRUE.equals(config.getAttachPreviousLastFrame()));
     }
 
     private static GenerationControlsView view(ShotGenerationControls row) {
-        return new GenerationControlsView(row.isFitDurationToDialogue(), row.isAutoDubDialogue(), row.isMixBackgroundMusic(),
-                row.isPreventDuplicateRenders(), row.isAttachPreviousLastFrame(), row.isConformToPlannedDuration(),
-                row.isInterpolateWhenSlowing());
+        return new GenerationControlsView(row.isPreventDuplicateRenders(), row.isAttachPreviousLastFrame());
     }
 }

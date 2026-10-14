@@ -2,12 +2,7 @@ package com.dalai.llama.videogen.service.render;
 
 import com.dalai.llama.videogen.domain.entity.ShotPrompt;
 import com.dalai.llama.videogen.domain.entity.VideoGenJob;
-import com.dalai.llama.videogen.dto.generationplan.GenerationControlsView;
-import com.dalai.llama.videogen.dto.shotcontext.DialogueBeat;
-import com.dalai.llama.videogen.dto.shotcontext.ShotContext;
 import com.dalai.llama.videogen.repository.VideoGenJobRepository;
-import com.dalai.llama.videogen.service.BeatDubbingService;
-import com.dalai.llama.videogen.service.DispatchResult;
 import com.dalai.llama.videogen.service.VideoGenException;
 import com.dalai.llama.videogen.service.postproduction.PostProductionClient;
 import lombok.RequiredArgsConstructor;
@@ -15,103 +10,76 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Objects;
+import java.math.RoundingMode;
 import java.util.UUID;
 
 /**
- * Everything that happens to a clip's sound and length around the render, decided in one place.
+ * What happens to a clip's sound and length after the render, decided in one place.
  *
- * <p>One question settles most of it: will post-production conform this clip to the shot's planned
- * length? It does whenever the clip was generated at a different length -- shorter to save money,
- * or longer because the model has a minimum -- and the "conform" control is on. Such a clip is
- * generated silent (slowed-down speech is unusable), and the dub is not laid on here, because
- * conform lays it on at the right length. Otherwise the clip is finished here, as it always was.
- * Music is never laid on a clip: shot music and sound effects are sound layers, mixed into the film
- * when it renders (post-production), so they can be moved or switched off without remaking a clip.
- * Nothing in here fails a render: the dub and the conform request are best-effort extras on a clip
- * that already exists.
+ * <p>The video model never voices a line. Every clip is generated silent, and a shot with a line gets
+ * the take the creator recorded -- the same take the dialogue fit was measured against, never a voice
+ * the model invents or a fresh synthesis at render. Removing the voice from a clip is a step taken
+ * after generation.
+ *
+ * <p>A clip at the shot's length or longer is handed straight to post-production, which trims it to
+ * the shot and lays the take on. A shorter clip is left as rendered: slowing it to the shot, always
+ * with frame interpolation, is the creator's step after generation, and it lays the take on too.
+ * Music is never laid on a clip: shot music is a sound layer, mixed into the film when it renders.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ClipFinishing {
 
-    private final BeatDubbingService dubbing;
     private final VideoGenJobRepository jobs;
     private final PostProductionClient postProduction;
 
-    public record Finished(String outputUri, BigDecimal cost) {
-    }
-
-    /** Post-production will bring this clip to its planned length. */
-    public static boolean conformsLater(Integer generationSeconds, Integer plannedSeconds, GenerationControlsView controls) {
-        return controls.conformToPlannedDuration() && plannedSeconds != null && generationSeconds != null
-                && !Objects.equals(generationSeconds, plannedSeconds);
-    }
-
-    /** Whether the model is told to generate no audio of its own. */
-    public boolean muteAudio(ShotContext shot, Integer generationSeconds, Integer plannedSeconds, GenerationControlsView controls) {
-        boolean hasSomethingToSay = (shot.dialogueBeats() != null && !shot.dialogueBeats().isEmpty())
-                || (shot.narrative() != null && shot.narrative().dialogue() != null && !shot.narrative().dialogue().isBlank());
-        boolean dubbedHere = controls.autoDubDialogue() && dubbing.canAutoDub(shot.dialogueBeats());
-        return !hasSomethingToSay || dubbedHere || conformsLater(generationSeconds, plannedSeconds, controls);
-    }
-
-    /** The rendered clip with its dub, unless post-production will lay that on instead. */
-    public Finished finish(VideoGenJob job, ShotPrompt prompt, List<DialogueBeat> beats, DispatchResult result,
-                           GenerationControlsView controls) {
-        String uri = result.outputUri();
-        BigDecimal cost = result.actualCost();
-        if (conformsLater(job.getDurationSeconds(), job.getPlannedDurationSeconds(), controls)) {
-            return new Finished(uri, cost);
+    /**
+     * How many seconds of the generated clip one second of the shot takes. Below 1 when a shorter
+     * clip is to be slowed to the shot's length (a 3s clip for a 7s shot: 3/7); 1 otherwise -- a clip
+     * that plays as rendered, or is trimmed. Decided here, beside how a clip is finished, so planning
+     * reads it rather than knowing how finishing works.
+     */
+    public static BigDecimal clipSecondsPerShotSecond(Integer generationSeconds, BigDecimal plannedSeconds) {
+        if (generationSeconds == null || plannedSeconds == null || plannedSeconds.signum() <= 0
+                || BigDecimal.valueOf(generationSeconds).compareTo(plannedSeconds) >= 0) {
+            return BigDecimal.ONE;
         }
-        if (job.isMuteAudio() && controls.autoDubDialogue() && dubbing.canAutoDub(beats)) {
-            Finished dubbed = dub(job, beats, uri, cost);
-            uri = dubbed.outputUri();
-            cost = dubbed.cost();
-        }
-        return new Finished(uri, cost);
+        return BigDecimal.valueOf(generationSeconds).divide(plannedSeconds, 6, RoundingMode.HALF_UP);
     }
 
     /**
-     * Asks post-production to conform the finished clip to the planned length -- slowed (with frame
-     * interpolation when that control is on) or trimmed, with the line and music laid on. Returns the
-     * request id, or null when the clip needs no conform or the request could not be made; the clip
-     * itself stands either way.
+     * Post-production finishes this clip without being asked: it is at least the shot's length (so
+     * nothing is slowed) and is either longer -- to be trimmed -- or has a line to lay on.
      */
-    public UUID requestConform(VideoGenJob job, ShotPrompt prompt, GenerationControlsView controls) {
-        if (prompt.getShotId() == null || !conformsLater(job.getDurationSeconds(), job.getPlannedDurationSeconds(), controls)) {
+    public static boolean finishesAutomatically(Integer generationSeconds, Integer plannedSeconds, boolean hasLine) {
+        if (generationSeconds == null || plannedSeconds == null || generationSeconds < plannedSeconds) {
+            return false;
+        }
+        return generationSeconds > plannedSeconds || hasLine;
+    }
+
+    /**
+     * Asks post-production to trim the finished clip to the shot and lay the recorded take on.
+     * Returns the request id, or null when the clip needs nothing or the request could not be made;
+     * the clip itself stands either way.
+     */
+    public UUID requestFinish(VideoGenJob job, ShotPrompt prompt, boolean hasLine) {
+        if (prompt.getShotId() == null
+                || !finishesAutomatically(job.getDurationSeconds(), job.getPlannedDurationSeconds(), hasLine)) {
             return null;
         }
         try {
             UUID requestId = postProduction.requestConform(job.getTenantId(), job.getProjectId(), prompt.getShotId(),
-                    job.getPlannedDurationSeconds(), controls.interpolateWhenSlowing());
+                    job.getPlannedDurationSeconds(), true);
             job.setConformRequestId(requestId);
             jobs.save(job);
-            log.info("Conforming jobId={} from {}s to the planned {}s interpolate={} requestId={}", job.getJobId(),
-                    job.getDurationSeconds(), job.getPlannedDurationSeconds(), controls.interpolateWhenSlowing(), requestId);
+            log.info("Finishing jobId={} at the shot's {}s from a {}s clip hasLine={} requestId={}", job.getJobId(),
+                    job.getPlannedDurationSeconds(), job.getDurationSeconds(), hasLine, requestId);
             return requestId;
         } catch (VideoGenException ex) {
-            log.warn("Could not ask post-production to conform jobId={}: {}", job.getJobId(), ex.getMessage());
+            log.warn("Could not ask post-production to finish jobId={}: {}", job.getJobId(), ex.getMessage());
             return null;
         }
-    }
-
-    /** A failed dub keeps the silent clip: losing a paid render over its voice track is the wrong trade. */
-    private Finished dub(VideoGenJob job, List<DialogueBeat> beats, String uri, BigDecimal cost) {
-        Finished finished;
-        try {
-            BeatDubbingService.DubResult dub = dubbing.dub(job.getTenantId().toString(), job.getJobId(), job.getProjectId(),
-                    beats, uri, job.getVoiceCloneModel(), job.getTtsModel(), job.getDurationSeconds(), job.getFps());
-            finished = new Finished(dub.finalVideoUrl(), cost.add(dub.cost()));
-            job.setDubSucceeded(true);
-        } catch (RuntimeException ex) {
-            log.warn("Auto-dub failed jobId={} -- keeping the silent clip: {}", job.getJobId(), ex.getMessage());
-            finished = new Finished(uri, cost);
-            job.setDubSucceeded(false);
-        }
-        jobs.save(job);
-        return finished;
     }
 }
