@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -56,7 +57,9 @@ public class YouTubePublishService {
     public JobView publish(UUID tenantId, String subject, PublishRequest r, String via) {
         var existing = store.byKey(tenantId, r.idempotencyKey());
         if (existing.isPresent()) return view(existing.get());
-        Connection connection = activeConnection(tenantId);
+        Connection connection = active(r.connectionId() == null
+                ? connections.profileConnection(tenantId)
+                : connections.creatorConnection(tenantId, r.connectionId()));
         var active = store.activeFor(tenantId, r.projectId(), connection.id());
         if (active.isPresent()) return view(active.get());
 
@@ -107,7 +110,7 @@ public class YouTubePublishService {
 
     @Transactional
     public JobView retry(UUID tenantId, UUID id) {
-        activeConnection(tenantId);
+        connectionOf(owned(tenantId, id));
         if (store.requeue(tenantId, id, clock.instant()) == 0) throw new IllegalStateException("Only a failed job can be retried");
         return job(tenantId, id);
     }
@@ -121,7 +124,7 @@ public class YouTubePublishService {
         if (job.videoId() == null) {
             store.setThumbnail(id, image, contentType);
         } else {
-            Connection connection = activeConnection(tenantId);
+            Connection connection = connectionOf(job);
             requireQuota();
             youTube.setThumbnail(connections.accessToken(connection), job.videoId(), image, contentType);
         }
@@ -139,7 +142,7 @@ public class YouTubePublishService {
         if (goesPublic && !r.confirmPublic() && job.publicConfirmedAt() == null) {
             throw new IllegalArgumentException("Confirm that this video will be public on YouTube");
         }
-        Connection connection = activeConnection(tenantId);
+        Connection connection = connectionOf(job);
         requireQuota();
         String privacy = youTube.updateVideo(connections.accessToken(connection), job.videoId(), new YouTubeApiClient.Metadata(
                 r.title().trim(), r.description() == null ? "" : r.description().trim(), r.tags() == null ? List.of() : r.tags(),
@@ -150,9 +153,13 @@ public class YouTubePublishService {
         return job(tenantId, id);
     }
 
-    private Connection activeConnection(UUID tenantId) {
-        Connection c = connections.creatorConnection(tenantId)
-                .orElseThrow(() -> new IllegalStateException("Connect your YouTube channel first"));
+    /** The channel a job was published to -- not whichever is connected now, since there may be several. */
+    private Connection connectionOf(Job job) {
+        return active(connections.creatorConnection(job.tenantId(), job.connectionId()));
+    }
+
+    private static Connection active(Optional<Connection> connection) {
+        Connection c = connection.orElseThrow(() -> new IllegalStateException("Connect your YouTube channel first"));
         if (c.status() != Status.ACTIVE) throw new YouTubeConnectionService.ReconnectRequiredException();
         return c;
     }
@@ -185,6 +192,7 @@ public class YouTubePublishService {
         return new JobView(j.id(), j.projectId(), j.title(), j.description(),
                 j.tags() == null ? List.of() : Arrays.asList(j.tags().split(",")), j.privacy(), j.publishAt(), j.status(), j.bytesTotal(),
                 j.bytesSent(), percent, j.videoId(), j.videoId() == null ? null : "https://www.youtube.com/watch?v=" + j.videoId(),
-                j.youtubePrivacy(), j.hasThumbnail(), j.attempts(), j.lastError(), j.via(), j.createdAt(), j.updatedAt());
+                j.youtubePrivacy(), j.hasThumbnail(), j.attempts(), j.lastError(), j.via(), j.createdAt(), j.updatedAt(),
+                j.connectionId());
     }
 }

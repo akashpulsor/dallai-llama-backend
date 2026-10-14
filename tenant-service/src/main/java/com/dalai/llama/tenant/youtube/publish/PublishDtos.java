@@ -33,7 +33,9 @@ public final class PublishDtos {
             Instant publishAt,
             /* Required for PUBLIC and for any schedule: the creator confirmed it will be public. */
             boolean confirmPublic,
-            @NotBlank @Size(max = 100) String idempotencyKey
+            @NotBlank @Size(max = 100) String idempotencyKey,
+            /* Which of the creator's connected channels; null for the profile's channel. */
+            UUID connectionId
     ) {
     }
 
@@ -50,7 +52,7 @@ public final class PublishDtos {
     public record JobView(UUID id, UUID projectId, String title, String description, List<String> tags, Privacy privacy,
                           Instant publishAt, Status status, Long bytesTotal, long bytesSent, int progressPercent, String youtubeVideoId,
                           String youtubeUrl, String youtubePrivacy, boolean hasThumbnail, int attempts, String lastError, String via,
-                          Instant createdAt, Instant updatedAt) {
+                          Instant createdAt, Instant updatedAt, UUID connectionId) {
     }
 
     /** A finished Dalaillama film the creator can publish. */

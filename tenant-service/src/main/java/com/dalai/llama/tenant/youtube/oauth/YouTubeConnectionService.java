@@ -59,10 +59,12 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
     private record CachedToken(String value, Instant expiresAt) {
     }
 
-    /** What a creator or ops sees about a connection. Never carries a token. */
+    /** What a creator or ops sees about a connection. Never carries a token. {@code profileChannel}:
+     * the channel the creator's profile is built from (the one verified first); other connected
+     * channels are places to publish. */
     public record ConnectionView(boolean oauthConfigured, boolean connected, Status status, String channelId, String channelTitle,
                                  String channelThumbnail, boolean canPublish, boolean canReadAnalytics, Instant connectedAt,
-                                 String lastError) {
+                                 String lastError, UUID connectionId, boolean profileChannel) {
     }
 
     /** Thrown when Google says the stored grant is dead; the UI offers "Reconnect". */
@@ -143,18 +145,11 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
             google.revoke(granted.refreshToken());
             return "taken";
         }
-        Optional<String> verifiedChannel = jdbc.queryForList(
-                "SELECT channel_id FROM creator_youtube_channel WHERE tenant_id = ? AND status = 'VERIFIED'", String.class, tenantId)
-                .stream().findFirst();
-        if (verifiedChannel.isPresent() && !verifiedChannel.get().equals(channel.channelId())) {
-            google.revoke(granted.refreshToken());
-            return "other_channel";
-        }
-        Optional<Connection> existing = store.creatorConnection(tenantId);
-        if (existing.isPresent() && !existing.get().channelId().equals(channel.channelId())) {
-            google.revoke(granted.refreshToken());
-            return "other_channel";
-        }
+        // Another of the creator's own channels is added beside the first, as a place to publish;
+        // connecting one already connected reconnects it. The profile keeps the channel verified first.
+        Optional<String> verifiedChannel = verifiedChannel(tenantId);
+        Optional<Connection> existing = store.creatorConnections(tenantId).stream()
+                .filter(c -> c.channelId().equals(channel.channelId())).findFirst();
         UUID id = save(existing, OwnerType.CREATOR, tenantId, channel, granted, p.startedBy());
         if (verifiedChannel.isEmpty()) verifyChannel(tenantId, channel);
         cache(id, granted.accessToken(), granted.expiresInSeconds());
@@ -217,8 +212,28 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
 
     // ---- using a connection ----
 
-    public Optional<Connection> creatorConnection(UUID tenantId) {
-        return store.creatorConnection(tenantId);
+    /** Every channel the creator has connected, oldest first. */
+    public List<Connection> creatorConnections(UUID tenantId) {
+        return store.creatorConnections(tenantId);
+    }
+
+    /** The connection of the channel the profile is built from: the verified channel, else the first. */
+    public Optional<Connection> profileConnection(UUID tenantId) {
+        List<Connection> all = store.creatorConnections(tenantId);
+        Optional<String> verified = verifiedChannel(tenantId);
+        return all.stream().filter(c -> verified.isPresent() && verified.get().equals(c.channelId())).findFirst()
+                .or(() -> all.stream().findFirst());
+    }
+
+    /** One of this creator's live connections, by id. */
+    public Optional<Connection> creatorConnection(UUID tenantId, UUID connectionId) {
+        return store.creatorConnections(tenantId).stream().filter(c -> c.id().equals(connectionId)).findFirst();
+    }
+
+    private Optional<String> verifiedChannel(UUID tenantId) {
+        return jdbc.queryForList(
+                "SELECT channel_id FROM creator_youtube_channel WHERE tenant_id = ? AND status = 'VERIFIED'", String.class, tenantId)
+                .stream().findFirst();
     }
 
     /** A short-lived access token for this connection; refreshed when it expires. */
@@ -254,17 +269,36 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
 
     // ---- views and disconnect ----
 
+    /** The profile channel's connection -- what "is YouTube connected" means for one-channel screens. */
     public ConnectionView creatorView(UUID tenantId) {
-        return view(store.creatorConnection(tenantId));
+        return view(profileConnection(tenantId), true);
+    }
+
+    /** Every connected channel, the profile's first. */
+    public List<ConnectionView> creatorViews(UUID tenantId) {
+        Optional<UUID> profile = profileConnection(tenantId).map(Connection::id);
+        return store.creatorConnections(tenantId).stream()
+                .map(c -> view(Optional.of(c), profile.filter(c.id()::equals).isPresent()))
+                .sorted(java.util.Comparator.comparing(ConnectionView::profileChannel).reversed())
+                .toList();
     }
 
     public ConnectionView platformView() {
-        return view(store.platformConnection());
+        return view(store.platformConnection(), false);
     }
 
+    /** Every channel the creator connected. */
     @Transactional
     public void disconnectCreator(UUID tenantId) {
-        store.creatorConnection(tenantId).ifPresent(this::disconnect);
+        store.creatorConnections(tenantId).forEach(this::disconnect);
+    }
+
+    /** One of the creator's channels. The profile keeps its verified channel either way. */
+    @Transactional
+    public void disconnectCreator(UUID tenantId, UUID connectionId) {
+        Connection c = creatorConnection(tenantId, connectionId)
+                .orElseThrow(() -> new IllegalArgumentException("No such connected channel"));
+        disconnect(c);
     }
 
     @Transactional
@@ -282,12 +316,15 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
         if (c.refreshTokenEnc() != null) google.revoke(encryptor.decrypt(c.refreshTokenEnc()));
     }
 
-    private ConnectionView view(Optional<Connection> connection) {
-        if (connection.isEmpty()) return new ConnectionView(properties.configured(), false, null, null, null, null, false, false, null, null);
+    private ConnectionView view(Optional<Connection> connection, boolean profileChannel) {
+        if (connection.isEmpty()) {
+            return new ConnectionView(properties.configured(), false, null, null, null, null, false, false, null, null, null, false);
+        }
         Connection c = connection.get();
         List<String> scopes = Arrays.asList(c.scopes().split(" "));
         return new ConnectionView(properties.configured(), c.status() == Status.ACTIVE, c.status(), c.channelId(), c.channelTitle(),
-                c.channelThumbnail(), scopes.contains(SCOPE_YOUTUBE), scopes.contains(SCOPE_ANALYTICS), c.connectedAt(), c.lastError());
+                c.channelThumbnail(), scopes.contains(SCOPE_YOUTUBE), scopes.contains(SCOPE_ANALYTICS), c.connectedAt(), c.lastError(),
+                c.id(), profileChannel);
     }
 
     private void cache(UUID connectionId, String token, long expiresIn) {

@@ -11,12 +11,15 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.List;
 
 /** The three HTTP faces of a YouTube connection (rules 31–33). */
 public final class YouTubeConnectionControllers {
@@ -47,12 +50,26 @@ public final class YouTubeConnectionControllers {
             return ResponseEntity.of(tenant(jwt).map(t -> new AuthorizationStart(connections.startForCreator(t.getId(), jwt.getSubject()))));
         }
 
-        /** Revokes our access at Google and forgets the token. The channel stays your verified channel. */
+        /** Revokes our access at Google for every connected channel. The profile keeps its verified channel. */
         @DeleteMapping
         public ResponseEntity<Void> disconnect(@AuthenticationPrincipal Jwt jwt) {
             Optional<Tenant> tenant = tenant(jwt);
             if (tenant.isEmpty()) return ResponseEntity.notFound().build();
             connections.disconnectCreator(tenant.get().getId());
+            return ResponseEntity.noContent().build();
+        }
+
+        /** Every channel connected, the profile's first. Connecting another goes through /start too. */
+        @GetMapping("/channels")
+        public ResponseEntity<List<ConnectionView>> channels(@AuthenticationPrincipal Jwt jwt) {
+            return ResponseEntity.of(tenant(jwt).map(t -> connections.creatorViews(t.getId())));
+        }
+
+        @DeleteMapping("/channels/{connectionId}")
+        public ResponseEntity<Void> disconnectChannel(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID connectionId) {
+            Optional<Tenant> tenant = tenant(jwt);
+            if (tenant.isEmpty()) return ResponseEntity.notFound().build();
+            connections.disconnectCreator(tenant.get().getId(), connectionId);
             return ResponseEntity.noContent().build();
         }
 

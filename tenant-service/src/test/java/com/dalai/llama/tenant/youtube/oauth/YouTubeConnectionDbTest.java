@@ -178,7 +178,7 @@ class YouTubeConnectionDbTest extends ShowcaseDbTestSupport {
     @Test
     void aDeadGrantAsksForReconnectAndDisconnectRevokes() {
         connections.complete(param(connections.startForCreator(riya, "u"), "state"), "auth-code", null);
-        var connection = connections.creatorConnection(riya).orElseThrow();
+        var connection = connections.profileConnection(riya).orElseThrow();
         connections.forget(connection.id());
         REFRESH_ERROR.set("invalid_grant");
 
@@ -188,6 +188,31 @@ class YouTubeConnectionDbTest extends ShowcaseDbTestSupport {
         connections.disconnectCreator(riya);
         assertThat(REVOKES.get()).isEqualTo(1);
         assertThat(connections.creatorView(riya).connected()).isFalse();
+    }
+
+    @Test
+    void anotherOfTheCreatorsChannelsIsAddedToPublishTo_andTheProfileKeepsItsChannel() {
+        connections.complete(param(connections.startForCreator(riya, "u"), "state"), "auth-code", null);
+        CHANNEL.set("UCriyaShorts000000000000");
+
+        String back = connections.complete(param(connections.startForCreator(riya, "u"), "state"), "auth-code", null);
+
+        assertThat(back).endsWith("youtube=connected");
+        assertThat(REVOKES.get()).isZero();
+        var channels = connections.creatorViews(riya);
+        assertThat(channels).extracting(YouTubeConnectionService.ConnectionView::channelId)
+                .containsExactly("UCriya000000000000000000", "UCriyaShorts000000000000");
+        assertThat(channels).extracting(YouTubeConnectionService.ConnectionView::profileChannel).containsExactly(true, false);
+        assertThat(jdbc.queryForObject("SELECT channel_id FROM creator_youtube_channel WHERE tenant_id = ?", String.class, riya))
+                .isEqualTo("UCriya000000000000000000");
+
+        // Connecting a channel already connected reconnects it rather than adding a second row.
+        connections.complete(param(connections.startForCreator(riya, "u"), "state"), "auth-code", null);
+        assertThat(connections.creatorViews(riya)).hasSize(2);
+
+        connections.disconnectCreator(riya, channels.get(1).connectionId());
+        assertThat(connections.creatorViews(riya)).extracting(YouTubeConnectionService.ConnectionView::channelId)
+                .containsExactly("UCriya000000000000000000");
     }
 
     @Test

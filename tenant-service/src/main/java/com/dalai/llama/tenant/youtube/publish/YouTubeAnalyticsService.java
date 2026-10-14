@@ -66,7 +66,7 @@ public class YouTubeAnalyticsService {
         Cached hit = cache.get(key);
         if (hit != null && hit.at().plus(CACHE_FOR).isAfter(clock.instant())) return hit.report();
 
-        Connection connection = connections.creatorConnection(tenantId)
+        Connection connection = connections.profileConnection(tenantId)
                 .orElseThrow(() -> new IllegalStateException("Connect your YouTube channel to see its analytics"));
         if (!connection.scopes().contains(YouTubeConnectionService.SCOPE_ANALYTICS)) {
             throw new IllegalStateException("Reconnect your channel and allow analytics to see them here");

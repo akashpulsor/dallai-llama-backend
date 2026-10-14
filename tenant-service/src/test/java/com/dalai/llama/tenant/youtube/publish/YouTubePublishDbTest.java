@@ -216,7 +216,7 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
         UUID other = UUID.randomUUID();
         when(preProduction.source(riya, other)).thenReturn(source(other, true));
         JobView first = publishing.publish(riya, "u", request(Privacy.PRIVATE, null, false, "q1"), "WEB");
-        JobView second = publishing.publish(riya, "u", new PublishRequest(other, "Second", "", null, null, Privacy.PRIVATE, null, false, "q2"), "WEB");
+        JobView second = publishing.publish(riya, "u", new PublishRequest(other, "Second", "", null, null, Privacy.PRIVATE, null, false, "q2", null), "WEB");
 
         assertThat(worker.runOnce()).isTrue();
         assertThat(publishing.job(riya, first.id()).status()).isEqualTo(Status.PUBLISHED);
@@ -291,10 +291,35 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
 
         UUID other = UUID.randomUUID();
         when(preProduction.source(riya, other)).thenReturn(source(other, true));
-        JobView queued = publishing.publish(riya, "u", new PublishRequest(other, "Another", "", null, null, Privacy.PRIVATE, null, false, "k2"), "WEB");
+        JobView queued = publishing.publish(riya, "u", new PublishRequest(other, "Another", "", null, null, Privacy.PRIVATE, null, false, "k2", null), "WEB");
         publishing.cancel(riya, queued.id());
         assertThat(worker.runOnce()).isFalse();
         assertThat(publishing.job(riya, queued.id()).status()).isEqualTo(Status.CANCELLED);
+    }
+
+    @Test
+    void aFilmGoesToTheChannelTheCreatorPicks_andWithoutAPickToTheProfilesChannel() {
+        UUID shorts = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO youtube_channel_connection (id, owner_type, tenant_id, channel_id, channel_title, scopes, refresh_token_enc,
+                    status, connected_by, connected_at)
+                VALUES (?, 'CREATOR', ?, 'UCriyaShorts000000000000', 'Riya Shorts', ?, ?, 'ACTIVE', 'kc-user', NOW() + INTERVAL '1 minute')""",
+                shorts, riya, YouTubeConnectionService.SCOPE_YOUTUBE, encryptor.encrypt("refresh-shorts"));
+
+        JobView picked = publishing.publish(riya, "u", new PublishRequest(project, "Masala chai launch", "", null, null,
+                Privacy.PRIVATE, null, false, "pick-1", shorts), "WEB");
+        assertThat(picked.connectionId()).isEqualTo(shorts);
+
+        UUID other = UUID.randomUUID();
+        when(preProduction.source(riya, other)).thenReturn(source(other, true));
+        JobView unpicked = publishing.publish(riya, "u", new PublishRequest(other, "Another", "", null, null,
+                Privacy.PRIVATE, null, false, "pick-2", null), "WEB");
+        assertThat(unpicked.connectionId()).isNotEqualTo(shorts);
+
+        // A channel that isn't this creator's is refused.
+        assertThatThrownBy(() -> publishing.publish(riya, "u", new PublishRequest(project, "x", "", null, null,
+                Privacy.PRIVATE, null, false, "pick-3", UUID.randomUUID()), "WEB"))
+                .hasMessageContaining("Connect your YouTube channel first");
     }
 
     @Test
@@ -315,7 +340,7 @@ class YouTubePublishDbTest extends ShowcaseDbTestSupport {
 
     private PublishRequest request(Privacy privacy, Instant publishAt, boolean confirm, String key) {
         return new PublishRequest(project, "Masala chai launch", "Made with Dalai Llama", List.of("chai", "ad"), null, privacy, publishAt,
-                confirm, key);
+                confirm, key, null);
     }
 
     private void filmWithConsent(boolean consent) {

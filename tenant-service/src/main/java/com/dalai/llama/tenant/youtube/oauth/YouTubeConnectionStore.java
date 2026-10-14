@@ -62,9 +62,10 @@ public class YouTubeConnectionStore {
 
     // ---- connections ----
 
-    public Optional<Connection> creatorConnection(UUID tenantId) {
+    /** A creator's live connections, oldest first -- the first is the one they started with. */
+    public List<Connection> creatorConnections(UUID tenantId) {
         return jdbc.query("SELECT " + COLUMNS + " FROM youtube_channel_connection WHERE owner_type = 'CREATOR' AND tenant_id = ?"
-                + " AND status <> 'REVOKED'", ROW, tenantId).stream().findFirst();
+                + " AND status <> 'REVOKED' ORDER BY connected_at, id", ROW, tenantId);
     }
 
     public Optional<Connection> platformConnection() {
