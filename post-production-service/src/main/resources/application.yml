@@ -155,6 +155,18 @@ post-production:
   sound-layer:
     requested-topic: ${POST_PROD_SOUND_LAYER_REQUESTED_TOPIC:postprod.sound-layer.requested}
     requested-consumer-group: ${POST_PROD_SOUND_LAYER_REQUESTED_GROUP:post-production-service-sound-layer}
+  # The joined film upscaled to full HD by Topaz, as a new film render. Minutes per film.
+  film-upscale:
+    requested-topic: ${POST_PROD_FILM_UPSCALE_REQUESTED_TOPIC:postprod.film-upscale.requested}
+    requested-consumer-group: ${POST_PROD_FILM_UPSCALE_REQUESTED_GROUP:post-production-service-film-upscale}
+  # Topaz on fal.ai through llm-gateway: frame interpolation for slow-downs (the model generates
+  # the missing frames) and upscaling. Chronos suits real-world motion; Proteus most footage.
+  topaz:
+    interpolate-model: ${POST_PROD_TOPAZ_INTERPOLATE_MODEL:topaz/interpolate/video}
+    interpolation-mode: ${POST_PROD_TOPAZ_INTERPOLATION_MODE:Chronos}
+    upscale-model: ${POST_PROD_TOPAZ_UPSCALE_MODEL:fal-ai/topaz/upscale/video}
+    upscale-mode: ${POST_PROD_TOPAZ_UPSCALE_MODE:Proteus}
+    timeout-ms: ${POST_PROD_TOPAZ_TIMEOUT_MS:1300000}
   film:
     requested-topic: ${POST_PROD_FILM_REQUESTED_TOPIC:postprod.film.requested}
     requested-consumer-group: ${POST_PROD_FILM_REQUESTED_GROUP:post-production-service-film}

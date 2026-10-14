@@ -31,6 +31,7 @@ import java.util.UUID;
 public class FilmRenderController {
 
     private final FilmAssemblyService filmAssemblyService;
+    private final com.dalai.llama.postprod.service.clip.FilmUpscaleService filmUpscaleService;
 
     /** Whether every shot has a cut yet, and which do not. */
     @GetMapping("/readiness")
@@ -77,6 +78,13 @@ public class FilmRenderController {
         TenantContext ctx = TenantContextHolder.get();
         return ResponseEntity.ok(toView(
                 filmAssemblyService.uploadEdited(ctx.tenantId(), projectId, ctx.userId(), file)));
+    }
+
+    /** An upscaled (full HD) copy of this film, queued; it becomes the project's latest film. */
+    @PostMapping("/{renderId}/upscale")
+    public ResponseEntity<FilmRenderView> upscale(@PathVariable UUID projectId, @PathVariable UUID renderId) {
+        TenantContext ctx = TenantContextHolder.get();
+        return ResponseEntity.ok(toView(filmUpscaleService.request(ctx.tenantId(), projectId, ctx.userId(), renderId)));
     }
 
     /** Show this film on the client's review page, or take it back down. */

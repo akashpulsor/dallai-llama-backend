@@ -13,7 +13,8 @@ public final class ShotConformDtos {
     }
 
     /** {@code interpolate} null means yes: slowed-down motion without it judders. */
-    public record Request(@NotNull @Positive BigDecimal targetSeconds, Boolean interpolate) {
+    /** {@code ai}: slow with Topaz, whose model generates the missing frames (paid), rather than ffmpeg. */
+    public record Request(@NotNull @Positive BigDecimal targetSeconds, Boolean interpolate, Boolean ai) {
     }
 
     /** QUEUED or PROCESSING while the consumer works; COMPLETED with the cut made (active, or a

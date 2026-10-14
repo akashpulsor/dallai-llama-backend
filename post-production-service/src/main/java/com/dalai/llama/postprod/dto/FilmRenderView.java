@@ -50,7 +50,9 @@ public record FilmRenderView(
         int filmsAhead,
         /** A rough total wait in seconds, or null when no join has finished yet and there is
          * nothing honest to estimate from. */
-        Long estimatedWaitSeconds
+        Long estimatedWaitSeconds,
+        /** The film this one is an upscaled copy of; null for a joined or uploaded film. */
+        UUID upscaledFromRenderId
 ) {
 
     /** Stored comma-separated; a film from before this was recorded simply has none. */
@@ -93,6 +95,7 @@ public record FilmRenderView(
                 render.getCompletedAt(),
                 parseVersionIds(render.getSourceVersionIds()),
                 filmsAhead,
-                estimatedWaitSeconds);
+                estimatedWaitSeconds,
+                render.getUpscaledFromRenderId());
     }
 }

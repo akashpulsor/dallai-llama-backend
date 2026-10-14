@@ -58,6 +58,28 @@ public class FfmpegClipProcessor {
      * underneath the line it should have spoken is worse than either alone. The video is
      * stream-copied, so the picture is bit-identical to what was generated and paid for.
      */
+    /** The picture brought to exactly {@code targetSeconds} by retiming alone (no frames invented,
+     * no trimming), silent. After a model has slowed a clip by a whole factor, this lands it on the
+     * shot's exact length. */
+    public void fitLength(Path clip, double targetSeconds, double frameRate, Path output) {
+        ClipProbe source = probe(clip);
+        if (source.durationSeconds() == null || source.durationSeconds().signum() <= 0) {
+            throw new ClipProcessingException("Could not measure the clip's length, so it cannot be fitted");
+        }
+        double factor = targetSeconds / source.durationSeconds().doubleValue();
+        String fps = String.format(Locale.ROOT, "%.3f", frameRate > 0 ? frameRate : 30);
+        run(List.of("ffmpeg", "-y", "-i", clip.toString(),
+                "-filter:v", "setpts=" + String.format(Locale.ROOT, "%.6f", factor) + "*PTS,fps=" + fps,
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-t", String.format(Locale.ROOT, "%.3f", targetSeconds), output.toString()));
+    }
+
+    /** {@code video}'s picture with {@code audioSource}'s soundtrack (none if it has none). */
+    public void keepAudioFrom(Path video, Path audioSource, Path output) {
+        run(List.of("ffmpeg", "-y", "-i", video.toString(), "-i", audioSource.toString(),
+                "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-shortest", output.toString()));
+    }
+
     public void replaceAudio(Path clip, Path audio, Path output) {
         run(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",

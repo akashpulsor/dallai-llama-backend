@@ -39,6 +39,11 @@ public class LlmGatewayClient {
      * no JWT, so it answered 401 for every capability this service offers. Tenant moves from the
      * X-Tenant-ID header into the path, which is the shape the internal handler takes. */
     public LlmGatewayChatResponse chat(String tenantId, String idempotencyKey, LlmGatewayChatRequest request) {
+        return chat(tenantId, idempotencyKey, request, Duration.ofMillis(timeoutMs));
+    }
+
+    /** As above, waiting up to {@code timeout} -- for a model that runs for minutes (Topaz). */
+    public LlmGatewayChatResponse chat(String tenantId, String idempotencyKey, LlmGatewayChatRequest request, Duration timeout) {
         try {
             return webClient.post()
                     .uri("/api/v1/internal/tenants/{tenantId}/chat", tenantId)
@@ -46,7 +51,7 @@ public class LlmGatewayClient {
                     .bodyValue(request)
                     .retrieve()
                     .bodyToMono(LlmGatewayChatResponse.class)
-                    .block(Duration.ofMillis(timeoutMs));
+                    .block(timeout);
         } catch (WebClientResponseException ex) {
             throw PostProductionException.upstream(
                     "llm-gateway chat failed status=%s body=%s".formatted(ex.getStatusCode(), ex.getResponseBodyAsString()), ex);

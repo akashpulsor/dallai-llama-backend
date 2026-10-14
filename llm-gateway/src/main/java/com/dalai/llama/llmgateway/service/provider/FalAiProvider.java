@@ -198,7 +198,8 @@ public class FalAiProvider implements LlmProvider {
             case "transcription" -> transcriptionRequestBody(request);
             case "video_edit" -> videoEditRequestBody(request);
             case "image" -> imageRequestBody(request);
-            case "upscale" -> upscaleRequestBody(request);
+            // Topaz frame interpolation takes the same shape as its upscaler: video_url plus tuning knobs.
+            case "upscale", "interpolate" -> upscaleRequestBody(request);
             default -> videoRequestBody(request);
         };
     }

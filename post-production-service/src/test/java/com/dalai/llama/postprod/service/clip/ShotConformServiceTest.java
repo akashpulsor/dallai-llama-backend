@@ -37,7 +37,8 @@ class ShotConformServiceTest {
     private final ShotClipVersionService clipVersions = mock(ShotClipVersionService.class);
     private final FfmpegClipProcessor ffmpeg = mock(FfmpegClipProcessor.class);
     private final ShotConformRequestedPublisher publisher = mock(ShotConformRequestedPublisher.class);
-    private final ShotConformService service = new ShotConformService(conforms, clipVersions, ffmpeg, publisher);
+    private final AiSlowDown aiSlowDown = mock(AiSlowDown.class);
+    private final ShotConformService service = new ShotConformService(conforms, clipVersions, ffmpeg, publisher, aiSlowDown);
 
     private final UUID tenant = UUID.randomUUID();
     private final UUID project = UUID.randomUUID();
@@ -57,7 +58,7 @@ class ShotConformServiceTest {
 
     private ShotClipConform queued() {
         ShotClipConform row = ShotClipConform.builder().requestId(UUID.randomUUID()).tenantId(tenant).projectId(project)
-                .shotId(shot).targetSeconds(new BigDecimal("6.000")).interpolate(true).activate(true)
+                .shotId(shot).targetSeconds(new BigDecimal("6.000")).interpolate(true).activate(true).ai(false)
                 .status(FrameExtractionStatus.QUEUED).createdAt(OffsetDateTime.now()).build();
         when(conforms.findById(row.getRequestId())).thenReturn(Optional.of(row));
         return row;
@@ -65,7 +66,7 @@ class ShotConformServiceTest {
 
     @Test
     void askingQueuesTheWorkAndInterpolatesUnlessToldNotTo() {
-        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("6"), null), true);
+        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("6"), null, null), true);
 
         assertThat(view.status()).isEqualTo("QUEUED");
         assertThat(view.interpolate()).isTrue();
@@ -111,7 +112,7 @@ class ShotConformServiceTest {
 
     @Test
     void aSlowDownTheCreatorAsksForIsAVersionToChoose_notAnImmediateSwap() {
-        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("7"), null), false);
+        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("7"), null, null), false);
         assertThat(view.interpolate()).isTrue();
 
         ShotClipConform row = queued();
@@ -124,6 +125,33 @@ class ShotConformServiceTest {
 
         verify(clipVersions).storeConformed(any(), eq(job), any(), any(), any(), any(), eq(false));
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
+    }
+
+    @Test
+    void anAiSlowDownHasTopazGenerateTheMissingFrames_thenFfmpegOnlyLaysTheTakeOn() {
+        ShotClipConform row = queued();
+        row.setTargetSeconds(new BigDecimal("7.000"));
+        row.setAi(true);
+        when(ffmpeg.probe(any())).thenReturn(new ClipProbe(true, false, new BigDecimal("4.0"), 480, 854));
+        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 4.0, null, null, null, "GENERATED", null));
+        Path fitted = workDir.resolve("fitted.mp4");
+        when(aiSlowDown.slow(eq(tenant), eq(project), eq(row.getRequestId()), any(), eq(4.0), eq(7.0), eq(30.0), any())).thenReturn(fitted);
+        when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any(), any(Boolean.class)))
+                .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(2).build());
+
+        service.process(row.getRequestId());
+
+        // The model's frames go in; ffmpeg is told not to interpolate again.
+        verify(ffmpeg).conform(eq(fitted), isNull(), isNull(), eq(7.0), eq(false), eq(30.0), any());
+        assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
+    }
+
+    @Test
+    void theSlowDownFactorIsTheSmallestWholeOneThatReachesTheShot() {
+        assertThat(AiSlowDown.factor(4.0, 7.0)).isEqualTo(2);
+        assertThat(AiSlowDown.factor(3.0, 7.0)).isEqualTo(3);
+        assertThat(AiSlowDown.factor(4.0, 4.4)).isEqualTo(2);
+        assertThat(AiSlowDown.factor(1.0, 20.0)).isEqualTo(8);
     }
 
     @Test

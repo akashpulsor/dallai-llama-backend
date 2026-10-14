@@ -423,7 +423,7 @@ public class LlmGatewayService {
      * case, ElevenLabsProvider.composeMusic's {@code music_length_ms} param for music). Every
      * other model type keeps the input/output-token path unchanged. */
     private static final java.util.Set<String> DURATION_PRICED_TYPES =
-            java.util.Set.of("video", "upscale", "music", "lip_sync", "video_edit", "transcription");
+            java.util.Set.of("video", "upscale", "interpolate", "music", "lip_sync", "video_edit", "transcription");
 
     static BigDecimal computeCost(RateCard rateCard, String modelType, int inputTokens, int outputTokens,
                                    Map<String, Object> params) {

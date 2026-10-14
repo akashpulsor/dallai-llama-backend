@@ -51,6 +51,10 @@ public class ShotClipConform {
     @Column(name = "activate", nullable = false)
     private Boolean activate;
 
+    /** Slow with Topaz, which generates the missing frames, instead of ffmpeg. */
+    @Column(name = "ai", nullable = false)
+    private Boolean ai;
+
     /** Same lifecycle as a frame extraction: QUEUED, PROCESSING, COMPLETED, FAILED. */
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)

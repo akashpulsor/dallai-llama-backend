@@ -76,6 +76,13 @@ public class FilmRender {
     private String lastError;
 
     /** The copy stamped with the Dalaillama mark (V16), used for every upload from the platform. */
+    /** The render this one is an upscaled copy of; null for a joined or uploaded film. */
+    @Column(name = "upscaled_from_render_id")
+    private UUID upscaledFromRenderId;
+
+    @Column(name = "upscale_factor", precision = 4, scale = 2)
+    private BigDecimal upscaleFactor;
+
     @Column(name = "stamped_object_key", length = 1024)
     private String stampedObjectKey;
 

@@ -44,4 +44,9 @@ public class PostProductionTopicConfig {
     public NewTopic conformRequestedTopic(@Value("${post-production.conform.requested-topic}") String topic) {
         return new NewTopic(topic, 3, (short) 1);
     }
+
+    @Bean
+    public NewTopic filmUpscaleRequestedTopic(@Value("${post-production.film-upscale.requested-topic}") String topic) {
+        return new NewTopic(topic, 3, (short) 1);
+    }
 }
