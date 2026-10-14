@@ -69,17 +69,22 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
      * least {@code :minItems} showable items (a profile isn't shown half-built). */
     String PUBLIC_VISIBLE = ITEM_SHOWABLE + """
             AND p.status = com.dalai.llama.tenant.showcase.domain.ProfileStatus.ACTIVE
-            AND EXISTS (SELECT 1 FROM CreatorYouTubeChannel c
-                        WHERE c.tenantId = i.tenantId
-                          AND c.status = com.dalai.llama.tenant.youtube.domain.ChannelStatus.VERIFIED)
-            AND (SELECT COUNT(x) FROM ShowcaseItem x, YouTubeVideo xv
-                 WHERE xv.videoId = x.youtubeVideoId AND x.tenantId = i.tenantId AND
+            AND (i.origin = com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM
+                 OR EXISTS (SELECT 1 FROM CreatorYouTubeChannel c
+                            WHERE c.tenantId = i.tenantId
+                              AND c.status = com.dalai.llama.tenant.youtube.domain.ChannelStatus.VERIFIED))
+            AND (SELECT COUNT(x) FROM ShowcaseItem x LEFT JOIN YouTubeVideo xv ON xv.videoId = x.youtubeVideoId
+                 WHERE x.tenantId = i.tenantId AND
             """ + OTHER_ITEM_SHOWABLE + """
                 ) >= :minItems
             """;
 
-    @Query("SELECT i FROM ShowcaseItem i, CreatorPublicProfile p, YouTubeVideo v"
-            + " WHERE p.tenantId = i.tenantId AND v.videoId = i.youtubeVideoId AND " + PUBLIC_VISIBLE
+    /** Items with their profile and, when there is one, their YouTube video. A platform film
+     * published to the profile has none until it is shared to YouTube. */
+    String ITEM_PROFILE_VIDEO = "SELECT i FROM ShowcaseItem i JOIN CreatorPublicProfile p ON p.tenantId = i.tenantId"
+            + " LEFT JOIN YouTubeVideo v ON v.videoId = i.youtubeVideoId";
+
+    @Query(ITEM_PROFILE_VIDEO + " WHERE " + PUBLIC_VISIBLE
             + " AND (:industry IS NULL OR i.industry = :industry)"
             + " AND (:format IS NULL OR i.format = :format)"
             + " ORDER BY i.publishedAt DESC, i.id")
@@ -90,9 +95,7 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
                                       @Param("platformSelf") boolean platformSelf,
                                       Pageable page);
 
-    @Query("SELECT i FROM ShowcaseItem i, CreatorPublicProfile p, YouTubeVideo v"
-            + " WHERE p.tenantId = i.tenantId AND v.videoId = i.youtubeVideoId AND i.tenantId = :tenantId AND "
-            + PUBLIC_VISIBLE
+    @Query(ITEM_PROFILE_VIDEO + " WHERE i.tenantId = :tenantId AND " + PUBLIC_VISIBLE
             + " ORDER BY i.sortOrder, i.publishedAt DESC")
     List<ShowcaseItem> findPublicForCreator(@Param("tenantId") UUID tenantId,
                                             @Param("freshAfter") OffsetDateTime freshAfter,
@@ -100,7 +103,7 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
                                             @Param("platformSelf") boolean platformSelf);
 
     /** Every item that passes the item-and-video half of the public rules, for the ranking run. */
-    @Query("SELECT i FROM ShowcaseItem i, YouTubeVideo v WHERE v.videoId = i.youtubeVideoId AND " + ITEM_SHOWABLE)
+    @Query("SELECT i FROM ShowcaseItem i LEFT JOIN YouTubeVideo v ON v.videoId = i.youtubeVideoId WHERE " + ITEM_SHOWABLE)
     List<ShowcaseItem> findAllShowable(@Param("freshAfter") OffsetDateTime freshAfter,
                                        @Param("platformSelf") boolean platformSelf);
 
@@ -110,8 +113,7 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
 
     /** Public items ranked by score, limited to creators at the given levels (a surface's floor and
      * above). Items not yet scored come last. */
-    @Query("SELECT i FROM ShowcaseItem i, CreatorPublicProfile p, YouTubeVideo v"
-            + " WHERE p.tenantId = i.tenantId AND v.videoId = i.youtubeVideoId AND " + PUBLIC_VISIBLE
+    @Query(ITEM_PROFILE_VIDEO + " WHERE " + PUBLIC_VISIBLE
             + " AND p.level IN :levels"
             + " AND (:industry IS NULL OR i.industry = :industry)"
             + " AND (:format IS NULL OR i.format = :format)"

@@ -46,8 +46,19 @@ public class ShowcaseItem {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "youtube_video_id", nullable = false, unique = true, length = 16)
+    /** Null for a platform film published to the profile and not (yet) shared to YouTube. */
+    @Column(name = "youtube_video_id", unique = true, length = 16)
     private String youtubeVideoId;
+
+    /** The film's own facts, for a card with no YouTube video to read them from. */
+    @Column(name = "film_duration_seconds", precision = 8, scale = 3)
+    private java.math.BigDecimal filmDurationSeconds;
+
+    @Column(name = "film_width")
+    private Integer filmWidth;
+
+    @Column(name = "film_height")
+    private Integer filmHeight;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "origin", nullable = false, length = 10)

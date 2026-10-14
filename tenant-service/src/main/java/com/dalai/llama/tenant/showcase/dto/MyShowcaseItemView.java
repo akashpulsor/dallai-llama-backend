@@ -25,6 +25,8 @@ public record MyShowcaseItemView(
         boolean hiddenByOps,
         int playCount,
         int fullPlayCount,
-        String watchUrl
+        String watchUrl,
+        /** The project a platform film was made in; null for a pick from the channel. */
+        UUID sourceProjectId
 ) {
 }

@@ -165,6 +165,33 @@ public class PlatformPublishService {
         return Optional.of(itemRepository.save(item));
     }
 
+    /**
+     * Puts a finished film on the creator's profile, with no YouTube upload: it plays from our
+     * stamped copy, its poster is its first frame. Sharing it to YouTube later fills in the video on
+     * this same item. Publishing again brings back a film taken off the profile.
+     */
+    @Transactional
+    public MyShowcaseItemView publishToProfile(UUID tenantId, UUID projectId) {
+        ShowcaseSource source = preProduction.source(tenantId, projectId);
+        if (!source.filmReady()) throw new IllegalStateException("Publish the finished film to the review page first");
+        CreatorPublicProfile profile = profile(tenantId);
+        ShowcaseItem existing = itemRepository.findBySourceProjectId(projectId).orElse(null);
+        if (existing != null && !existing.getTenantId().equals(tenantId)) {
+            throw new IllegalStateException("This film is already on another profile");
+        }
+        boolean vertical = source.width() != null && source.height() != null && source.height() > source.width();
+        ShowcaseItem item = platformItem(existing, tenantId, source, existing == null ? null : existing.getYoutubeVideoId(),
+                existing != null ? existing.getIndustry() : profile.getIndustries().stream().findFirst().orElse(ShowcaseIndustry.OTHER),
+                existing != null ? existing.getFormat() : vertical ? ShowcaseFormat.SOCIAL_SHORT : ShowcaseFormat.BRAND_FILM,
+                existing == null ? null : existing.getClientLabel(),
+                existing == null || existing.getPlatformProof() == null ? PlatformProof.RENDERED : existing.getPlatformProof(),
+                existing == null ? null : existing.getChannel(), OffsetDateTime.now(clock));
+        if (item.getTitleOverride() == null) item.setTitleOverride(source.projectName());
+        ShowcaseItem saved = itemRepository.save(item);
+        return ShowcasePickService.toView(saved, saved.getYoutubeVideoId() == null ? null
+                : videoRepository.findById(saved.getYoutubeVideoId()).orElse(null));
+    }
+
     /** Path 1: queue an upload to Dalaillama's channel. Re-requesting after a failure re-queues it. */
     @Transactional
     public OfficialUploadView requestOfficialUpload(UUID tenantId, UUID projectId, OfficialUploadRequest request) {
@@ -257,6 +284,10 @@ public class PlatformPublishService {
                 .build();
         // A reused item follows the upload it is being recorded for.
         item.setYoutubeVideoId(videoId);
+        // The film's own facts, for its card whether or not it is on YouTube.
+        item.setFilmDurationSeconds(source.durationSeconds());
+        item.setFilmWidth(source.width());
+        item.setFilmHeight(source.height());
         item.setOrigin(ShowcaseOrigin.PLATFORM);
         item.setPlatformProof(proof);
         item.setChannel(channel);

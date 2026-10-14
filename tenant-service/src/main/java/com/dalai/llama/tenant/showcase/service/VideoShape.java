@@ -12,6 +12,13 @@ record VideoShape(int width, int height) {
         return new VideoShape(video.getAspectW(), video.getAspectH());
     }
 
+    /** The YouTube video's shape, else the film's own (a platform film not on YouTube). */
+    static VideoShape of(YouTubeVideo video, com.dalai.llama.tenant.showcase.domain.entity.ShowcaseItem item) {
+        if (video != null && video.getAspectW() != null && video.getAspectH() != null) return of(video);
+        if (item.getFilmWidth() != null && item.getFilmHeight() != null) return new VideoShape(item.getFilmWidth(), item.getFilmHeight());
+        return DEFAULT;
+    }
+
     boolean vertical() {
         return height > width;
     }

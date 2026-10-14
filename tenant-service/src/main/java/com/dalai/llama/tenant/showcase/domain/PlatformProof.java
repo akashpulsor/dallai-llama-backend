@@ -5,5 +5,8 @@ public enum PlatformProof {
     /** We uploaded it ourselves and hold the id YouTube returned. */
     UPLOADED,
     /** The creator uploaded it and pasted the link; it matched the project's film. */
-    LINK_MATCH
+    LINK_MATCH,
+    /** Published straight from the project to the profile; the proof is our own render. It may
+     * gain a YouTube video later, when the creator shares it there. */
+    RENDERED
 }

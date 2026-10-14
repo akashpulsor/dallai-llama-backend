@@ -39,6 +39,12 @@ public class MyPlatformFilmController {
         return ResponseEntity.of(tenant(jwt).map(t -> publishService.kit(t.getId(), projectId)));
     }
 
+    /** Puts the finished film on the profile (no YouTube); sharing to YouTube is a later step. */
+    @PostMapping("/profile")
+    public ResponseEntity<MyShowcaseItemView> publishToProfile(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID projectId) {
+        return ResponseEntity.of(tenant(jwt).map(t -> publishService.publishToProfile(t.getId(), projectId)));
+    }
+
     @PostMapping("/youtube-link")
     public ResponseEntity<MyShowcaseItemView> link(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID projectId,
                                                    @Valid @RequestBody LinkPlatformFilmRequest request) {

@@ -15,7 +15,9 @@ public final class YouTubeLinks {
         return "https://www.youtube.com/channel/" + channelId;
     }
 
+    /** Null when there is no YouTube video (a platform film only on the profile). */
     public static String watch(String videoId, boolean vertical, BigDecimal durationSeconds) {
+        if (videoId == null) return null;
         boolean shorts = vertical && durationSeconds != null && durationSeconds.intValue() <= SHORTS_MAX_SECONDS;
         return shorts ? "https://www.youtube.com/shorts/" + videoId : "https://www.youtube.com/watch?v=" + videoId;
     }

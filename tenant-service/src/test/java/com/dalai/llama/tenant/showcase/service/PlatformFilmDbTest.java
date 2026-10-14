@@ -96,6 +96,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     @Autowired private OfficialUploadJobRepository jobs;
     @Autowired private AutoOfficialUploadJob autoQueue;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.dalai.llama.tenant.showcase.repository.ShowcaseItemRepository items;
 
     private UUID creator;
     private final UUID project = UUID.randomUUID();
@@ -304,6 +305,33 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT youtube_video_id FROM showcase_item", String.class)).isEqualTo("creatorVid2");
+    }
+
+    @Test
+    void aFilmPublishedToTheProfileShowsWithoutYouTube_andSharingItLaterFillsInTheVideo() {
+        when(preProduction.source(creator, project)).thenReturn(source(false, false));
+        // No YouTube at all: a profile of platform films needs no verified channel.
+        jdbc.update("DELETE FROM creator_youtube_channel");
+
+        var published = publishService.publishToProfile(creator, project);
+
+        assertThat(published.youtubeVideoId()).isNull();
+        assertThat(published.sourceProjectId()).isEqualTo(project);
+        assertThat(published.title()).isEqualTo("GlowLabs serum launch");
+        assertThat(published.watchUrl()).isNull();
+        assertThat(jdbc.queryForObject("SELECT platform_proof || '/' || status || '/' || film_width || 'x' || film_height"
+                + " FROM showcase_item", String.class)).isEqualTo("RENDERED/LIVE/1080x1920");
+        assertThat(items.findPublicForCreator(creator, NOW.atOffset(java.time.ZoneOffset.UTC).minusDays(30), 1, true)).hasSize(1);
+        // Without our own copy to play there is nothing to show.
+        assertThat(items.findPublicForCreator(creator, NOW.atOffset(java.time.ZoneOffset.UTC).minusDays(30), 1, false)).isEmpty();
+
+        // Publishing again is a no-op on the same item; sharing to YouTube later fills in its video.
+        publishService.publishToProfile(creator, project);
+        when(youTube.videos(any())).thenReturn(List.of());
+        publishService.recordCreatorUpload(creator, project, "creatorVid9", "public");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM showcase_item", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT youtube_video_id || '/' || platform_proof FROM showcase_item", String.class))
+                .isEqualTo("creatorVid9/UPLOADED");
     }
 
     @Test

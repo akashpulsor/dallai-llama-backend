@@ -87,7 +87,8 @@ public class ShowcasePickService {
 
     public List<MyShowcaseItemView> listMine(UUID tenantId) {
         List<ShowcaseItem> items = itemRepository.findByTenantIdAndStatusInOrderBySortOrderAscPublishedAtDesc(tenantId, MANAGED);
-        Map<String, YouTubeVideo> videos = videoRepository.findAllById(items.stream().map(ShowcaseItem::getYoutubeVideoId).toList())
+        Map<String, YouTubeVideo> videos = videoRepository.findAllById(items.stream().map(ShowcaseItem::getYoutubeVideoId)
+                        .filter(java.util.Objects::nonNull).toList())
                 .stream().collect(Collectors.toMap(YouTubeVideo::getVideoId, Function.identity()));
         return items.stream().map(i -> toView(i, videos.get(i.getYoutubeVideoId()))).toList();
     }
@@ -102,7 +103,8 @@ public class ShowcasePickService {
         item.setClientLabel(blankToNull(request.clientLabel()));
         item.setTitleOverride(blankToNull(request.titleOverride()));
         item.setStatus(request.visible() ? ShowcaseItemStatus.LIVE : ShowcaseItemStatus.HIDDEN);
-        return toView(itemRepository.save(item), videoRepository.findById(item.getYoutubeVideoId()).orElse(null));
+        return toView(itemRepository.save(item), item.getYoutubeVideoId() == null ? null
+                : videoRepository.findById(item.getYoutubeVideoId()).orElse(null));
     }
 
     @Transactional
@@ -139,7 +141,7 @@ public class ShowcasePickService {
     }
 
     static MyShowcaseItemView toView(ShowcaseItem i, YouTubeVideo v) {
-        VideoShape shape = VideoShape.of(v);
+        VideoShape shape = VideoShape.of(v, i);
         return new MyShowcaseItemView(
                 i.getId(),
                 i.getPublicId(),
@@ -157,7 +159,8 @@ public class ShowcasePickService {
                 i.isHiddenByOps(),
                 i.getPlayCount(),
                 i.getFullPlayCount(),
-                YouTubeLinks.watch(i.getYoutubeVideoId(), shape.vertical(), v == null ? null : v.getDurationSeconds()));
+                YouTubeLinks.watch(i.getYoutubeVideoId(), shape.vertical(), v == null ? i.getFilmDurationSeconds() : v.getDurationSeconds()),
+                i.getSourceProjectId());
     }
 
     private static String blankToNull(String s) {

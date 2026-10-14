@@ -156,7 +156,8 @@ public class PublicShowcaseService {
     List<PublicShowcaseCard> toCards(List<ShowcaseItem> items) {
         if (items.isEmpty()) return List.of();
         List<UUID> tenantIds = items.stream().map(ShowcaseItem::getTenantId).distinct().toList();
-        Map<String, YouTubeVideo> videos = videoRepository.findAllById(items.stream().map(ShowcaseItem::getYoutubeVideoId).toList())
+        Map<String, YouTubeVideo> videos = videoRepository.findAllById(items.stream().map(ShowcaseItem::getYoutubeVideoId)
+                        .filter(java.util.Objects::nonNull).toList())
                 .stream().collect(Collectors.toMap(YouTubeVideo::getVideoId, Function.identity()));
         Map<UUID, CreatorPublicProfile> profiles = profileRepository.findAllById(tenantIds).stream()
                 .collect(Collectors.toMap(CreatorPublicProfile::getTenantId, Function.identity()));
@@ -168,21 +169,22 @@ public class PublicShowcaseService {
     }
 
     private PublicShowcaseCard toCard(ShowcaseItem i, YouTubeVideo v, CreatorPublicProfile p, CreatorYouTubeChannel channel) {
-        VideoShape shape = VideoShape.of(v);
+        VideoShape shape = VideoShape.of(v, i);
+        java.math.BigDecimal duration = v != null ? v.getDurationSeconds() : i.getFilmDurationSeconds();
         return new PublicShowcaseCard(
                 i.getPublicId(),
                 i.getYoutubeVideoId(),
-                i.getTitleOverride() != null ? i.getTitleOverride() : v.getTitle(),
+                i.getTitleOverride() != null ? i.getTitleOverride() : v == null ? null : v.getTitle(),
                 thumbnail(i, v),
                 shape.width(),
                 shape.height(),
                 shape.vertical(),
-                v.getDurationSeconds(),
+                duration,
                 i.getOrigin(),
                 i.getIndustry(),
                 i.getFormat(),
                 i.getClientLabel(),
-                YouTubeLinks.watch(i.getYoutubeVideoId(), shape.vertical(), v.getDurationSeconds()),
+                YouTubeLinks.watch(i.getYoutubeVideoId(), shape.vertical(), duration),
                 hostFor(i),
                 i.getLikeCount(),
                 new PublicShowcaseCard.Creator(p.getHandle(), p.getDisplayName(), CreatorAvatar.of(p, channel),
@@ -195,7 +197,7 @@ public class PublicShowcaseService {
     /** YouTube's thumbnail, except for a platform film that is private on YouTube (YouTube shows
      * nobody its picture): that one's poster is its own first frame, served by {@link #poster}. */
     private String thumbnail(ShowcaseItem i, YouTubeVideo v) {
-        boolean privateOnYouTube = v.getPrivacyStatus() == null || "private".equals(v.getPrivacyStatus());
+        boolean privateOnYouTube = v == null || v.getPrivacyStatus() == null || "private".equals(v.getPrivacyStatus());
         return i.getOrigin() == ShowcaseOrigin.PLATFORM && privateOnYouTube
                 ? publicApiBaseUrl + "/showcase/" + i.getPublicId() + "/poster"
                 : v.getThumbnailUrl();
