@@ -103,7 +103,7 @@ public class ShotClipVersionService {
         return cut(context, source, ClipOrigin.DUBBED, (work, clip, output) -> {
             Path audio = work.resolve("take.mp3");
             fetch(source.dubbedAudioUrl(), audio);
-            ffmpeg.replaceAudio(clip, audio, output);
+            ffmpeg.replaceAudio(clip, audio, source.dubStartSeconds(), output);
         });
     }
 
@@ -167,7 +167,7 @@ public class ShotClipVersionService {
             // No music on a clip: shot music is a sound layer, mixed into the film when it renders,
             // so it can be moved or switched off without remaking the shot.
             Path output = workDir.resolve("preview.mp4");
-            ffmpeg.mix(clip, dub, null, targetSeconds, output);
+            ffmpeg.mix(clip, dub, null, targetSeconds, source.dubStartSeconds(), output);
 
             ClipProbe probe = ffmpeg.probe(output);
             if (!probe.isPlayable()) {

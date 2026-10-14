@@ -98,8 +98,10 @@ public class ShotConformService {
             Path music = null;
 
             Path output = workDir.resolve("conformed.mp4");
+            // The take starts at its line's planned moment in the shot. The picture is conformed to the
+            // shot's length, so that moment is the same in the result.
             ffmpeg.conform(generated, dub, music, row.getTargetSeconds().doubleValue(), row.getInterpolate(),
-                    ffmpeg.frameRate(generated), output);
+                    ffmpeg.frameRate(generated), source.dubStartSeconds(), output);
             ClipProbe conformedProbe = playable(ffmpeg.probe(output), "The conformed clip");
 
             ShotClipVersion cut = clipVersions.storeConformed(context, source.jobId(), generated, generatedProbe, output, conformedProbe,

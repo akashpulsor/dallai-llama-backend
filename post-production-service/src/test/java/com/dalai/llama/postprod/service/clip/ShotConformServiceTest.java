@@ -69,14 +69,14 @@ class ShotConformServiceTest {
         assertThat(view.status()).isEqualTo("QUEUED");
         assertThat(view.interpolate()).isTrue();
         verify(publisher).publish(any());
-        verify(ffmpeg, never()).conform(any(), any(), any(), any(Double.class), any(Boolean.class), any(Double.class), any());
+        verify(ffmpeg, never()).conform(any(), any(), any(), any(Double.class), any(Boolean.class), any(Double.class), any(Double.class), any());
     }
 
     @Test
     void aShortClipIsSlowedToThePlannedLengthWithItsLineAndBecomesTheShotsCut() {
         ShotClipConform row = queued();
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0,
-                "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED"));
+                "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED", 1.2));
         ShotClipVersion cut = ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(3).build();
         when(clipVersions.storeConformed(any(), eq(job), any(), any(), any(), any(), eq(true))).thenReturn(cut);
 
@@ -84,7 +84,8 @@ class ShotConformServiceTest {
 
         verify(clipVersions).fetch(eq("https://minio/generated.mp4"), any());
         verify(clipVersions).fetch(eq("https://minio/take.mp3"), any());
-        verify(ffmpeg).conform(any(), any(), isNull(), eq(6.0), eq(true), eq(30.0), any());
+        // The line was planned to start 1.2s in, so the take is held back until then.
+        verify(ffmpeg).conform(any(), any(), isNull(), eq(6.0), eq(true), eq(30.0), eq(1.2), any());
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
         assertThat(row.getVersionId()).isEqualTo(cut.getVersionId());
         assertThat(row.getSourceJobId()).isEqualTo(job);
@@ -94,13 +95,13 @@ class ShotConformServiceTest {
     void aConformNeverLaysMusicOnTheClip() {
         // Shot music is a sound layer mixed into the film when it renders, not part of a cut.
         ShotClipConform row = queued();
-        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED"));
+        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED", null));
         when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any(), any(Boolean.class)))
                 .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(2).build());
 
         service.process(row.getRequestId());
 
-        verify(ffmpeg).conform(any(), isNull(), isNull(), eq(6.0), eq(true), eq(30.0), any());
+        verify(ffmpeg).conform(any(), isNull(), isNull(), eq(6.0), eq(true), eq(30.0), eq(0.0), any());
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
     }
 
@@ -111,7 +112,7 @@ class ShotConformServiceTest {
 
         ShotClipConform row = queued();
         row.setActivate(false);
-        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED"));
+        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED", null));
         when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any(), eq(false)))
                 .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(4).build());
 
@@ -124,7 +125,7 @@ class ShotConformServiceTest {
     @Test
     void aShotWithNoClipFailsTheRequestWithItsReason() {
         ShotClipConform row = queued();
-        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(null, null, null, null, null, null, null));
+        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(null, null, null, null, null, null, null, null));
 
         service.process(row.getRequestId());
 

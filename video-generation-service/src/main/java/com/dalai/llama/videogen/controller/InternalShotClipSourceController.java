@@ -30,6 +30,7 @@ public class InternalShotClipSourceController {
     private final ShotClipRepairService shotClipRepairService;
     private final CloneAudioService cloneAudioService;
     private final com.dalai.llama.videogen.service.ShotGenerationOrchestrator shotGenerationOrchestrator;
+    private final com.dalai.llama.videogen.service.dialoguefit.TakeTiming takeTiming;
 
     /**
      * Every shot's latest job in this project -- what another service needs to know which shots
@@ -65,7 +66,8 @@ public class InternalShotClipSourceController {
                 take == null ? null : take.audioUrl(),
                 take == null || take.durationMs() == null ? null : take.durationMs() / 1000.0,
                 take == null ? null : take.text(),
-                sources.outputOrigin()));
+                sources.outputOrigin(),
+                take == null ? null : takeTiming.startSeconds(tenantId, projectId, shotId, take.beatId())));
     }
 
     /**
@@ -73,6 +75,8 @@ public class InternalShotClipSourceController {
      * @param dubbedAudioUrl the recorded take, presigned. Null when nothing has been dubbed, which
      *                       the caller has to handle rather than treat as an error -- a shot with no
      *                       line is a perfectly ordinary thing to want silenced.
+     * @param dubbedAudioStartSeconds where the take starts in the shot: its line's planned start
+     *                       (see TakeTiming). Null when there is no take.
      */
     public record ShotClipSourceView(UUID jobId,
                                      String clipUrl,
@@ -80,6 +84,7 @@ public class InternalShotClipSourceController {
                                      String dubbedAudioUrl,
                                      Double dubbedAudioSeconds,
                                      String dubbedText,
-                                     String outputOrigin) {
+                                     String outputOrigin,
+                                     Double dubbedAudioStartSeconds) {
     }
 }

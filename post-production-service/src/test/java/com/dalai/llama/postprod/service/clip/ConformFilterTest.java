@@ -31,4 +31,11 @@ class ConformFilterTest {
         // An unknown frame rate falls back to 30 rather than producing an invalid filter.
         assertThat(FfmpegClipProcessor.conformVideoFilter(6.0, 6.0, true, 0)).isEqualTo("fps=30.000");
     }
+
+    @Test
+    void aTakeIsHeldBackUntilItsLinesPlannedStart_andUntouchedWhenItStartsOnTheFirstFrame() {
+        assertThat(FfmpegClipProcessor.delayed(1.2)).isEqualTo("adelay=delays=1200:all=1,");
+        assertThat(FfmpegClipProcessor.delayed(0)).isEmpty();
+        assertThat(FfmpegClipProcessor.delayed(-0.5)).isEmpty();
+    }
 }

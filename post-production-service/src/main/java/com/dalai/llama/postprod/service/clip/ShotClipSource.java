@@ -15,9 +15,16 @@ public record ShotClipSource(UUID jobId,
                              String dubbedAudioUrl,
                              Double dubbedAudioSeconds,
                              String dubbedText,
-                             String outputOrigin) {
+                             String outputOrigin,
+                             /** Where the take starts in the shot: its line's planned start. */
+                             Double dubbedAudioStartSeconds) {
 
     public boolean hasDub() {
         return dubbedAudioUrl != null && !dubbedAudioUrl.isBlank();
+    }
+
+    /** Seconds of silence before the take, so the line lands when it was planned; 0 when unknown. */
+    public double dubStartSeconds() {
+        return dubbedAudioStartSeconds == null || dubbedAudioStartSeconds < 0 ? 0 : dubbedAudioStartSeconds;
     }
 }
