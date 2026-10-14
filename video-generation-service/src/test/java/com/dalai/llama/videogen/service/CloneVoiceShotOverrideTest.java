@@ -114,4 +114,65 @@ class CloneVoiceShotOverrideTest {
         assertThatThrownBy(() -> service.cloneVoice(tenant, project, shotId, "Mumbai wakes up early."))
                 .isInstanceOf(VideoGenException.class);
     }
+
+    @Test
+    void inATwoPersonShotEachLineIsRecordedInItsOwnSpeakersVoice() {
+        // Meera is the shot's main character; Ravi answers her. His line must be his voice.
+        UUID meeraProfileId = UUID.randomUUID();
+        UUID raviProfileId = UUID.randomUUID();
+        CastProfileView meeraProfile = mock(CastProfileView.class);
+        when(meeraProfile.id()).thenReturn(meeraProfileId);
+        when(meeraProfile.clonedVoiceId()).thenReturn("voice-meera");
+        when(meeraProfile.clonedVoiceProviderId()).thenReturn("elevenlabs");
+        when(meeraProfile.voiceIdentityType()).thenReturn("HUMAN");
+        CastProfileView raviProfile = mock(CastProfileView.class);
+        when(raviProfile.id()).thenReturn(raviProfileId);
+        when(raviProfile.clonedVoiceId()).thenReturn("voice-ravi");
+        when(raviProfile.clonedVoiceProviderId()).thenReturn("elevenlabs");
+        when(raviProfile.voiceIdentityType()).thenReturn("HUMAN");
+
+        UUID meeraCharacter = UUID.randomUUID();
+        UUID raviCharacter = UUID.randomUUID();
+        com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptCharacterView meeraChar =
+                mock(com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptCharacterView.class);
+        when(meeraChar.id()).thenReturn(meeraCharacter);
+        when(meeraChar.characterKey()).thenReturn("meera");
+        com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptCharacterView raviChar =
+                mock(com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptCharacterView.class);
+        when(raviChar.id()).thenReturn(raviCharacter);
+        when(raviChar.characterKey()).thenReturn("ravi");
+        com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptView script =
+                mock(com.dalai.llama.videogen.service.preproduction.PreProductionViews.ScriptView.class);
+        when(script.characters()).thenReturn(List.of(meeraChar, raviChar));
+        com.dalai.llama.videogen.service.preproduction.PreProductionViews.CastAssignmentView meeraCast =
+                mock(com.dalai.llama.videogen.service.preproduction.PreProductionViews.CastAssignmentView.class);
+        when(meeraCast.scriptCharacterId()).thenReturn(meeraCharacter);
+        when(meeraCast.castProfileId()).thenReturn(meeraProfileId);
+        com.dalai.llama.videogen.service.preproduction.PreProductionViews.CastAssignmentView raviCast =
+                mock(com.dalai.llama.videogen.service.preproduction.PreProductionViews.CastAssignmentView.class);
+        when(raviCast.scriptCharacterId()).thenReturn(raviCharacter);
+        when(raviCast.castProfileId()).thenReturn(raviProfileId);
+
+        ShotView shot = mock(ShotView.class);
+        when(shot.id()).thenReturn(shotId);
+        when(shot.shotRef()).thenReturn("shot-03-002");
+        when(shot.primaryCharacterKey()).thenReturn("meera");
+        UUID askBeat = UUID.randomUUID();
+        UUID answerBeat = UUID.randomUUID();
+        var beats = List.of(
+                new com.dalai.llama.videogen.service.preproduction.PreProductionViews.ShotDialogueBeatView(
+                        askBeat, 0, new java.math.BigDecimal("1.2"), java.math.BigDecimal.ONE, "Ho gaya?", "meera", null),
+                new com.dalai.llama.videogen.service.preproduction.PreProductionViews.ShotDialogueBeatView(
+                        answerBeat, 1, new java.math.BigDecimal("3.5"), java.math.BigDecimal.ONE, "Theek hai.", "ravi", null));
+        ShotBundleView shotBundle = new ShotBundleView(shot, beats, null, null, List.of(), null, null);
+        when(preprod.getPrepareBundle(tenant, project)).thenReturn(Optional.of(
+                new PrepareBundleView(null, null, script, List.of(meeraCast, raviCast), List.of(meeraProfile, raviProfile), List.of(shotBundle))));
+        when(gateway.chat(anyString(), anyString(), any(LlmGatewayChatRequest.class)))
+                .thenReturn(new LlmGatewayChatResponse(UUID.randomUUID(), "tts-model", "data:audio/mpeg;base64,AAAA", null, 12L));
+        when(audio.save(any(), any(), any(), any(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn("https://media/take.mp3");
+
+        assertThat(service.cloneVoice(tenant, project, shotId, "Theek hai.").providerVoiceId()).isEqualTo("voice-ravi");
+        assertThat(service.cloneVoice(tenant, project, shotId, "Ho gaya?").providerVoiceId()).isEqualTo("voice-meera");
+    }
 }

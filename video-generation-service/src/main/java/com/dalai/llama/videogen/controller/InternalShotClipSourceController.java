@@ -30,7 +30,7 @@ public class InternalShotClipSourceController {
     private final ShotClipRepairService shotClipRepairService;
     private final CloneAudioService cloneAudioService;
     private final com.dalai.llama.videogen.service.ShotGenerationOrchestrator shotGenerationOrchestrator;
-    private final com.dalai.llama.videogen.service.dialoguefit.TakeTiming takeTiming;
+    private final com.dalai.llama.videogen.service.dialoguefit.ShotTakes shotTakes;
 
     /**
      * Every shot's latest job in this project -- what another service needs to know which shots
@@ -67,7 +67,8 @@ public class InternalShotClipSourceController {
                 take == null || take.durationMs() == null ? null : take.durationMs() / 1000.0,
                 take == null ? null : take.text(),
                 sources.outputOrigin(),
-                take == null ? null : takeTiming.startSeconds(tenantId, projectId, shotId, take.beatId())));
+                shotTakes.forShot(tenantId, projectId, shotId).stream()
+                        .map(t -> new PlacedTake(t.audioUrl(), t.startSeconds())).toList()));
     }
 
     /**
@@ -75,8 +76,8 @@ public class InternalShotClipSourceController {
      * @param dubbedAudioUrl the recorded take, presigned. Null when nothing has been dubbed, which
      *                       the caller has to handle rather than treat as an error -- a shot with no
      *                       line is a perfectly ordinary thing to want silenced.
-     * @param dubbedAudioStartSeconds where the take starts in the shot: its line's planned start
-     *                       (see TakeTiming). Null when there is no take.
+     * @param takes          every take the clip should carry, each at its line's planned start (see
+     *                       ShotTakes): one per line in a multi-line shot. Empty with no recording.
      */
     public record ShotClipSourceView(UUID jobId,
                                      String clipUrl,
@@ -85,6 +86,10 @@ public class InternalShotClipSourceController {
                                      Double dubbedAudioSeconds,
                                      String dubbedText,
                                      String outputOrigin,
-                                     Double dubbedAudioStartSeconds) {
+                                     java.util.List<PlacedTake> takes) {
+    }
+
+    /** One recorded take, presigned, and the second of the shot it starts at. */
+    public record PlacedTake(String audioUrl, double startSeconds) {
     }
 }

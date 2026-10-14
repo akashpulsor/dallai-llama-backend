@@ -13,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -69,23 +70,26 @@ class ShotConformServiceTest {
         assertThat(view.status()).isEqualTo("QUEUED");
         assertThat(view.interpolate()).isTrue();
         verify(publisher).publish(any());
-        verify(ffmpeg, never()).conform(any(), any(), any(), any(Double.class), any(Boolean.class), any(Double.class), any(Double.class), any());
+        verify(ffmpeg, never()).conform(any(), any(), any(), any(Double.class), any(Boolean.class), any(Double.class), any());
     }
 
     @Test
     void aShortClipIsSlowedToThePlannedLengthWithItsLineAndBecomesTheShotsCut() {
         ShotClipConform row = queued();
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0,
-                "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED", 1.2));
+                "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED",
+                List.of(new ShotClipSource.PlacedTake("https://minio/take.mp3", 1.2))));
+        Path takes = workDir.resolve("takes.wav");
+        when(clipVersions.takeTrack(any(), any())).thenReturn(takes);
         ShotClipVersion cut = ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(3).build();
         when(clipVersions.storeConformed(any(), eq(job), any(), any(), any(), any(), eq(true))).thenReturn(cut);
 
         service.process(row.getRequestId());
 
         verify(clipVersions).fetch(eq("https://minio/generated.mp4"), any());
-        verify(clipVersions).fetch(eq("https://minio/take.mp3"), any());
-        // The line was planned to start 1.2s in, so the take is held back until then.
-        verify(ffmpeg).conform(any(), any(), isNull(), eq(6.0), eq(true), eq(30.0), eq(1.2), any());
+        // The take track (each line at its planned start) is what goes under the slowed picture.
+        verify(clipVersions).takeTrack(any(), eq(workDir));
+        verify(ffmpeg).conform(any(), eq(takes), isNull(), eq(6.0), eq(true), eq(30.0), any());
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
         assertThat(row.getVersionId()).isEqualTo(cut.getVersionId());
         assertThat(row.getSourceJobId()).isEqualTo(job);
@@ -101,7 +105,7 @@ class ShotConformServiceTest {
 
         service.process(row.getRequestId());
 
-        verify(ffmpeg).conform(any(), isNull(), isNull(), eq(6.0), eq(true), eq(30.0), eq(0.0), any());
+        verify(ffmpeg).conform(any(), isNull(), isNull(), eq(6.0), eq(true), eq(30.0), any());
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
     }
 

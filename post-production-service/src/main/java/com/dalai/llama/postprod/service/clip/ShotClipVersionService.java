@@ -100,11 +100,8 @@ public class ShotClipVersionService {
             throw new ClipProcessingException(
                     "Nothing has been dubbed for this shot yet, so there is no voice to put on it");
         }
-        return cut(context, source, ClipOrigin.DUBBED, (work, clip, output) -> {
-            Path audio = work.resolve("take.mp3");
-            fetch(source.dubbedAudioUrl(), audio);
-            ffmpeg.replaceAudio(clip, audio, source.dubStartSeconds(), output);
-        });
+        return cut(context, source, ClipOrigin.DUBBED, (work, clip, output) ->
+                ffmpeg.replaceAudio(clip, takeTrack(source, work), output));
     }
 
     /** A new cut with no voice at all. */
@@ -161,13 +158,12 @@ public class ShotClipVersionService {
 
             Path dub = null;
             if (withDub) {
-                dub = workDir.resolve("take.mp3");
-                fetch(source.dubbedAudioUrl(), dub);
+                dub = takeTrack(source, workDir);
             }
             // No music on a clip: shot music is a sound layer, mixed into the film when it renders,
             // so it can be moved or switched off without remaking the shot.
             Path output = workDir.resolve("preview.mp4");
-            ffmpeg.mix(clip, dub, null, targetSeconds, source.dubStartSeconds(), output);
+            ffmpeg.mix(clip, dub, null, targetSeconds, output);
 
             ClipProbe probe = ffmpeg.probe(output);
             if (!probe.isPlayable()) {
@@ -557,6 +553,26 @@ public class ShotClipVersionService {
         } finally {
             ffmpeg.deleteQuietly(workDir);
         }
+    }
+
+    /**
+     * The shot's recorded takes as one audio file, each line at its planned start (see
+     * {@link FfmpegClipProcessor#combineTakes}). A single take that starts on the first frame is used
+     * as it is.
+     */
+    public Path takeTrack(ShotClipSource source, Path workDir) {
+        List<ShotClipSource.PlacedTake> takes = source.placedTakes();
+        if (takes.isEmpty()) throw new ClipProcessingException("Nothing has been dubbed for this shot yet, so there is no voice to put on it");
+        List<Path> files = new java.util.ArrayList<>();
+        for (int i = 0; i < takes.size(); i++) {
+            Path file = workDir.resolve("take-" + i + ".mp3");
+            fetch(takes.get(i).audioUrl(), file);
+            files.add(file);
+        }
+        if (takes.size() == 1 && takes.get(0).startSeconds() <= 0) return files.get(0);
+        Path combined = workDir.resolve("takes.wav");
+        ffmpeg.combineTakes(files, takes.stream().map(ShotClipSource.PlacedTake::startSeconds).toList(), combined);
+        return combined;
     }
 
     /** The shot's newest generated clip, as video-generation-service reports it. */

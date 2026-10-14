@@ -38,4 +38,12 @@ class ConformFilterTest {
         assertThat(FfmpegClipProcessor.delayed(0)).isEmpty();
         assertThat(FfmpegClipProcessor.delayed(-0.5)).isEmpty();
     }
+
+    @Test
+    void aTwoLineShotsTakesAreEachHeldToTheirStartAndMixedAtFullLevel() {
+        assertThat(FfmpegClipProcessor.combineFilter(java.util.List.of(1.2, 3.5))).isEqualTo(
+                "[0:a]adelay=delays=1200:all=1,aformat=sample_rates=48000:channel_layouts=stereo[t0];"
+                        + "[1:a]adelay=delays=3500:all=1,aformat=sample_rates=48000:channel_layouts=stereo[t1];"
+                        + "[t0][t1]amix=inputs=2:duration=longest:normalize=0[a]");
+    }
 }

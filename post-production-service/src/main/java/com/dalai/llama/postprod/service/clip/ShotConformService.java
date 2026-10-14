@@ -93,15 +93,15 @@ public class ShotConformService {
             clipVersions.fetch(source.clipUrl(), generated);
             ClipProbe generatedProbe = playable(ffmpeg.probe(generated), "The generated clip");
 
-            Path dub = source.hasDub() ? fetched(source.dubbedAudioUrl(), workDir.resolve("take.mp3")) : null;
+            // Every line's take at its planned start in the shot. The picture is conformed to the
+            // shot's length, so those moments are the same in the result.
+            Path dub = source.hasDub() ? clipVersions.takeTrack(source, workDir) : null;
             // No music bed: shot music is a sound layer, mixed into the film when it renders.
             Path music = null;
 
             Path output = workDir.resolve("conformed.mp4");
-            // The take starts at its line's planned moment in the shot. The picture is conformed to the
-            // shot's length, so that moment is the same in the result.
             ffmpeg.conform(generated, dub, music, row.getTargetSeconds().doubleValue(), row.getInterpolate(),
-                    ffmpeg.frameRate(generated), source.dubStartSeconds(), output);
+                    ffmpeg.frameRate(generated), output);
             ClipProbe conformedProbe = playable(ffmpeg.probe(output), "The conformed clip");
 
             ShotClipVersion cut = clipVersions.storeConformed(context, source.jobId(), generated, generatedProbe, output, conformedProbe,
@@ -117,10 +117,6 @@ public class ShotConformService {
         }
     }
 
-    private Path fetched(String url, Path target) {
-        clipVersions.fetch(url, target);
-        return target;
-    }
 
     private static ClipProbe playable(ClipProbe probe, String what) {
         if (!probe.isPlayable()) {

@@ -58,11 +58,37 @@ public class FfmpegClipProcessor {
      * underneath the line it should have spoken is worse than either alone. The video is
      * stream-copied, so the picture is bit-identical to what was generated and paid for.
      */
-    /** {@code startSeconds}: silence before the take, so its line lands when it was planned. */
-    public void replaceAudio(Path clip, Path audio, double startSeconds, Path output) {
+    public void replaceAudio(Path clip, Path audio, Path output) {
         run(List.of("ffmpeg", "-y", "-i", clip.toString(), "-i", audio.toString(),
                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
-                "-af", delayed(startSeconds) + "apad", "-shortest", output.toString()));
+                "-af", "apad", "-shortest", output.toString()));
+    }
+
+    /**
+     * The shot's takes as one track: each held back to its line's planned start, then mixed at full
+     * level. One per line in a multi-line shot -- two speakers, or one speaking twice around an
+     * action -- so every line is heard where it was planned, not just the newest on the first frame.
+     */
+    public void combineTakes(List<Path> takes, List<Double> startSeconds, Path output) {
+        List<String> cmd = new java.util.ArrayList<>(List.of("ffmpeg", "-y"));
+        for (Path take : takes) cmd.addAll(List.of("-i", take.toString()));
+        cmd.addAll(List.of("-filter_complex", combineFilter(startSeconds), "-map", "[a]",
+                "-c:a", "pcm_s16le", output.toString()));
+        run(cmd);
+    }
+
+    /** The filter graph for {@link #combineTakes}: take n delayed to its start, all mixed without the
+     * level drop amix applies by default. Package-private for tests. */
+    static String combineFilter(List<Double> startSeconds) {
+        StringBuilder graph = new StringBuilder();
+        StringBuilder inputs = new StringBuilder();
+        for (int i = 0; i < startSeconds.size(); i++) {
+            graph.append('[').append(i).append(":a]").append(delayed(startSeconds.get(i)))
+                    .append("aformat=sample_rates=48000:channel_layouts=stereo[t").append(i).append("];");
+            inputs.append("[t").append(i).append(']');
+        }
+        return graph.append(inputs).append("amix=inputs=").append(startSeconds.size())
+                .append(":duration=longest:normalize=0[a]").toString();
     }
 
     /** An adelay that holds a take back until its line's planned start, for every channel. Empty
@@ -126,7 +152,7 @@ public class FfmpegClipProcessor {
      *
      * @param targetSeconds null leaves the picture at its own length.
      */
-    public void mix(Path clip, Path dubAudio, Path musicAudio, Integer targetSeconds, double dubStartSeconds, Path output) {
+    public void mix(Path clip, Path dubAudio, Path musicAudio, Integer targetSeconds, Path output) {
         List<String> cmd = new java.util.ArrayList<>(List.of("ffmpeg", "-y", "-i", clip.toString()));
         List<String> audioLabels = addAudioInputs(cmd, dubAudio, musicAudio);
 
@@ -149,7 +175,7 @@ public class FfmpegClipProcessor {
             videoOut = "v";
         }
 
-        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio, dubStartSeconds);
+        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio);
 
         cmd.addAll(List.of("-filter_complex", filter.toString(),
                 "-map", "[" + videoOut + "]", "-map", "[" + audioOut + "]",
@@ -176,7 +202,7 @@ public class FfmpegClipProcessor {
      * @param frameRate the rate to deliver at -- the clip's own, so the film's frame rate is unchanged
      */
     public void conform(Path clip, Path dubAudio, Path musicAudio, double targetSeconds, boolean interpolate,
-                        double frameRate, double dubStartSeconds, Path output) {
+                        double frameRate, Path output) {
         ClipProbe source = probe(clip);
         if (source.durationSeconds() == null || source.durationSeconds().signum() <= 0) {
             throw new ClipProcessingException("Could not measure the clip's length, so it cannot be conformed");
@@ -186,7 +212,7 @@ public class FfmpegClipProcessor {
         StringBuilder filter = new StringBuilder("[0:v]")
                 .append(conformVideoFilter(source.durationSeconds().doubleValue(), targetSeconds, interpolate, frameRate))
                 .append("[v];");
-        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio, dubStartSeconds);
+        String audioOut = appendAudioMix(filter, audioLabels, dubAudio, musicAudio);
         cmd.addAll(List.of("-filter_complex", filter.toString(),
                 "-map", "[v]", "-map", "[" + audioOut + "]",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
@@ -236,16 +262,15 @@ public class FfmpegClipProcessor {
     }
 
     /** Dub over music (music ducked to 0.25 under a dub, 0.6 alone), padded so -shortest ends at the picture. */
-    private static String appendAudioMix(StringBuilder filter, List<String> audioLabels, Path dubAudio, Path musicAudio,
-                                         double dubStartSeconds) {
+    private static String appendAudioMix(StringBuilder filter, List<String> audioLabels, Path dubAudio, Path musicAudio) {
         if (audioLabels.size() == 2) {
             // Dub first, music second -- the order addAudioInputs appended them.
-            filter.append("[").append(audioLabels.get(0)).append("]").append(delayed(dubStartSeconds)).append("apad[dub];")
+            filter.append("[").append(audioLabels.get(0)).append("]apad[dub];")
                   .append("[").append(audioLabels.get(1)).append("]volume=0.25,apad[bed];")
                   .append("[dub][bed]amix=inputs=2:duration=longest:dropout_transition=0[a]");
         } else {
             double volume = musicAudio != null && dubAudio == null ? 0.6 : 1.0;
-            filter.append("[").append(audioLabels.get(0)).append("]").append(dubAudio != null ? delayed(dubStartSeconds) : "").append("volume=")
+            filter.append("[").append(audioLabels.get(0)).append("]volume=")
                   .append(String.format(java.util.Locale.ROOT, "%.2f", volume)).append(",apad[a]");
         }
         return "a";

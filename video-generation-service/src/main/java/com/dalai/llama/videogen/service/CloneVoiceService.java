@@ -196,6 +196,17 @@ public class CloneVoiceService {
         String characterKey = shot.primaryCharacterKey();
         boolean named = characterKey != null && !characterKey.isBlank();
 
+        // A line spoken by someone other than the shot's main character is recorded in that
+        // speaker's own voice. Everything below answers "who speaks this SHOT"; in a two-person
+        // exchange that put Ravi's reply in Meera's voice. Only a different speaker with a cast
+        // voice of their own takes this path, so a one-speaker shot resolves exactly as before.
+        PreProductionViews.CastProfileView beatSpeaker = otherSpeaker(bundle, shotBundle, beatId, characterKey);
+        if (beatSpeaker != null) {
+            log.info("clone-voice using the beat's own speaker projectId={} shotId={} beatId={} castProfileId={}",
+                    projectId, shot.id(), beatId, beatSpeaker.id());
+            return speakAs(tenantId, projectId, shot, bundle, text, beatId, beatSpeaker);
+        }
+
         // An override on the shot settles who speaks before any of the cast resolution below runs.
         //
         // It has to short-circuit rather than merge, because the whole point is the shot the cast
@@ -246,6 +257,26 @@ public class CloneVoiceService {
                       + " no cast assigned to narrate it -- assign a voice in Cast first");
         }
 
+        return speakAs(tenantId, projectId, shot, bundle, text, beatId, profile);
+    }
+
+    /** The beat's speaker when it is someone other than the shot's main character and has a cast
+     * voice; null otherwise (no beat, no speaker named, the main character, or nobody cast). */
+    private PreProductionViews.CastProfileView otherSpeaker(PreProductionViews.PrepareBundleView bundle,
+                                                            PreProductionViews.ShotBundleView shotBundle, UUID beatId,
+                                                            String shotCharacterKey) {
+        if (beatId == null || shotBundle.dialogueBeats() == null) return null;
+        String speaker = shotBundle.dialogueBeats().stream().filter(b -> beatId.equals(b.id()))
+                .map(PreProductionViews.ShotDialogueBeatView::characterKey).findFirst().orElse(null);
+        if (speaker == null || speaker.isBlank() || speaker.equals(shotCharacterKey)) return null;
+        return resolveCastProfile(bundle, speaker);
+    }
+
+    /** Records the line in this cast profile's voice: its prepared clone, a clone of its uploaded
+     * sample, or its built-in voice. */
+    private CloneVoiceResult speakAs(UUID tenantId, UUID projectId, PreProductionViews.ShotView shot,
+                                     PreProductionViews.PrepareBundleView bundle, String text, UUID beatId,
+                                     PreProductionViews.CastProfileView profile) {
         String voiceId;
         String mode;
 

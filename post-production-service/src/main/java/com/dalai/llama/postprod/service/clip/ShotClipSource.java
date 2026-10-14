@@ -16,15 +16,22 @@ public record ShotClipSource(UUID jobId,
                              Double dubbedAudioSeconds,
                              String dubbedText,
                              String outputOrigin,
-                             /** Where the take starts in the shot: its line's planned start. */
-                             Double dubbedAudioStartSeconds) {
+                             /** Every take the clip carries, each at its line's planned start -- one per
+                              * line in a multi-line shot. Null from a video-generation that predates it. */
+                             java.util.List<PlacedTake> takes) {
 
-    public boolean hasDub() {
-        return dubbedAudioUrl != null && !dubbedAudioUrl.isBlank();
+    /** One recorded take and the second of the shot it starts at. */
+    public record PlacedTake(String audioUrl, double startSeconds) {
     }
 
-    /** Seconds of silence before the take, so the line lands when it was planned; 0 when unknown. */
-    public double dubStartSeconds() {
-        return dubbedAudioStartSeconds == null || dubbedAudioStartSeconds < 0 ? 0 : dubbedAudioStartSeconds;
+    /** The takes to lay on: the placed ones, else the single newest take from the first frame. */
+    public java.util.List<PlacedTake> placedTakes() {
+        if (takes != null && !takes.isEmpty()) return takes;
+        return dubbedAudioUrl == null || dubbedAudioUrl.isBlank() ? java.util.List.of()
+                : java.util.List.of(new PlacedTake(dubbedAudioUrl, 0));
+    }
+
+    public boolean hasDub() {
+        return !placedTakes().isEmpty();
     }
 }
