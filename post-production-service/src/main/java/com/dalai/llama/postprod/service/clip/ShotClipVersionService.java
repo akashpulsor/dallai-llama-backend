@@ -469,11 +469,14 @@ public class ShotClipVersionService {
     })
     @Transactional
     public ShotClipVersion storeConformed(Context context, UUID sourceJobId, Path generated, ClipProbe generatedProbe,
-                                          Path conformed, ClipProbe conformedProbe) {
+                                          Path conformed, ClipProbe conformedProbe, boolean activate) {
         repository.lockByShotId(context.shotId());
-        addVersion(context, sourceJobId, ClipOrigin.GENERATED, generated, generatedProbe);
+        // The clip as generated is kept once per render, not again with every slow-down of it.
+        if (!repository.existsByShotIdAndSourceJobIdAndOrigin(context.shotId(), sourceJobId, ClipOrigin.GENERATED)) {
+            addVersion(context, sourceJobId, ClipOrigin.GENERATED, generated, generatedProbe);
+        }
         ShotClipVersion cut = addVersion(context, sourceJobId, ClipOrigin.CONFORMED, conformed, conformedProbe);
-        return accept(context.tenantId(), context.shotId(), cut.getVersionId());
+        return activate ? accept(context.tenantId(), context.shotId(), cut.getVersionId()) : cut;
     }
 
     /** Uploads {@code file} as the shot's next version, a PREVIEW until accepted. Callers hold the shot lock. */

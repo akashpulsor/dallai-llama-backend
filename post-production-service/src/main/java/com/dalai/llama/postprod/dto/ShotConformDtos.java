@@ -16,7 +16,8 @@ public final class ShotConformDtos {
     public record Request(@NotNull @Positive BigDecimal targetSeconds, Boolean interpolate) {
     }
 
-    /** QUEUED or PROCESSING while the consumer works; COMPLETED with the cut now active, or FAILED with why. */
+    /** QUEUED or PROCESSING while the consumer works; COMPLETED with the cut made (active, or a
+     * preview for the creator to choose), or FAILED with why. */
     public record View(UUID requestId, UUID shotId, BigDecimal targetSeconds, boolean interpolate, String status,
                        UUID sourceJobId, UUID versionId, String error) {
     }

@@ -56,7 +56,7 @@ class ShotConformServiceTest {
 
     private ShotClipConform queued() {
         ShotClipConform row = ShotClipConform.builder().requestId(UUID.randomUUID()).tenantId(tenant).projectId(project)
-                .shotId(shot).targetSeconds(new BigDecimal("6.000")).interpolate(true)
+                .shotId(shot).targetSeconds(new BigDecimal("6.000")).interpolate(true).activate(true)
                 .status(FrameExtractionStatus.QUEUED).createdAt(OffsetDateTime.now()).build();
         when(conforms.findById(row.getRequestId())).thenReturn(Optional.of(row));
         return row;
@@ -64,7 +64,7 @@ class ShotConformServiceTest {
 
     @Test
     void askingQueuesTheWorkAndInterpolatesUnlessToldNotTo() {
-        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("6"), null));
+        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("6"), null), true);
 
         assertThat(view.status()).isEqualTo("QUEUED");
         assertThat(view.interpolate()).isTrue();
@@ -78,7 +78,7 @@ class ShotConformServiceTest {
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0,
                 "https://minio/take.mp3", 5.4, "Ho gaya.", "GENERATED"));
         ShotClipVersion cut = ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(3).build();
-        when(clipVersions.storeConformed(any(), eq(job), any(), any(), any(), any())).thenReturn(cut);
+        when(clipVersions.storeConformed(any(), eq(job), any(), any(), any(), any(), eq(true))).thenReturn(cut);
 
         service.process(row.getRequestId());
 
@@ -95,12 +95,29 @@ class ShotConformServiceTest {
         // Shot music is a sound layer mixed into the film when it renders, not part of a cut.
         ShotClipConform row = queued();
         when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED"));
-        when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any()))
+        when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any(), any(Boolean.class)))
                 .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(2).build());
 
         service.process(row.getRequestId());
 
         verify(ffmpeg).conform(any(), isNull(), isNull(), eq(6.0), eq(true), eq(30.0), any());
+        assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
+    }
+
+    @Test
+    void aSlowDownTheCreatorAsksForIsAVersionToChoose_notAnImmediateSwap() {
+        ShotConformDtos.View view = service.request(tenant, project, shot, new ShotConformDtos.Request(new BigDecimal("7"), null), false);
+        assertThat(view.interpolate()).isTrue();
+
+        ShotClipConform row = queued();
+        row.setActivate(false);
+        when(clipVersions.clipSource(any())).thenReturn(new ShotClipSource(job, "https://minio/generated.mp4", 3.0, null, null, null, "GENERATED"));
+        when(clipVersions.storeConformed(any(), any(), any(), any(), any(), any(), eq(false)))
+                .thenReturn(ShotClipVersion.builder().versionId(UUID.randomUUID()).versionNumber(4).build());
+
+        service.process(row.getRequestId());
+
+        verify(clipVersions).storeConformed(any(), eq(job), any(), any(), any(), any(), eq(false));
         assertThat(row.getStatus()).isEqualTo(FrameExtractionStatus.COMPLETED);
     }
 

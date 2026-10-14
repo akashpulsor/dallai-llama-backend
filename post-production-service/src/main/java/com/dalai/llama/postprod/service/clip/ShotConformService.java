@@ -40,7 +40,10 @@ public class ShotConformService {
     private final FfmpegClipProcessor ffmpeg;
     private final ShotConformRequestedPublisher publisher;
 
-    public ShotConformDtos.View request(UUID tenantId, UUID projectId, UUID shotId, ShotConformDtos.Request request) {
+    /** {@code activate}: the result becomes the shot's clip at once (finishing after a render), or is
+     * a preview version the creator chooses (their own slow-down). */
+    public ShotConformDtos.View request(UUID tenantId, UUID projectId, UUID shotId, ShotConformDtos.Request request,
+                                        boolean activate) {
         ShotClipConform row = conforms.save(ShotClipConform.builder()
                 .requestId(UUID.randomUUID())
                 .tenantId(tenantId)
@@ -48,6 +51,7 @@ public class ShotConformService {
                 .shotId(shotId)
                 .targetSeconds(request.targetSeconds().setScale(3, RoundingMode.HALF_UP))
                 .interpolate(!Boolean.FALSE.equals(request.interpolate()))
+                .activate(activate)
                 .status(FrameExtractionStatus.QUEUED)
                 .createdAt(OffsetDateTime.now())
                 .build());
@@ -98,7 +102,8 @@ public class ShotConformService {
                     ffmpeg.frameRate(generated), output);
             ClipProbe conformedProbe = playable(ffmpeg.probe(output), "The conformed clip");
 
-            ShotClipVersion cut = clipVersions.storeConformed(context, source.jobId(), generated, generatedProbe, output, conformedProbe);
+            ShotClipVersion cut = clipVersions.storeConformed(context, source.jobId(), generated, generatedProbe, output, conformedProbe,
+                    !Boolean.FALSE.equals(row.getActivate()));
             finish(row, FrameExtractionStatus.COMPLETED, cut.getVersionId(), null);
             log.info("Conformed shotId={} from {}s to {}s interpolate={} version={}", row.getShotId(),
                     generatedProbe.durationSeconds(), row.getTargetSeconds(), row.getInterpolate(), cut.getVersionNumber());

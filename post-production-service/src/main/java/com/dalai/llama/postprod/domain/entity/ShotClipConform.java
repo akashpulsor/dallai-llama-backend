@@ -46,6 +46,11 @@ public class ShotClipConform {
     @Column(name = "interpolate", nullable = false)
     private Boolean interpolate;
 
+    /** True: the conformed cut becomes the shot's clip at once (finishing after a render). False: it
+     * is a preview the creator chooses, like any other cut. */
+    @Column(name = "activate", nullable = false)
+    private Boolean activate;
+
     /** Same lifecycle as a frame extraction: QUEUED, PROCESSING, COMPLETED, FAILED. */
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)

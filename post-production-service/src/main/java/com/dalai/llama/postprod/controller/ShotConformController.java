@@ -26,11 +26,12 @@ public class ShotConformController {
 
     private final ShotConformService conformService;
 
+    /** The creator's slow-down: a new version to preview and choose, not an immediate swap. */
     @PostMapping("/v1/post-production/projects/{projectId}/shots/{shotId}/conform")
     public ResponseEntity<ShotConformDtos.View> request(@PathVariable UUID projectId, @PathVariable UUID shotId,
                                                         @Valid @RequestBody ShotConformDtos.Request request) {
         return ResponseEntity.status(HttpStatus.ACCEPTED)
-                .body(conformService.request(TenantContextHolder.get().tenantId(), projectId, shotId, request));
+                .body(conformService.request(TenantContextHolder.get().tenantId(), projectId, shotId, request, false));
     }
 
     @GetMapping("/v1/post-production/projects/{projectId}/shots/{shotId}/conform/{requestId}")
@@ -39,11 +40,11 @@ public class ShotConformController {
         return ResponseEntity.ok(conformService.status(TenantContextHolder.get().tenantId(), requestId));
     }
 
-    /** For video-generation-service, after a render finishes at a length other than planned. */
+    /** For video-generation-service's finishing after a render: the result becomes the shot's clip. */
     @PostMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/shots/{shotId}/conform")
     public ResponseEntity<ShotConformDtos.View> requestInternal(@PathVariable UUID tenantId, @PathVariable UUID projectId,
                                                                 @PathVariable UUID shotId,
                                                                 @Valid @RequestBody ShotConformDtos.Request request) {
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(conformService.request(tenantId, projectId, shotId, request));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(conformService.request(tenantId, projectId, shotId, request, true));
     }
 }

@@ -14,6 +14,8 @@ import java.util.UUID;
 
 public interface ShotClipVersionRepository extends JpaRepository<ShotClipVersion, UUID> {
 
+    boolean existsByShotIdAndSourceJobIdAndOrigin(UUID shotId, UUID sourceJobId, com.dalai.llama.postprod.domain.ClipOrigin origin);
+
     /** Every cut of one shot, newest first. The page's per-card read. */
     List<ShotClipVersion> findByShotIdOrderByVersionNumberDesc(UUID shotId);
 
