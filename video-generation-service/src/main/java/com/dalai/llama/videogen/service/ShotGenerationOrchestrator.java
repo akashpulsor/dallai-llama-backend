@@ -675,6 +675,11 @@ public class ShotGenerationOrchestrator {
      * comes from -- so nothing is hidden, it is just no longer mistaken for the shot's video.
      */
     public List<VideoGenJobView> listJobsForProject(UUID tenantId, UUID projectId) {
+        return currentJobPerShot(tenantId, projectId).stream().map(this::toJobView).toList();
+    }
+
+    /** The job each shot of the project is on -- the rule {@link #listJobsForProject} documents. */
+    public List<VideoGenJob> currentJobPerShot(UUID tenantId, UUID projectId) {
         List<VideoGenJob> jobs = videoGenJobRepository.findByTenantIdAndProjectIdOrderByCreatedAtDesc(tenantId, projectId);
 
         // Grouped by shot_id, not shot_ref.
@@ -695,7 +700,7 @@ public class ShotGenerationOrchestrator {
             }
         }
 
-        return latestJobPerShot(jobs, shotIdByJob).stream().map(this::toJobView).toList();
+        return latestJobPerShot(jobs, shotIdByJob);
     }
 
     /**

@@ -25,6 +25,14 @@ import java.util.UUID;
 public class GenerationControlsController {
 
     private final GenerationControlsService service;
+    private final com.dalai.llama.videogen.service.savings.GenerationSavingsService savingsService;
+
+    /** The film's shots as planned against as made: what generating shorter, at lower resolution,
+     * and slowing down saved. */
+    @GetMapping("/v1/scenes/projects/{projectId}/generation-savings")
+    public ResponseEntity<com.dalai.llama.videogen.dto.GenerationSavingsView> savings(@PathVariable UUID projectId) {
+        return ResponseEntity.ok(savingsService.forProject(TenantContextHolder.get().tenantId(), projectId));
+    }
 
     @GetMapping("/v1/scenes/projects/{projectId}/generation-controls")
     public ResponseEntity<GenerationControlsView> get(@PathVariable UUID projectId) {

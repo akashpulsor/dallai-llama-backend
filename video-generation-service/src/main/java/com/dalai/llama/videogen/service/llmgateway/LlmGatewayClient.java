@@ -63,6 +63,27 @@ public class LlmGatewayClient {
         }
     }
 
+    /** A model's current rates, one per render tier, raw in the provider's currency. */
+    public List<RateCard> rateCards(String modelId) {
+        try {
+            List<RateCard> rates = webClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/api/v1/internal/rate-cards").queryParam("modelId", modelId).build())
+                    .retrieve()
+                    .bodyToFlux(RateCard.class)
+                    .collectList()
+                    .block(Duration.ofMillis(timeoutMs));
+            return rates == null ? List.of() : rates;
+        } catch (WebClientResponseException ex) {
+            throw new LlmGatewayCallException(
+                    "llm-gateway rate-cards for %s failed status=%s body=%s"
+                            .formatted(modelId, ex.getStatusCode(), ex.getResponseBodyAsString()), ex);
+        }
+    }
+
+    /** One rate of a model: {@code resolution} null for a tier-less rate. */
+    public record RateCard(String modelId, String resolution, java.math.BigDecimal perSecondCost, String currency) {
+    }
+
     public LlmGatewayJobStatusResponse cancel(String tenantId, UUID llmGatewayJobId) {
         try {
             return webClient.post()
