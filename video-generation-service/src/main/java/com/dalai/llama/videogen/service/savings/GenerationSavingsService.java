@@ -27,6 +27,12 @@ public class GenerationSavingsService {
     private final LlmGatewayClient llmGatewayClient;
     private final BillingCurrencyClient billingCurrencyClient;
 
+    /** See {@link GenerationSavings#breakEven}: a share, never a rate. */
+    public com.dalai.llama.videogen.dto.SlowDownBreakEvenView breakEven(String modelId) {
+        return new com.dalai.llama.videogen.dto.SlowDownBreakEvenView(modelId,
+                GenerationSavings.breakEven(llmGatewayClient.rateCards(modelId), llmGatewayClient.rateCards(SLOW_DOWN_MODEL)));
+    }
+
     public GenerationSavingsView forProject(UUID tenantId, UUID projectId) {
         Map<String, List<RateCard>> rates = new HashMap<>();
         GenerationSavings.Totals totals = GenerationSavings.of(

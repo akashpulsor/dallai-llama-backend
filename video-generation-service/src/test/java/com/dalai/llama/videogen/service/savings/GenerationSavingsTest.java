@@ -52,6 +52,20 @@ class GenerationSavingsTest {
         assertThat(totals.made()).isEqualByComparingTo("0");
     }
 
+    @Test
+    void slowingPaysOnlyUnderTheBreakEvenShare_pricedAtTheModelsCheapestTier() {
+        List<RateCard> topazAtFal = List.of(new RateCard("topaz/interpolate/video", null, new BigDecimal("0.03"), "USD"));
+        // Wan 3.0 at 480p: 1 - 0.03 / 0.068.
+        assertThat(GenerationSavings.breakEven(WAN_RATES, topazAtFal)).isEqualByComparingTo("0.5588");
+        // Seedance 2.0 fast: its tier-less row is the 720p price; the 480p tier is what counts.
+        List<RateCard> seedance = List.of(new RateCard("s", "480p", new BigDecimal("0.1076"), "USD"),
+                new RateCard("s", "720p", new BigDecimal("0.24192"), "USD"), new RateCard("s", null, new BigDecimal("0.24192"), "USD"));
+        assertThat(GenerationSavings.breakEven(seedance, topazAtFal)).isEqualByComparingTo("0.7212");
+        // Slowing that costs more than the model never pays; an unpriced model has no answer.
+        assertThat(GenerationSavings.breakEven(List.of(new RateCard("c", null, new BigDecimal("0.02"), "USD")), topazAtFal)).isEqualByComparingTo("0");
+        assertThat(GenerationSavings.breakEven(List.of(), topazAtFal)).isNull();
+    }
+
     private static VideoGenJob job(int planned, int generated, String resolution, String origin) {
         return VideoGenJob.builder()
                 .modelId(WAN).status(JobStatus.COMPLETED).outputObjectKey("clips/x.mp4").outputOrigin(origin)

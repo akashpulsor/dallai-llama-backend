@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -26,6 +27,13 @@ public class GenerationControlsController {
 
     private final GenerationControlsService service;
     private final com.dalai.llama.videogen.service.savings.GenerationSavingsService savingsService;
+
+    /** The share of a shot's length under which a shorter clip slowed back costs less (model ids
+     * contain slashes, hence a query parameter). */
+    @GetMapping("/v1/scenes/slow-down-break-even")
+    public ResponseEntity<com.dalai.llama.videogen.dto.SlowDownBreakEvenView> breakEven(@RequestParam String modelId) {
+        return ResponseEntity.ok(savingsService.breakEven(modelId));
+    }
 
     /** The film's shots as planned against as made: what generating shorter, at lower resolution,
      * and slowing down saved. */

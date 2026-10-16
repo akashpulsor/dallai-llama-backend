@@ -59,6 +59,22 @@ public final class GenerationSavings {
         return new Totals(shots, plannedSeconds, generatedSeconds, planned, made);
     }
 
+    /**
+     * The share of a shot's planned length under which generating a shorter clip and slowing it
+     * back costs less than generating the whole shot: generating g seconds and slowing to p costs
+     * g x model + p x slowDown, which beats p x model only while g / p < 1 - slowDown / model.
+     * Priced at the model's cheapest tier, the strictest threshold: a clip under it saves at any
+     * resolution. (Not the tier-less rate -- Seedance's is its 720p price.) Zero when slowing never
+     * pays; null when the model has no per-second rate.
+     */
+    public static BigDecimal breakEven(List<RateCard> model, List<RateCard> slowDown) {
+        BigDecimal modelRate = model.stream().map(RateCard::perSecondCost).filter(Objects::nonNull)
+                .filter(rate -> rate.signum() > 0).min(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
+        if (modelRate.signum() <= 0) return null;
+        BigDecimal ratio = BigDecimal.ONE.subtract(rateAt(slowDown, null).divide(modelRate, 4, java.math.RoundingMode.HALF_UP));
+        return ratio.max(BigDecimal.ZERO);
+    }
+
     private static boolean generated(VideoGenJob job) {
         return job.getStatus() == JobStatus.COMPLETED && job.getOutputObjectKey() != null
                 && "GENERATED".equals(job.getOutputOrigin()) && job.getDurationSeconds() != null
