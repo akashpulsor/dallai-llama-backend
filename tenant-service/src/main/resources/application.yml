@@ -194,6 +194,7 @@ brands:
   sign-in-page-url: ${BRANDS_SIGN_IN_PAGE_URL:https://platform.dalaillama.in/brands/sign-in/}
   brief-page-url: ${BRANDS_BRIEF_PAGE_URL:https://creator.dalaillama.in/brief/}
   creator-requests-url: ${BRANDS_CREATOR_REQUESTS_URL:https://creator.dalaillama.in/requests}
+  review-page-url: ${BRANDS_REVIEW_PAGE_URL:https://creator.dalaillama.in/review/}
 
 # Creator Showcase, Phase C: outreach mail (rules 15-17).
 outreach:

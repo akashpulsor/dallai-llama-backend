@@ -29,7 +29,7 @@ public class BrandIdentityTest {
     private final JwtDecoder decoder = mock(JwtDecoder.class);
     private final BrandContactRepository contacts = mock(BrandContactRepository.class);
     private final ContactPointValidator validator = mock(ContactPointValidator.class);
-    private final BrandSessionService sessions = new BrandSessionService(new BrandProperties("secret", 30, true, 30, 5, "", "", ""), CLOCK);
+    private final BrandSessionService sessions = new BrandSessionService(new BrandProperties("secret", 30, true, 30, 5, "", "", "", ""), CLOCK);
     private final BrandIdentity identity = new BrandIdentity(() -> decoder, sessions, contacts, validator, CLOCK);
 
     /** For controller tests that only exercise the cookie. */

@@ -36,7 +36,7 @@ class PublicEngagementControllerTest {
     private final FollowService follows = mock(FollowService.class);
     private final BrandInquiryService inquiries = mock(BrandInquiryService.class);
     private final BrandSessionService sessions = new BrandSessionService(
-            new BrandProperties("secret", 30, true, 30, 5, "", "", ""), Clock.fixed(Instant.parse("2026-10-09T10:00:00Z"), ZoneOffset.UTC));
+            new BrandProperties("secret", 30, true, 30, 5, "", "", "", ""), Clock.fixed(Instant.parse("2026-10-09T10:00:00Z"), ZoneOffset.UTC));
     private MockMvc mvc;
 
     @BeforeEach

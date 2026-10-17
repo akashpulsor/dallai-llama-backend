@@ -58,6 +58,12 @@ public class MyInquiryController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /** Takes a request sent to Dalaillama that is offered to this creator; 409 when another was first. */
+    @PostMapping("/{inquiryId}/accept")
+    public ResponseEntity<CreatorInquiryView> accept(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID inquiryId) {
+        return ResponseEntity.of(tenant(jwt).map(t -> inquiryService.accept(t.getId(), inquiryId)));
+    }
+
     @PostMapping("/{inquiryId}/convert")
     public ResponseEntity<CreatorInquiryView> convert(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID inquiryId) {
         return ResponseEntity.of(tenant(jwt).map(t -> inquiryService.convert(t.getId(), inquiryId)));

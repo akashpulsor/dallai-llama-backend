@@ -27,7 +27,9 @@ public final class InquiryDtos {
             @Size(max = 500) String targetAudience,
             @Size(max = 1000) String campaignDirection,
             @jakarta.validation.constraints.Min(5) @jakarta.validation.constraints.Max(600) Integer durationSeconds,
-            @Size(max = 6) java.util.List<@Size(max = 30) String> languages
+            @Size(max = 6) java.util.List<@Size(max = 30) String> languages,
+            /* The brand's industry for this video; routes a request sent to Dalaillama. */
+            com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry
     ) {
     }
 
@@ -64,7 +66,11 @@ public final class InquiryDtos {
             /* Set once the creator turned it into a brief. */
             String briefUrl,
             OffsetDateTime createdAt,
-            BriefDetails brief
+            BriefDetails brief,
+            /* The brief has been paid for. */
+            boolean funded,
+            /* The project's review page, once paid and the creator has shared it. */
+            String reviewUrl
     ) {
     }
 
@@ -81,7 +87,9 @@ public final class InquiryDtos {
             boolean cameFromMail,
             String briefUrl,
             OffsetDateTime createdAt,
-            BriefDetails brief
+            BriefDetails brief,
+            /* Sent to Dalaillama and offered to this creator among others: accept to take it. */
+            boolean offered
     ) {
         public record Brand(String contactName, String companyName, String email, String websiteUrl, ShowcaseIndustry industry) {
         }

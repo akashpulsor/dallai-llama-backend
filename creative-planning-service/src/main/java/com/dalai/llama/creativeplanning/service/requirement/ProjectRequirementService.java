@@ -289,6 +289,16 @@ public class ProjectRequirementService {
                         requirement.getRequiredAmount(), requirement.isFunded()));
     }
 
+    /** The brief's payment and the project its locked idea became: the reverse of
+     * {@link #findSourceRequirement}. Empty for an unknown brief or another tenant's. */
+    @Transactional(readOnly = true)
+    public Optional<com.dalai.llama.creativeplanning.dto.RequirementProgressView> progress(UUID tenantId, UUID requirementId) {
+        return projectRequirementRepository.findById(requirementId)
+                .filter(requirement -> requirement.getTenantId().equals(tenantId))
+                .map(requirement -> new com.dalai.llama.creativeplanning.dto.RequirementProgressView(requirement.isFunded(),
+                        lockedIdeaRepository.findByProjectRequirementId(requirementId).map(LockedIdea::getProjectId).orElse(null)));
+    }
+
     /** Unauthenticated read -- backs {@code GET /v1/public/project-requirements/{shareToken}}.
      * Deliberately returns the slimmer {@link PublicProjectRequirementView} (no tenant id, no
      * created-by, no locked-idea cross-reference) since this is reachable by anyone holding the

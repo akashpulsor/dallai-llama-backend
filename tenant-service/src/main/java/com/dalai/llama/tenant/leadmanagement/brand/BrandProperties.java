@@ -19,6 +19,8 @@ public record BrandProperties(
         /* Brief page a converted request sends the brand to, e.g. https://creator.dalaillama.in/brief/ */
         String briefPageUrl,
         /* Creator-ui page listing requests, linked from the alert mail. */
-        String creatorRequestsUrl
+        String creatorRequestsUrl,
+        /* The client review page a project's shared token opens, e.g. https://creator.dalaillama.in/review/ */
+        String reviewPageUrl
 ) {
 }

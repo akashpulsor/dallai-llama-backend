@@ -190,6 +190,14 @@ public class ProjectService {
                 .orElseThrow(() -> PreProductionException.notFound("No project " + projectId));
     }
 
+    /** The project's client review token if the creator has shared the review link, else null.
+     * Read-only: unlike {@link #ensureClientReviewToken}, this never creates one -- a brand's own
+     * page shows the review only once its creator chose to share it. */
+    @Transactional(readOnly = true)
+    public String sharedClientReviewToken(UUID tenantId, UUID projectId) {
+        return requireProject(tenantId, projectId).getClientReviewToken();
+    }
+
     /** Generates one the first time a project is locked, returns the existing one on every later
      * call -- same "possession of the token is the authorization" convention creative-planning-
      * service's ProjectRequirement.shareToken already uses, deliberately non-expiring (unlike that

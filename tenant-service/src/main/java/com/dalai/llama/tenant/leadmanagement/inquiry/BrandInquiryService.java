@@ -55,6 +55,10 @@ public class BrandInquiryService {
     private final YouTubeVideoRepository videoRepository;
     private final TenantRepository tenantRepository;
     private final CreativePlanningBriefClient briefClient;
+    private final com.dalai.llama.tenant.leadmanagement.routing.RequestRouter router;
+    private final com.dalai.llama.tenant.leadmanagement.routing.RequestRoutingStore routingStore;
+    private final com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier notifier;
+    private final ProjectReviewLinks reviewLinks;
     private final PlatformMailer mailer;
     private final BrandProperties brandProperties;
     private final JdbcTemplate jdbc;
@@ -70,27 +74,64 @@ public class BrandInquiryService {
     public SubmittedInquiry submit(UUID brandContactId, String handle, SubmitInquiryRequest request,
                                    java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
                                    java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
-        InquiryImageStore.validate(productImages);
-        InquiryImageStore.validate(referenceImages);
-        BrandContact brand = contactRepository.findById(brandContactId).orElseThrow(BrandNotSignedInException::new);
+        BrandContact brand = checkedBrand(brandContactId, productImages, referenceImages);
         CreatorPublicProfile creator = profileRepository.findByHandle(handle)
                 .filter(p -> p.getStatus() == ProfileStatus.ACTIVE)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown creator"));
+        // Only a live film of this creator counts as "the film they were watching".
+        Optional<ShowcaseItem> film = Optional.ofNullable(request.publicId())
+                .flatMap(itemRepository::findByPublicId)
+                .filter(i -> creator.getTenantId().equals(i.getTenantId()) && i.getStatus() == ShowcaseItemStatus.LIVE);
+        BrandInquiry inquiry = create(brandContactId, creator.getTenantId(), BrandInquiry.Source.CREATOR, film, request,
+                productImages, referenceImages);
+        notifier.assigned(creator.getTenantId(), brand, inquiry);
+        return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
+    }
+
+    /**
+     * "Request a video" from the landing page: sent to Dalaillama, not to a creator. The router
+     * finds the creator (or leaves it for ops); the brand follows it on their page as usual.
+     */
+    @Transactional
+    public SubmittedInquiry submitToDalaillama(UUID brandContactId, SubmitInquiryRequest request,
+                                               java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+                                               java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        checkedBrand(brandContactId, productImages, referenceImages);
+        // The film they were watching, whoever made it: a signal for that film, not a route to its creator.
+        Optional<ShowcaseItem> film = Optional.ofNullable(request.publicId())
+                .flatMap(itemRepository::findByPublicId)
+                .filter(i -> i.getStatus() == ShowcaseItemStatus.LIVE);
+        BrandInquiry inquiry = create(brandContactId, null, BrandInquiry.Source.LANDING, film, request, productImages, referenceImages);
+        router.route(inquiry.getId());
+        return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
+    }
+
+    /** The signed-in brand, once their images pass and they are under the daily limit. */
+    private BrandContact checkedBrand(UUID brandContactId,
+                                      java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+                                      java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        InquiryImageStore.validate(productImages);
+        InquiryImageStore.validate(referenceImages);
+        BrandContact brand = contactRepository.findById(brandContactId).orElseThrow(BrandNotSignedInException::new);
         Integer today = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM lead_brand_inquiry WHERE brand_contact_id = ? AND created_at > ?", Integer.class,
                 brandContactId, Timestamp.from(OffsetDateTime.now(clock).minusDays(1).toInstant()));
         if (today != null && today >= MAX_REQUESTS_PER_BRAND_PER_DAY) {
             throw new IllegalStateException("You've sent a lot of requests today; please try again tomorrow");
         }
-        // Only a live film of this creator counts as "the film they were watching".
-        Optional<ShowcaseItem> film = Optional.ofNullable(request.publicId())
-                .flatMap(itemRepository::findByPublicId)
-                .filter(i -> i.getTenantId().equals(creator.getTenantId()) && i.getStatus() == ShowcaseItemStatus.LIVE);
+        return brand;
+    }
 
+    private BrandInquiry create(UUID brandContactId, UUID creatorTenantId, BrandInquiry.Source source, Optional<ShowcaseItem> film,
+                                SubmitInquiryRequest request,
+                                java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+                                java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
         // Flushed now: the image rows below are written with JDBC and reference this row.
         BrandInquiry inquiry = inquiryRepository.saveAndFlush(BrandInquiry.builder()
                 .id(UUID.randomUUID())
-                .tenantId(creator.getTenantId())
+                .tenantId(creatorTenantId)
+                .source(source)
+                .industry(request.industry())
                 .brandContactId(brandContactId)
                 .showcaseItemId(film.map(ShowcaseItem::getId).orElse(null))
                 .attributionToken(request.attributionToken())
@@ -109,26 +150,35 @@ public class BrandInquiryService {
         // Brand interest is a ranking signal for the film (rule 13).
         film.ifPresent(i -> jdbc.update("UPDATE showcase_item SET inquiry_count = inquiry_count + 1 WHERE id = ?", i.getId()));
         images.save(inquiry.getId(), productImages, referenceImages);
-        notifyCreator(creator, brand, inquiry);
-        return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
+        return inquiry;
     }
 
     public List<BrandInquiryView> forBrand(UUID brandContactId) {
         List<BrandInquiry> inquiries = inquiryRepository.findByBrandContactIdOrderByCreatedAtDesc(brandContactId);
         Map<UUID, CreatorPublicProfile> creators = profileRepository.findAllById(
-                        inquiries.stream().map(BrandInquiry::getTenantId).distinct().toList()).stream()
+                        inquiries.stream().map(BrandInquiry::getTenantId).filter(java.util.Objects::nonNull).distinct().toList()).stream()
                 .collect(Collectors.toMap(CreatorPublicProfile::getTenantId, Function.identity()));
         Map<UUID, String> titles = filmTitles(inquiries);
         return inquiries.stream().map(i -> {
-            CreatorPublicProfile p = creators.get(i.getTenantId());
-            return new BrandInquiryView(i.getId(), p.getHandle(), p.getDisplayName(), p.getAvatarUrl(),
+            // A request sent to Dalaillama has no creator until it is routed: "finding a creator".
+            Optional<CreatorPublicProfile> p = Optional.ofNullable(i.getTenantId()).map(creators::get);
+            // After it became a brief: paid yet, and the review link once the creator shared it.
+            ProjectReviewLinks.Progress progress = i.getRequirementId() == null || i.getTenantId() == null
+                    ? ProjectReviewLinks.Progress.UNKNOWN : reviewLinks.of(i.getTenantId(), i.getRequirementId());
+            return new BrandInquiryView(i.getId(), p.map(CreatorPublicProfile::getHandle).orElse(null),
+                    p.map(CreatorPublicProfile::getDisplayName).orElse(null), p.map(CreatorPublicProfile::getAvatarUrl).orElse(null),
                     titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(), i.getMessage(), i.getStatus(),
-                    briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i));
+                    briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i), progress.funded(), progress.reviewUrl());
         }).toList();
     }
 
     public List<CreatorInquiryView> forCreator(UUID tenantId) {
-        List<BrandInquiry> inquiries = inquiryRepository.findByTenantIdOrderByCreatedAtDesc(tenantId);
+        // Theirs, and requests sent to Dalaillama that are offered to them, waiting to be accepted.
+        List<BrandInquiry> offered = inquiryRepository.findAllById(routingStore.offeredTo(tenantId));
+        java.util.Set<UUID> offeredIds = offered.stream().map(BrandInquiry::getId).collect(Collectors.toSet());
+        List<BrandInquiry> inquiries = java.util.stream.Stream.concat(offered.stream(),
+                        inquiryRepository.findByTenantIdOrderByCreatedAtDesc(tenantId).stream())
+                .sorted(java.util.Comparator.comparing(BrandInquiry::getCreatedAt).reversed()).toList();
         Map<UUID, BrandContact> brands = contactRepository.findAllById(
                         inquiries.stream().map(BrandInquiry::getBrandContactId).distinct().toList()).stream()
                 .collect(Collectors.toMap(BrandContact::getId, Function.identity()));
@@ -142,8 +192,15 @@ public class BrandInquiryService {
                     new CreatorInquiryView.Brand(b.getContactName(), b.getCompanyName(), b.getEmail(), b.getWebsiteUrl(), b.getIndustry()),
                     publicIds.get(i.getShowcaseItemId()), titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(),
                     i.getMessage(), i.getStatus(), i.getAttributionToken() != null, briefUrl(i), i.getCreatedAt(),
-                    InquiryDtos.BriefDetails.of(i, images.refs(i.getId())));
+                    InquiryDtos.BriefDetails.of(i, images.refs(i.getId())), offeredIds.contains(i.getId()));
         }).toList();
+    }
+
+    /** Takes a request offered to this creator (offer to all): theirs if they are first. */
+    @Transactional
+    public CreatorInquiryView accept(UUID tenantId, UUID inquiryId) {
+        if (!router.accept(tenantId, inquiryId)) throw new IllegalStateException("Another creator took this request first");
+        return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
     }
 
     /** The creator marks a request read or declines it; converting has its own action. */
@@ -152,9 +209,16 @@ public class BrandInquiryService {
         if (status != BrandInquiry.Status.VIEWED && status != BrandInquiry.Status.DECLINED) {
             throw new IllegalArgumentException("A request can only be marked VIEWED or DECLINED here");
         }
-        BrandInquiry inquiry = owned(tenantId, inquiryId);
+        BrandInquiry inquiry = visible(tenantId, inquiryId);
         if (inquiry.getStatus() == BrandInquiry.Status.CONVERTED) {
             throw new IllegalStateException("This request already became a brief");
+        }
+        // A request sent to Dalaillama isn't the creator's to close: passing on it sends it on to
+        // another creator (or ops); merely reading an offer doesn't take it.
+        if (inquiry.getSource() == BrandInquiry.Source.LANDING) {
+            if (status == BrandInquiry.Status.DECLINED) router.decline(tenantId, inquiryId);
+            else if (tenantId.equals(inquiry.getTenantId())) inquiryRepository.save(withStatus(inquiry, status));
+            return;
         }
         inquiry.setStatus(status);
         inquiryRepository.save(inquiry);
@@ -187,16 +251,6 @@ public class BrandInquiryService {
         return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
     }
 
-    private void notifyCreator(CreatorPublicProfile creator, BrandContact brand, BrandInquiry inquiry) {
-        Optional<String> to = tenantRepository.findById(creator.getTenantId()).map(Tenant::getPrimaryContactEmail);
-        if (to.isEmpty()) return;
-        String who = firstNonBlank(brand.getCompanyName(), brand.getContactName(), brand.getEmail());
-        mailer.send(new PlatformMailer.Mail(to.get(), who + " asked you for a video",
-                who + " sent you a request on Dalai Llama:\n\n\"" + inquiry.getMessage() + "\"\n\nSee it and reply: "
-                        + brandProperties.creatorRequestsUrl() + "\n",
-                null));
-    }
-
     private Map<UUID, String> filmTitles(List<BrandInquiry> inquiries) {
         List<ShowcaseItem> items = itemRepository.findAllById(inquiries.stream().map(BrandInquiry::getShowcaseItemId)
                 .filter(java.util.Objects::nonNull).distinct().toList());
@@ -212,13 +266,25 @@ public class BrandInquiryService {
 
     /** One attached image, for the creator who received the request. */
     public Optional<InquiryImageStore.Image> image(UUID tenantId, UUID inquiryId, UUID imageId) {
-        owned(tenantId, inquiryId);
+        visible(tenantId, inquiryId);
         return images.one(inquiryId, imageId);
     }
 
     private BrandInquiry owned(UUID tenantId, UUID inquiryId) {
-        return inquiryRepository.findById(inquiryId).filter(i -> i.getTenantId().equals(tenantId))
+        return inquiryRepository.findById(inquiryId).filter(i -> tenantId.equals(i.getTenantId()))
                 .orElseThrow(() -> new IllegalArgumentException("No such request"));
+    }
+
+    /** The creator's own request, or one offered to them. */
+    private BrandInquiry visible(UUID tenantId, UUID inquiryId) {
+        return inquiryRepository.findById(inquiryId)
+                .filter(i -> tenantId.equals(i.getTenantId()) || routingStore.isOffered(inquiryId, tenantId))
+                .orElseThrow(() -> new IllegalArgumentException("No such request"));
+    }
+
+    private static BrandInquiry withStatus(BrandInquiry inquiry, BrandInquiry.Status status) {
+        inquiry.setStatus(status);
+        return inquiry;
     }
 
     private static String briefText(BrandContact brand, BrandInquiry inquiry) {

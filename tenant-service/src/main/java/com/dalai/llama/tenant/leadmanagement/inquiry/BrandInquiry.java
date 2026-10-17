@@ -30,6 +30,9 @@ public class BrandInquiry {
 
     public enum Status { NEW, VIEWED, CONVERTED, DECLINED }
 
+    /** CREATOR: sent from a creator's page. LANDING: sent to Dalaillama and routed to a creator. */
+    public enum Source { CREATOR, LANDING }
+
     public enum BudgetBand { UNDER_50K, FROM_50K_TO_2L, FROM_2L_TO_8L, OVER_8L, NOT_SURE }
 
     public enum Timeline { ASAP, THIS_MONTH, THIS_QUARTER, EXPLORING }
@@ -38,8 +41,19 @@ public class BrandInquiry {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false)
+    /** The creator it is for; null while a request sent to Dalaillama waits to be routed. */
+    @Column(name = "tenant_id")
     private UUID tenantId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source", nullable = false, length = 16)
+    @Builder.Default
+    private Source source = Source.CREATOR;
+
+    /** The brand's industry for this video (the router's match); null when not given. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "industry", length = 32)
+    private com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry;
 
     @Column(name = "brand_contact_id", nullable = false)
     private UUID brandContactId;

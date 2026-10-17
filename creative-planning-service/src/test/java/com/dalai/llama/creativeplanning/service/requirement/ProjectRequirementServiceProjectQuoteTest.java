@@ -57,6 +57,24 @@ class ProjectRequirementServiceProjectQuoteTest {
     }
 
     @Test
+    void progressSaysWhetherTheBriefIsPaidAndWhichProjectItBecame_onlyForItsOwnTenant() {
+        when(requirements.findById(requirementId)).thenReturn(Optional.of(ProjectRequirement.builder()
+                .id(requirementId).tenantId(tenantId).funded(true).build()));
+        when(lockedIdeas.findByProjectRequirementId(requirementId)).thenReturn(Optional.empty());
+        assertThat(service.progress(tenantId, requirementId)).get()
+                .satisfies(p -> {
+                    assertThat(p.funded()).isTrue();
+                    assertThat(p.projectId()).isNull();
+                });
+
+        when(lockedIdeas.findByProjectRequirementId(requirementId)).thenReturn(Optional.of(LockedIdea.builder()
+                .tenantId(tenantId).projectRequirementId(requirementId).projectId(projectId).build()));
+        assertThat(service.progress(tenantId, requirementId)).get()
+                .extracting(com.dalai.llama.creativeplanning.dto.RequirementProgressView::projectId).isEqualTo(projectId);
+        assertThat(service.progress(UUID.randomUUID(), requirementId)).isEmpty();
+    }
+
+    @Test
     void noQuoteForAnotherTenantsProjectOrAnUnquotedRequirement() {
         lockedIdeaFor(UUID.randomUUID());
         assertThat(service.findProjectQuote(tenantId, projectId)).isEmpty();

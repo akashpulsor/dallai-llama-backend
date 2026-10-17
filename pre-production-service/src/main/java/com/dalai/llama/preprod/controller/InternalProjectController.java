@@ -47,6 +47,16 @@ public class InternalProjectController {
         return ResponseEntity.noContent().build();
     }
 
+    /** tenant-service -> here, for a brand's own page: the review link the creator has shared for
+     * this project, if any (token null until then). Never creates one. */
+    @org.springframework.web.bind.annotation.GetMapping("/api/v1/internal/tenants/{tenantId}/projects/{projectId}/client-review-token")
+    public ResponseEntity<SharedReviewTokenView> sharedReviewToken(@PathVariable UUID tenantId, @PathVariable UUID projectId) {
+        return ResponseEntity.ok(new SharedReviewTokenView(projectService.sharedClientReviewToken(tenantId, projectId)));
+    }
+
+    public record SharedReviewTokenView(String token) {
+    }
+
     @PostMapping("/api/v1/internal/tenants/{tenantId}/projects/from-locked-idea")
     public ResponseEntity<ProjectView> createFromLockedIdea(
             @PathVariable UUID tenantId, @Valid @RequestBody CreateProjectRequest request) {

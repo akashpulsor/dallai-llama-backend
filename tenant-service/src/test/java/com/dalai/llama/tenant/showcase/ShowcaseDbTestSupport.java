@@ -29,11 +29,13 @@ public abstract class ShowcaseDbTestSupport {
                 "lead_directory_person_result", "lead_provider_search_result", "lead_provider_search", "lead_directory_person", "lead_company_contact", "lead_company", "lead_provider_usage", "lead_outreach_link", "lead_outreach_intent", "lead_outreach_delivery", "lead_mail_pack",
                 "lead_creator_lead_source", "lead_import_batch", "lead_saved_audience_member", "lead_creator_lead_contact_point",
                 "lead_contact_point", "lead_creator_lead", "lead_saved_audience",
-                "lead_suppression", "lead_brand_inquiry", "creator_follower", "showcase_like", "lead_brand_sign_in",
+                "lead_suppression", "lead_inquiry_offer", "request_routing_creator", "lead_brand_inquiry", "creator_follower", "showcase_like", "lead_brand_sign_in",
                 "lead_brand_contact", "official_upload_job", "showcase_play", "showcase_item", "youtube_video",
                 "creator_youtube_channel", "creator_handle_history", "creator_profile_industry", "creator_public_profile"}) {
             jdbc.update("DELETE FROM " + table);
         }
+        // Routing back to its seeded default (V46).
+        jdbc.update("UPDATE request_routing_setting SET strategy = 'ROUND_ROBIN_BY_INDUSTRY' WHERE id = 1");
         // The seeded global templates (V34) stay; anything a test created goes.
         jdbc.update("DELETE FROM lead_email_template WHERE tenant_id IS NOT NULL OR id::text NOT LIKE '00000000-0000-4000-8000-0000000000a%'");
     }

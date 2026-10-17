@@ -60,7 +60,9 @@ import static org.mockito.Mockito.when;
         "brands.session-secret=test-secret"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
+@Import({com.dalai.llama.tenant.leadmanagement.routing.RequestRouter.class, com.dalai.llama.tenant.leadmanagement.routing.RequestRoutingStore.class,
+        com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier.class,
+        BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
         com.dalai.llama.tenant.leadmanagement.inquiry.InquiryImageStore.class,
         FollowService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class, CreatorProfileService.class,
         HandlePolicy.class, com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class,
@@ -81,6 +83,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private PlatformMailer mailer;
     @MockBean private CreativePlanningBriefClient briefClient;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.inquiry.ProjectReviewLinks reviewLinks;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private BrandAccountService accounts;
     @Autowired private BrandSessionService sessions;
@@ -108,6 +111,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
                 VALUES (?, 'pub0000001', ?, 'film0000001', 'EXTERNAL', 'FOOD_BEVERAGE', 'PRODUCT_AD', 'LIVE', ?, ?)""",
                 UUID.randomUUID(), creator, Timestamp.from(NOW), Timestamp.from(NOW));
         when(mailer.send(any())).thenReturn(true);
+        when(reviewLinks.of(any(), any())).thenReturn(new com.dalai.llama.tenant.leadmanagement.inquiry.ProjectReviewLinks.Progress(false, null));
     }
 
     @Test
@@ -172,7 +176,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest("pub0000001", null,
                 BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee",
                 "A2 Desi Ghee", "Small-batch ghee from grass-fed cows", "Young parents in metros", "Warm, homely, morning kitchen",
-                30, java.util.List.of("English", "Hindi")),
+                30, java.util.List.of("English", "Hindi"), null),
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("productImages", "jar.png", "image/png", new byte[]{1, 2, 3})),
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("referenceImages", "mood.jpg", "image/jpeg", new byte[]{4})));
 
@@ -214,7 +218,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         UUID brand = signedInBrand("img@hearth.example");
         var big = new org.springframework.mock.web.MockMultipartFile("productImages", "big.png", "image/png", new byte[3 * 1024 * 1024 + 1]);
         var pdf = new org.springframework.mock.web.MockMultipartFile("referenceImages", "deck.pdf", "application/pdf", new byte[]{1});
-        var request = new SubmitInquiryRequest(null, null, null, null, "Hi", null, null, null, null, null, null);
+        var request = new SubmitInquiryRequest(null, null, null, null, "Hi", null, null, null, null, null, null, null);
         assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(big), java.util.List.of()))
                 .hasMessageContaining("3 MB");
         assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(), java.util.List.of(pdf)))
@@ -225,7 +229,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     @Test
     void aCreatorCannotActOnAnotherCreatorsRequest() {
         UUID brand = signedInBrand("x@hearth.example");
-        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null));
+        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null, null));
         assertThatThrownBy(() -> inquiries.convert(UUID.randomUUID(), submitted.id())).isInstanceOf(IllegalArgumentException.class);
         verify(briefClient, never()).createBrief(any(), any(), any(), any(), any(), any());
     }
