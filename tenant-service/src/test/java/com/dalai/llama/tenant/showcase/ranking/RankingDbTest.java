@@ -50,7 +50,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({RankingRunJob.class, CreatorLadder.class, VisibilityFloor.class, ShowcaseScorer.class, CreatorFactsCollector.class,
+@Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, RankingRunJob.class, CreatorLadder.class, VisibilityFloor.class, ShowcaseScorer.class, CreatorFactsCollector.class,
         com.dalai.llama.tenant.leadmanagement.inquiry.InquiryConvertedRequestCounter.class, VisibilityService.class, PublicShowcaseService.class, LandingAssembler.class,
         ShowcaseModerationService.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
         RankingDbTest.TestConfig.class})
@@ -69,6 +69,7 @@ class RankingDbTest extends ShowcaseDbTestSupport {
     }
 
     private int industryCursor;
+    @MockBean private com.dalai.llama.tenant.showcase.service.ShowcaseMediaStore mediaStore;
 
     @MockBean private PreProductionShowcaseClient preProduction;
     @Autowired private RankingRunJob run;

@@ -65,7 +65,7 @@ import static org.mockito.Mockito.when;
         "video-host.official-channel.client-secret=s", "video-host.official-channel.refresh-token=r"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({PlatformPublishService.class, OfficialUploadWorker.class, FundingVerifier.class, ShowcasePickService.class,
+@Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, PlatformPublishService.class, OfficialUploadWorker.class, FundingVerifier.class, ShowcasePickService.class,
         PublicShowcaseService.class, PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class,
         VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class,
         com.dalai.llama.tenant.youtube.publish.YouTubeQuotaService.class, PlatformFilmDbTest.TestConfig.class})
@@ -84,6 +84,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
             return new MutableClock(NOW);
         }
     }
+    @MockBean private com.dalai.llama.tenant.showcase.service.ShowcaseMediaStore mediaStore;
 
     @MockBean private PreProductionShowcaseClient preProduction;
     @MockBean private YouTubeDataClient youTube;

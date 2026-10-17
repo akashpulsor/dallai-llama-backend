@@ -15,6 +15,7 @@ import com.dalai.llama.tenant.youtube.config.YouTubeProperties;
 import com.dalai.llama.tenant.youtube.service.VideoEligibility;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,10 +50,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({ShowcasePickService.class, PublicShowcaseService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class,
+@Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, ShowcasePickService.class, PublicShowcaseService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class,
         PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
         AutoShowcaseService.class, ShowcaseDbTest.TestConfig.class})
 class ShowcaseDbTest {
+    @MockBean private com.dalai.llama.tenant.showcase.service.ShowcaseMediaStore mediaStore;
+
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");

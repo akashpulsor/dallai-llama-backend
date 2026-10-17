@@ -58,6 +58,8 @@ public class PublicShowcaseService {
     private final ShowcaseRankingRunRepository runRepository;
     private final com.dalai.llama.tenant.showcase.repository.CreatorHandleHistoryRepository handleHistoryRepository;
     private final com.dalai.llama.tenant.repository.TenantRepository tenantRepository;
+    private final ShowcasePosterLinks posterLinks;
+    private final ShowcaseMediaStore mediaStore;
     private final Clock clock;
 
     /** Empty (404) for unknown handles and for suspended or hidden profiles. */
@@ -198,44 +200,54 @@ public class PublicShowcaseService {
     @org.springframework.beans.factory.annotation.Value("${showcase.public-api-base-url:https://api.dalaillama.in/api/v1/public}")
     private String publicApiBaseUrl;
 
-    /** YouTube's thumbnail, except for a platform film that is private on YouTube (YouTube shows
-     * nobody its picture): that one's poster is its own first frame, served by {@link #poster}. */
+    /** YouTube's thumbnail for a pick from the channel. A film that plays our own copy -- made on
+     * Dalaillama, or uploaded by the creator -- shows the frame its creator chose, served by
+     * {@link #poster}, whatever YouTube has. */
     private String thumbnail(ShowcaseItem i, YouTubeVideo v) {
-        // A film made on Dalaillama shows the frame its creator chose (else its first shot's), whatever
-        // YouTube has -- the profile plays our own copy of it, and the creator picks how it looks.
-        return i.getOrigin() == ShowcaseOrigin.PLATFORM
-                ? publicApiBaseUrl + "/showcase/" + i.getPublicId() + "/poster"
-                : v.getThumbnailUrl();
+        String own = posterLinks.of(i);
+        return own != null ? own : v.getThumbnailUrl();
     }
 
-    /** A fresh link to a platform film's poster (its first shot's frame). */
+    /** A fresh link to an item's own poster: the creator's chosen frame of an uploaded video, or a
+     * platform film's chosen frame (else its first shot's). */
     public Optional<String> poster(String publicId) {
         return itemRepository.findByPublicId(publicId)
-                .filter(i -> i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null && !i.isHiddenByOps())
-                .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()).posterUrl());
+                .filter(i -> !i.isHiddenByOps())
+                .flatMap(i -> {
+                    if (i.getPosterObjectKey() != null) return Optional.of(mediaStore.link(i.getPosterObjectKey()));
+                    if (i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null) {
+                        return Optional.ofNullable(preProduction.source(i.getTenantId(), i.getSourceProjectId()).posterUrl());
+                    }
+                    return Optional.empty();
+                });
     }
 
-    /** A short-lived link to our own copy of a platform film -- the newest finished film of its
-     * project, stamped -- for our own player. Empty unless the item is a publicly visible platform film. */
+    /** A short-lived link to our own copy, for our own player: the video the creator uploaded, or a
+     * platform film's newest finished film, stamped. Empty unless the item is publicly visible. */
     public Optional<SelfSourceView> selfSource(String publicId) {
         return itemRepository.findByPublicId(publicId)
-                .filter(i -> i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null)
+                .filter(i -> i.getUploadObjectKey() != null || (i.getOrigin() == ShowcaseOrigin.PLATFORM && i.getSourceProjectId() != null))
                 .filter(i -> itemRepository.findPublicForCreator(i.getTenantId(), freshAfter(), minItems(), true).stream()
                         .anyMatch(visible -> visible.getId().equals(i.getId())))
-                .map(i -> preProduction.source(i.getTenantId(), i.getSourceProjectId()))
-                // The stamped copy (with the Dalaillama mark) once post-production has made it.
-                .map(s -> s.stampedDownloadUrl() != null ? s.stampedDownloadUrl() : s.downloadUrl())
+                .map(this::ownCopyLink)
                 .map(SelfSourceView::new);
+    }
+
+    private String ownCopyLink(ShowcaseItem i) {
+        if (i.getUploadObjectKey() != null) return mediaStore.link(i.getUploadObjectKey());
+        var source = preProduction.source(i.getTenantId(), i.getSourceProjectId());
+        // The stamped copy (with the Dalaillama mark) once post-production has made it.
+        return source.stampedDownloadUrl() != null ? source.stampedDownloadUrl() : source.downloadUrl();
     }
 
     public record SelfSourceView(String url) {
     }
 
-    /** A film made on Dalaillama always plays from our own copy in our own player -- it may not be on
-     * YouTube at all (published straight to the profile). Only a pick from the creator's channel
-     * plays through YouTube. */
+    /** A film made on Dalaillama, or a video the creator uploaded, plays from our own copy in our own
+     * player -- neither need be public on YouTube. Only a pick from the creator's channel plays
+     * through YouTube. */
     private static VideoHostType hostFor(ShowcaseItem item) {
-        return item.getOrigin() == ShowcaseOrigin.PLATFORM ? VideoHostType.SELF : VideoHostType.YOUTUBE;
+        return item.playsOwnCopy() ? VideoHostType.SELF : VideoHostType.YOUTUBE;
     }
 
     private OffsetDateTime freshAfter() {

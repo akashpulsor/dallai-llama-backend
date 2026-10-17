@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
         "video-host.platform-films=SELF"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({PublicShowcaseService.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
+@Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, PublicShowcaseService.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
         SelfHostDbTest.TestConfig.class})
 class SelfHostDbTest extends ShowcaseDbTestSupport {
 
@@ -54,6 +54,7 @@ class SelfHostDbTest extends ShowcaseDbTestSupport {
             return new MutableClock(NOW);
         }
     }
+    @MockBean private com.dalai.llama.tenant.showcase.service.ShowcaseMediaStore mediaStore;
 
     @MockBean private PreProductionShowcaseClient preProduction;
     @Autowired private PublicShowcaseService publicService;

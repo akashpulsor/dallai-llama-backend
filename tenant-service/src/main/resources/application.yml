@@ -1,10 +1,11 @@
 spring:
   servlet:
     multipart:
-      # Audience CSV uploads (rule 21) are at most 2 MB; a little headroom for the form wrapper.
-      max-file-size: 3MB
-      # A brand's brief can carry up to 8 images of 3 MB each (rule 48); single files stay at 3 MB.
-      max-request-size: 25MB
+      # The largest upload is a video a creator puts on their profile (ShowcaseUploadService, 1 GB).
+      # Every other upload checks its own, much smaller, limit in code: audience CSVs 2 MB (rule
+      # 21), brief images 3 MB each (rule 48), thumbnails 2-3 MB. Spring spools parts to disk.
+      max-file-size: 1025MB
+      max-request-size: 1030MB
   application:
     name: tenant-service
 
@@ -106,6 +107,11 @@ dalaillama:
     access-key: ${MINIO_ACCESS_KEY:minioadmin}
     secret-key: ${MINIO_SECRET_KEY:minioadmin}
     bucket-prefix: ${MINIO_BUCKET_PREFIX:dl}
+    # Links handed to browsers (uploaded profile videos and their thumbnails) are signed against
+    # this host -- reachable from outside the cluster. Blank signs against `endpoint` (local dev).
+    public-url: ${MINIO_PUBLIC_URL:}
+    # Where creators' uploaded profile videos are kept.
+    showcase-bucket: ${SHOWCASE_UPLOAD_BUCKET:creator-assets}
 
   ai-service:
     url: ${AI_SERVICE_URL:http://ai-service.apps.svc.cluster.local:8601}

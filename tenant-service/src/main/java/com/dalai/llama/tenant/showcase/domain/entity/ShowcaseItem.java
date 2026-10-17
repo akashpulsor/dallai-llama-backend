@@ -121,6 +121,19 @@ public class ShowcaseItem {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
+    /** Our copy of a video the creator uploaded to their profile (MinIO key); null otherwise. */
+    @Column(name = "upload_object_key", length = 512)
+    private String uploadObjectKey;
+
+    /** The thumbnail the creator chose for an uploaded video (MinIO key). */
+    @Column(name = "poster_object_key", length = 512)
+    private String posterObjectKey;
+
+    /** Plays from our own copy in our own player: a film made here, or a video the creator uploaded. */
+    public boolean playsOwnCopy() {
+        return origin == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM || uploadObjectKey != null;
+    }
+
     @Column(name = "play_count", nullable = false)
     private int playCount;
 

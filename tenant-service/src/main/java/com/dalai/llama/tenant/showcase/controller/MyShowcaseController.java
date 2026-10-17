@@ -35,6 +35,7 @@ public class MyShowcaseController {
 
     private final TenantService tenantService;
     private final ShowcasePickService pickService;
+    private final com.dalai.llama.tenant.showcase.service.ShowcaseUploadService uploadService;
 
     @GetMapping
     public ResponseEntity<List<MyShowcaseItemView>> list(@AuthenticationPrincipal Jwt jwt) {
@@ -46,6 +47,17 @@ public class MyShowcaseController {
                                                    @Valid @RequestBody PickVideoRequest request) {
         return tenant(jwt)
                 .map(t -> ResponseEntity.status(HttpStatus.CREATED).body(pickService.pick(t.getId(), request)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** A video file for the profile (often one that is private on YouTube) with its thumbnail. */
+    @PostMapping(value = "/uploads", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<MyShowcaseItemView> upload(@AuthenticationPrincipal Jwt jwt,
+                                                     @org.springframework.web.bind.annotation.RequestPart("video") org.springframework.web.multipart.MultipartFile video,
+                                                     @org.springframework.web.bind.annotation.RequestPart("poster") org.springframework.web.multipart.MultipartFile poster,
+                                                     @org.springframework.web.bind.annotation.ModelAttribute com.dalai.llama.tenant.showcase.dto.UploadShowcaseFilmRequest request) {
+        return tenant(jwt)
+                .map(t -> ResponseEntity.status(HttpStatus.CREATED).body(uploadService.upload(t.getId(), video, poster, request)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 

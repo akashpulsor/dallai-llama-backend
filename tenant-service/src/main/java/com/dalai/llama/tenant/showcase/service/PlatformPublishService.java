@@ -68,6 +68,7 @@ public class PlatformPublishService {
     private final YouTubeVideoCache videoCache;
     private final YouTubeVideoRepository videoRepository;
     private final PublicIdGenerator publicIds;
+    private final ShowcasePosterLinks posterLinks;
     private final ShowcaseProperties properties;
     private final VideoHostProperties hostProperties;
     private final RankingProperties ranking;
@@ -119,7 +120,8 @@ public class PlatformPublishService {
         }
         item = platformItem(item, tenantId, source, videoId, request.industry(), request.format(), request.clientLabel(),
                 PlatformProof.LINK_MATCH, VideoChannel.CREATOR, now);
-        return ShowcasePickService.toView(itemRepository.save(item), videoRepository.findById(videoId).orElse(null));
+        ShowcaseItem saved = itemRepository.save(item);
+        return ShowcasePickService.toView(saved, videoRepository.findById(videoId).orElse(null), posterLinks.of(saved));
     }
 
     /**
@@ -189,7 +191,7 @@ public class PlatformPublishService {
         if (item.getTitleOverride() == null) item.setTitleOverride(source.projectName());
         ShowcaseItem saved = itemRepository.save(item);
         return ShowcasePickService.toView(saved, saved.getYoutubeVideoId() == null ? null
-                : videoRepository.findById(saved.getYoutubeVideoId()).orElse(null));
+                : videoRepository.findById(saved.getYoutubeVideoId()).orElse(null), posterLinks.of(saved));
     }
 
     /** Path 1: queue an upload to Dalaillama's channel. Re-requesting after a failure re-queues it. */

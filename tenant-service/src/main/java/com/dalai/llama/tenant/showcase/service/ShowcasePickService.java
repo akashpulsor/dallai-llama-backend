@@ -43,6 +43,7 @@ public class ShowcasePickService {
     private final VideoEligibility eligibility;
     private final PublicIdGenerator publicIds;
     private final ShowcaseProperties properties;
+    private final ShowcasePosterLinks posterLinks;
     private final Clock clock;
 
     @Transactional
@@ -140,14 +141,19 @@ public class ShowcasePickService {
                 .orElseThrow(() -> new IllegalArgumentException("No such item on your profile"));
     }
 
-    static MyShowcaseItemView toView(ShowcaseItem i, YouTubeVideo v) {
+    MyShowcaseItemView toView(ShowcaseItem i, YouTubeVideo v) {
+        return toView(i, v, posterLinks.of(i));
+    }
+
+    /** @param posterUrl the item's own poster, when it has one; else YouTube's thumbnail shows */
+    static MyShowcaseItemView toView(ShowcaseItem i, YouTubeVideo v, String posterUrl) {
         VideoShape shape = VideoShape.of(v, i);
         return new MyShowcaseItemView(
                 i.getId(),
                 i.getPublicId(),
                 i.getYoutubeVideoId(),
                 i.getTitleOverride() != null ? i.getTitleOverride() : v == null ? null : v.getTitle(),
-                v == null ? null : v.getThumbnailUrl(),
+                posterUrl != null ? posterUrl : v == null ? null : v.getThumbnailUrl(),
                 shape.width(),
                 shape.height(),
                 i.getOrigin(),

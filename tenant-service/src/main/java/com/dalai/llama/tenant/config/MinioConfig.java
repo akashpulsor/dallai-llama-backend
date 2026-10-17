@@ -22,6 +22,21 @@ public class MinioConfig {
     @Value("${dalaillama.minio.secret-key:minioadmin}")
     private String secretKey;
 
+    @Value("${dalaillama.minio.public-url:}")
+    private String publicUrl;
+
+    /** Signs links for browsers against the public host. Signing is offline, and the host is part
+     * of the signature, so it must be the host the browser will use. */
+    @Bean
+    public software.amazon.awssdk.services.s3.presigner.S3Presigner publicS3Presigner() {
+        return software.amazon.awssdk.services.s3.presigner.S3Presigner.builder()
+                .endpointOverride(URI.create(publicUrl == null || publicUrl.isBlank() ? endpoint : publicUrl))
+                .region(Region.US_EAST_1)
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
+                .serviceConfiguration(software.amazon.awssdk.services.s3.S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .build();
+    }
+
     @Bean
     public S3Client s3Client() {
         return S3Client.builder()
