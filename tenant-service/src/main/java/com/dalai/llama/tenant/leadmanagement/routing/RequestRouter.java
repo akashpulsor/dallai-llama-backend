@@ -94,13 +94,18 @@ public class RequestRouter {
         BrandInquiry inquiry = inquiryRepository.findById(inquiryId)
                 .filter(i -> i.getSource() == BrandInquiry.Source.LANDING)
                 .orElseThrow(() -> new IllegalArgumentException("No such routed request"));
+        if (tenantId.equals(inquiry.getTenantId())) return;
         if (inquiry.getTenantId() != null) throw new IllegalStateException("This request already has a creator");
         assign(inquiry, tenantId);
     }
 
     private void assign(BrandInquiry inquiry, UUID tenantId) {
         OffsetDateTime now = OffsetDateTime.now(clock);
-        if (!store.claim(inquiry.getId(), tenantId)) throw new IllegalStateException("This request already has a creator");
+        if (!store.claim(inquiry.getId(), tenantId)) {
+            // Asked twice (a double click while the first was still making the brief): already done.
+            if (tenantId.equals(store.holder(inquiry.getId()))) return;
+            throw new IllegalStateException("This request already has a creator");
+        }
         store.offer(inquiry.getId(), tenantId, OfferStatus.ASSIGNED, now);
         store.withdrawOthers(inquiry.getId(), tenantId, now);
         store.touchRouted(tenantId, now);

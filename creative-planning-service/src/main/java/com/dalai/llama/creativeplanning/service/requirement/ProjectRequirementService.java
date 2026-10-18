@@ -285,6 +285,19 @@ public class ProjectRequirementService {
         }
     }
 
+    /** Ends an unpaid brief's link at once, so it can no longer be opened or paid (the request it
+     * came from expired). Refused once funded: the brand has paid for it. */
+    @Transactional
+    public void withdrawLink(UUID tenantId, UUID requirementId) {
+        ProjectRequirement requirement = requireRequirement(tenantId, requirementId);
+        if (requirement.isFunded()) {
+            throw CreativePlanningException.conflict("The brand has already paid for this brief");
+        }
+        requirement.setShareTokenExpiresAt(OffsetDateTime.now());
+        requirement.setUpdatedAt(OffsetDateTime.now());
+        projectRequirementRepository.save(requirement);
+    }
+
     /** billing-service's per-project spend cap needs the price a project was actually sold at --
      * there is no direct FK from pre-production-service's {@code Project.id} back to this
      * service's {@code ProjectRequirement}; the join is {@code Project.id == LockedIdea.projectId

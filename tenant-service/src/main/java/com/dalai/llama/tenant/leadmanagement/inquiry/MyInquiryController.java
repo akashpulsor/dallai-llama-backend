@@ -59,7 +59,12 @@ public class MyInquiryController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Turns the request into a brief and emails the brand its link. */
+    /** Closes a request the brand never paid for: its brief link stops working. */
+    @PostMapping("/{inquiryId}/expire")
+    public ResponseEntity<CreatorInquiryView> expire(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID inquiryId) {
+        return ResponseEntity.of(tenant(jwt).map(t -> inquiryService.expireByCreator(t.getId(), inquiryId)));
+    }
+
     /** An image the brand attached, for the creator who received the request. */
     @GetMapping("/{inquiryId}/images/{imageId}")
     public ResponseEntity<byte[]> image(@AuthenticationPrincipal Jwt jwt, @PathVariable java.util.UUID inquiryId,

@@ -91,7 +91,9 @@ public final class InquiryDtos {
             OffsetDateTime createdAt,
             BriefDetails brief,
             /* Sent to Dalaillama and offered to this creator among others: accept to take it. */
-            boolean offered
+            boolean offered,
+            /* The brand paid the brief; until then the creator can expire it. */
+            boolean paid
     ) {
         public record Brand(String contactName, String companyName, String email, String websiteUrl, ShowcaseIndustry industry) {
         }

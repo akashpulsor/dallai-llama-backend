@@ -203,7 +203,8 @@ public class BrandInquiryService {
             return new BrandInquiryView(i.getId(), p.map(CreatorPublicProfile::getHandle).orElse(null),
                     p.map(CreatorPublicProfile::getDisplayName).orElse(null), p.map(CreatorPublicProfile::getAvatarUrl).orElse(null),
                     titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(), i.getMessage(), i.getStatus(),
-                    briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i), progress.funded(), progress.reviewUrl());
+                    i.getStatus() == BrandInquiry.Status.EXPIRED ? null : briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i),
+                    progress.funded(), progress.reviewUrl());
         }).toList();
     }
 
@@ -227,7 +228,7 @@ public class BrandInquiryService {
                     new CreatorInquiryView.Brand(b.getContactName(), b.getCompanyName(), b.getEmail(), b.getWebsiteUrl(), b.getIndustry()),
                     publicIds.get(i.getShowcaseItemId()), titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(),
                     i.getMessage(), i.getStatus(), i.getAttributionToken() != null, briefUrl(i), i.getCreatedAt(),
-                    InquiryDtos.BriefDetails.of(i, images.refs(i.getId())), offeredIds.contains(i.getId()));
+                    InquiryDtos.BriefDetails.of(i, images.refs(i.getId())), offeredIds.contains(i.getId()), i.getPaidAt() != null);
         }).toList();
     }
 
@@ -270,6 +271,30 @@ public class BrandInquiryService {
         if (inquiry.getStatus() == BrandInquiry.Status.DECLINED) throw new IllegalStateException("This request was declined");
         makeBrief(inquiry);
         return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
+    }
+
+    /** The creator closes a request of theirs the brand never paid for. */
+    @Transactional
+    public CreatorInquiryView expireByCreator(UUID tenantId, UUID inquiryId) {
+        expire(owned(tenantId, inquiryId));
+        return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
+    }
+
+    /** Ops close a request (waiting or held) the brand never paid for. */
+    @Transactional
+    public void expireByOps(UUID inquiryId) {
+        expire(inquiryRepository.findById(inquiryId).orElseThrow(() -> new IllegalArgumentException("No such request")));
+    }
+
+    /** Unpaid only: its brief link stops working, open offers are withdrawn, it leaves every queue. */
+    private void expire(BrandInquiry inquiry) {
+        if (inquiry.getStatus() == BrandInquiry.Status.EXPIRED) return;
+        if (inquiry.getPaidAt() != null) throw new IllegalStateException("The brand has already paid for this request");
+        if (inquiry.getStatus() == BrandInquiry.Status.DECLINED) throw new IllegalStateException("This request was declined");
+        if (inquiry.getRequirementId() != null) briefClient.withdrawLink(inquiry.getTenantId(), inquiry.getRequirementId());
+        routingStore.withdrawAll(inquiry.getId(), OffsetDateTime.now(clock));
+        inquiry.setStatus(BrandInquiry.Status.EXPIRED);
+        inquiryRepository.save(inquiry);
     }
 
     /** Ops hand a routed request to a creator; its brief is made at once. */

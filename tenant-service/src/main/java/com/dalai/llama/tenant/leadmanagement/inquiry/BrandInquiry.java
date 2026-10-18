@@ -28,7 +28,8 @@ import java.util.UUID;
 @Table(name = "lead_brand_inquiry")
 public class BrandInquiry {
 
-    public enum Status { NEW, VIEWED, CONVERTED, DECLINED }
+    /** EXPIRED: still unpaid when its creator or ops closed it (V52). */
+    public enum Status { NEW, VIEWED, CONVERTED, DECLINED, EXPIRED }
 
     /** CREATOR: sent from a creator's page. LANDING: sent to Dalaillama and routed to a creator. */
     public enum Source { CREATOR, LANDING }

@@ -84,6 +84,19 @@ public class CreativePlanningBriefClient {
         }
     }
 
+    /** Stops an unpaid brief's link working. {@link IllegalStateException} when the brand already paid. */
+    public void withdrawLink(UUID tenantId, UUID requirementId) {
+        try {
+            webClient.post().uri("/api/v1/internal/tenants/{tenantId}/project-requirements/{requirementId}/withdraw-link", tenantId, requirementId)
+                    .retrieve().toBodilessEntity().block(TIMEOUT);
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException.Conflict e) {
+            throw new IllegalStateException("The brand has already paid for this brief");
+        } catch (RuntimeException e) {
+            log.error("Could not withdraw the link of brief {} (tenant {}): {}", requirementId, tenantId, e.getMessage(), e);
+            throw new UpstreamUnavailableException("Briefs are unavailable right now; please try again", e);
+        }
+    }
+
     private static org.springframework.util.MultiValueMap<String, org.springframework.http.HttpEntity<?>> multipart(StandaloneBrief body,
                                                                                                                 List<InquiryImageStore.Image> images) {
         org.springframework.http.client.MultipartBodyBuilder parts = new org.springframework.http.client.MultipartBodyBuilder();

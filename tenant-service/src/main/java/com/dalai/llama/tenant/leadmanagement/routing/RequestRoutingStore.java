@@ -85,6 +85,17 @@ public class RequestRoutingStore {
                 WHERE inquiry_id = ? AND tenant_id <> ? AND status = 'OFFERED'""", Timestamp.from(now.toInstant()), inquiryId, keep);
     }
 
+    /** Every open offer of this request is withdrawn (it expired). */
+    public void withdrawAll(UUID inquiryId, OffsetDateTime now) {
+        jdbc.update("UPDATE lead_inquiry_offer SET status = 'WITHDRAWN', answered_at = ? WHERE inquiry_id = ? AND status = 'OFFERED'",
+                Timestamp.from(now.toInstant()), inquiryId);
+    }
+
+    /** Who holds the request now; null when nobody does. */
+    public UUID holder(UUID inquiryId) {
+        return jdbc.queryForObject("SELECT tenant_id FROM lead_brand_inquiry WHERE id = ?", UUID.class, inquiryId);
+    }
+
     public boolean isOffered(UUID inquiryId, UUID tenantId) {
         Integer n = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM lead_inquiry_offer WHERE inquiry_id = ? AND tenant_id = ? AND status = 'OFFERED'""",
@@ -124,11 +135,25 @@ public class RequestRoutingStore {
                                  OffsetDateTime createdAt) {
     }
 
+    /** A request a creator holds whose brief the brand hasn't paid yet: ops can expire it. */
+    public record UnpaidRequest(UUID id, String brand, String email, String creatorHandle, String status, OffsetDateTime createdAt) {
+    }
+
+    public List<UnpaidRequest> unpaid() {
+        return jdbc.query("""
+                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, p.handle, q.status, q.created_at
+                FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
+                JOIN creator_public_profile p ON p.tenant_id = q.tenant_id
+                WHERE q.paid_at IS NULL AND q.status IN ('NEW', 'VIEWED', 'CONVERTED') ORDER BY q.created_at""",
+                (rs, n) -> new UnpaidRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getString(5), rs.getObject(6, OffsetDateTime.class)));
+    }
+
     public List<WaitingRequest> waiting() {
         return jdbc.query("""
                 SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, q.industry, q.message, q.created_at
                 FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
-                WHERE q.tenant_id IS NULL AND q.source = 'LANDING' AND q.status <> 'DECLINED' ORDER BY q.created_at""",
+                WHERE q.tenant_id IS NULL AND q.source = 'LANDING' AND q.status IN ('NEW', 'VIEWED') ORDER BY q.created_at""",
                 (rs, n) -> new WaitingRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
                         rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5),
                         rs.getObject(6, OffsetDateTime.class)));

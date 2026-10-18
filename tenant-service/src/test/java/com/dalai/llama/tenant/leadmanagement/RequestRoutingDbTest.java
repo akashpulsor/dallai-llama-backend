@@ -254,6 +254,43 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void opsAssigningTwice_isDoneOnce_notAnError() {
+        briefsAreUp();
+        store.setStrategy(RoutingStrategy.OPS_ASSIGNS);
+        UUID waiting = request(null);
+        inquiries.assignByOps(waiting, tech);
+        inquiries.assignByOps(waiting, tech);   // a double click while the brief was being made
+
+        assertThat(holder(waiting)).isEqualTo(tech);
+        verify(briefClient, org.mockito.Mockito.times(1)).createBrief(eq(tech), anyString(), any(), any(), any(), any(), any());
+        assertThatThrownBy(() -> inquiries.assignByOps(waiting, akash)).hasMessageContaining("already has a creator");
+    }
+
+    @Test
+    void anUnpaidRequestCanBeExpired_byItsCreatorOrOps_andItsBriefLinkStops() {
+        briefsAreUp();
+        UUID held = request(ShowcaseIndustry.FOOD_BEVERAGE);           // routed to akash, brief made
+        UUID requirement = jdbc.queryForObject("SELECT requirement_id FROM lead_brand_inquiry WHERE id = ?", UUID.class, held);
+        assertThat(store.unpaid()).extracting(RequestRoutingStore.UnpaidRequest::id).contains(held);
+
+        assertThat(inquiries.expireByCreator(akash, held).status()).isEqualTo(BrandInquiry.Status.EXPIRED);
+        verify(briefClient).withdrawLink(akash, requirement);
+        assertThat(store.unpaid()).extracting(RequestRoutingStore.UnpaidRequest::id).doesNotContain(held);
+        assertThat(inquiries.forBrand(brand).stream().filter(v -> v.id().equals(held)).findFirst().orElseThrow().briefUrl()).isNull();
+
+        store.setStrategy(RoutingStrategy.OPS_ASSIGNS);
+        UUID waiting = request(null);
+        inquiries.expireByOps(waiting);
+        assertThat(store.waiting()).isEmpty();
+
+        store.setStrategy(RoutingStrategy.ROUND_ROBIN_BY_INDUSTRY);
+        UUID paid = request(ShowcaseIndustry.FOOD_BEVERAGE);
+        inquiries.onBriefPaid(jdbc.queryForObject("SELECT requirement_id FROM lead_brand_inquiry WHERE id = ?", UUID.class, paid),
+                new java.math.BigDecimal("750"), "INR");
+        assertThatThrownBy(() -> inquiries.expireByOps(paid)).hasMessageContaining("already paid");
+    }
+
+    @Test
     void thePlatformPriceIsPerSecond_fromItsSixtySecondPrice() {
         briefsAreUp();
         inquiries.submitToDalaillama(brand, new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE,

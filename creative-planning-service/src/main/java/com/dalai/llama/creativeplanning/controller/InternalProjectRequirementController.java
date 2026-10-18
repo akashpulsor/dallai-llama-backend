@@ -25,9 +25,12 @@ import org.springframework.web.multipart.MultipartFile;
 public class InternalProjectRequirementController {
 
     private final ProjectRequirementCreationManager creationManager;
+    private final com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService requirementService;
 
-    public InternalProjectRequirementController(ProjectRequirementCreationManager creationManager) {
+    public InternalProjectRequirementController(ProjectRequirementCreationManager creationManager,
+                                                com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService requirementService) {
         this.creationManager = creationManager;
+        this.requirementService = requirementService;
     }
 
     /** The new brief, and its price and upfront amount when it was priced at creation (else null). */
@@ -37,6 +40,13 @@ public class InternalProjectRequirementController {
             return new CreatedBrief(created.id(), created.shareToken(), created.quotedTotalPrice(), created.requiredAmount(),
                     created.quotedCurrency());
         }
+    }
+
+    /** The request behind this brief expired before it was paid: its link stops working. */
+    @PostMapping("/api/v1/internal/tenants/{tenantId}/project-requirements/{requirementId}/withdraw-link")
+    public ResponseEntity<Void> withdrawLink(@PathVariable UUID tenantId, @PathVariable UUID requirementId) {
+        requirementService.withdrawLink(tenantId, requirementId);
+        return ResponseEntity.noContent().build();
     }
 
     /** Through the creation manager (not the bare service) so {@code productDetails} creates the product. */

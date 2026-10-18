@@ -31,7 +31,7 @@ public class AdminRequestRoutingController {
     private final CreatorPublicProfileRepository profileRepository;
 
     public record RoutingView(RoutingStrategy strategy, List<RequestRoutingStore.RoutedCreator> creators,
-                              List<RequestRoutingStore.WaitingRequest> waiting) {
+                              List<RequestRoutingStore.WaitingRequest> waiting, List<RequestRoutingStore.UnpaidRequest> unpaid) {
     }
 
     public record StrategyRequest(@NotNull RoutingStrategy strategy) {
@@ -45,7 +45,7 @@ public class AdminRequestRoutingController {
 
     @GetMapping("/routing")
     public RoutingView view() {
-        return new RoutingView(store.strategy(), store.creators(), store.waiting());
+        return new RoutingView(store.strategy(), store.creators(), store.waiting(), store.unpaid());
     }
 
     @PutMapping("/routing")
@@ -64,6 +64,13 @@ public class AdminRequestRoutingController {
     @PostMapping("/{inquiryId}/assign")
     public ResponseEntity<RoutingView> assign(@PathVariable UUID inquiryId, @Valid @RequestBody AssignRequest request) {
         inquiryService.assignByOps(inquiryId, creator(request.handle()));
+        return ResponseEntity.ok(view());
+    }
+
+    /** Closes a request the brand never paid for, waiting or held by a creator. */
+    @PostMapping("/{inquiryId}/expire")
+    public ResponseEntity<RoutingView> expire(@PathVariable UUID inquiryId) {
+        inquiryService.expireByOps(inquiryId);
         return ResponseEntity.ok(view());
     }
 

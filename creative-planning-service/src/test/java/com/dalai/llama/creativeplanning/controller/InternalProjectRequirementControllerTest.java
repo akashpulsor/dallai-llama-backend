@@ -27,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class InternalProjectRequirementControllerTest {
 
     private final ProjectRequirementCreationManager service = mock(ProjectRequirementCreationManager.class);
-    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new InternalProjectRequirementController(service)).build();
+    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new InternalProjectRequirementController(service,
+            org.mockito.Mockito.mock(com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService.class))).build();
 
     @Test
     void createsAStandaloneBriefForTheTenantInThePathWithNoUser() throws Exception {
