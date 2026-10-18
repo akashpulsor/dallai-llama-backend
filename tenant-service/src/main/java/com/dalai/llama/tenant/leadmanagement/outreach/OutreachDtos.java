@@ -67,6 +67,8 @@ public final class OutreachDtos {
         OVER_ALLOWANCE,
         /** The address can't receive mail (bad syntax or no mail server); the mail was given back. */
         UNDELIVERABLE,
+        /** The platform's daily sending limit is reached; it stays queued and goes out tomorrow. */
+        DAILY_LIMIT,
         DUPLICATE
     }
 

@@ -164,7 +164,7 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
     }
 
     private OutreachProperties props() {
-        return new OutreachProperties("pepper", 100, 25, 14, 4, 7, 30, "https://api.example/outreach");
+        return new OutreachProperties("pepper", 100, 25, 14, 4, 7, 30, 900, "https://api.example/outreach");
     }
 
     private UUID creator(String name, String channel) {

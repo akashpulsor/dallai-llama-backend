@@ -57,15 +57,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Phase C on a real Postgres: one mail per recipient per day (now, or in the next digest), the
- * creator cooldown, the weekly allowance and paid packs, unsubscribe, tracked links and the purge.
+ * daily send cap, the creator cooldown, the weekly allowance and paid packs, unsubscribe, tracked
+ * links and the purge.
  * SMTP and billing are the only fakes. */
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true",
-        "outreach.free-per-week=3", "outreach.hash-pepper=pepper"})
+        "outreach.free-per-week=3", "outreach.hash-pepper=pepper", "outreach.daily-send-cap=5"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        OutreachRenderer.class, RecipientHasher.class, DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class,
+        OutreachRenderer.class, RecipientHasher.class, DailyDigestJob.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.class,
@@ -90,6 +92,8 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private OutreachService outreach;
     @Autowired private DailyDigestJob digest;
+    @Autowired private com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob dispatchJob;
+    @Autowired private org.springframework.transaction.support.TransactionTemplate transactions;
     @Autowired private OutreachStore store;
     @Autowired private CreatorProfileService profileService;
     @Autowired private JdbcTemplate jdbc;
@@ -219,6 +223,83 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_outreach_delivery WHERE recipient_email IS NOT NULL", Integer.class)).isZero();
         // The cooldown still holds: it keys on the hash.
         assertThat(send(riya, "pubriya0001", "click@x.example").results().get(0).outcome()).isEqualTo(Outcome.COOLDOWN);
+    }
+
+    @Test
+    void onceTheDailyCapIsReachedCreatorMailStaysQueuedAndGoesOutTomorrow() {
+        otherDeliveriesToday(4);
+        assertThat(send(riya, "pubriya0001", "fifth@x.example").results().get(0).outcome()).isEqualTo(Outcome.SENT);
+
+        assertThat(send(riya, "pubriya0001", "sixth@x.example").results().get(0).outcome()).isEqualTo(Outcome.DAILY_LIMIT);
+        assertThat(jdbc.queryForObject("SELECT status FROM lead_outreach_intent WHERE recipient_email = 'sixth@x.example'",
+                String.class)).isEqualTo("QUEUED");
+        assertThat(dispatchJob.run().sent()).isZero();
+        verify(creatorSender, times(1)).send(any());
+
+        clock.set(NOW.plus(Duration.ofDays(1)));
+        assertThat(dispatchJob.run().sent()).isEqualTo(1);
+        verify(creatorSender, times(2)).send(any());
+        // Charged once, when it was accepted: 2 of the 3 free mails used, none given back or taken again.
+        assertThat(outreach.overview(riya).allowance().freeUsedThisWeek()).isEqualTo(2);
+    }
+
+    @Test
+    void theDigestStopsAtTheDailyCapAndTheRestWaitsForTheNextDigest() {
+        send(riya, "pubriya0001", "buyer@hearth.example");
+        send(arjun, "pubarjun001", "buyer@hearth.example"); // waits for a digest
+
+        clock.set(NOW.plus(Duration.ofDays(1)));
+        otherDeliveriesToday(5);
+        assertThat(digest.run().digestsSent()).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_outreach_intent WHERE status = 'PENDING'", Integer.class)).isEqualTo(1);
+
+        clock.set(NOW.plus(Duration.ofDays(2)));
+        assertThat(digest.run().digestsSent()).isEqualTo(1);
+    }
+
+    @Test
+    void twoSendsAtOnceCannotBothTakeTheLastPlace() throws Exception {
+        otherDeliveriesToday(4);
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 10, 7);
+        java.util.concurrent.CountDownLatch firstClaimed = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch commitFirst = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> transactions.execute(tx -> {
+                boolean room = store.dayHasRoom(today, 5);
+                store.claimDay("a".repeat(64), today, "DIGEST", null, "a@x.example", "digest");
+                firstClaimed.countDown();
+                await(commitFirst);
+                return room;
+            }));
+            firstClaimed.await();
+            var second = pool.submit(() -> transactions.execute(tx -> store.dayHasRoom(today, 5)));
+            Thread.sleep(300);
+            assertThat(second.isDone()).isFalse(); // waiting on the day's lock
+            commitFirst.countDown();
+
+            assertThat(first.get()).isTrue();
+            assertThat(second.get()).isFalse();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static void await(java.util.concurrent.CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Mail already delivered today to other people. */
+    private void otherDeliveriesToday(int count) {
+        java.time.LocalDate today = java.time.LocalDate.ofInstant(clock.instant(), java.time.ZoneOffset.UTC);
+        for (int i = 0; i < count; i++) {
+            store.claimDay(UUID.randomUUID().toString().replace("-", "") + "0".repeat(32), today, "DIGEST", null,
+                    "other" + i + "@x.example", "digest");
+        }
     }
 
     private SendResult send(UUID tenant, String publicId, String email) {

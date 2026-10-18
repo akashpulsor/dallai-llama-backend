@@ -23,8 +23,8 @@ import java.util.UUID;
 
 /** Rule 15's daily digest (18:30 IST): each recipient with queued mail and nothing delivered today
  * gets one email from Dalai Llama with up to {@code digestMaxCards} films. Anything beyond that, or
- * queued for someone already emailed today, waits for the next run. Also purges raw recipient data
- * past retention (rule 17). */
+ * queued for someone already emailed today, waits for the next run, as does everyone left once the
+ * daily send cap is reached. Also purges raw recipient data past retention (rule 17). */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -41,6 +41,8 @@ public class DailyDigestJob {
     public record RunSummary(int digestsSent, int expired) {
     }
 
+    private enum Digest { SENT, SKIPPED, DAY_FULL }
+
     @Scheduled(cron = "${outreach.digest-cron:0 0 13 * * *}", zone = "UTC")
     public void scheduled() {
         RunSummary summary = run();
@@ -54,7 +56,9 @@ public class DailyDigestJob {
         int sent = 0;
         for (String recipient : store.recipientsWithPending()) {
             try {
-                if (Boolean.TRUE.equals(transactions.execute(tx -> digestFor(recipient, now)))) sent++;
+                Digest digest = transactions.execute(tx -> digestFor(recipient, now));
+                if (digest == Digest.DAY_FULL) break;
+                if (digest == Digest.SENT) sent++;
             } catch (RuntimeException e) {
                 log.warn("Digest failed for one recipient: {}", e.getMessage());
             }
@@ -62,7 +66,7 @@ public class DailyDigestJob {
         return new RunSummary(sent, expired);
     }
 
-    private boolean digestFor(String recipient, Instant now) {
+    private Digest digestFor(String recipient, Instant now) {
         List<PendingIntent> pending = store.pendingFor(recipient);
         List<OutreachComposer.DigestCard> cards = new ArrayList<>();
         List<UUID> used = new ArrayList<>();
@@ -80,22 +84,23 @@ public class DailyDigestJob {
             }
         }
         store.markIntents(gone, OutreachStore.IntentStatus.EXPIRED, null, now);
-        if (cards.isEmpty()) return false;
+        if (cards.isEmpty()) return Digest.SKIPPED;
 
         String email = pending.stream().map(PendingIntent::email).filter(e -> e != null).reduce((a, b) -> b).orElse(null);
-        if (email == null) return false;
+        if (email == null) return Digest.SKIPPED;
         String name = pending.stream().map(PendingIntent::name).filter(n -> n != null && !n.isBlank()).findFirst().orElse(null);
         LocalDate today = LocalDate.now(clock.withZone(ZoneOffset.UTC));
+        if (!store.dayHasRoom(today, properties.dailySendCap())) return Digest.DAY_FULL;
         Optional<OutreachStore.Delivery> slot = store.claimDay(recipient, today, "DIGEST", null, email, "digest");
-        if (slot.isEmpty()) return false;
+        if (slot.isEmpty()) return Digest.SKIPPED;
 
         OutreachComposer.Mail mail = composer.digest(cards, name, slot.get());
         if (!mailer.send(new PlatformMailer.Mail(email, mail.subject(), mail.text(), mail.html(), mail.headers()))) {
             store.releaseDay(slot.get().id());
-            return false;
+            return Digest.SKIPPED;
         }
         store.markSent(slot.get().id(), mail.subject());
         store.markIntents(used, OutreachStore.IntentStatus.DIGESTED, slot.get().id(), now);
-        return true;
+        return Digest.SENT;
     }
 }

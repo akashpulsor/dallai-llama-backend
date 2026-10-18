@@ -120,6 +120,7 @@ public class OutreachService {
             case WAITING_FOR_DIGEST -> Outcome.QUEUED;
             case SUPPRESSED -> Outcome.SUPPRESSED;
             case UNDELIVERABLE -> Outcome.UNDELIVERABLE;
+            case DAY_FULL -> Outcome.DAILY_LIMIT;
         };
     }
 

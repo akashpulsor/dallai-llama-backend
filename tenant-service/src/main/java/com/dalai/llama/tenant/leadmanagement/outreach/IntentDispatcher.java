@@ -24,13 +24,14 @@ import java.util.Optional;
 /** Sends one queued creator mail through the one-a-day slot (rule 15), for typed sends right away
  * and for audience sends from the dispatch job. Re-checks at send time (AUDIENCE_PROVIDER §51):
  * unsubscribed since → dropped; the address can't take mail → failed and the mail given back; the
- * film stopped being mailable → failed and given back. */
+ * film stopped being mailable → failed and given back; the daily send cap reached → left queued. */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class IntentDispatcher {
 
-    public enum Result { SENT, WAITING_FOR_DIGEST, UNDELIVERABLE, SUPPRESSED }
+    /** DAY_FULL: the daily send cap is reached; the mail stays queued and goes out tomorrow. */
+    public enum Result { SENT, WAITING_FOR_DIGEST, UNDELIVERABLE, SUPPRESSED, DAY_FULL }
 
     private final OutreachStore store;
     private final MailableFilms mailableFilms;
@@ -39,6 +40,7 @@ public class IntentDispatcher {
     private final CreatorEmailSender creatorSender;
     private final CreatorPublicProfileRepository profileRepository;
     private final ContactPointValidator validator;
+    private final OutreachProperties properties;
     private final Clock clock;
 
     public Result dispatch(QueuedIntent q) {
@@ -54,8 +56,9 @@ public class IntentDispatcher {
             store.refundPack(q.mailPackId());
             return Result.UNDELIVERABLE;
         }
-        Optional<OutreachStore.Delivery> slot = store.claimDay(q.recipientHash(), LocalDate.now(clock.withZone(ZoneOffset.UTC)),
-                "CREATOR_MAIL", q.tenantId(), q.email(), "pending");
+        LocalDate today = LocalDate.now(clock.withZone(ZoneOffset.UTC));
+        if (!store.dayHasRoom(today, properties.dailySendCap())) return Result.DAY_FULL;
+        Optional<OutreachStore.Delivery> slot = store.claimDay(q.recipientHash(), today, "CREATOR_MAIL", q.tenantId(), q.email(), "pending");
         if (slot.isEmpty()) return waitForDigest(q, now);
 
         OutreachComposer.Mail mail = composer.creatorMail(template(q), films, profile.get().getDisplayName(),

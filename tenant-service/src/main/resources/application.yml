@@ -211,6 +211,8 @@ outreach:
   digest-max-cards: 4
   pending-expiry-days: 7
   retention-days: 30
+  # Hostinger allows the shared mailbox 1000 mails a day; 100 stay free for sign-in/brief/alert mail.
+  daily-send-cap: ${OUTREACH_DAILY_SEND_CAP:900}
   # 13:00 UTC = 18:30 IST.
   digest-cron: "0 0 13 * * *"
   public-api-base-url: ${OUTREACH_PUBLIC_API_BASE_URL:https://api.dalaillama.in/api/v1/public/outreach}

@@ -15,6 +15,9 @@ public record OutreachProperties(
         /* A queued mail not delivered within this many days is dropped. */
         int pendingExpiryDays,
         int retentionDays,
+        /* All outreach deliveries (creator mail + digests) per UTC day. The shared Hostinger
+         * mailbox sends at most 1000 a day; the rest is kept for sign-in, brief and alert mail. */
+        int dailySendCap,
         /* Public base of the tracked-link and unsubscribe endpoints, e.g.
          * https://api.dalaillama.in/api/v1/public/outreach */
         String publicApiBaseUrl

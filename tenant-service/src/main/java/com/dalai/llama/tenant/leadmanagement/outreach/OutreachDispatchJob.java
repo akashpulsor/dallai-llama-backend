@@ -11,7 +11,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /** Sends queued audience mail (rule 26), oldest first, one transaction per mail so one bad address
- * never holds up the rest. Runs every minute; each run takes at most {@code BATCH}. */
+ * never holds up the rest. Runs every minute; each run takes at most {@code BATCH}, and stops once
+ * the daily send cap is reached (the rest stays queued for tomorrow). */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -38,6 +39,7 @@ public class OutreachDispatchJob {
         for (UUID id : store.queuedIds(BATCH)) {
             try {
                 IntentDispatcher.Result result = transactions.execute(tx -> store.lockQueued(id).map(dispatcher::dispatch).orElse(null));
+                if (result == IntentDispatcher.Result.DAY_FULL) break;
                 if (result != null) counts.merge(result, 1, Integer::sum);
             } catch (RuntimeException e) {
                 log.warn("Dispatch failed for intent {}: {}", id, e.getMessage());

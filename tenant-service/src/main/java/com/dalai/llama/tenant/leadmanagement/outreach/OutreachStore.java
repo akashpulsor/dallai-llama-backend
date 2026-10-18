@@ -181,6 +181,16 @@ public class OutreachStore {
     // ---- deliveries and links ----
 
     /** Takes {@code day}'s single slot for this recipient; empty if something already went today. */
+    /** Whether today still has room under the daily send cap. Locks the day until the transaction
+     * ends, so two sends can't both take the last place; call it in the same transaction as
+     * {@link #claimDay}. */
+    public boolean dayHasRoom(LocalDate day, int cap) {
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))", "outreach-day:" + day);
+        Integer used = jdbc.queryForObject("SELECT COUNT(*) FROM lead_outreach_delivery WHERE delivery_day = ?",
+                Integer.class, Date.valueOf(day));
+        return used == null || used < cap;
+    }
+
     public Optional<Delivery> claimDay(String recipientHash, LocalDate day, String kind, UUID tenantId, String email, String subject) {
         UUID id = UUID.randomUUID();
         String unsubscribe = PublicTokens.newToken();
