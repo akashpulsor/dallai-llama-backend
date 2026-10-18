@@ -137,6 +137,27 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void everyActiveCreatorTakesRoutedRequestsUntilOpsSwitchThemOff() {
+        // A creator nobody ever configured is on.
+        jdbc.update("DELETE FROM request_routing_creator WHERE tenant_id = ?", riya);
+        store.setAccepting(akash, false);
+        store.setAccepting(tech, false);
+
+        assertThat(holder(request(ShowcaseIndustry.FOOD_BEVERAGE))).isEqualTo(riya);
+        assertThat(store.creators()).extracting(RequestRoutingStore.RoutedCreator::handle, RequestRoutingStore.RoutedCreator::accepting)
+                .contains(org.assertj.core.groups.Tuple.tuple("akash", false), org.assertj.core.groups.Tuple.tuple("riya-motion", true));
+
+        store.setAccepting(riya, false);
+        UUID waiting = request(ShowcaseIndustry.FOOD_BEVERAGE);
+        assertThat(holder(waiting)).isNull();
+        assertThat(store.waiting()).singleElement().satisfies(w -> {
+            assertThat(w.id()).isEqualTo(waiting);
+            assertThat(w.brand()).isEqualTo("Hearth Foods");
+            assertThat(w.message()).isEqualTo("A 30s film for our ghee");
+        });
+    }
+
+    @Test
     void offerToAllShowsItToEveryActiveCreator_andTheFirstToAcceptTakesIt() {
         store.setStrategy(RoutingStrategy.OFFER_TO_ALL);
         UUID request = request(ShowcaseIndustry.FOOD_BEVERAGE);

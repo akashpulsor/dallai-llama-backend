@@ -30,7 +30,8 @@ public class AdminRequestRoutingController {
     private final com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiryService inquiryService;
     private final CreatorPublicProfileRepository profileRepository;
 
-    public record RoutingView(RoutingStrategy strategy, List<String> acceptingCreators, List<UUID> waiting) {
+    public record RoutingView(RoutingStrategy strategy, List<RequestRoutingStore.RoutedCreator> creators,
+                              List<RequestRoutingStore.WaitingRequest> waiting) {
     }
 
     public record StrategyRequest(@NotNull RoutingStrategy strategy) {
@@ -44,7 +45,7 @@ public class AdminRequestRoutingController {
 
     @GetMapping("/routing")
     public RoutingView view() {
-        return new RoutingView(store.strategy(), store.acceptingHandles(), store.unassigned());
+        return new RoutingView(store.strategy(), store.creators(), store.waiting());
     }
 
     @PutMapping("/routing")

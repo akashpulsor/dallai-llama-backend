@@ -23,6 +23,15 @@ public class BillingEventConsumer {
 
     private final TenantService tenantService;
     private final com.dalai.llama.tenant.showcase.service.ShowcaseModerationService showcaseModeration;
+    private final com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiryService inquiryService;
+
+    /** A brand paid a brief: if it came from a request, its creator hears now. */
+    @KafkaListener(topics = "billing.payment.received", groupId = "tenant-billing-consumer",
+            containerFactory = "paymentReceivedListenerFactory")
+    public void onPaymentReceived(com.dalai.llama.tenant.domain.event.PaymentReceivedEvent event) {
+        if (event.getProjectRequirementId() == null) return;
+        inquiryService.onBriefPaid(event.getProjectRequirementId(), event.getAmount(), event.getCurrency());
+    }
 
 
     @KafkaListener(topics = "billing.wallet.created", groupId = "tenant-billing-consumer",

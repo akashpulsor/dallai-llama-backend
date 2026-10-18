@@ -63,6 +63,12 @@ public class KafkaConsumerConfig {
         return handler;
     }
 
+    @Bean(name = "paymentReceivedListenerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, com.dalai.llama.tenant.domain.event.PaymentReceivedEvent>
+    paymentReceivedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {
+        return buildFactory(com.dalai.llama.tenant.domain.event.PaymentReceivedEvent.class, kafkaErrorHandler);
+    }
+
     @Bean(name = "walletCreatedListenerFactory")
     public ConcurrentKafkaListenerContainerFactory<String, WalletCreatedEvent>
     walletCreatedListenerFactory(DefaultErrorHandler kafkaErrorHandler) {

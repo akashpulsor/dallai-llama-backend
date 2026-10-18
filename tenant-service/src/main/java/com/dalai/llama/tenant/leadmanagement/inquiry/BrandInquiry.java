@@ -106,6 +106,10 @@ public class BrandInquiry {
     @Column(name = "brief_share_token", length = 100)
     private String briefShareToken;
 
+    /** When the brand paid the brief (V51); the creator is mailed when this is first set. */
+    @Column(name = "paid_at")
+    private OffsetDateTime paidAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

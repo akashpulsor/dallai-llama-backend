@@ -200,8 +200,8 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         assertThat(submitted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
         verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("ask@hearth.example")
                 && m.text().contains("https://creator.dalaillama.in/brief/share-abc") && m.text().contains("pay ₹1,200 now")));
-        // The creator was alerted, and the film counted the brand's interest.
-        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
+        // The creator hears nothing until the brand pays; the film counted the brand's interest.
+        verify(mailer, never()).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
         assertThat(jdbc.queryForObject("SELECT inquiry_count FROM showcase_item WHERE public_id = 'pub0000001'", Integer.class))
                 .isEqualTo(1);
         CreatorInquiryView seen = inquiries.forCreator(creator).get(0);
@@ -218,6 +218,21 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         assertThat(inquiries.forBrand(brand).get(0).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
         assertThat(convertedCounter.convertedRequests(creator)).isEqualTo(1);
         assertThatThrownBy(() -> inquiries.convert(creator, submitted.id())).isInstanceOf(IllegalStateException.class);
+
+        // Paid: the creator is mailed once, however often billing says so (the balance, a redelivery).
+        inquiries.onBriefPaid(requirement, new java.math.BigDecimal("1200.00"), "INR");
+        inquiries.onBriefPaid(requirement, new java.math.BigDecimal("1800.00"), "INR");
+        inquiries.onBriefPaid(UUID.randomUUID(), new java.math.BigDecimal("500"), "INR");
+        ArgumentCaptor<PlatformMailer.Mail> toCreator = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer, org.mockito.Mockito.atLeastOnce()).send(toCreator.capture());
+        assertThat(toCreator.getAllValues()).filteredOn(m -> m.to().equals("owner@example.com")).singleElement()
+                .satisfies(m -> {
+                    assertThat(m.subject()).isEqualTo("Paid: Hearth Foods wants a video from you");
+                    assertThat(m.text()).contains("₹1,200 paid upfront").contains("A 30s launch film for our new ghee");
+                    assertThat(m.html()).contains("Open the brief").contains("A2 Desi Ghee");
+                });
+        assertThat(jdbc.queryForObject("SELECT paid_at IS NOT NULL FROM lead_brand_inquiry WHERE id = ?", Boolean.class, submitted.id()))
+                .isTrue();
     }
 
     @Test
@@ -228,6 +243,9 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
                 null, null, null));
         assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.NEW);
         assertThat(submitted.briefUrl()).isNull();
+        // The creator has to act, so they hear now.
+        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")
+                && m.subject().equals("Hearth Foods asked you for a video") && m.html().contains("Make the brief")));
 
         org.mockito.Mockito.reset(briefClient);
         when(briefClient.createBrief(eq(creator), anyString(), any(), any(), any(), any(), eq(new CreativePlanningBriefClient.Pricing(null, 25))))

@@ -9,6 +9,8 @@ public interface BrandInquiryRepository extends JpaRepository<BrandInquiry, UUID
 
     List<BrandInquiry> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
+    java.util.Optional<BrandInquiry> findByRequirementId(UUID requirementId);
+
     List<BrandInquiry> findByBrandContactIdOrderByCreatedAtDesc(UUID brandContactId);
 
     long countByTenantIdAndStatus(UUID tenantId, BrandInquiry.Status status);

@@ -10,7 +10,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/** The routing setting, the creators who take routed requests, and each request's offers (V46). */
+/** The routing setting, the creators who take routed requests, and each request's offers (V46).
+ * Every creator with an active profile takes routed requests unless ops switched them off. */
 @Repository
 @RequiredArgsConstructor
 public class RequestRoutingStore {
@@ -33,11 +34,17 @@ public class RequestRoutingStore {
                 ON CONFLICT (tenant_id) DO UPDATE SET accepting = EXCLUDED.accepting, updated_at = NOW()""", tenantId, accepting);
     }
 
-    /** Creators who take routed requests: handle and whether they are on. */
-    public List<String> acceptingHandles() {
-        return jdbc.queryForList("""
-                SELECT p.handle FROM request_routing_creator r JOIN creator_public_profile p ON p.tenant_id = r.tenant_id
-                WHERE r.accepting AND p.status = 'ACTIVE' ORDER BY p.handle""", String.class);
+    /** One active creator as ops see them: on for routed requests or switched off. */
+    public record RoutedCreator(String handle, String displayName, boolean accepting) {
+    }
+
+    /** Every active creator, and whether they take routed requests. */
+    public List<RoutedCreator> creators() {
+        return jdbc.query("""
+                SELECT p.handle, p.display_name, COALESCE(r.accepting, TRUE) AS accepting
+                FROM creator_public_profile p LEFT JOIN request_routing_creator r ON r.tenant_id = p.tenant_id
+                WHERE p.status = 'ACTIVE' ORDER BY p.handle""",
+                (rs, n) -> new RoutedCreator(rs.getString(1), rs.getString(2), rs.getBoolean(3)));
     }
 
     /**
@@ -47,14 +54,14 @@ public class RequestRoutingStore {
     public List<UUID> candidates(UUID inquiryId, ShowcaseIndustry industry) {
         String code = industry == null ? null : industry.name();
         return jdbc.queryForList("""
-                SELECT r.tenant_id FROM request_routing_creator r
-                JOIN creator_public_profile p ON p.tenant_id = r.tenant_id
-                WHERE r.accepting AND p.status = 'ACTIVE'
+                SELECT p.tenant_id FROM creator_public_profile p
+                LEFT JOIN request_routing_creator r ON r.tenant_id = p.tenant_id
+                WHERE COALESCE(r.accepting, TRUE) AND p.status = 'ACTIVE'
                   AND NOT EXISTS (SELECT 1 FROM lead_inquiry_offer o
-                                  WHERE o.inquiry_id = ? AND o.tenant_id = r.tenant_id AND o.status = 'DECLINED')
+                                  WHERE o.inquiry_id = ? AND o.tenant_id = p.tenant_id AND o.status = 'DECLINED')
                 ORDER BY CASE WHEN CAST(? AS VARCHAR) IS NULL THEN 0
                               WHEN EXISTS (SELECT 1 FROM creator_profile_industry i
-                                           WHERE i.tenant_id = r.tenant_id AND i.industry = ?) THEN 0
+                                           WHERE i.tenant_id = p.tenant_id AND i.industry = ?) THEN 0
                               ELSE 1 END,
                          r.last_routed_at NULLS FIRST, p.created_at""", UUID.class, inquiryId, code, code);
     }
@@ -100,13 +107,30 @@ public class RequestRoutingStore {
     }
 
     public void touchRouted(UUID tenantId, OffsetDateTime now) {
-        jdbc.update("UPDATE request_routing_creator SET last_routed_at = ? WHERE tenant_id = ?", Timestamp.from(now.toInstant()), tenantId);
+        // A creator on by default has no row yet: this makes it.
+        jdbc.update("""
+                INSERT INTO request_routing_creator (tenant_id, accepting, last_routed_at) VALUES (?, TRUE, ?)
+                ON CONFLICT (tenant_id) DO UPDATE SET last_routed_at = EXCLUDED.last_routed_at""",
+                tenantId, Timestamp.from(now.toInstant()));
     }
 
     /** Routed requests nobody has yet, oldest first: the ops queue. */
     public List<UUID> unassigned() {
-        return jdbc.queryForList("""
-                SELECT id FROM lead_brand_inquiry WHERE tenant_id IS NULL AND source = 'LANDING'
-                  AND status <> 'DECLINED' ORDER BY created_at""", UUID.class);
+        return waiting().stream().map(WaitingRequest::id).toList();
+    }
+
+    /** A request in the ops queue, with what ops need to pick its creator. */
+    public record WaitingRequest(UUID id, String brand, String email, ShowcaseIndustry industry, String message,
+                                 OffsetDateTime createdAt) {
+    }
+
+    public List<WaitingRequest> waiting() {
+        return jdbc.query("""
+                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, q.industry, q.message, q.created_at
+                FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
+                WHERE q.tenant_id IS NULL AND q.source = 'LANDING' AND q.status <> 'DECLINED' ORDER BY q.created_at""",
+                (rs, n) -> new WaitingRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
+                        rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5),
+                        rs.getObject(6, OffsetDateTime.class)));
     }
 }

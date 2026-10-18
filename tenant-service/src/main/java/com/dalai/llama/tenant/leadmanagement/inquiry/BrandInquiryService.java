@@ -93,7 +93,6 @@ public class BrandInquiryService {
                 .filter(i -> creator.getTenantId().equals(i.getTenantId()) && i.getStatus() == ShowcaseItemStatus.LIVE);
         BrandInquiry inquiry = create(brandContactId, creator.getTenantId(), BrandInquiry.Source.CREATOR, film, request,
                 productImages, referenceImages);
-        notifier.assigned(creator.getTenantId(), brand, inquiry);
         return submitted(inquiry.getId());
     }
 
@@ -299,8 +298,24 @@ public class BrandInquiryService {
             return Optional.of(makeBrief(inquiry));
         } catch (UpstreamUnavailableException e) {
             log.warn("Request {} kept for its creator to convert: {}", inquiryId, e.getMessage());
+            notifier.needsBrief(inquiry.getTenantId(), contactRepository.findById(inquiry.getBrandContactId()).orElseThrow(), inquiry);
             return Optional.empty();
         }
+    }
+
+    /**
+     * The brand paid the brief made from a request: mark it paid and mail its creator, once. A
+     * payment for any other brief, or a later one (the balance), changes nothing.
+     */
+    @Transactional
+    public void onBriefPaid(UUID requirementId, java.math.BigDecimal amount, String currency) {
+        Optional<BrandInquiry> found = inquiryRepository.findByRequirementId(requirementId).filter(i -> i.getPaidAt() == null);
+        if (found.isEmpty()) return;
+        BrandInquiry inquiry = found.get();
+        inquiry.setPaidAt(OffsetDateTime.now(clock));
+        inquiryRepository.save(inquiry);
+        notifier.paid(inquiry.getTenantId(), contactRepository.findById(inquiry.getBrandContactId()).orElseThrow(), inquiry,
+                amount == null ? "Your share" : BriefReadyMail.money(amount, currency));
     }
 
     /** Creates the priced brief in creative-planning, marks the request converted and mails the

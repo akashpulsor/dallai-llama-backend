@@ -104,7 +104,6 @@ public class RequestRouter {
         store.offer(inquiry.getId(), tenantId, OfferStatus.ASSIGNED, now);
         store.withdrawOthers(inquiry.getId(), tenantId, now);
         store.touchRouted(tenantId, now);
-        notifier.assigned(tenantId, brand(inquiry), inquiry);
     }
 
     private BrandContact brand(BrandInquiry inquiry) {
