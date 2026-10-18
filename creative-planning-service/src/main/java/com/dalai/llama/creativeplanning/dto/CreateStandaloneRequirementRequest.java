@@ -2,11 +2,14 @@ package com.dalai.llama.creativeplanning.dto;
 
 import com.dalai.llama.creativeplanning.domain.TenantType;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,7 +28,9 @@ import java.util.UUID;
  * productImages} multipart part, distinct from {@code projectReferenceImages} (what the client has
  * in mind, not the product itself -- see {@code ProjectReferenceImage}). Both image sets are
  * stored as-is at creation time; the actual vision analysis is deferred until the requirement is
- * funded (see {@code ReferenceMaterialAnalysisService}). */
+ * funded (see {@code ReferenceMaterialAnalysisService}). {@code pricing} prices the brief at
+ * creation (a brand's request, ready to pay at once); absent, the brief starts unpriced and the
+ * creator sets the price later. */
 public record CreateStandaloneRequirementRequest(
         @NotBlank String briefText,
         String targetAudience,
@@ -35,6 +40,15 @@ public record CreateStandaloneRequirementRequest(
         @NotNull TenantType tenantType,
         UUID brandId,
         @Valid CreateBrandContextRequest brandContext,
-        @Valid CreateProductRequest productDetails
+        @Valid CreateProductRequest productDetails,
+        @Valid Pricing pricing
 ) {
+    /** {@code pricePerSecond} given: that rate times the length (e.g. the platform's rate), and the
+     * brief re-prices when the length changes. Absent: the creator's own rate for the length, from
+     * billing. Either way the client pays {@code requiredPaymentPercent} of it upfront. */
+    public record Pricing(
+            @Positive BigDecimal pricePerSecond,
+            @NotNull @Min(1) @Max(100) Integer requiredPaymentPercent
+    ) {
+    }
 }

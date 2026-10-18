@@ -103,6 +103,17 @@ public class ProjectRequirement {
     @Column(name = "quoted_total_price", precision = 12, scale = 2)
     private BigDecimal quotedTotalPrice;
 
+    /** Set when the brief is priced by length (V21): the total is this rate times the length, so
+     * a length change re-prices it. Null for a brief priced by hand or at the creator's rate. */
+    @Column(name = "price_per_second", precision = 12, scale = 4)
+    private BigDecimal pricePerSecond;
+
+    /** The total for {@code seconds} at {@link #pricePerSecond}, to the nearest whole unit (the rate
+     * is rounded, so rounding up would turn a 60-second Rs 4,999 into Rs 5,000). */
+    public BigDecimal priceAtRate(int seconds) {
+        return pricePerSecond.multiply(BigDecimal.valueOf(seconds)).setScale(0, RoundingMode.HALF_UP);
+    }
+
     @Column(name = "quoted_currency", length = 3)
     private String quotedCurrency;
 

@@ -28,23 +28,32 @@ public class CreativePlanningBriefClient {
         this.webClient = builder.baseUrl(baseUrl).build();
     }
 
-    public record CreatedBrief(UUID requirementId, String shareToken) {
+    /** The new brief; price, upfront amount and currency are null when it was left unpriced. */
+    public record CreatedBrief(UUID requirementId, String shareToken, java.math.BigDecimal totalPrice,
+                               java.math.BigDecimal requiredAmount, String currency) {
+    }
+
+    /** Wire shape of creative-planning's CreateStandaloneRequirementRequest.Pricing: a null
+     * {@code pricePerSecond} prices the brief at the creator's own rate. */
+    public record Pricing(java.math.BigDecimal pricePerSecond, int requiredPaymentPercent) {
     }
 
     /** Wire shape of creative-planning's CreateStandaloneRequirementRequest (no product, no files). */
     record StandaloneBrief(String briefText, String targetAudience, String campaignDirection, Integer durationSeconds,
-                           List<String> languages, String tenantType, Map<String, String> brandContext, Map<String, String> productDetails) {
+                           List<String> languages, String tenantType, Map<String, String> brandContext, Map<String, String> productDetails,
+                           Pricing pricing) {
     }
 
-    public CreatedBrief createBrief(UUID tenantId, String briefText, String brandName, String industry,
-                                    com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.BriefDetails details) {
-        return createBrief(tenantId, briefText, brandName, industry, details, List.of());
+    /** The length a brief starts at when the brand didn't give one. */
+    public static int durationOf(com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.BriefDetails details) {
+        return details != null && details.durationSeconds() != null ? details.durationSeconds() : DEFAULT_DURATION_SECONDS;
     }
 
-    /** With images: sent as multipart (product images only when there's a product to hang them on). */
+    /** With images: sent as multipart (product images only when there's a product to hang them on).
+     * {@code pricing} null leaves the brief for the creator to price. */
     public CreatedBrief createBrief(UUID tenantId, String briefText, String brandName, String industry,
                                     com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.BriefDetails details,
-                                    List<InquiryImageStore.Image> images) {
+                                    List<InquiryImageStore.Image> images, Pricing pricing) {
         Map<String, String> brand = brandName == null || brandName.isBlank() ? null : industry == null
                 ? Map.of("brandName", brandName) : Map.of("brandName", brandName, "industry", industry);
         // A product needs a brand to belong to (creative-planning rule), so it only rides along with one.
@@ -53,9 +62,9 @@ public class CreativePlanningBriefClient {
                 : Map.of("name", details.productName(), "description", details.productDescription());
         StandaloneBrief body = new StandaloneBrief(briefText,
                 details == null ? null : details.targetAudience(), details == null ? null : details.campaignDirection(),
-                details != null && details.durationSeconds() != null ? details.durationSeconds() : DEFAULT_DURATION_SECONDS,
+                durationOf(details),
                 details != null && !details.languages().isEmpty() ? details.languages() : List.of("English"),
-                "AI_VIDEO_CREATOR", brand, product);
+                "AI_VIDEO_CREATOR", brand, product, pricing);
         try {
             var request = webClient.post().uri("/api/v1/internal/tenants/{tenantId}/project-requirements/standalone", tenantId);
             var spec = images == null || images.isEmpty() ? request.bodyValue(body) : request

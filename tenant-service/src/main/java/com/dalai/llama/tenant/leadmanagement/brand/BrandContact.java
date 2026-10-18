@@ -18,7 +18,8 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** A brand we know by email (V32): one that signed in, or one ops imported for automatic picks. */
+/** A brand we know by email (V32): one that signed in, one ops imported for automatic picks, or one
+ * that sent a request without signing in (V48). */
 @Getter
 @Setter
 @Builder
@@ -28,7 +29,7 @@ import java.util.UUID;
 @Table(name = "lead_brand_contact")
 public class BrandContact {
 
-    public enum Source { SIGNUP, OPS_IMPORT }
+    public enum Source { SIGNUP, OPS_IMPORT, REQUEST }
 
     @Id
     @Column(name = "id")

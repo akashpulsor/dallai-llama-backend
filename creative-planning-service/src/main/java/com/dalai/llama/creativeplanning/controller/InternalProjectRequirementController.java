@@ -30,7 +30,13 @@ public class InternalProjectRequirementController {
         this.creationManager = creationManager;
     }
 
-    public record CreatedBrief(UUID requirementId, String shareToken) {
+    /** The new brief, and its price and upfront amount when it was priced at creation (else null). */
+    public record CreatedBrief(UUID requirementId, String shareToken, java.math.BigDecimal totalPrice,
+                               java.math.BigDecimal requiredAmount, String currency) {
+        static CreatedBrief of(ProjectRequirementView created) {
+            return new CreatedBrief(created.id(), created.shareToken(), created.quotedTotalPrice(), created.requiredAmount(),
+                    created.quotedCurrency());
+        }
     }
 
     /** Through the creation manager (not the bare service) so {@code productDetails} creates the product. */
@@ -38,7 +44,7 @@ public class InternalProjectRequirementController {
     public ResponseEntity<CreatedBrief> createStandalone(@PathVariable UUID tenantId,
                                                          @Valid @RequestBody CreateStandaloneRequirementRequest request) {
         ProjectRequirementView created = creationManager.createStandalone(tenantId, null, request, null, null, null);
-        return ResponseEntity.status(HttpStatus.CREATED).body(new CreatedBrief(created.id(), created.shareToken()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(CreatedBrief.of(created));
     }
 
     /** Same, with the brand's product and reference images (a request a brand sent from a creator's page). */
@@ -49,6 +55,6 @@ public class InternalProjectRequirementController {
             @RequestPart(value = "productImages", required = false) List<MultipartFile> productImages,
             @RequestPart(value = "projectReferenceImages", required = false) List<MultipartFile> projectReferenceImages) {
         ProjectRequirementView created = creationManager.createStandalone(tenantId, null, request, null, productImages, projectReferenceImages);
-        return ResponseEntity.status(HttpStatus.CREATED).body(new CreatedBrief(created.id(), created.shareToken()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(CreatedBrief.of(created));
     }
 }

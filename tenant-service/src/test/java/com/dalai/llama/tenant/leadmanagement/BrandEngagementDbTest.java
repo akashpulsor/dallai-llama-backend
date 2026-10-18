@@ -64,6 +64,7 @@ import static org.mockito.Mockito.when;
         com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier.class,
         BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
         com.dalai.llama.tenant.leadmanagement.inquiry.InquiryImageStore.class,
+        com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricing.class,
         FollowService.class, ShowcaseEngagementService.class, ShowcasePlayStore.class, CreatorProfileService.class,
         HandlePolicy.class, com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class,
         com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher.class, BrandEngagementDbTest.TestConfig.class})
@@ -73,7 +74,8 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
 
     @TestConfiguration
     @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class,
-            com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class})
+            com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
+            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -112,6 +114,9 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
                 UUID.randomUUID(), creator, Timestamp.from(NOW), Timestamp.from(NOW));
         when(mailer.send(any())).thenReturn(true);
         when(reviewLinks.of(any(), any())).thenReturn(new com.dalai.llama.tenant.leadmanagement.inquiry.ProjectReviewLinks.Progress(false, null));
+        // creative-planning is down unless a test says otherwise: requests then wait for the creator to convert them.
+        when(briefClient.createBrief(any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException("down", null));
     }
 
     @Test
@@ -170,9 +175,19 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
-    void aRequestReachesTheCreatorAndBecomesABriefTheBrandIsSent() {
+    void aRequestToACreatorBecomesABriefAtOnce_atTheirRate_withTheirUpfrontShare() {
         UUID brand = signedInBrand("ask@hearth.example");
+        UUID requirement = UUID.randomUUID();
+        org.mockito.Mockito.reset(briefClient);
+        when(briefClient.createBrief(eq(creator), anyString(), eq("Hearth Foods"), eq("food beverage"),
+                org.mockito.ArgumentMatchers.argThat(d -> d.durationSeconds() == 30 && "Young parents in metros".equals(d.targetAudience())
+                        && "A2 Desi Ghee".equals(d.productName())),
+                org.mockito.ArgumentMatchers.argThat(images -> images.size() == 2),
+                eq(new CreativePlanningBriefClient.Pricing(null, 40))))
+                .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "share-abc", new java.math.BigDecimal("3000"),
+                        new java.math.BigDecimal("1200"), "INR"));
         clearInvocations(mailer);
+
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest("pub0000001", null,
                 BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee",
                 "A2 Desi Ghee", "Small-batch ghee from grass-fed cows", "Young parents in metros", "Warm, homely, morning kitchen",
@@ -180,11 +195,17 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("productImages", "jar.png", "image/png", new byte[]{1, 2, 3})),
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("referenceImages", "mood.jpg", "image/jpeg", new byte[]{4})));
 
+        // The brand goes straight to the brief, and is mailed it with what to pay now.
+        assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
+        assertThat(submitted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
+        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("ask@hearth.example")
+                && m.text().contains("https://creator.dalaillama.in/brief/share-abc") && m.text().contains("pay ₹1,200 now")));
         // The creator was alerted, and the film counted the brand's interest.
         verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
         assertThat(jdbc.queryForObject("SELECT inquiry_count FROM showcase_item WHERE public_id = 'pub0000001'", Integer.class))
                 .isEqualTo(1);
         CreatorInquiryView seen = inquiries.forCreator(creator).get(0);
+        assertThat(seen.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
         assertThat(seen.filmTitle()).isEqualTo("Video film0000001");
         assertThat(seen.brand().companyName()).isEqualTo("Hearth Foods");
         assertThat(seen.brief().productName()).isEqualTo("A2 Desi Ghee");
@@ -194,23 +215,24 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         var img = inquiries.image(creator, submitted.id(), seen.brief().images().get(0).id()).orElseThrow();
         assertThat(img.contentType()).isEqualTo("image/png");
         assertThat(img.bytes()).containsExactly(1, 2, 3);
-
-        UUID requirement = UUID.randomUUID();
-        when(briefClient.createBrief(eq(creator), anyString(), eq("Hearth Foods"), eq("food beverage"),
-                org.mockito.ArgumentMatchers.argThat(d -> d.durationSeconds() == 30 && "Young parents in metros".equals(d.targetAudience())
-                        && "A2 Desi Ghee".equals(d.productName())),
-                org.mockito.ArgumentMatchers.argThat(images -> images.size() == 2)))
-                .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "share-abc"));
-        clearInvocations(mailer);
-        CreatorInquiryView converted = inquiries.convert(creator, submitted.id());
-
-        assertThat(converted.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
-        assertThat(converted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
-        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("ask@hearth.example")
-                && m.text().contains("https://creator.dalaillama.in/brief/share-abc")));
         assertThat(inquiries.forBrand(brand).get(0).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
         assertThat(convertedCounter.convertedRequests(creator)).isEqualTo(1);
         assertThatThrownBy(() -> inquiries.convert(creator, submitted.id())).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void whenBriefsAreDown_theRequestWaits_andTheCreatorConvertsItLater_atTheirOwnUpfrontShare() {
+        UUID brand = signedInBrand("later@hearth.example");
+        jdbc.update("UPDATE creator_public_profile SET request_prepayment_percent = 25 WHERE tenant_id = ?", creator);
+        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "A reel", null, null, null, null,
+                null, null, null));
+        assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.NEW);
+        assertThat(submitted.briefUrl()).isNull();
+
+        org.mockito.Mockito.reset(briefClient);
+        when(briefClient.createBrief(eq(creator), anyString(), any(), any(), any(), any(), eq(new CreativePlanningBriefClient.Pricing(null, 25))))
+                .thenReturn(new CreativePlanningBriefClient.CreatedBrief(UUID.randomUUID(), "share-later", null, null, null));
+        assertThat(inquiries.convert(creator, submitted.id()).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-later");
     }
 
     @Test
@@ -231,7 +253,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         UUID brand = signedInBrand("x@hearth.example");
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null, null));
         assertThatThrownBy(() -> inquiries.convert(UUID.randomUUID(), submitted.id())).isInstanceOf(IllegalArgumentException.class);
-        verify(briefClient, never()).createBrief(any(), any(), any(), any(), any(), any());
+        assertThat(inquiries.forCreator(creator).get(0).status()).isEqualTo(BrandInquiry.Status.NEW);
     }
 
     @Test

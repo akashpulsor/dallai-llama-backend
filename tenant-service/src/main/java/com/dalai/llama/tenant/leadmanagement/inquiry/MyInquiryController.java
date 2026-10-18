@@ -29,6 +29,21 @@ public class MyInquiryController {
 
     private final TenantService tenantService;
     private final BrandInquiryService inquiryService;
+    private final RequestPricing pricing;
+
+    /** What a brand pays upfront on a brief made from a request sent to this creator. */
+    public record RequestSettings(@jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(100) int prepaymentPercent) {
+    }
+
+    @GetMapping("/settings")
+    public ResponseEntity<RequestSettings> settings(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.of(tenant(jwt).map(t -> new RequestSettings(pricing.prepaymentPercent(t.getId()))));
+    }
+
+    @org.springframework.web.bind.annotation.PutMapping("/settings")
+    public ResponseEntity<RequestSettings> saveSettings(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody RequestSettings request) {
+        return ResponseEntity.of(tenant(jwt).map(t -> new RequestSettings(pricing.setPrepaymentPercent(t.getId(), request.prepaymentPercent()))));
+    }
 
     @GetMapping
     public ResponseEntity<List<CreatorInquiryView>> list(@AuthenticationPrincipal Jwt jwt) {

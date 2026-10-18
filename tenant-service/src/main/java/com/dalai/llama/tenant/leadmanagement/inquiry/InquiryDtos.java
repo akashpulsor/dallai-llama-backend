@@ -49,7 +49,9 @@ public final class InquiryDtos {
         }
     }
 
-    public record SubmittedInquiry(UUID id, BrandInquiry.Status status) {
+    /** {@code briefUrl}: the brief to review and pay, when it was made at once (a creator took the
+     * request); null while the request waits for one. */
+    public record SubmittedInquiry(UUID id, BrandInquiry.Status status, String briefUrl) {
     }
 
     /** The brand's view of one of their requests. */

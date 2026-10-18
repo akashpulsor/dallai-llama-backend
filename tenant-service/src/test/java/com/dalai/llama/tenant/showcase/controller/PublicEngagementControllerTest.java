@@ -1,9 +1,12 @@
 package com.dalai.llama.tenant.showcase.controller;
 
 import com.dalai.llama.tenant.domain.exception.GlobalExceptionHandler;
+import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.GuestContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandProperties;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandSessionService;
+import com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiry;
 import com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiryService;
+import com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.SubmittedInquiry;
 import com.dalai.llama.tenant.showcase.service.FollowService;
 import com.dalai.llama.tenant.showcase.service.ShowcaseEngagementService;
 import jakarta.servlet.http.Cookie;
@@ -24,12 +27,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Likes need only a visitor id; follows and requests need a real brand session cookie (401 otherwise). */
+/** Likes need only a visitor id; follows and requests to a creator need a real brand session cookie
+ * (401 otherwise); a request to Dalaillama can also come with the asker's details instead. */
 class PublicEngagementControllerTest {
 
     private final ShowcaseEngagementService engagement = mock(ShowcaseEngagementService.class);
@@ -81,5 +86,26 @@ class PublicEngagementControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"A launch film\",\"budgetBand\":\"NOT_SURE\"}"))
                 .andExpect(status().isCreated());
         verify(inquiries).submit(eq(brand), eq("riya-motion"), any());
+    }
+
+    @Test
+    void anyoneCanRequestAVideoWithoutSigningIn_butMustSayWhoTheyAre() throws Exception {
+        org.springframework.mock.web.MockMultipartFile data = json("data", "{\"message\":\"A 30s film for our ghee\",\"industry\":\"FOOD_BEVERAGE\"}");
+        mvc.perform(multipart("/api/v1/public/brands/requests").file(data)
+                        .file(json("contact", "{\"email\":\"not-an-email\",\"contactName\":\"Asha\"}")))
+                .andExpect(status().isBadRequest());
+        verify(inquiries, never()).submitAsGuest(any(), any(), any(), any());
+
+        when(inquiries.submitAsGuest(any(), any(), any(), any()))
+                .thenReturn(new SubmittedInquiry(UUID.randomUUID(), BrandInquiry.Status.NEW, null));
+        mvc.perform(multipart("/api/v1/public/brands/requests").file(data)
+                        .file(json("contact", "{\"email\":\"asha@hearth.example\",\"contactName\":\"Asha\",\"companyName\":\"Hearth\"}")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("NEW"));
+        verify(inquiries).submitAsGuest(eq(new GuestContact("asha@hearth.example", "Asha", "Hearth", null)), any(), any(), any());
+    }
+
+    private static org.springframework.mock.web.MockMultipartFile json(String part, String body) {
+        return new org.springframework.mock.web.MockMultipartFile(part, "", MediaType.APPLICATION_JSON_VALUE, body.getBytes());
     }
 }

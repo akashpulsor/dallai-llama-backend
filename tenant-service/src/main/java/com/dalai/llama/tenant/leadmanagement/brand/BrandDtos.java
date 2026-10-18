@@ -32,6 +32,15 @@ public final class BrandDtos {
     ) {
     }
 
+    /** Who is asking, on a request sent without signing in: enough to reply, nothing more. */
+    public record GuestContact(
+            @NotBlank @Email @Size(max = 254) String email,
+            @NotBlank @Size(max = 80) String contactName,
+            @Size(max = 120) String companyName,
+            @Size(max = 255) @Pattern(regexp = "^$|^https?://\\S+$", message = "must be an http(s) link") String websiteUrl
+    ) {
+    }
+
     /** What a completed sign-in tells the page. The session itself travels only in the HttpOnly
      * cookie, never in a body a script could read. */
     public record SignedIn(Instant expiresAt, String pendingAction, BrandMeView brand) {

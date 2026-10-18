@@ -81,6 +81,11 @@ public class CreatorPublicProfile {
     @Column(name = "auto_picks_enabled", nullable = false)
     private boolean autoPicksEnabled = true;
 
+    /** Share of a brief made from a brand's request that the brand pays upfront (V49). */
+    @Builder.Default
+    @Column(name = "request_prepayment_percent", nullable = false)
+    private int requestPrepaymentPercent = 40;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private ProfileStatus status;

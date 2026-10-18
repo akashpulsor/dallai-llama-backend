@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.showcase.controller;
 
+import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.GuestContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandSessionService;
 import com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiryService;
 import com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.SubmitInquiryRequest;
@@ -22,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
-/** Likes (anonymous), follows and video requests (signed-in brands). Under the already-routed
+/** Likes (anonymous), follows (signed-in brands) and video requests (signed in or not). Under the already-routed
  * {@code /api/v1/public/creators} and {@code /api/v1/public/showcase} prefixes. */
 @RestController
 @RequiredArgsConstructor
@@ -77,6 +78,17 @@ public class PublicEngagementController {
             @org.springframework.web.bind.annotation.RequestPart(value = "productImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
             @org.springframework.web.bind.annotation.RequestPart(value = "referenceImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
         return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submitToDalaillama(identity.require(authorization, session), request,
+                productImages, referenceImages));
+    }
+
+    /** The same "Request a video" without signing in: who is asking travels with the request. */
+    @PostMapping(path = "/api/v1/public/brands/requests", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<SubmittedInquiry> requestAsGuest(
+            @Valid @org.springframework.web.bind.annotation.RequestPart("contact") GuestContact contact,
+            @Valid @org.springframework.web.bind.annotation.RequestPart("data") SubmitInquiryRequest request,
+            @org.springframework.web.bind.annotation.RequestPart(value = "productImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+            @org.springframework.web.bind.annotation.RequestPart(value = "referenceImages", required = false) java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(inquiryService.submitAsGuest(contact, request,
                 productImages, referenceImages));
     }
 

@@ -1,8 +1,10 @@
 package com.dalai.llama.tenant.leadmanagement.inquiry;
 
 import com.dalai.llama.tenant.domain.entity.Tenant;
+import com.dalai.llama.tenant.leadmanagement.brand.BrandAccountService;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandContactRepository;
+import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.GuestContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandNotSignedInException;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandProperties;
 import com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.BrandInquiryView;
@@ -11,7 +13,9 @@ import com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.SubmitInquiryRe
 import com.dalai.llama.tenant.leadmanagement.inquiry.InquiryDtos.SubmittedInquiry;
 import com.dalai.llama.tenant.leadmanagement.notify.PlatformMailer;
 import com.dalai.llama.tenant.repository.TenantRepository;
+import com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException;
 import com.dalai.llama.tenant.showcase.domain.ProfileStatus;
+import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import com.dalai.llama.tenant.showcase.domain.ShowcaseItemStatus;
 import com.dalai.llama.tenant.showcase.domain.entity.CreatorPublicProfile;
 import com.dalai.llama.tenant.showcase.domain.entity.ShowcaseItem;
@@ -24,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.HtmlUtils;
 
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -36,8 +41,10 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** "Request a video": a signed-in brand asks a creator; the creator reads it, declines it, or turns
- * it into a brief, which mails the brand the brief link and hands over to the existing brief flow. */
+/** "Request a video": a brand asks a creator, or Dalaillama, which routes it to one. As soon as a
+ * creator holds the request it becomes a priced brief ({@link RequestPricing}) and the brand is
+ * mailed the link to review, edit and pay upfront; if creative-planning is down, the creator turns
+ * it into a brief by hand later. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -50,6 +57,7 @@ public class BrandInquiryService {
     private final BrandInquiryRepository inquiryRepository;
     private final InquiryImageStore images;
     private final BrandContactRepository contactRepository;
+    private final BrandAccountService accounts;
     private final CreatorPublicProfileRepository profileRepository;
     private final ShowcaseItemRepository itemRepository;
     private final YouTubeVideoRepository videoRepository;
@@ -59,6 +67,7 @@ public class BrandInquiryService {
     private final com.dalai.llama.tenant.leadmanagement.routing.RequestRoutingStore routingStore;
     private final com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier notifier;
     private final ProjectReviewLinks reviewLinks;
+    private final RequestPricing pricing;
     private final PlatformMailer mailer;
     private final BrandProperties brandProperties;
     private final JdbcTemplate jdbc;
@@ -85,7 +94,7 @@ public class BrandInquiryService {
         BrandInquiry inquiry = create(brandContactId, creator.getTenantId(), BrandInquiry.Source.CREATOR, film, request,
                 productImages, referenceImages);
         notifier.assigned(creator.getTenantId(), brand, inquiry);
-        return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
+        return submitted(inquiry.getId());
     }
 
     /**
@@ -103,7 +112,34 @@ public class BrandInquiryService {
                 .filter(i -> i.getStatus() == ShowcaseItemStatus.LIVE);
         BrandInquiry inquiry = create(brandContactId, null, BrandInquiry.Source.LANDING, film, request, productImages, referenceImages);
         router.route(inquiry.getId());
-        return new SubmittedInquiry(inquiry.getId(), inquiry.getStatus());
+        return submitted(inquiry.getId());
+    }
+
+    /**
+     * The same request from someone who hasn't signed in: their email finds or makes the brand.
+     * Everything after (the brief, paying, the review) reaches them by mail, so they never need to
+     * sign in; until a creator has it, a receipt says what happens next.
+     */
+    @Transactional
+    public SubmittedInquiry submitAsGuest(GuestContact guest, SubmitInquiryRequest request,
+                                          java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
+                                          java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
+        UUID brandContactId = accounts.guest(guest, request.industry());
+        SubmittedInquiry submitted = submitToDalaillama(brandContactId, request, productImages, referenceImages);
+        if (submitted.briefUrl() == null) mailer.send(receivedMail(contactRepository.findById(brandContactId).orElseThrow()));
+        return submitted;
+    }
+
+    private static PlatformMailer.Mail receivedMail(BrandContact brand) {
+        String text = "Hi " + brand.getContactName() + ",\n\n"
+                + "We've got your video request. As soon as a creator takes it, usually within a day, we'll mail you the "
+                + "brief. Open it to check the details and pay upfront; production starts as soon as you do.\n\n"
+                + "Reply to this mail if you want to add anything.\n";
+        String html = "<p>Hi " + HtmlUtils.htmlEscape(brand.getContactName()) + ",</p>"
+                + "<p>We've got your video request. As soon as a creator takes it, usually within a day, we'll mail you the "
+                + "brief. Open it to check the details and pay upfront; production starts as soon as you do.</p>"
+                + "<p style=\"color:#64748b\">Reply to this mail if you want to add anything.</p>";
+        return new PlatformMailer.Mail(brand.getEmail(), "We've got your video request", text, html);
     }
 
     /** The signed-in brand, once their images pass and they are under the daily limit. */
@@ -200,6 +236,7 @@ public class BrandInquiryService {
     @Transactional
     public CreatorInquiryView accept(UUID tenantId, UUID inquiryId) {
         if (!router.accept(tenantId, inquiryId)) throw new IllegalStateException("Another creator took this request first");
+        briefOnceHeld(inquiryId);
         return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
     }
 
@@ -216,39 +253,76 @@ public class BrandInquiryService {
         // A request sent to Dalaillama isn't the creator's to close: passing on it sends it on to
         // another creator (or ops); merely reading an offer doesn't take it.
         if (inquiry.getSource() == BrandInquiry.Source.LANDING) {
-            if (status == BrandInquiry.Status.DECLINED) router.decline(tenantId, inquiryId);
-            else if (tenantId.equals(inquiry.getTenantId())) inquiryRepository.save(withStatus(inquiry, status));
+            if (status == BrandInquiry.Status.DECLINED) {
+                router.decline(tenantId, inquiryId);
+                briefOnceHeld(inquiryId);
+            } else if (tenantId.equals(inquiry.getTenantId())) inquiryRepository.save(withStatus(inquiry, status));
             return;
         }
         inquiry.setStatus(status);
         inquiryRepository.save(inquiry);
     }
 
-    /** Creates the brief in creative-planning and mails the brand its link. */
+    /** The creator turns a request into a brief by hand (when it couldn't be made automatically). */
     @Transactional
     public CreatorInquiryView convert(UUID tenantId, UUID inquiryId) {
         BrandInquiry inquiry = owned(tenantId, inquiryId);
         if (inquiry.getStatus() == BrandInquiry.Status.CONVERTED) throw new IllegalStateException("This request already became a brief");
         if (inquiry.getStatus() == BrandInquiry.Status.DECLINED) throw new IllegalStateException("This request was declined");
+        makeBrief(inquiry);
+        return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
+    }
+
+    /** Ops hand a routed request to a creator; its brief is made at once. */
+    @Transactional
+    public void assignByOps(UUID inquiryId, UUID tenantId) {
+        router.assignByOps(inquiryId, tenantId);
+        briefOnceHeld(inquiryId);
+    }
+
+    private SubmittedInquiry submitted(UUID inquiryId) {
+        Optional<String> briefUrl = briefOnceHeld(inquiryId);
+        BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
+        return new SubmittedInquiry(inquiryId, inquiry.getStatus(), briefUrl.orElse(null));
+    }
+
+    /**
+     * Makes the brief if a creator holds the request and it has none yet. Best effort: when
+     * creative-planning can't be reached the request stays as it is, for the creator to convert.
+     */
+    private Optional<String> briefOnceHeld(UUID inquiryId) {
+        BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
+        // The router claims with plain SQL, so an entity loaded earlier in this transaction can't know.
+        inquiry.setTenantId(jdbc.queryForObject("SELECT tenant_id FROM lead_brand_inquiry WHERE id = ?", UUID.class, inquiryId));
+        if (inquiry.getTenantId() == null || inquiry.getStatus() == BrandInquiry.Status.CONVERTED) return Optional.empty();
+        try {
+            return Optional.of(makeBrief(inquiry));
+        } catch (UpstreamUnavailableException e) {
+            log.warn("Request {} kept for its creator to convert: {}", inquiryId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** Creates the priced brief in creative-planning, marks the request converted and mails the
+     * brand the link; returns the link. */
+    private String makeBrief(BrandInquiry inquiry) {
         BrandContact brand = contactRepository.findById(inquiry.getBrandContactId()).orElseThrow();
         String brandName = firstNonBlank(brand.getCompanyName(), brand.getContactName(), brand.getEmail());
-        CreativePlanningBriefClient.CreatedBrief brief = briefClient.createBrief(tenantId, briefText(brand, inquiry), brandName,
-                brand.getIndustry() == null ? null : brand.getIndustry().name().toLowerCase(Locale.ROOT).replace('_', ' '),
-                InquiryDtos.BriefDetails.of(inquiry), images.all(inquiry.getId()));
+        InquiryDtos.BriefDetails details = InquiryDtos.BriefDetails.of(inquiry);
+        RequestPricing.Price price = pricing.of(inquiry);
+        ShowcaseIndustry industry = inquiry.getIndustry() != null ? inquiry.getIndustry() : brand.getIndustry();
+        CreativePlanningBriefClient.CreatedBrief brief = briefClient.createBrief(inquiry.getTenantId(), briefText(brand, inquiry), brandName,
+                industry == null ? null : industry.name().toLowerCase(Locale.ROOT).replace('_', ' '),
+                details, images.all(inquiry.getId()), new CreativePlanningBriefClient.Pricing(price.pricePerSecond(), price.prepaymentPercent()));
         inquiry.setStatus(BrandInquiry.Status.CONVERTED);
         inquiry.setRequirementId(brief.requirementId());
         inquiry.setBriefShareToken(brief.shareToken());
         inquiryRepository.save(inquiry);
 
-        CreatorPublicProfile creator = profileRepository.findById(tenantId).orElseThrow();
+        CreatorPublicProfile creator = profileRepository.findById(inquiry.getTenantId()).orElseThrow();
         String link = briefUrl(inquiry);
-        mailer.send(new PlatformMailer.Mail(brand.getEmail(), creator.getDisplayName() + " sent you a brief",
-                "Hi" + (brand.getContactName() == null ? "" : " " + brand.getContactName()) + ",\n\n"
-                        + creator.getDisplayName() + " turned your request into a brief. Review it, add anything they should know, and "
-                        + "confirm when you're ready:\n" + link + "\n",
-                "<p>" + creator.getDisplayName() + " turned your request into a brief.</p><p><a href=\"" + link
-                        + "\">Open the brief</a></p>"));
-        return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
+        mailer.send(BriefReadyMail.of(brand, creator.getDisplayName(), link, brief));
+        return link;
     }
 
     private Map<UUID, String> filmTitles(List<BrandInquiry> inquiries) {

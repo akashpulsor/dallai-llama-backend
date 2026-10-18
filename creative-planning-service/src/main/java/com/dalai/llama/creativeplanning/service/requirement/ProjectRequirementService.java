@@ -104,11 +104,19 @@ public class ProjectRequirementService {
     @Transactional
     public ProjectRequirementView createStandalone(UUID tenantId, UUID userId, CreateStandaloneRequirementRequest request) {
         UUID brandContextId = resolveOrCreateBrand(tenantId, request.brandId(), request.brandContext());
-        // Not priced here. The client is asked for their budget and the creator sets the price; a
-        // number computed from the per-second rate shown to the client read as the creator's offer.
+        // Unpriced unless the caller prices it: by default the client gives a budget and the creator
+        // sets the price. A brand's request comes priced, so the brand can pay straight away.
+        CreateStandaloneRequirementRequest.Pricing pricing = request.pricing();
+        BillingServiceClient.VideoPriceQuote quote = pricing == null ? null
+                : billingServiceClient.quoteVideoPrice(tenantId, request.durationSeconds());
         ProjectRequirement requirement = build(tenantId, userId, request.tenantType(), null, brandContextId, request.briefText(),
                 request.targetAudience(), request.campaignDirection(), deriveLegacyBudgetTier(request.durationSeconds()),
-                request.durationSeconds(), String.join(",", request.languages()), null);
+                request.durationSeconds(), String.join(",", request.languages()), quote);
+        if (pricing != null) {
+            requirement.setPricePerSecond(pricing.pricePerSecond());
+            applyQuote(requirement, pricing.pricePerSecond() != null ? requirement.priceAtRate(request.durationSeconds()) : quote.totalPrice(),
+                    pricing.requiredPaymentPercent());
+        }
         return toView(projectRequirementRepository.save(requirement));
     }
 
@@ -255,21 +263,26 @@ public class ProjectRequirementService {
         if (requirement.isFunded()) {
             throw CreativePlanningException.badRequest("This requirement is already funded and its price can no longer be changed");
         }
-        requirement.setQuotedTotalPrice(request.totalPrice());
-        requirement.setRequiredPaymentPercent(request.requiredPaymentPercent());
+        applyQuote(requirement, request.totalPrice(), request.requiredPaymentPercent());
+        requirement.setUpdatedAt(OffsetDateTime.now());
+        return toView(projectRequirementRepository.save(requirement));
+    }
+
+    /** Sets the client-facing price and the share of it due upfront, re-deriving the creator's
+     * margin from the real platform cost (see {@link #updateQuote}). */
+    private static void applyQuote(ProjectRequirement requirement, BigDecimal totalPrice, int requiredPaymentPercent) {
+        requirement.setQuotedTotalPrice(totalPrice);
+        requirement.setRequiredPaymentPercent(requiredPaymentPercent);
         if (requirement.getQuotedCurrency() == null) {
             // A brief is no longer auto-quoted, so the creator's price is the first one it has.
             requirement.setQuotedCurrency(requirement.getClientBudgetCurrency() != null ? requirement.getClientBudgetCurrency() : "INR");
         }
         BigDecimal platformCost = requirement.getQuotedPlatformCost();
-        if (platformCost != null && platformCost.signum() > 0 && request.totalPrice() != null) {
-            BigDecimal impliedMargin = request.totalPrice().subtract(platformCost)
+        if (platformCost != null && platformCost.signum() > 0 && totalPrice != null) {
+            requirement.setQuotedCreatorMarginPercent(totalPrice.subtract(platformCost)
                     .multiply(BigDecimal.valueOf(100))
-                    .divide(platformCost, 2, RoundingMode.HALF_UP);
-            requirement.setQuotedCreatorMarginPercent(impliedMargin);
+                    .divide(platformCost, 2, RoundingMode.HALF_UP));
         }
-        requirement.setUpdatedAt(OffsetDateTime.now());
-        return toView(projectRequirementRepository.save(requirement));
     }
 
     /** billing-service's per-project spend cap needs the price a project was actually sold at --
@@ -385,11 +398,15 @@ public class ProjectRequirementService {
         // creator margin, total, currency) plus the derived legacy tier are all refreshed
         // together -- keeping any subset stale would leave downstream tier-keyed consumers
         // (idea prompt, pre-prod Project.budgetTier) disagreeing with the visible price.
-        // A length change no longer re-prices: the creator sets the price, from the client's budget.
+        // A length change re-prices only a brief priced by length; otherwise the creator sets the
+        // price, from the client's budget.
         if (newDurationSeconds != null && newDurationSeconds > 0
                 && !newDurationSeconds.equals(requirement.getDurationSeconds())) {
             requirement.setDurationSeconds(newDurationSeconds);
             requirement.setBudgetTier(deriveLegacyBudgetTier(newDurationSeconds));
+            if (requirement.getPricePerSecond() != null) {
+                applyQuote(requirement, requirement.priceAtRate(newDurationSeconds), requirement.getRequiredPaymentPercent());
+            }
         }
         if (clientBudget != null) {
             if (clientBudget.signum() <= 0) {
@@ -421,6 +438,10 @@ public class ProjectRequirementService {
         }
         if (durationSeconds <= 0 || durationSeconds > 600) {
             throw CreativePlanningException.badRequest("durationSeconds must be between 1 and 600");
+        }
+        if (requirement.getPricePerSecond() != null) {
+            return new com.dalai.llama.creativeplanning.dto.PublicQuotePreviewView(durationSeconds,
+                    requirement.priceAtRate(durationSeconds).toPlainString(), requirement.getQuotedCurrency());
         }
         BillingServiceClient.VideoPriceQuote quote = billingServiceClient.quoteVideoPrice(
                 requirement.getTenantId(), durationSeconds);

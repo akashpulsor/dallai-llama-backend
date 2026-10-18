@@ -1,6 +1,7 @@
 package com.dalai.llama.tenant.leadmanagement;
 
 import com.dalai.llama.tenant.leadmanagement.brand.BrandAccountService;
+import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.GuestContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.SignInRequest;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandProperties;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandSessionService;
@@ -61,6 +62,7 @@ import static org.mockito.Mockito.when;
 @Import({RequestRouter.class, RequestRoutingStore.class, CreatorRequestNotifier.class,
         BrandAccountService.class, BrandSessionService.class, BrandInquiryService.class, InquiryConvertedRequestCounter.class,
         com.dalai.llama.tenant.leadmanagement.inquiry.InquiryImageStore.class, CreatorProfileService.class, HandlePolicy.class,
+        com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricing.class,
         com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class,
         com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher.class, RequestRoutingDbTest.TestConfig.class})
 class RequestRoutingDbTest extends ShowcaseDbTestSupport {
@@ -69,7 +71,8 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
 
     @TestConfiguration
     @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class,
-            com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class})
+            com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
+            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -102,6 +105,9 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         wipe(jdbc);
         when(mailer.send(any())).thenReturn(true);
         when(reviewLinks.of(any(), any())).thenReturn(new ProjectReviewLinks.Progress(false, null));
+        // creative-planning is down unless a test says otherwise, so requests stay with the router.
+        when(briefClient.createBrief(any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new com.dalai.llama.tenant.showcase.client.UpstreamUnavailableException("down", null));
         akash = creator("Akash", ShowcaseIndustry.FOOD_BEVERAGE);
         riya = creator("Riya Motion", ShowcaseIndustry.FOOD_BEVERAGE);
         tech = creator("Byte Films", ShowcaseIndustry.TECH);
@@ -163,8 +169,9 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     void onceTheBriefIsPaidAndTheReviewShared_theBrandPageOpensTheSameReviewLink() {
         UUID request = request(ShowcaseIndustry.FOOD_BEVERAGE);
         UUID requirement = UUID.randomUUID();
-        when(briefClient.createBrief(eq(akash), anyString(), anyString(), any(), any(), any()))
-                .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "brief-token"));
+        org.mockito.Mockito.reset(briefClient);
+        when(briefClient.createBrief(eq(akash), anyString(), anyString(), any(), any(), any(), any()))
+                .thenReturn(new CreativePlanningBriefClient.CreatedBrief(requirement, "brief-token", null, null, null));
         inquiries.convert(akash, request);
         when(reviewLinks.of(akash, requirement))
                 .thenReturn(new ProjectReviewLinks.Progress(true, "https://creator.dalaillama.in/review/abc123"));
@@ -173,6 +180,98 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         assertThat(seen.creatorHandle()).isEqualTo("akash");
         assertThat(seen.funded()).isTrue();
         assertThat(seen.reviewUrl()).isEqualTo("https://creator.dalaillama.in/review/abc123");
+    }
+
+    @Test
+    void aGuestRequestMakesAnUnverifiedBrand_isRoutedLikeAnyOther_andMailsAReceipt() {
+        UUID id = inquiries.submitAsGuest(new GuestContact(" Ravi@Ghar.example ", "Ravi", "Ghar Pickles", ""), guestRequest(),
+                List.of(), List.of()).id();
+
+        assertThat(holder(id)).isEqualTo(akash);
+        assertThat(jdbc.queryForMap("SELECT c.source, c.verified_at, c.contact_name, c.company_name, c.website_url, c.industry "
+                + "FROM lead_brand_contact c JOIN lead_brand_inquiry i ON i.brand_contact_id = c.id WHERE i.id = ?", id))
+                .containsEntry("source", "REQUEST").containsEntry("verified_at", null).containsEntry("contact_name", "Ravi")
+                .containsEntry("company_name", "Ghar Pickles").containsEntry("website_url", null)
+                .containsEntry("industry", "FOOD_BEVERAGE");
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer, atLeastOnce()).send(mail.capture());
+        assertThat(mail.getAllValues()).anySatisfy(m -> {
+            assertThat(m.to()).isEqualTo("ravi@ghar.example");
+            assertThat(m.subject()).isEqualTo("We've got your video request");
+        });
+    }
+
+    @Test
+    void aGuestUsingAKnownBrandsEmail_addsTheRequestToThatBrand_withoutChangingItsDetails() {
+        UUID id = inquiries.submitAsGuest(new GuestContact("ask@hearth.example", "Someone Else", "Other Co", "https://other.example"),
+                guestRequest(), List.of(), List.of()).id();
+
+        assertThat(inquiries.forBrand(brand)).extracting(BrandInquiryView::id).contains(id);
+        assertThat(jdbc.queryForMap("SELECT source, contact_name, company_name, website_url FROM lead_brand_contact WHERE id = ?", brand))
+                .containsEntry("source", "SIGNUP").containsEntry("contact_name", "Asha")
+                .containsEntry("company_name", "Hearth Foods").containsEntry("website_url", "https://hearth.example");
+    }
+
+    @Test
+    void aRequestToDalaillama_isABriefAtThePlatformPrice_readyToPay_theMomentItIsRouted() {
+        briefsAreUp();
+        var submitted = inquiries.submitAsGuest(new GuestContact("ravi@ghar.example", "Ravi", "Ghar Pickles", null), guestRequest(),
+                List.of(), List.of());
+
+        assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
+        assertThat(submitted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/brief-" + akash);
+        // The platform's rate (Rs 4,999 a minute), 30% upfront: a 30s video is Rs 2,500.
+        verify(briefClient).createBrief(eq(akash), anyString(), eq("Ghar Pickles"), eq("food beverage"), any(), any(),
+                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer, atLeastOnce()).send(mail.capture());
+        assertThat(mail.getAllValues()).filteredOn(m -> m.to().equals("ravi@ghar.example")).singleElement()
+                .satisfies(m -> {
+                    assertThat(m.subject()).isEqualTo("Your video brief is ready");
+                    assertThat(m.text()).contains("costs ₹2,500; pay ₹750 now");
+                });
+    }
+
+    @Test
+    void thePlatformPriceIsPerSecond_fromItsSixtySecondPrice() {
+        briefsAreUp();
+        inquiries.submitToDalaillama(brand, new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE,
+                BrandInquiry.Timeline.THIS_MONTH, "A 90s brand film", null, null, null, null, 90, List.of("English"),
+                ShowcaseIndustry.FOOD_BEVERAGE), List.of(), List.of());
+        verify(briefClient).createBrief(any(), anyString(), any(), any(), any(), any(),
+                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
+    }
+
+    @Test
+    void aRequestNobodyHeldYet_becomesABriefWhenACreatorAcceptsOrOpsAssign() {
+        briefsAreUp();
+        store.setStrategy(RoutingStrategy.OFFER_TO_ALL);
+        UUID offered = request(ShowcaseIndustry.FOOD_BEVERAGE);
+        assertThat(inquiries.forCreator(akash).get(0).briefUrl()).isNull();
+        assertThat(inquiries.accept(riya, offered).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/brief-" + riya);
+
+        store.setStrategy(RoutingStrategy.OPS_ASSIGNS);
+        UUID waiting = request(null);
+        inquiries.assignByOps(waiting, tech);
+        assertThat(inquiries.forCreator(tech).get(0).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/brief-" + tech);
+    }
+
+    /** creative-planning answers, with one brief per creator. */
+    private void briefsAreUp() {
+        org.mockito.Mockito.reset(briefClient);
+        when(briefClient.createBrief(any(), anyString(), any(), any(), any(), any(), any())).thenAnswer(call -> {
+            UUID creator = call.getArgument(0);
+            CreativePlanningBriefClient.Pricing price = call.getArgument(6);
+            java.math.BigDecimal total = price.pricePerSecond() == null ? new java.math.BigDecimal("3000")
+                    : price.pricePerSecond().multiply(java.math.BigDecimal.valueOf(30)).setScale(0, java.math.RoundingMode.HALF_UP);
+            return new CreativePlanningBriefClient.CreatedBrief(UUID.randomUUID(), "brief-" + creator, total,
+                    total.multiply(java.math.BigDecimal.valueOf(price.requiredPaymentPercent())).divide(java.math.BigDecimal.valueOf(100)), "INR");
+        });
+    }
+
+    private static SubmitInquiryRequest guestRequest() {
+        return new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE, BrandInquiry.Timeline.THIS_MONTH,
+                "A 30s reel for our mango pickle", null, null, null, null, 30, List.of("Hindi"), ShowcaseIndustry.FOOD_BEVERAGE);
     }
 
     private UUID request(ShowcaseIndustry industry) {

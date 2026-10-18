@@ -27,7 +27,7 @@ import java.util.UUID;
 public class AdminRequestRoutingController {
 
     private final RequestRoutingStore store;
-    private final RequestRouter router;
+    private final com.dalai.llama.tenant.leadmanagement.inquiry.BrandInquiryService inquiryService;
     private final CreatorPublicProfileRepository profileRepository;
 
     public record RoutingView(RoutingStrategy strategy, List<String> acceptingCreators, List<UUID> waiting) {
@@ -62,7 +62,7 @@ public class AdminRequestRoutingController {
 
     @PostMapping("/{inquiryId}/assign")
     public ResponseEntity<RoutingView> assign(@PathVariable UUID inquiryId, @Valid @RequestBody AssignRequest request) {
-        router.assignByOps(inquiryId, creator(request.handle()));
+        inquiryService.assignByOps(inquiryId, creator(request.handle()));
         return ResponseEntity.ok(view());
     }
 

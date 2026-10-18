@@ -3,10 +3,12 @@ package com.dalai.llama.tenant.leadmanagement.brand;
 import com.dalai.llama.tenant.common.token.PublicTokens;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.BrandMeView;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.FollowedCreator;
+import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.GuestContact;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.PreferencesRequest;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.SignInRequest;
 import com.dalai.llama.tenant.leadmanagement.brand.BrandDtos.SignedIn;
 import com.dalai.llama.tenant.leadmanagement.notify.PlatformMailer;
+import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -65,6 +67,26 @@ public class BrandAccountService {
                 PublicTokens.sha256Hex(token), contact.getId(), blankToNull(request.pendingAction()),
                 Timestamp.from(now.plusMinutes(properties.signInLinkMinutes()).toInstant()), Timestamp.from(now.toInstant()));
         mailer.send(signInMail(contact, properties.signInPageUrl() + token));
+    }
+
+    /**
+     * The brand behind a request sent without signing in: the one with this email, or a new,
+     * unverified one (source REQUEST). Nobody proved the inbox, so a known brand's details are
+     * only filled in where empty, never changed.
+     */
+    @Transactional
+    public UUID guest(GuestContact guest, ShowcaseIndustry industry) {
+        BrandContact contact = contactRepository.findByEmail(normalise(guest.email())).orElseGet(() -> BrandContact.builder()
+                .id(UUID.randomUUID())
+                .email(normalise(guest.email()))
+                .source(BrandContact.Source.REQUEST)
+                .build());
+        if (contact.getContactName() == null) contact.setContactName(guest.contactName().trim());
+        if (contact.getCompanyName() == null) contact.setCompanyName(blankToNull(guest.companyName()));
+        if (contact.getWebsiteUrl() == null) contact.setWebsiteUrl(blankToNull(guest.websiteUrl()));
+        if (contact.getIndustry() == null) contact.setIndustry(industry);
+        // Flushed now: the request row is written next and references this one.
+        return contactRepository.saveAndFlush(contact).getId();
     }
 
     /** A completed sign-in: the session for the cookie, and what the page is told. */
@@ -145,7 +167,7 @@ public class BrandAccountService {
     }
 
     private static String blankToNull(String s) {
-        return notBlank(s) ? s : null;
+        return notBlank(s) ? s.trim() : null;
     }
 
     static String escape(String s) {
