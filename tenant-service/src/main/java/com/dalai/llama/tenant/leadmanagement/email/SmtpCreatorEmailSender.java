@@ -4,6 +4,7 @@ import com.dalai.llama.tenant.leadmanagement.domain.entity.CreatorEmailIdentity;
 import com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import org.eclipse.angus.mail.smtp.SMTPMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -21,8 +22,8 @@ import java.util.UUID;
  *
  * <p>Hostinger's SMTP AUTH requires the {@code MAIL FROM} envelope address to be a mailbox
  * on the authenticated account -- our virtual {@code cr_*@partner.dalaillama.in} is NOT such
- * a mailbox. So we set the envelope From (aka {@code Return-Path}) to {@code SMTP_FROM} (the
- * shared account) and set the HEADER From to the creator's identity string. This is the
+ * a mailbox. So we set the envelope From ({@link SMTPMessage#setEnvelopeFrom}) to
+ * {@code SMTP_FROM} (the shared account) and set the HEADER From to the creator's identity string. This is the
  * standard "send-on-behalf-of" pattern; recipient's mail client displays the header, and
  * bounces come back to the shared account.
  *
@@ -75,13 +76,11 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
         try {
             MimeMessage mime = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mime, true, StandardCharsets.UTF_8.name());
-            // Envelope MAIL FROM (Return-Path) -- required by Hostinger to be a real mailbox on
-            // the authenticated account or the relay rejects with 553. Set via the standard
-            // {@code Return-Path} header; JavaMailSender uses it as the SMTP envelope From when
-            // {@code mail.smtp.from} isn't explicitly configured. Fall back to smtpUsername.
+            // Envelope MAIL FROM -- must be a mailbox on the authenticated account, or Hostinger
+            // rejects the mail (it also checks the domain exists, and partner.dalaillama.in has
+            // no MX/A). Set on the SMTPMessage below: JavaMail ignores a Return-Path header and
+            // would otherwise use the header From, the creator's address. Falls back to smtpUsername.
             String envelope = (envelopeFrom == null || envelopeFrom.isBlank()) ? smtpUsername : envelopeFrom;
-            mime.setHeader("Return-Path", "<" + envelope + ">");
-            mime.setHeader("Sender", envelope);
             // HEADER From -- what the recipient's mail client displays. Display-name aliasing
             // happens here (see class doc).
             String displayName = identity.getDisplayName();
@@ -111,7 +110,9 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
                     mime.setHeader(header.getKey(), header.getValue());
                 }
             }
-            mailSender.send(mime);
+            SMTPMessage out = new SMTPMessage(mime);
+            out.setEnvelopeFrom(envelope);
+            mailSender.send(out);
             log.info("Sent creator email tenantId={} from={} to={} subject={}",
                     creatorId, identity.getEmail(), message.to(), message.subject());
             // No provider-side message id from JavaMailSender; leave null.

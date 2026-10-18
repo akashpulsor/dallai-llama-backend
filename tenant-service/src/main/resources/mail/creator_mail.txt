@@ -1,0 +1,16 @@
+{{greeting}}
+
+{{intro}}
+
+{{note}}
+
+{{filmsText}}
+{{ask}}
+{{requestText}}See all my work: {{profileUrl}}
+
+{{creatorName}}
+dalaillama.in/c/{{handle}}
+
+--
+{{creatorName}} sent you this through Dalai Llama, where brands get videos made by creators. You'll get at most one email a day from creators here.
+Unsubscribe: {{unsubscribeUrl}}

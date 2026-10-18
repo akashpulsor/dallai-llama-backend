@@ -19,6 +19,7 @@ import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.IntentStatus
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.NewIntent;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.Origin;
 import com.dalai.llama.tenant.service.client.BillingServiceClient;
+import com.dalai.llama.tenant.showcase.inspiration.InspirationStore.MailIdea;
 import com.dalai.llama.tenant.showcase.domain.entity.CreatorPublicProfile;
 import com.dalai.llama.tenant.showcase.repository.CreatorPublicProfileRepository;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +52,7 @@ public class OutreachService {
     private final OutreachStore store;
     private final MailAllowance allowance;
     private final MailableFilms mailableFilms;
+    private final MailIdeas mailIdeas;
     private final OutreachComposer composer;
     private final RecipientHasher hasher;
     private final IntentDispatcher dispatcher;
@@ -75,8 +77,8 @@ public class OutreachService {
         EmailTemplate template = new EmailTemplate(saved.id(), saved.tenantId(), saved.name(), saved.layout(),
                 blank(request.subject()) ? saved.subject() : request.subject(), blank(request.intro()) ? saved.intro() : request.intro(),
                 saved.active());
-        OutreachComposer.Mail mail = composer.creatorMail(template, previewFilms(tenantId, profile, template.layout(), request.publicId()),
-                profile.getDisplayName(), profile.getHandle(), request.recipientName(), request.note(), null);
+        OutreachComposer.Mail mail = composer.creatorMail(template, previewContent(tenantId, profile, template.layout(), request.publicId()),
+                tenantId, profile.getDisplayName(), profile.getHandle(), request.recipientName(), request.note(), null);
         return new PreviewView(mail.subject(), mail.text(), mail.html());
     }
 
@@ -86,9 +88,9 @@ public class OutreachService {
         if (request.recipients().size() > properties.maxRecipientsPerSend()) {
             throw new IllegalArgumentException("Send to at most " + properties.maxRecipientsPerSend() + " people at a time");
         }
-        profile(tenantId);
+        CreatorPublicProfile profile = profile(tenantId);
         EmailTemplate template = templates.resolve(tenantId, request.templateId(), request.template());
-        List<MailableFilm> films = films(tenantId, template.layout(), request.publicId());
+        UUID itemId = firstItem(content(tenantId, profile, template.layout(), request.publicId()));
         Instant now = clock.instant();
         allowance.lock(tenantId);
 
@@ -96,13 +98,13 @@ public class OutreachService {
         List<RecipientResult> results = new ArrayList<>();
         for (Recipient r : request.recipients()) {
             String hash = hasher.hash(r.email());
-            Outcome outcome = !seen.add(hash) ? Outcome.DUPLICATE : deliver(tenantId, template, films, request.note(), r, hash, now);
+            Outcome outcome = !seen.add(hash) ? Outcome.DUPLICATE : deliver(tenantId, template, itemId, request.note(), r, hash, now);
             results.add(new RecipientResult(RecipientHasher.normalise(r.email()), outcome));
         }
         return new SendResult(results, allowance.view(tenantId));
     }
 
-    private Outcome deliver(UUID tenantId, EmailTemplate template, List<MailableFilm> films, String note, Recipient r,
+    private Outcome deliver(UUID tenantId, EmailTemplate template, UUID itemId, String note, Recipient r,
                             String hash, Instant now) {
         Optional<Outcome> refused = refusal(tenantId, hash, now);
         if (refused.isPresent()) return refused.get();
@@ -110,7 +112,6 @@ public class OutreachService {
         if (charge.isEmpty()) return Outcome.OVER_ALLOWANCE;
 
         String email = RecipientHasher.normalise(r.email());
-        UUID itemId = films.get(0).itemId();
         UUID intent = store.addIntent(new NewIntent(tenantId, hash, email, r.name(), r.company(), template.layout(), Origin.CREATOR,
                 itemId, note, charge.get().packId(), template.id(), null, null), IntentStatus.QUEUED, now);
         IntentDispatcher.Result result = dispatcher.dispatch(new OutreachStore.QueuedIntent(intent, tenantId, hash, email, r.name(),
@@ -130,9 +131,9 @@ public class OutreachService {
     public AudienceSendResult sendToAudience(UUID tenantId, AudienceSendRequest request) {
         if (!hasher.configured()) throw new IllegalStateException(OUTREACH_OFF);
         if (!audiences.owns(tenantId, request.audienceId())) throw new IllegalArgumentException("Unknown audience");
-        profile(tenantId);
+        CreatorPublicProfile profile = profile(tenantId);
         EmailTemplate template = templates.resolve(tenantId, request.templateId(), request.template());
-        List<MailableFilm> films = films(tenantId, template.layout(), request.publicId());
+        UUID itemId = firstItem(content(tenantId, profile, template.layout(), request.publicId()));
         Instant now = clock.instant();
         int members = audiences.memberCount(request.audienceId());
         List<AudienceStore.Recipient> recipients = audiences.recipients(tenantId, request.audienceId(), MAX_AUDIENCE_SEND);
@@ -151,7 +152,7 @@ public class OutreachService {
             Optional<MailAllowance.Charge> charge = allowance.take(tenantId);
             if (charge.isEmpty()) { over++; continue; }
             store.addIntent(new NewIntent(tenantId, hash, RecipientHasher.normalise(r.email()), r.name(), r.company(),
-                    template.layout(), Origin.CREATOR, films.get(0).itemId(), request.note(), charge.get().packId(), template.id(),
+                    template.layout(), Origin.CREATOR, itemId, request.note(), charge.get().packId(), template.id(),
                     request.audienceId(), r.leadId()), IntentStatus.QUEUED, now);
             queued++;
         }
@@ -213,26 +214,43 @@ public class OutreachService {
         store.suppress(hasher.hash(email), "OPS");
     }
 
-    private List<MailableFilm> films(UUID tenantId, OutreachTemplate layout, String publicId) {
+    /** What the mail will carry; refuses when there is nothing to send. Inspiration needs no film. */
+    private OutreachComposer.Content content(UUID tenantId, CreatorPublicProfile profile, OutreachTemplate layout, String publicId) {
         if (!layout.creatorSendable()) throw new IllegalArgumentException("That template isn't sent by creators");
+        if (layout == OutreachTemplate.INSPIRATION) {
+            List<MailIdea> ideas = mailIdeas.forIndustries(profile.getIndustries(), layout.maxFilms());
+            if (ideas.isEmpty()) throw new IllegalStateException(NO_IDEAS);
+            return OutreachComposer.Content.ideas(ideas);
+        }
         if (layout == OutreachTemplate.CREATOR_PORTFOLIO) {
             List<MailableFilm> films = mailableFilms.forCreator(tenantId);
             if (films.isEmpty()) throw new IllegalStateException(NOTHING_MAILABLE);
-            return films;
+            return OutreachComposer.Content.of(films);
         }
         if (publicId == null) throw new IllegalArgumentException("Choose the film to send");
-        return List.of(mailableFilms.byPublicId(tenantId, publicId).orElseThrow(() -> new IllegalStateException(NOTHING_MAILABLE)));
+        return OutreachComposer.Content.of(List.of(mailableFilms.byPublicId(tenantId, publicId)
+                .orElseThrow(() -> new IllegalStateException(NOTHING_MAILABLE))));
     }
 
-    /** Like {@link #films} but never refuses: with no film chosen or nothing mailable yet, a sample card
+    /** The film the intent records (the one a click or request is attributed to); none for inspiration. */
+    private static UUID firstItem(OutreachComposer.Content content) {
+        return content.films().isEmpty() ? null : content.films().get(0).itemId();
+    }
+
+    /** Like {@link #content} but never refuses: with no film chosen or nothing mailable yet, a sample card
      * shows where the film goes, so creators can see every template before their first paid film. */
-    private List<MailableFilm> previewFilms(UUID tenantId, CreatorPublicProfile profile, OutreachTemplate layout, String publicId) {
+    private OutreachComposer.Content previewContent(UUID tenantId, CreatorPublicProfile profile, OutreachTemplate layout, String publicId) {
         if (!layout.creatorSendable()) throw new IllegalArgumentException("That template isn't sent by creators");
-        List<MailableFilm> films = layout == OutreachTemplate.CREATOR_PORTFOLIO ? mailableFilms.forCreator(tenantId)
-                : publicId == null ? List.of() : mailableFilms.byPublicId(tenantId, publicId).map(List::of).orElse(List.of());
-        if (!films.isEmpty()) return films;
-        return List.of(new MailableFilm(null, null, "Your film appears here", SAMPLE_THUMBNAIL, null, "Sample", tenantId,
-                profile.getHandle(), profile.getDisplayName()));
+        if (layout == OutreachTemplate.INSPIRATION) {
+            List<MailIdea> ideas = mailIdeas.forIndustries(profile.getIndustries(), layout.maxFilms());
+            if (!ideas.isEmpty()) return OutreachComposer.Content.ideas(ideas);
+        } else {
+            List<MailableFilm> films = layout == OutreachTemplate.CREATOR_PORTFOLIO ? mailableFilms.forCreator(tenantId)
+                    : publicId == null ? List.of() : mailableFilms.byPublicId(tenantId, publicId).map(List::of).orElse(List.of());
+            if (!films.isEmpty()) return OutreachComposer.Content.of(films);
+        }
+        return OutreachComposer.Content.of(List.of(new MailableFilm(null, null, "Your film appears here", SAMPLE_THUMBNAIL, null,
+                "Sample", tenantId, profile.getHandle(), profile.getDisplayName())));
     }
 
     private static boolean blank(String s) {
@@ -242,6 +260,8 @@ public class OutreachService {
     public static final String SAMPLE_THUMBNAIL = "https://placehold.co/1080x608/09070f/c3acec/png?text=Your+film";
 
     private static final String OUTREACH_OFF = "Sending to brands isn't switched on yet. Please try again later.";
+
+    private static final String NO_IDEAS = "There are no video ideas for your industries yet. Please try again later.";
 
     private static final String NOTHING_MAILABLE = "Only films made on Dalai Llama that your client fully paid for and agreed "
             + "to marketing use of can be emailed. Publish one to your profile first.";

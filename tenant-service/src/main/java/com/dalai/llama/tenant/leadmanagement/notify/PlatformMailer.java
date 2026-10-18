@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.leadmanagement.notify;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.angus.mail.smtp.SMTPMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -21,7 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Mail sent as Dalai Llama itself (sign-in links, request alerts, brief links, digests), through
- * the same SMTP relay the creator sender uses. Never throws: a mail that can't be sent is logged
+ * the same SMTP relay the creator sender uses. It shows the brands alias on the outreach domain
+ * ({@code brands.mail-from}, brands@partner.dalaillama.in), never the main domain; a creator's own
+ * mail shows their alias instead (SmtpCreatorEmailSender). Never throws: a mail that can't be sent is logged
  * and reported as false, so a relay outage can't fail the request that triggered it. */
 @Slf4j
 @Service
@@ -33,21 +36,25 @@ public class PlatformMailer {
     private final Executor executor;
     private final String smtpUsername;
     private final String fromAddress;
+    private final String brandsFrom;
     private final boolean enabled;
 
     @org.springframework.beans.factory.annotation.Autowired
     public PlatformMailer(JavaMailSender mailSender,
                           @Value("${spring.mail.username:}") String smtpUsername,
                           @Value("${spring.mail.from:}") String fromAddress,
+                          @Value("${brands.mail-from:}") String brandsFrom,
                           @Value("${spring.mail.enabled:true}") boolean enabled) {
-        this(mailSender, sendThreads(), smtpUsername, fromAddress, enabled);
+        this(mailSender, sendThreads(), smtpUsername, fromAddress, brandsFrom, enabled);
     }
 
-    PlatformMailer(JavaMailSender mailSender, Executor executor, String smtpUsername, String fromAddress, boolean enabled) {
+    PlatformMailer(JavaMailSender mailSender, Executor executor, String smtpUsername, String fromAddress, String brandsFrom,
+                   boolean enabled) {
         this.mailSender = mailSender;
         this.executor = executor;
         this.smtpUsername = smtpUsername;
         this.fromAddress = fromAddress;
+        this.brandsFrom = brandsFrom;
         this.enabled = enabled;
     }
 
@@ -107,7 +114,8 @@ public class PlatformMailer {
             return false;
         }
         try {
-            String from = fromAddress == null || fromAddress.isBlank() ? smtpUsername : fromAddress;
+            String mailbox = fromAddress == null || fromAddress.isBlank() ? smtpUsername : fromAddress;
+            String from = brandsFrom == null || brandsFrom.isBlank() ? mailbox : brandsFrom;
             MimeMessage mime = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mime, true, StandardCharsets.UTF_8.name());
             helper.setFrom(new InternetAddress(from, DISPLAY_NAME, StandardCharsets.UTF_8.name()));
@@ -116,7 +124,10 @@ public class PlatformMailer {
             if (mail.html() != null) helper.setText(mail.text(), mail.html());
             else helper.setText(mail.text(), false);
             for (Map.Entry<String, String> header : mail.headers().entrySet()) mime.setHeader(header.getKey(), header.getValue());
-            mailSender.send(mime);
+            // The envelope sender stays the relay's own mailbox (Hostinger refuses any other).
+            SMTPMessage out = new SMTPMessage(mime);
+            out.setEnvelopeFrom(mailbox);
+            mailSender.send(out);
             return true;
         } catch (Exception e) {
             log.warn("Platform mail failed to={} subject={}: {}", mail.to(), mail.subject(), e.getMessage());

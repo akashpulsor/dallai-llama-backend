@@ -295,7 +295,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         briefsAreUp();
         inquiries.submitToDalaillama(brand, new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE,
                 BrandInquiry.Timeline.THIS_MONTH, "A 90s brand film", null, null, null, null, 90, List.of("English"),
-                ShowcaseIndustry.FOOD_BEVERAGE), List.of(), List.of());
+                ShowcaseIndustry.FOOD_BEVERAGE, null), List.of(), List.of());
         verify(briefClient).createBrief(any(), anyString(), any(), any(), any(), any(),
                 eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
     }
@@ -314,6 +314,29 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         assertThat(inquiries.forCreator(tech).get(0).briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/brief-" + tech);
     }
 
+    @Test
+    void aRequestFromACreatorsMail_goesToThatCreator_whateverTheStrategy_whileTheyTakeRequests() {
+        store.setStrategy(RoutingStrategy.OPS_ASSIGNS);
+        // Byte Films mailed a food brand: their request goes to them, not to the food creators or ops.
+        assertThat(holder(requestFrom("byte-films", ShowcaseIndustry.FOOD_BEVERAGE))).isEqualTo(tech);
+
+        store.setStrategy(RoutingStrategy.OFFER_TO_ALL);
+        assertThat(holder(requestFrom("riya-motion", ShowcaseIndustry.FOOD_BEVERAGE))).isEqualTo(riya);
+
+        // Not taking requests (or an unknown handle): routed as usual.
+        store.setAccepting(riya, false);
+        store.setStrategy(RoutingStrategy.OPS_ASSIGNS);
+        assertThat(holder(requestFrom("riya-motion", ShowcaseIndustry.FOOD_BEVERAGE))).isNull();
+        assertThat(holder(requestFrom("nobody-here", ShowcaseIndustry.FOOD_BEVERAGE))).isNull();
+    }
+
+    private UUID requestFrom(String creatorHandle, ShowcaseIndustry industry) {
+        clock.set(NOW.plusSeconds(++tick * 60L));
+        return inquiries.submitToDalaillama(brand, new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE,
+                BrandInquiry.Timeline.THIS_MONTH, "A 30s film like the one you mailed", null, null, null, null, 30, List.of("English"),
+                industry, creatorHandle), List.of(), List.of()).id();
+    }
+
     /** creative-planning answers, with one brief per creator. */
     private void briefsAreUp() {
         org.mockito.Mockito.reset(briefClient);
@@ -329,13 +352,13 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
 
     private static SubmitInquiryRequest guestRequest() {
         return new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE, BrandInquiry.Timeline.THIS_MONTH,
-                "A 30s reel for our mango pickle", null, null, null, null, 30, List.of("Hindi"), ShowcaseIndustry.FOOD_BEVERAGE);
+                "A 30s reel for our mango pickle", null, null, null, null, 30, List.of("Hindi"), ShowcaseIndustry.FOOD_BEVERAGE, null);
     }
 
     private UUID request(ShowcaseIndustry industry) {
         clock.set(NOW.plusSeconds(++tick * 60L));
         return inquiries.submitToDalaillama(brand, new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE,
-                BrandInquiry.Timeline.THIS_MONTH, "A 30s film for our ghee", null, null, null, null, 30, List.of("English"), industry),
+                BrandInquiry.Timeline.THIS_MONTH, "A 30s film for our ghee", null, null, null, null, 30, List.of("English"), industry, null),
                 List.of(), List.of()).id();
     }
 

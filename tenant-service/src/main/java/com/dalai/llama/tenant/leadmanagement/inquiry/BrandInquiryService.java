@@ -105,12 +105,13 @@ public class BrandInquiryService {
                                                java.util.List<org.springframework.web.multipart.MultipartFile> productImages,
                                                java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
         checkedBrand(brandContactId, productImages, referenceImages);
-        // The film they were watching, whoever made it: a signal for that film, not a route to its creator.
+        // The film they were watching, whoever made it: a signal for that film. Only a request from a
+        // creator's mail is routed to that creator.
         Optional<ShowcaseItem> film = Optional.ofNullable(request.publicId())
                 .flatMap(itemRepository::findByPublicId)
                 .filter(i -> i.getStatus() == ShowcaseItemStatus.LIVE);
         BrandInquiry inquiry = create(brandContactId, null, BrandInquiry.Source.LANDING, film, request, productImages, referenceImages);
-        router.route(inquiry.getId());
+        router.route(inquiry.getId(), mailingCreator(request));
         return submitted(inquiry.getId());
     }
 
@@ -139,6 +140,21 @@ public class BrandInquiryService {
                 + "brief. Open it to check the details and pay upfront; production starts as soon as you do.</p>"
                 + "<p style=\"color:#64748b\">Reply to this mail if you want to add anything.</p>";
         return new PlatformMailer.Mail(brand.getEmail(), "We've got your video request", text, html);
+    }
+
+    /**
+     * The creator whose mail the request came from: the one it names, else the one whose tracked
+     * link brought the brand here. Null for a plain request from the site.
+     */
+    private UUID mailingCreator(SubmitInquiryRequest request) {
+        if (request.creator() != null && !request.creator().isBlank()) {
+            Optional<UUID> named = profileRepository.findByHandle(request.creator().trim().toLowerCase(java.util.Locale.ROOT))
+                    .filter(p -> p.getStatus() == ProfileStatus.ACTIVE).map(CreatorPublicProfile::getTenantId);
+            if (named.isPresent()) return named.get();
+        }
+        if (request.attributionToken() == null) return null;
+        return jdbc.query("SELECT tenant_id FROM lead_outreach_link WHERE token = ?", (rs, n) -> rs.getObject(1, UUID.class),
+                request.attributionToken()).stream().findFirst().orElse(null);
     }
 
     /** The signed-in brand, once their images pass and they are under the daily limit. */

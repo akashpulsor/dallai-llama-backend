@@ -9,7 +9,7 @@ import com.dalai.llama.tenant.leadmanagement.outreach.MailAllowance;
 import com.dalai.llama.tenant.leadmanagement.outreach.MailableFilms;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachComposer;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties;
-import com.dalai.llama.tenant.leadmanagement.outreach.OutreachRenderer;
+import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachService;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore;
 import com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher;
@@ -53,7 +53,8 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({AutoPickJob.class, BrandDirectoryService.class, FollowService.class, OutreachService.class, OutreachStore.class,
-        MailAllowance.class, MailableFilms.class, OutreachComposer.class, OutreachRenderer.class, RecipientHasher.class,
+        MailAllowance.class, MailableFilms.class, OutreachComposer.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class, MailRenderer.class, RecipientHasher.class,
         DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
@@ -76,6 +77,7 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
     }
 
     @MockBean private CreatorEmailSender creatorSender;
+    @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
@@ -156,7 +158,7 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
         assertThat(digest.run().digestsSent()).isEqualTo(1);
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(platformMailer).send(mail.capture());
-        assertThat(mail.getValue().text()).contains("who you follow");
+        assertThat(mail.getValue().text()).contains("NEW FROM A CREATOR YOU FOLLOW", "posted a new film");
     }
 
     private String pendingFilm() {

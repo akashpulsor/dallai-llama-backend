@@ -1,13 +1,14 @@
 package com.dalai.llama.tenant.leadmanagement.outreach;
 
-import com.dalai.llama.tenant.leadmanagement.domain.entity.CreatorEmailIdentity;
 import com.dalai.llama.tenant.leadmanagement.notify.PlatformMailer;
 import com.dalai.llama.tenant.leadmanagement.outreach.MailableFilms.MailableFilm;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachComposer.DigestReason;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachComposer.DigestSection;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.Origin;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.PendingIntent;
-import com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService;
+import com.dalai.llama.tenant.showcase.domain.entity.CreatorPublicProfile;
+import com.dalai.llama.tenant.showcase.inspiration.InspirationStore.MailIdea;
+import com.dalai.llama.tenant.showcase.repository.CreatorPublicProfileRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -31,7 +32,7 @@ import java.util.function.Predicate;
 
 /** Rule 15's digest: mail held for a recipient (they already had today's email) is merged into one
  * email from Dalai Llama, a block per creator (up to {@code digestMaxCards} creators) with what they
- * wrote, their films and a reply button to their own address. Runs hourly; each recipient's digest
+ * wrote, their videos (each at most once in the mail) and a button to request a video from them. Runs hourly; each recipient's digest
  * goes out at the hour they tend to open mail ({@link OutreachSendTimes}). Creators beyond the cap,
  * or anyone already emailed today, wait for the next digest, as does everyone left once the daily
  * send cap is reached. Also drops mail held too long (given back to the creator) and purges raw
@@ -44,7 +45,8 @@ public class DailyDigestJob {
     private final OutreachStore store;
     private final MailableFilms mailableFilms;
     private final EmailTemplateStore templates;
-    private final CreatorEmailIdentityService identities;
+    private final MailIdeas mailIdeas;
+    private final CreatorPublicProfileRepository profiles;
     private final OutreachComposer composer;
     private final OutreachSendTimes sendTimes;
     private final PlatformMailer mailer;
@@ -101,25 +103,25 @@ public class DailyDigestJob {
         Map<UUID, Block> blocks = new LinkedHashMap<>();
         List<UUID> used = new ArrayList<>();
         List<UUID> gone = new ArrayList<>();
+        // A video already in this mail isn't shown again, whoever else held it.
         Set<UUID> shown = new HashSet<>();
         for (PendingIntent intent : pending) {
             Block block = blocks.get(intent.tenantId());
             // More creators than fit: theirs waits for the next digest.
             if (block == null && blocks.size() == properties.digestMaxCards()) continue;
-            List<MailableFilm> films = films(intent);
+            Optional<CreatorPublicProfile> creator = profiles.findById(intent.tenantId());
+            OutreachComposer.Content content = creator.map(c -> content(intent, c)).orElse(OutreachComposer.Content.of(List.of()));
             // A film that stopped being mailable (hidden, consent withdrawn) is dropped, not sent.
-            if (films.isEmpty()) {
+            if (content.isEmpty()) {
                 gone.add(intent.id());
                 continue;
             }
             used.add(intent.id());
-            if (block == null) blocks.put(intent.tenantId(), block = new Block());
-            block.add(intent, films.stream().filter(f -> shown.add(f.itemId())).toList(), name);
+            if (block == null) blocks.put(intent.tenantId(), block = new Block(creator.get()));
+            block.add(intent, content, shown, name);
         }
         store.expire(gone, now);
-        List<DigestSection> sections = blocks.entrySet().stream().filter(e -> !e.getValue().films.isEmpty())
-                .map(e -> e.getValue().section(identities.findByTenant(e.getKey()).map(CreatorEmailIdentity::getEmail).orElse(null)))
-                .toList();
+        List<DigestSection> sections = blocks.values().stream().filter(Block::hasVideos).map(Block::section).toList();
         if (sections.isEmpty()) return Digest.SKIPPED;
 
         String email = pending.stream().map(PendingIntent::email).filter(e -> e != null).reduce((a, b) -> b).orElse(null);
@@ -139,45 +141,73 @@ public class DailyDigestJob {
         return Digest.SENT;
     }
 
-    /** The films this held mail carries: a portfolio is all of the creator's mailable films. */
-    private List<MailableFilm> films(PendingIntent intent) {
-        if (intent.template() == OutreachTemplate.CREATOR_PORTFOLIO) {
-            List<MailableFilm> films = mailableFilms.forCreator(intent.tenantId());
-            return films.subList(0, Math.min(films.size(), OutreachTemplate.CREATOR_PORTFOLIO.maxFilms()));
+    /** The videos this held mail carries: a portfolio is all of the creator's mailable films;
+     * inspiration, the ideas for the creator's industries. */
+    private OutreachComposer.Content content(PendingIntent intent, CreatorPublicProfile creator) {
+        OutreachTemplate template = intent.template();
+        if (template == OutreachTemplate.INSPIRATION) {
+            return OutreachComposer.Content.ideas(mailIdeas.forIndustries(creator.getIndustries(), template.maxFilms()));
         }
-        return Optional.ofNullable(intent.showcaseItemId()).flatMap(mailableFilms::byItemId).stream().toList();
+        if (template == OutreachTemplate.CREATOR_PORTFOLIO) {
+            List<MailableFilm> films = mailableFilms.forCreator(intent.tenantId());
+            return OutreachComposer.Content.of(films.subList(0, Math.min(films.size(), template.maxFilms())));
+        }
+        return OutreachComposer.Content.of(Optional.ofNullable(intent.showcaseItemId()).flatMap(mailableFilms::byItemId).stream().toList());
     }
 
-    /** One creator's held mail for this recipient, merged; at most a portfolio's worth of films. */
+    /** One creator's held mail for this recipient, merged; at most a portfolio's worth of videos. */
     private final class Block {
-        private static final int MAX_FILMS = OutreachTemplate.CREATOR_PORTFOLIO.maxFilms();
+        private static final int MAX_VIDEOS = OutreachTemplate.CREATOR_PORTFOLIO.maxFilms();
 
+        private final CreatorPublicProfile creator;
         private final List<MailableFilm> films = new ArrayList<>();
+        private final List<MailIdea> ideas = new ArrayList<>();
         private DigestReason reason = DigestReason.PICKED_FOR_YOU;
         private String message;
 
-        void add(PendingIntent intent, List<MailableFilm> newFilms, String recipientName) {
-            List<MailableFilm> fitting = newFilms.subList(0, Math.min(newFilms.size(), Math.max(0, MAX_FILMS - films.size())));
-            films.addAll(fitting);
+        Block(CreatorPublicProfile creator) {
+            this.creator = creator;
+        }
+
+        void add(PendingIntent intent, OutreachComposer.Content content, Set<UUID> shown, String recipientName) {
+            List<MailableFilm> newFilms = new ArrayList<>();
+            for (MailableFilm f : content.films()) {
+                if (films.size() + newFilms.size() < MAX_VIDEOS && shown.add(f.itemId())) newFilms.add(f);
+            }
+            films.addAll(newFilms);
+            List<MailIdea> newIdeas = new ArrayList<>();
+            // The creator's own work comes first; ideas only fill a block with no film.
+            for (MailIdea i : content.ideas()) {
+                if (films.isEmpty() && ideas.size() + newIdeas.size() < MAX_VIDEOS && shown.add(i.id())) newIdeas.add(i);
+            }
+            ideas.addAll(newIdeas);
+            OutreachComposer.Content added = new OutreachComposer.Content(newFilms, newIdeas);
             if (intent.origin() == Origin.CREATOR) {
                 reason = DigestReason.WROTE_TO_YOU;
-                if (message == null && !fitting.isEmpty()) message = message(intent, fitting, recipientName);
+                if (message == null && !added.isEmpty()) message = message(intent, added, recipientName);
             } else if (intent.origin() == Origin.FOLLOW && reason == DigestReason.PICKED_FOR_YOU) {
                 reason = DigestReason.YOU_FOLLOW;
             }
         }
 
+        boolean hasVideos() {
+            return !films.isEmpty() || !ideas.isEmpty();
+        }
+
         /** What the creator wrote: their personal note, else their template's intro. */
-        private String message(PendingIntent intent, List<MailableFilm> films, String recipientName) {
+        private String message(PendingIntent intent, OutreachComposer.Content content, String recipientName) {
             if (intent.note() != null && !intent.note().isBlank()) return intent.note().trim();
             return Optional.ofNullable(intent.emailTemplateId()).flatMap(templates::find)
                     .or(() -> templates.defaultFor(intent.template()))
-                    .map(t -> OutreachComposer.fill(t.intro(), films, films.get(0).creatorName(), recipientName))
+                    .map(t -> OutreachComposer.fill(t.intro(), content, creator.getDisplayName(), recipientName))
                     .orElse(null);
         }
 
-        DigestSection section(String replyTo) {
-            return new DigestSection(films.get(0).creatorName(), reason, message, List.copyOf(films), replyTo);
+        DigestSection section() {
+            // Films and ideas never share a block: once a film is in, the ideas step aside.
+            OutreachComposer.Content content = films.isEmpty() ? OutreachComposer.Content.ideas(List.copyOf(ideas))
+                    : OutreachComposer.Content.of(List.copyOf(films));
+            return new DigestSection(creator.getTenantId(), creator.getDisplayName(), creator.getHandle(), reason, message, content);
         }
     }
 }

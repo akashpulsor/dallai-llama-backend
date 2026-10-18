@@ -27,7 +27,7 @@ import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewReques
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.Recipient;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.SendRequest;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties;
-import com.dalai.llama.tenant.leadmanagement.outreach.OutreachRenderer;
+import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachService;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachTemplate;
@@ -78,7 +78,8 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({LeadImportService.class, AudienceService.class, AudienceStore.class, ContactPointValidator.class, RecipientHasher.class,
         OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        OutreachRenderer.class, IntentDispatcher.class, EmailTemplateService.class, EmailTemplateStore.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
+        MailRenderer.class, IntentDispatcher.class, EmailTemplateService.class, EmailTemplateStore.class,
         OutreachDispatchJob.class, OutreachAnalyticsService.class, OutreachAnalyticsStore.class, CreatorProfileService.class,
         HandlePolicy.class, AudienceDbTest.TestConfig.class})
 class AudienceDbTest extends ShowcaseDbTestSupport {
@@ -95,6 +96,7 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
     }
 
     @MockBean private CreatorEmailSender creatorSender;
+    @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
     @MockBean private BillingServiceClient billing;
     @MockBean private MailDomainResolver domains;
     @Autowired private LeadImportService imports;
@@ -226,11 +228,11 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
                 OutreachTemplate.SIMILAR_BRAND_WORK, "{name}, a {industry} film for Diwali", "Made {film} for a {industry} brand.", null));
 
         var preview = outreach.preview(riya, new PreviewRequest(null, mine.id(), "pubriya0001", null, "Asha", null, null));
-        assertThat(preview.subject()).isEqualTo("Asha, a food beverage film for Diwali");
-        assertThat(preview.text()).contains("Made Video riya0000001 for a food beverage brand.");
+        assertThat(preview.subject()).isEqualTo("Asha, a food & beverage film for Diwali");
+        assertThat(preview.text()).contains("Made Video riya0000001 for a food & beverage brand.");
 
         assertThat(templates.usableBy(riya)).extracting(EmailTemplateService.TemplateView::name)
-                .containsExactly("Share a film", "Made for a brand like yours", "My recent work", "Festive");
+                .containsExactly("Share a film", "Made for a brand like yours", "My recent work", "Video ideas for your brand", "Festive");
         UUID global = templates.usableBy(riya).get(0).id();
         assertThatThrownBy(() -> templates.deactivate(riya, global)).isInstanceOf(IllegalArgumentException.class);
 
@@ -239,7 +241,7 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         assertThat(sent.results().get(0).outcome()).isEqualTo(Outcome.SENT);
         ArgumentCaptor<CreatorEmailMessage> mail = ArgumentCaptor.forClass(CreatorEmailMessage.class);
         verify(creatorSender).send(mail.capture());
-        assertThat(mail.getValue().subject()).isEqualTo("Asha, a food beverage film for Diwali");
+        assertThat(mail.getValue().subject()).isEqualTo("Asha, a food & beverage film for Diwali");
     }
 
     @Test
@@ -256,7 +258,7 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         upload("name,email\nAsha,asha@hearth.example\n");
         outreach.send(riya, new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, "pubriya0001", null,
                 List.of(new Recipient("asha@hearth.example", null, null))));
-        String token = jdbc.queryForObject("SELECT token FROM lead_outreach_link", String.class);
+        String token = jdbc.queryForObject("SELECT token FROM lead_outreach_link LIMIT 1", String.class);
 
         store.recipientOfLink(token).ifPresent(hash -> validator.markVerifiedByHash(hash, "CLICKED"));
 

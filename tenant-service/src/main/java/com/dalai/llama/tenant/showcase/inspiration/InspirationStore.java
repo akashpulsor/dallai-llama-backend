@@ -40,6 +40,34 @@ public class InspirationStore {
         return jdbc.queryForObject("SELECT * FROM inspiration_item WHERE pin_id = ?", ROW, pinId);
     }
 
+    /** An inspiration video as mail shows it: its picture (null until fetched) and who made it. */
+    public record MailIdea(UUID id, String pinId, String pinUrl, String title, ShowcaseIndustry industry, String posterUrl,
+                           Integer posterWidth, Integer posterHeight, String makerName) {
+    }
+
+    private static final RowMapper<MailIdea> MAIL_ROW = (rs, n) -> new MailIdea(
+            rs.getObject("id", UUID.class), rs.getString("pin_id"), InspirationPins.url(rs.getString("pin_id")),
+            rs.getString("title"), ShowcaseIndustry.valueOf(rs.getString("industry")), rs.getString("poster_url"),
+            rs.getObject("poster_width", Integer.class), rs.getObject("poster_height", Integer.class), rs.getString("maker_name"));
+
+    /** Active items for mail, those of the given industries first (in ops' order), then the rest. */
+    public List<MailIdea> forMail(List<ShowcaseIndustry> industries, int limit) {
+        String[] codes = industries.stream().map(Enum::name).toArray(String[]::new);
+        return jdbc.query(con -> {
+            var ps = con.prepareStatement("""
+                    SELECT * FROM inspiration_item WHERE active
+                    ORDER BY CASE WHEN industry = ANY (?) THEN 0 ELSE 1 END, sort_order, created_at LIMIT ?""");
+            ps.setArray(1, con.createArrayOf("varchar", codes));
+            ps.setInt(2, limit);
+            return ps;
+        }, MAIL_ROW);
+    }
+
+    public void setPoster(UUID id, InspirationPosters.Poster poster) {
+        jdbc.update("UPDATE inspiration_item SET poster_url = ?, poster_width = ?, poster_height = ?, maker_name = ? WHERE id = ?",
+                poster.url(), poster.width(), poster.height(), poster.makerName(), id);
+    }
+
     public boolean hide(UUID id) {
         return jdbc.update("UPDATE inspiration_item SET active = FALSE WHERE id = ?", id) == 1;
     }

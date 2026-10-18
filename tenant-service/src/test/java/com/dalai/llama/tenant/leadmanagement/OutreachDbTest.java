@@ -13,7 +13,7 @@ import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.Recipient;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.SendRequest;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.SendResult;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties;
-import com.dalai.llama.tenant.leadmanagement.outreach.OutreachRenderer;
+import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachService;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachTemplate;
@@ -66,7 +66,8 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        OutreachRenderer.class, RecipientHasher.class, DailyDigestJob.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
+        MailRenderer.class, RecipientHasher.class, DailyDigestJob.class,
         com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
@@ -89,6 +90,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     }
 
     @MockBean private CreatorEmailSender creatorSender;
+    @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
@@ -96,7 +98,6 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     @Autowired private DailyDigestJob digest;
     @Autowired private com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob dispatchJob;
     @Autowired private org.springframework.transaction.support.TransactionTemplate transactions;
-    @Autowired private com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService identities;
     @Autowired private RecipientHasher hasher;
     @Autowired private OutreachStore store;
     @Autowired private CreatorProfileService profileService;
@@ -126,6 +127,15 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         assertThat(mail.getValue().fromCreatorId()).isEqualTo(riya);
         assertThat(mail.getValue().headers()).containsEntry("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
         assertThat(mail.getValue().bodyText()).contains("https://api.dalaillama.in/api/v1/public/outreach/r/");
+        // A letter from the creator showing the film: who it was for, its format and length, a way to watch it.
+        assertThat(mail.getValue().subject()).isEqualTo("A video I made recently: Video riya0000001");
+        assertThat(mail.getValue().bodyText()).contains("Hi Asha,", "Hello", "Video riya0000001", "Made for a food & beverage brand",
+                "Product ad · 0:30 · Widescreen · Made on Dalai Llama for a paying client", "Watch the film: ", "Riya Motion\ndalaillama.in/c/riya-motion");
+        assertThat(mail.getValue().bodyHtml()).contains("/showcase/pubriya0001/poster", "Watch the film", "Request one like this",
+                "Request a video from me", "/o/");
+        // "Request" opens the brands site's request form for this creator, not a reply.
+        assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class))
+                .anyMatch(t -> t.startsWith("https://dalaillama.in/creators?then=request&creator=riya-motion&film=pubriya0001&industry=FOOD_BEVERAGE&ref="));
 
         assertThat(send(arjun, "pubarjun001", "Buyer@Hearth.example").results().get(0).outcome()).isEqualTo(Outcome.QUEUED);
         assertThat(digest.run().digestsSent()).isZero(); // they already had today's mail
@@ -148,7 +158,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         var preview = outreach.preview(neha, new com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewRequest(
                 OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha", null, null));
 
-        assertThat(preview.html()).contains("Your film appears here", "CREATOR STUDIO", "Neha Studio", "Hi Asha");
+        assertThat(preview.html()).contains("Your film appears here", "Request a video from me", "See all my work", "Neha Studio", "Hi Asha");
         // Unsaved edits show live in the preview.
         var edited = outreach.preview(neha, new com.dalai.llama.tenant.leadmanagement.outreach.OutreachDtos.PreviewRequest(
                 OutreachTemplate.SHOWCASE_WORK, null, null, null, "Asha", "A film idea for {name}", "Loved your last launch."));
@@ -216,11 +226,11 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     @Test
     void trackedLinksCountClicksCarryTheRefAndRawAddressesArePurgedAfter30Days() {
         send(riya, "pubriya0001", "click@x.example");
-        String token = jdbc.queryForObject("SELECT token FROM lead_outreach_link", String.class);
+        String token = jdbc.queryForObject("SELECT token FROM lead_outreach_link WHERE target_url LIKE '%/c/%'", String.class);
 
         assertThat(store.click(token)).get().asString()
-                .isEqualTo("https://dalaillama.in/c/riya-motion?industry=FOOD_BEVERAGE&ref=" + token);
-        assertThat(jdbc.queryForObject("SELECT click_count FROM lead_outreach_link", Integer.class)).isEqualTo(1);
+                .isEqualTo("https://dalaillama.in/c/riya-motion?film=pubriya0001&industry=FOOD_BEVERAGE&ref=" + token);
+        assertThat(jdbc.queryForObject("SELECT click_count FROM lead_outreach_link WHERE token = ?", Integer.class, token)).isEqualTo(1);
 
         store.purgeBefore(NOW.plus(Duration.ofDays(1)));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_outreach_intent WHERE recipient_email IS NOT NULL", Integer.class)).isZero();
@@ -298,8 +308,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
-    void heldMailIsMergedWithEachCreatorsMessageAllTheirFilmsAndAReplyToThem() {
-        String arjunAddress = identities.provisionForCreator(arjun, "Arjun Frames").getEmail();
+    void heldMailIsMergedWithEachCreatorsMessageAllTheirFilmsAndARequestButtonForEach() {
         UUID kabir = creator("Kabir Reels", "UCkabir", "kabir000001", "pubkabir001", true);
         film(kabir, "kabir000002", "pubkabir002", "UCkabir", true);
         send(riya, "pubriya0001", "buyer@hearth.example"); // today's mail
@@ -312,13 +321,50 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
 
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(platformMailer).send(mail.capture());
-        assertThat(mail.getValue().subject()).isEqualTo("2 creators on Dalai Llama shared their work with you");
-        assertThat(mail.getValue().text()).contains("Arjun Frames wrote to you", "Hello", "Reply to Arjun Frames: " + arjunAddress,
-                "Kabir Reels wrote to you", "Video kabir000001", "Video kabir000002");
-        // Kabir has no address yet: no reply button for him.
-        assertThat(mail.getValue().text()).doesNotContain("Reply to Kabir Reels");
-        assertThat(mail.getValue().html()).contains("mailto:" + arjunAddress + "?subject=About%20Video%20arjun000001",
-                "https://api.dalaillama.in/api/v1/public/outreach/o/");
+        assertThat(mail.getValue().subject()).isEqualTo("2 creators on Dalai Llama shared videos with you");
+        assertThat(mail.getValue().text()).contains("A CREATOR WROTE TO YOU: Arjun Frames", "Hello",
+                "Request a video from Arjun Frames: https://api.dalaillama.in/api/v1/public/outreach/r/",
+                "A CREATOR WROTE TO YOU: Kabir Reels", "Video kabir000001", "Video kabir000002", "Request a video from Kabir Reels",
+                "Made for a food & beverage brand", "Made on Dalai Llama for a paying client");
+        // Every film is shown in full, with its own poster and both buttons; nobody is asked to reply by mail.
+        assertThat(mail.getValue().html()).contains("/showcase/pubkabir002/poster", "Ask Kabir Reels for one like this")
+                .doesNotContain("https://i/kabir000002.jpg", "mailto:", "Reply to");
+        assertThat(mail.getValue().html().split("Watch the film", -1)).hasSize(4);
+        assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class))
+                .anyMatch(t -> t.startsWith("https://dalaillama.in/creators?then=request&creator=kabir-reels&industry=FOOD_BEVERAGE&ref="));
+        assertThat(mail.getValue().html()).contains("https://api.dalaillama.in/api/v1/public/outreach/o/");
+    }
+
+    @Test
+    void aCreatorWithNoFilmYetMailsInspirationVideosCreditedToTheirMakers() {
+        UUID neha = tenant(jdbc, "Neha Studio");
+        profileService.ensureProfile(neha, "Neha Studio");
+        jdbc.update("INSERT INTO creator_profile_industry (tenant_id, industry) VALUES (?, 'FOOD_BEVERAGE')", neha);
+        UUID juice = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO inspiration_item (id, pin_id, title, industry, sort_order, poster_url, poster_width, poster_height, maker_name)
+                VALUES (?, '1037376095420175260', 'Healthy juice benefits reel', 'FOOD_BEVERAGE', 0, 'https://i.pinimg.com/564x/juice.jpg', 564, 1002, 'Dadu Fresh')""",
+                juice);
+        // No picture stored and Pinterest can't give one: left out of mail.
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, sort_order) VALUES (?, '1061653312137891793', 'Mochi launch', 'FOOD_BEVERAGE', 1)",
+                UUID.randomUUID());
+        when(posters.fetch(any())).thenReturn(java.util.Optional.empty());
+
+        var result = outreach.send(neha, new SendRequest(OutreachTemplate.INSPIRATION, null, null, null,
+                List.of(new Recipient("buyer@hearth.example", "Asha", null))));
+
+        assertThat(result.results().get(0).outcome()).isEqualTo(Outcome.SENT);
+        ArgumentCaptor<CreatorEmailMessage> mail = ArgumentCaptor.forClass(CreatorEmailMessage.class);
+        verify(creatorSender).send(mail.capture());
+        assertThat(mail.getValue().subject()).isEqualTo("Video ideas for your brand");
+        assertThat(mail.getValue().bodyText()).contains("videos food & beverage brands are running", "Healthy juice benefits reel",
+                "Found on Pinterest · by Dadu Fresh", "An idea for your brand, not made on Dalai Llama", "Watch on Pinterest",
+                "Request a video from me").doesNotContain("Mochi launch");
+        assertThat(mail.getValue().bodyHtml()).contains("https://i.pinimg.com/564x/juice.jpg", "width=\"300\"");
+        assertThat(jdbc.queryForObject("SELECT template FROM lead_outreach_intent", String.class)).isEqualTo("INSPIRATION");
+        assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class)).contains(
+                "https://www.pinterest.com/pin/1037376095420175260/")
+                .anyMatch(t -> t.startsWith("https://dalaillama.in/creators?then=request&creator=neha-studio&inspiration=1037376095420175260"));
     }
 
     @Test

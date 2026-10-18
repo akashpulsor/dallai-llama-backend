@@ -5,7 +5,6 @@ import com.dalai.llama.tenant.leadmanagement.email.CreatorEmailMessage;
 import com.dalai.llama.tenant.leadmanagement.email.CreatorEmailSender;
 import com.dalai.llama.tenant.leadmanagement.email.EmailSendResult;
 import com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.EmailTemplate;
-import com.dalai.llama.tenant.leadmanagement.outreach.MailableFilms.MailableFilm;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.IntentStatus;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore.QueuedIntent;
 import com.dalai.llama.tenant.showcase.domain.entity.CreatorPublicProfile;
@@ -24,7 +23,7 @@ import java.util.Optional;
 /** Sends one queued creator mail through the one-a-day slot (rule 15), for typed sends right away
  * and for audience sends from the dispatch job. Re-checks at send time (AUDIENCE_PROVIDER §51):
  * unsubscribed since → dropped; the address can't take mail → failed and the mail given back; the
- * film stopped being mailable → failed and given back; the daily send cap reached → left queued. */
+ * film stopped being mailable (or no inspiration is left) → failed and given back; the daily send cap reached → left queued. */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -35,6 +34,7 @@ public class IntentDispatcher {
 
     private final OutreachStore store;
     private final MailableFilms mailableFilms;
+    private final MailIdeas mailIdeas;
     private final EmailTemplateStore templates;
     private final OutreachComposer composer;
     private final CreatorEmailSender creatorSender;
@@ -49,9 +49,9 @@ public class IntentDispatcher {
             store.expire(List.of(q.id()), now);
             return Result.SUPPRESSED;
         }
-        List<MailableFilm> films = films(q);
         Optional<CreatorPublicProfile> profile = profileRepository.findById(q.tenantId());
-        if (films.isEmpty() || profile.isEmpty() || !validator.deliverable(q.email())) {
+        OutreachComposer.Content content = profile.map(p -> content(q, p)).orElse(OutreachComposer.Content.of(List.of()));
+        if (content.isEmpty() || profile.isEmpty() || !validator.deliverable(q.email())) {
             store.markIntents(List.of(q.id()), IntentStatus.FAILED, null, now);
             store.refundPack(q.mailPackId());
             return Result.UNDELIVERABLE;
@@ -61,7 +61,7 @@ public class IntentDispatcher {
         Optional<OutreachStore.Delivery> slot = store.claimDay(q.recipientHash(), today, "CREATOR_MAIL", q.tenantId(), q.email(), "pending");
         if (slot.isEmpty()) return waitForDigest(q, now);
 
-        OutreachComposer.Mail mail = composer.creatorMail(template(q), films, profile.get().getDisplayName(),
+        OutreachComposer.Mail mail = composer.creatorMail(template(q), content, q.tenantId(), profile.get().getDisplayName(),
                 profile.get().getHandle(), q.name(), q.note(), slot.get());
         EmailSendResult sent = creatorSender.send(CreatorEmailMessage.builder()
                 .fromCreatorId(q.tenantId()).to(List.of(q.email())).subject(mail.subject())
@@ -82,9 +82,13 @@ public class IntentDispatcher {
         return Result.WAITING_FOR_DIGEST;
     }
 
-    private List<MailableFilm> films(QueuedIntent q) {
-        if (q.template() == OutreachTemplate.CREATOR_PORTFOLIO) return mailableFilms.forCreator(q.tenantId());
-        return q.showcaseItemId() == null ? List.of() : mailableFilms.byItemId(q.showcaseItemId()).stream().toList();
+    private OutreachComposer.Content content(QueuedIntent q, CreatorPublicProfile profile) {
+        if (q.template() == OutreachTemplate.INSPIRATION) {
+            return OutreachComposer.Content.ideas(mailIdeas.forIndustries(profile.getIndustries(), q.template().maxFilms()));
+        }
+        if (q.template() == OutreachTemplate.CREATOR_PORTFOLIO) return OutreachComposer.Content.of(mailableFilms.forCreator(q.tenantId()));
+        return OutreachComposer.Content.of(q.showcaseItemId() == null ? List.of()
+                : mailableFilms.byItemId(q.showcaseItemId()).stream().toList());
     }
 
     /** The template chosen at send time, even if it was deactivated since. */

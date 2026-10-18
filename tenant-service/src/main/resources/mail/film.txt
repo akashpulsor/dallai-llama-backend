@@ -1,0 +1,6 @@
+{{title}}
+{{madeFor}}
+{{details}}
+{{watchLabel}}: {{watchUrl}}
+{{requestLabel}}: {{requestUrl}}
+

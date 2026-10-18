@@ -29,7 +29,9 @@ public final class InquiryDtos {
             @jakarta.validation.constraints.Min(5) @jakarta.validation.constraints.Max(600) Integer durationSeconds,
             @Size(max = 6) java.util.List<@Size(max = 30) String> languages,
             /* The brand's industry for this video; routes a request sent to Dalaillama. */
-            com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry
+            com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry,
+            /* A request sent to Dalaillama from a creator's mail: the creator (handle) it goes to first. */
+            @Size(max = 40) String creator
     ) {
     }
 

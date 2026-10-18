@@ -1,20 +1,30 @@
 package com.dalai.llama.tenant.leadmanagement.outreach;
 
 import com.dalai.llama.tenant.common.token.PublicTokens;
+import com.dalai.llama.tenant.leadmanagement.notify.MailLabels;
+import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.outreach.MailableFilms.MailableFilm;
 import com.dalai.llama.tenant.showcase.config.ShowcaseProperties;
+import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
+import com.dalai.llama.tenant.showcase.inspiration.InspirationStore.MailIdea;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
-/** Turns films into mail: the creator's own mail (layout, subject and intro from an email
- * template, rule 27) and the daily digest. Every film link is a tracked link minted for this delivery; with no delivery yet (a
- * preview) links go straight to the profile. */
+/** Turns videos into mailers: the creator's own mail (a letter from them, subject and intro from an
+ * email template, rule 27) and the digest from Dalai Llama. Every video shows what a brand needs to
+ * judge it (picture, who it was made for, format, length, shape), a link to watch it and a button to
+ * request one like it. A request opens the brands site's request form, and the router gives it to
+ * the creator who mailed (BrandInquiryService#submitToDalaillama). A creator with no film of their
+ * own yet mails inspiration videos instead, credited to their makers. Links are tracked links minted
+ * for this delivery; with no delivery yet (a preview) they go straight to the site. */
 @Component
 @RequiredArgsConstructor
 public class OutreachComposer {
@@ -22,131 +32,264 @@ public class OutreachComposer {
     public record Mail(String subject, String text, String html, Map<String, String> headers) {
     }
 
+    /** What one mail (or digest block) shows: the creator's films, or with none, inspiration videos. */
+    public record Content(List<MailableFilm> films, List<MailIdea> ideas) {
+        public static Content of(List<MailableFilm> films) {
+            return new Content(films, List.of());
+        }
+
+        public static Content ideas(List<MailIdea> ideas) {
+            return new Content(List.of(), ideas);
+        }
+
+        public boolean isEmpty() {
+            return films.isEmpty() && ideas.isEmpty();
+        }
+
+        public int size() {
+            return films.size() + ideas.size();
+        }
+
+        String firstTitle() {
+            return films.isEmpty() ? ideas.get(0).title() : films.get(0).title();
+        }
+
+        ShowcaseIndustry industry() {
+            return films.isEmpty() ? ideas.get(0).industry() : films.get(0).industry();
+        }
+    }
+
     /** Why a creator's block is in the digest. */
     public enum DigestReason { WROTE_TO_YOU, YOU_FOLLOW, PICKED_FOR_YOU }
 
-    /** One creator's block in the digest: their films, what they wrote (null for picks and follow
-     * notices) and the address replies go to (null if they have none). */
-    public record DigestSection(String creatorName, DigestReason reason, String message, List<MailableFilm> films, String replyTo) {
+    /** One creator's block in the digest: their videos and what they wrote (null for picks and
+     * follow notices). */
+    public record DigestSection(UUID tenantId, String creatorName, String handle, DigestReason reason, String message, Content content) {
     }
 
-    record SectionContext(String heading, String messageHtml, String messageText, String cardsHtml, String cardsText,
-                          String replyHtml, String replyText) {
+    record SectionContext(String label, String heading, String messageHtml, String messageText, String filmsHtml, String filmsText,
+                          String requestHtml, String requestText) {
     }
 
-    record ReplyContext(String creatorName, String mailto, String replyTo) {
+    record CreatorMailContext(String subject, String preheader, String greeting, String intro, String noteHtml, String note,
+                              String filmsHtml, String filmsText, String ask, String requestHtml, String requestText,
+                              String creatorName, String handle, String profileUrl, String unsubscribeUrl, String openPixelHtml) {
     }
 
-    record CreatorMailContext(String headline, String greeting, String intro, String note, String filmsHtml, String filmsText,
-                              String creatorName, String profileUrl, String unsubscribeUrl, String openPixelHtml) {
+    /** One video as a mailer shows it: picture, title, who it was made for, its format and length,
+     * then "watch" and "request one like it". */
+    record FilmContext(String title, String imageUrl, int imageWidth, String madeFor, String details, String watchLabel, String watchUrl,
+                       String requestLabel, String requestUrl) {
     }
 
-    record DigestContext(String greeting, String intro, String cardsHtml, String cardsText, String discoverUrl,
-                         String unsubscribeUrl, String openPixelHtml) {
+    record TextContext(String text) {
     }
 
-    record CardContext(String title, String subtitle, String thumbnailUrl, String url) {
+    record ButtonContext(String label, String url) {
     }
 
-    private final OutreachRenderer renderer;
+    record MailLayout(String title, String preheader, String audience, String contentHtml, String contentText, String footer,
+                      String unsubscribeHtml, String unsubscribeText, String openPixelHtml) {
+    }
+
+    private final MailRenderer renderer;
     private final OutreachStore store;
     private final ShowcaseProperties showcaseProperties;
     private final OutreachProperties properties;
 
-    /** {@code delivery} null = preview: nothing is stored, links are plain profile links. */
-    public Mail creatorMail(EmailTemplateStore.EmailTemplate template, List<MailableFilm> films, String creatorName, String handle,
+    /** The creator's own mail: a letter from them with their videos and a request button.
+     * {@code delivery} null = preview: nothing is stored, links are plain links. */
+    public Mail creatorMail(EmailTemplateStore.EmailTemplate template, Content content, UUID tenantId, String creatorName, String handle,
                             String recipientName, String note, OutreachStore.Delivery delivery) {
-        StringBuilder html = new StringBuilder();
-        StringBuilder text = new StringBuilder();
-        for (MailableFilm film : films.subList(0, Math.min(films.size(), template.layout().maxFilms()))) {
-            CardContext card = card(film, film.clientLabel() == null ? industry(film) : film.clientLabel(), delivery);
-            html.append(renderer.html("card", card));
-            text.append(renderer.text("card", card));
-        }
-        String profileUrl = profileUrl(handle, null);
+        Content shown = limit(content, template.layout().maxFilms());
+        Videos videos = videos(shown, tenantId, handle, delivery, "Request one like this");
         String unsubscribe = unsubscribeUrl(delivery);
-        String subject = fill(template.subject(), films, creatorName, recipientName);
-        CreatorMailContext context = new CreatorMailContext(subject, greeting(recipientName),
-                fill(template.intro(), films, creatorName, recipientName), blank(note),
-                html.toString(), text.toString(), creatorName, profileUrl, unsubscribe, openPixel(delivery));
+        String subject = fill(template.subject(), shown, creatorName, recipientName);
+        String intro = fill(template.intro(), shown, creatorName, recipientName);
+        String personal = blank(note);
+        ButtonContext request = new ButtonContext("Request a video from me", requestUrl(tenantId, handle, null, null, shown.industry(), delivery));
+        String ask = shown.films().isEmpty()
+                ? "These aren't my videos; they're ideas. Tell me what you need and I'll make one for your brand: send me a request "
+                + "and you'll get a brief with the price straight away."
+                : "If you have a video coming up, I'd be glad to make it for you. Send me a request and you'll get a brief with "
+                + "the price straight away.";
+        CreatorMailContext context = new CreatorMailContext(subject, preheader(shown), greeting(recipientName), intro,
+                personal.isEmpty() ? "" : renderer.html("note", new TextContext(personal)), personal,
+                videos.html, videos.text, ask, renderer.html("button", request), renderer.text("button", request),
+                creatorName, handle, profileUrl(handle, null, null), unsubscribe, openPixel(delivery));
         return new Mail(subject, renderer.text("creator_mail", context),
                 renderer.html("creator_mail", context), unsubscribeHeaders(unsubscribe));
     }
 
-    /** The held mail of several creators merged into one email: a block per creator with what they
-     * wrote, all their films and a button that replies to their own address. */
+    /** The held mail of several creators merged into one email from Dalai Llama: a block per
+     * creator with what they wrote, their videos and a button to request a video from them. */
     public Mail digest(List<DigestSection> sections, String recipientName, OutreachStore.Delivery delivery) {
         StringBuilder html = new StringBuilder();
         StringBuilder text = new StringBuilder();
+        TextContext intro = new TextContext(greeting(recipientName) + " " + (sections.size() == 1
+                ? "a creator on Dalai Llama wanted you to see this."
+                : sections.size() + " creators on Dalai Llama wanted you to see this today.")
+                + " Like something? Request a video and you'll get a brief with the price straight away.");
+        html.append(renderer.html("p", intro)).append("</td></tr>");
+        text.append(renderer.text("p", intro));
         for (DigestSection section : sections) {
             SectionContext context = section(section, delivery);
             html.append(renderer.html("digest_section", context));
             text.append(renderer.text("digest_section", context));
         }
+        ButtonContext discover = new ButtonContext("Discover more creators", showcaseProperties.publicBaseUrl() + "/creators");
+        html.append("<tr><td style=\"padding:8px 32px 8px\">").append(renderer.html("button", discover));
+        text.append(renderer.text("button", discover));
         String unsubscribe = unsubscribeUrl(delivery);
-        DigestContext context = new DigestContext(greeting(recipientName),
-                sections.size() == 1 ? "A creator on Dalai Llama wanted you to see their work:"
-                        : "Creators on Dalai Llama wanted you to see their work today:",
-                html.toString(), text.toString(), showcaseProperties.publicBaseUrl() + "/creators", unsubscribe, openPixel(delivery));
-        return new Mail(digestSubject(sections), renderer.text("digest", context), renderer.html("digest", context),
-                unsubscribeHeaders(unsubscribe));
+        String subject = digestSubject(sections);
+        MailLayout layout = new MailLayout(subject, preheader(sections.get(0).content()),
+                "FOR BRANDS", html.toString(), text.toString(),
+                "You're getting this because creators on Dalai Llama wanted to show you their work. We group it into one email, at most one a day. ",
+                "<a href=\"" + MailRenderer.escape(unsubscribe) + "\" style=\"color:#7a7088\">Unsubscribe</a>",
+                "Unsubscribe: " + unsubscribe, openPixel(delivery));
+        return new Mail(subject, renderer.text("layout", layout), renderer.html("layout", layout), unsubscribeHeaders(unsubscribe));
     }
 
     private SectionContext section(DigestSection section, OutreachStore.Delivery delivery) {
-        StringBuilder cardsHtml = new StringBuilder();
-        StringBuilder cardsText = new StringBuilder();
-        for (MailableFilm film : section.films()) {
-            CardContext card = card(film, film.clientLabel() == null ? industry(film) : film.clientLabel(), delivery);
-            cardsHtml.append(renderer.html("card", card));
-            cardsText.append(renderer.text("card", card));
-        }
+        Videos videos = videos(section.content(), section.tenantId(), section.handle(), delivery,
+                "Ask " + section.creatorName() + " for one like this");
         String message = blank(section.message());
-        String replyHtml = "";
-        String replyText = "";
-        if (section.replyTo() != null) {
-            String subject = "About " + section.films().get(0).title();
-            ReplyContext reply = new ReplyContext(section.creatorName(),
-                    "mailto:" + section.replyTo() + "?subject=" + URLEncoder.encode(subject, StandardCharsets.UTF_8).replace("+", "%20"),
-                    section.replyTo());
-            replyHtml = renderer.html("digest_reply", reply);
-            replyText = renderer.text("digest_reply", reply);
-        }
-        return new SectionContext(heading(section),
-                message.isEmpty() ? "" : "<p style=\"margin:8px 0 0;font-size:14px;line-height:1.7;color:#3b3346\">"
-                        + OutreachRenderer.escape(message).replace("\n", "<br>") + "</p>", message,
-                cardsHtml.toString(), cardsText.toString(), replyHtml, replyText);
+        ButtonContext request = new ButtonContext("Request a video from " + section.creatorName(),
+                requestUrl(section.tenantId(), section.handle(), null, null, section.content().industry(), delivery));
+        return new SectionContext(label(section), heading(section),
+                message.isEmpty() ? "" : renderer.html("note", new TextContext(message)), message,
+                videos.html, videos.text, renderer.html("digest_request", request), renderer.text("button", request));
+    }
+
+    private static String label(DigestSection section) {
+        if (section.content().films().isEmpty()) return "IDEAS FOR YOUR BRAND";
+        return switch (section.reason()) {
+            case WROTE_TO_YOU -> "A CREATOR WROTE TO YOU";
+            case YOU_FOLLOW -> "NEW FROM A CREATOR YOU FOLLOW";
+            case PICKED_FOR_YOU -> "PICKED FOR YOUR INDUSTRY";
+        };
     }
 
     private static String heading(DigestSection section) {
+        if (section.content().films().isEmpty()) return section.creatorName() + " found videos you may want for your brand";
         return switch (section.reason()) {
-            case WROTE_TO_YOU -> section.creatorName() + " wrote to you";
-            case YOU_FOLLOW -> "New from " + section.creatorName() + ", who you follow";
-            case PICKED_FOR_YOU -> "Picked for you: " + section.creatorName() + "'s work for brands like yours";
+            case WROTE_TO_YOU -> section.creatorName();
+            case YOU_FOLLOW -> section.creatorName() + " posted a new film";
+            case PICKED_FOR_YOU -> section.creatorName() + "'s work for brands like yours";
         };
     }
 
     private static String digestSubject(List<DigestSection> sections) {
-        if (sections.size() > 1) return sections.size() + " creators on Dalai Llama shared their work with you";
+        if (sections.size() > 1) return sections.size() + " creators on Dalai Llama shared videos with you";
         DigestSection only = sections.get(0);
-        return only.films().size() == 1 ? only.films().get(0).title() + " · from " + only.creatorName()
-                : only.films().size() + " films from " + only.creatorName();
+        if (only.content().films().isEmpty()) return "Video ideas for your brand · from " + only.creatorName();
+        List<MailableFilm> films = only.content().films();
+        return films.size() == 1 ? films.get(0).title() + " · from " + only.creatorName() : films.size() + " films from " + only.creatorName();
     }
 
-    private CardContext card(MailableFilm film, String subtitle, OutreachStore.Delivery delivery) {
-        String target = profileUrl(film.handle(), film.industry() == null ? null : film.industry().name());
-        String url = target;
-        if (delivery != null) {
-            // ?ref= carries the link token to the profile, so a request made from it is attributed.
-            String token = PublicTokens.newToken();
-            store.addLink(token, delivery.id(), film.tenantId(), film.itemId(), target + "&ref=" + token);
-            url = properties.publicApiBaseUrl() + "/r/" + token;
+    private record Videos(String html, String text) {
+    }
+
+    private Videos videos(Content content, UUID tenantId, String handle, OutreachStore.Delivery delivery, String requestLabel) {
+        StringBuilder html = new StringBuilder();
+        StringBuilder text = new StringBuilder();
+        List<FilmContext> blocks = new ArrayList<>();
+        for (MailableFilm f : content.films()) blocks.add(film(f, delivery, requestLabel));
+        for (MailIdea i : content.ideas()) blocks.add(idea(i, tenantId, handle, delivery, requestLabel));
+        for (FilmContext block : blocks) {
+            html.append(renderer.html("film", block));
+            text.append(renderer.text("film", block));
         }
-        return new CardContext(film.title(), subtitle, film.thumbnailUrl() == null ? "" : film.thumbnailUrl(), url);
+        return new Videos(html.toString(), text.toString());
     }
 
-    private String profileUrl(String handle, String industry) {
-        String base = showcaseProperties.publicBaseUrl() + "/c/" + handle;
-        return industry == null ? base : base + "?industry=" + URLEncoder.encode(industry, StandardCharsets.UTF_8);
+    private FilmContext film(MailableFilm film, OutreachStore.Delivery delivery, String requestLabel) {
+        // The creator's page with this film first (and their films for that industry next).
+        String watch = link(delivery, film.tenantId(), film.itemId(),
+                profileUrl(film.handle(), film.industry() == null ? null : film.industry().name(), film.publicId()));
+        String request = requestUrl(film.tenantId(), film.handle(), film.publicId(), null, film.industry(), delivery);
+        return new FilmContext(film.title(), film.thumbnailUrl() == null ? "" : film.thumbnailUrl(), film.vertical() ? 300 : 536,
+                madeFor(film), details(film), "Watch the film", watch, requestLabel, request);
+    }
+
+    /** An inspiration video: never passed off as the creator's work; credited to its maker. */
+    private FilmContext idea(MailIdea idea, UUID tenantId, String handle, OutreachStore.Delivery delivery, String requestLabel) {
+        boolean vertical = idea.posterWidth() != null && idea.posterHeight() != null && idea.posterHeight() > idea.posterWidth();
+        String industry = MailLabels.industry(idea.industry());
+        String madeFor = "Found on Pinterest" + (idea.makerName() == null ? "" : " · by " + idea.makerName());
+        String details = (industry == null ? "" : industry + " · ") + "An idea for your brand, not made on Dalai Llama";
+        return new FilmContext(idea.title(), idea.posterUrl(), vertical ? 300 : 536, madeFor, details,
+                "Watch on Pinterest", link(delivery, tenantId, null, idea.pinUrl()), requestLabel,
+                requestUrl(tenantId, handle, null, idea.pinId(), idea.industry(), delivery));
+    }
+
+    /** The brands site's request form, opened for this creator; the router gives the request to them. */
+    private String requestUrl(UUID tenantId, String handle, String publicId, String pinId, ShowcaseIndustry industry,
+                              OutreachStore.Delivery delivery) {
+        StringBuilder url = new StringBuilder(showcaseProperties.publicBaseUrl()).append("/creators?then=request&creator=")
+                .append(encode(handle));
+        if (publicId != null) url.append("&film=").append(encode(publicId));
+        if (pinId != null) url.append("&inspiration=").append(encode(pinId));
+        if (industry != null) url.append("&industry=").append(industry.name());
+        return link(delivery, tenantId, null, url.toString());
+    }
+
+    /** A tracked link for this delivery: ?ref= carries its token on, so a request made from it is
+     * attributed. Pinterest links go through the redirect too but get no ?ref=. */
+    private String link(OutreachStore.Delivery delivery, UUID tenantId, UUID itemId, String target) {
+        if (delivery == null) return target;
+        String token = PublicTokens.newToken();
+        boolean ours = target.startsWith(showcaseProperties.publicBaseUrl());
+        store.addLink(token, delivery.id(), tenantId, itemId, ours ? target + (target.contains("?") ? "&" : "?") + "ref=" + token : target);
+        return properties.publicApiBaseUrl() + "/r/" + token;
+    }
+
+    /** "Made for Hearth Foods · Food & beverage", or for an unnamed client "Made for a food & beverage brand". */
+    static String madeFor(MailableFilm film) {
+        String industry = MailLabels.industry(film.industry());
+        if (film.clientLabel() != null && !film.clientLabel().isBlank()) {
+            return "Made for " + film.clientLabel().trim() + (industry == null ? "" : " · " + industry);
+        }
+        return industry == null ? "Made for a brand" : "Made for a " + industry.toLowerCase(Locale.ROOT) + " brand";
+    }
+
+    /** "Social short · 1:00 · Vertical · Made on Dalai Llama for a paying client". */
+    static String details(MailableFilm film) {
+        List<String> parts = new ArrayList<>();
+        if (MailLabels.format(film.format()) != null) parts.add(MailLabels.format(film.format()));
+        if (MailLabels.duration(film.durationSeconds()) != null) parts.add(MailLabels.duration(film.durationSeconds()));
+        if (film.format() != null) parts.add(film.vertical() ? "Vertical" : "Widescreen");
+        // Every mailable film is a delivered, paid, client-approved project (rule 9).
+        parts.add("Made on Dalai Llama for a paying client");
+        return String.join(" · ", parts);
+    }
+
+    /** The inbox preview line: what's inside. */
+    private static String preheader(Content content) {
+        if (content.isEmpty()) return "";
+        String more = content.size() > 1 ? " and " + (content.size() - 1) + " more" : "";
+        String what = content.films().isEmpty() ? "video ideas for your brand" : madeFor(content.films().get(0));
+        return content.firstTitle() + more + " · " + what;
+    }
+
+    private static Content limit(Content content, int max) {
+        return new Content(content.films().subList(0, Math.min(content.films().size(), max)),
+                content.ideas().subList(0, Math.min(content.ideas().size(), max)));
+    }
+
+    private String profileUrl(String handle, String industry, String publicId) {
+        StringBuilder url = new StringBuilder(showcaseProperties.publicBaseUrl()).append("/c/").append(handle);
+        String sep = "?";
+        if (publicId != null) {
+            url.append(sep).append("film=").append(encode(publicId));
+            sep = "&";
+        }
+        if (industry != null) url.append(sep).append("industry=").append(encode(industry));
+        return url.toString();
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     /** Tells us when the mail is opened (the send-time signal); none in previews. */
@@ -165,23 +308,18 @@ public class OutreachComposer {
         return Map.of("List-Unsubscribe", "<" + unsubscribeUrl + ">", "List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
     }
 
-    /** Template placeholders: {film} (first film's title), {creator}, {industry}, {name}. */
-    static String fill(String copy, List<MailableFilm> films, String creatorName, String recipientName) {
-        MailableFilm first = films.get(0);
-        return copy.replace("{film}", first.title())
+    /** Template placeholders: {film} (first video's title), {creator}, {industry} ("food & beverage";
+     * "your industry" when the video has none), {name}. */
+    static String fill(String copy, Content content, String creatorName, String recipientName) {
+        String industry = MailLabels.industry(content.industry());
+        return copy.replace("{film}", content.firstTitle())
                 .replace("{creator}", creatorName)
-                .replace("{industry}", industry(first).toLowerCase(Locale.ROOT))
+                .replace("{industry}", industry == null ? "your industry" : industry.toLowerCase(Locale.ROOT))
                 .replace("{name}", recipientName == null || recipientName.isBlank() ? "there" : recipientName.trim());
     }
 
     private static String greeting(String name) {
         return name == null || name.isBlank() ? "Hi," : "Hi " + name.trim() + ",";
-    }
-
-    private static String industry(MailableFilm film) {
-        if (film.industry() == null) return "Your industry";
-        String n = film.industry().name().replace('_', ' ').toLowerCase(Locale.ROOT);
-        return Character.toUpperCase(n.charAt(0)) + n.substring(1);
     }
 
     private static String blank(String s) {

@@ -1,4 +1,0 @@
-== {{heading}} ==
-{{messageText}}
-
-{{cardsText}}{{replyText}}

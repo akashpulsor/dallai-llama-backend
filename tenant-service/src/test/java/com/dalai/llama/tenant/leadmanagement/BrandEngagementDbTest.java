@@ -191,7 +191,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest("pub0000001", null,
                 BrandInquiry.BudgetBand.FROM_50K_TO_2L, BrandInquiry.Timeline.THIS_MONTH, "A 30s launch film for our new ghee",
                 "A2 Desi Ghee", "Small-batch ghee from grass-fed cows", "Young parents in metros", "Warm, homely, morning kitchen",
-                30, java.util.List.of("English", "Hindi"), null),
+                30, java.util.List.of("English", "Hindi"), null, null),
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("productImages", "jar.png", "image/png", new byte[]{1, 2, 3})),
                 java.util.List.of(new org.springframework.mock.web.MockMultipartFile("referenceImages", "mood.jpg", "image/jpeg", new byte[]{4})));
 
@@ -240,7 +240,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         UUID brand = signedInBrand("later@hearth.example");
         jdbc.update("UPDATE creator_public_profile SET request_prepayment_percent = 25 WHERE tenant_id = ?", creator);
         var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "A reel", null, null, null, null,
-                null, null, null));
+                null, null, null, null));
         assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.NEW);
         assertThat(submitted.briefUrl()).isNull();
         // The creator has to act, so they hear now.
@@ -258,7 +258,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         UUID brand = signedInBrand("img@hearth.example");
         var big = new org.springframework.mock.web.MockMultipartFile("productImages", "big.png", "image/png", new byte[3 * 1024 * 1024 + 1]);
         var pdf = new org.springframework.mock.web.MockMultipartFile("referenceImages", "deck.pdf", "application/pdf", new byte[]{1});
-        var request = new SubmitInquiryRequest(null, null, null, null, "Hi", null, null, null, null, null, null, null);
+        var request = new SubmitInquiryRequest(null, null, null, null, "Hi", null, null, null, null, null, null, null, null);
         assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(big), java.util.List.of()))
                 .hasMessageContaining("3 MB");
         assertThatThrownBy(() -> inquiries.submit(brand, "riya-motion", request, java.util.List.of(), java.util.List.of(pdf)))
@@ -269,7 +269,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     @Test
     void aCreatorCannotActOnAnotherCreatorsRequest() {
         UUID brand = signedInBrand("x@hearth.example");
-        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null, null));
+        var submitted = inquiries.submit(brand, "riya-motion", new SubmitInquiryRequest(null, null, null, null, "Hello", null, null, null, null, null, null, null, null));
         assertThatThrownBy(() -> inquiries.convert(UUID.randomUUID(), submitted.id())).isInstanceOf(IllegalArgumentException.class);
         assertThat(inquiries.forCreator(creator).get(0).status()).isEqualTo(BrandInquiry.Status.NEW);
     }

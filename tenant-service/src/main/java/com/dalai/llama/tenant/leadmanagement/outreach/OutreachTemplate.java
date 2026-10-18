@@ -1,6 +1,6 @@
 package com.dalai.llama.tenant.leadmanagement.outreach;
 
-/** What a mail says. The creator's three are sent from their own address; NEW_FILM (a creator you
+/** What a mail says. The creator's four are sent from their own address; NEW_FILM (a creator you
  * follow posted a film) only ever travels inside the daily digest. */
 public enum OutreachTemplate {
     /** "Here's a film I made" — one film. */
@@ -9,6 +9,9 @@ public enum OutreachTemplate {
     SIMILAR_BRAND_WORK(true, 1),
     /** "Some of my work" — up to three films and the profile. */
     CREATOR_PORTFOLIO(true, 3),
+    /** "Videos you may want for your brand" — for a creator with no film of their own yet: up to
+     * three inspiration videos (credited to their makers) and a request to the creator. */
+    INSPIRATION(true, 3),
     NEW_FILM(false, 1);
 
     private final boolean creatorSendable;

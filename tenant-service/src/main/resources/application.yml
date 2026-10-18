@@ -185,6 +185,10 @@ lead-management:
 
 # Creator Showcase, Phase B: brands sign in by email link (no password, no Keycloak).
 brands:
+  # The From of every mail Dalai Llama sends itself (digests, sign-in, briefs, alerts): the brands
+  # alias on the outreach domain, never the main domain. Creators' mail shows their own alias. The
+  # envelope sender stays the SMTP mailbox (SMTP_FROM), the only one Hostinger accepts.
+  mail-from: ${BRANDS_MAIL_FROM:brands@partner.dalaillama.in}
   session-secret: ${BRAND_SESSION_SECRET:}
   session-days: ${BRAND_SESSION_DAYS:30}
   # Secure session cookie (HTTPS only). Set BRAND_COOKIE_SECURE=false only for local http dev.

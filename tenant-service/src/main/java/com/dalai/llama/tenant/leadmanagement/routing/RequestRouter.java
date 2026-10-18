@@ -34,8 +34,22 @@ public class RequestRouter {
     /** Hands out a request that has no creator. */
     @Transactional
     public void route(UUID inquiryId) {
+        route(inquiryId, null);
+    }
+
+    /**
+     * The same, for a request the brand sent from a creator's mail: it goes to that creator
+     * ({@code preferred}) whatever the strategy, as a request from their page would, while they
+     * are active, accepting requests and haven't passed on it. Otherwise it is routed as usual.
+     */
+    @Transactional
+    public void route(UUID inquiryId, UUID preferred) {
         BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
         if (inquiry.getTenantId() != null) return;
+        if (preferred != null && store.candidates(inquiryId, inquiry.getIndustry()).contains(preferred)) {
+            assign(inquiry, preferred);
+            return;
+        }
         RoutingStrategy strategy = store.strategy();
         List<UUID> candidates = strategy == RoutingStrategy.OPS_ASSIGNS ? List.of() : store.candidates(inquiryId, inquiry.getIndustry());
         if (candidates.isEmpty()) {
