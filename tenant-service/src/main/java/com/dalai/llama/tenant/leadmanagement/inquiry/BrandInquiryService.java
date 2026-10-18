@@ -125,7 +125,7 @@ public class BrandInquiryService {
                                           java.util.List<org.springframework.web.multipart.MultipartFile> referenceImages) {
         UUID brandContactId = accounts.guest(guest, request.industry());
         SubmittedInquiry submitted = submitToDalaillama(brandContactId, request, productImages, referenceImages);
-        if (submitted.briefUrl() == null) mailer.send(receivedMail(contactRepository.findById(brandContactId).orElseThrow()));
+        if (submitted.briefUrl() == null) mailer.sendAfterCommit(receivedMail(contactRepository.findById(brandContactId).orElseThrow()));
         return submitted;
     }
 
@@ -361,7 +361,7 @@ public class BrandInquiryService {
 
         CreatorPublicProfile creator = profileRepository.findById(inquiry.getTenantId()).orElseThrow();
         String link = briefUrl(inquiry);
-        mailer.send(BriefReadyMail.of(brand, creator.getDisplayName(), link, brief));
+        mailer.sendAfterCommit(BriefReadyMail.of(brand, creator.getDisplayName(), link, brief));
         return link;
     }
 

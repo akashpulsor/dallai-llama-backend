@@ -89,7 +89,7 @@ public class PeopleSearchService {
             if (p.id() == null || p.id().isBlank()) continue;
             ids.add(people.upsert(PROVIDER, p, country));
         }
-        searches.saveSearch(key, PROVIDER, describe(r, country), List.of());
+        searches.saveSearch(key, PROVIDER, describe(r, country), List.of(), clock.instant());
         people.saveResults(key, ids);
         return new SearchResult(views(people.results(key)), false, credits());
     }

@@ -59,13 +59,15 @@ import static org.mockito.Mockito.when;
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.class,
         com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class,
-        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, AutoPickDbTest.TestConfig.class})
+        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, com.dalai.llama.tenant.leadmanagement.outreach.OutreachSendTimes.class,
+        com.dalai.llama.tenant.leadmanagement.service.impl.CreatorEmailIdentityServiceImpl.class, AutoPickDbTest.TestConfig.class})
 class AutoPickDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-07T12:30:00Z");
 
     @TestConfiguration
-    @EnableConfigurationProperties({OutreachProperties.class, ShowcaseProperties.class})
+    @EnableConfigurationProperties({OutreachProperties.class, ShowcaseProperties.class,
+            com.dalai.llama.tenant.leadmanagement.config.LeadManagementProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -164,7 +166,8 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
     }
 
     private OutreachProperties props() {
-        return new OutreachProperties("pepper", 100, 25, 14, 4, 7, 30, 900, "https://api.example/outreach");
+        return new OutreachProperties("pepper", 100, 25, 14, 4, 7, 30, 900,
+                new OutreachProperties.SendTime(13, 90, 3), "https://api.example/outreach");
     }
 
     private UUID creator(String name, String channel) {

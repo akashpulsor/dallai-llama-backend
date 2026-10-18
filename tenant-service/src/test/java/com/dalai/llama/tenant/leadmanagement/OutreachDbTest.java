@@ -72,13 +72,15 @@ import static org.mockito.Mockito.when;
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateStore.class,
         com.dalai.llama.tenant.leadmanagement.audience.AudienceStore.class,
-        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, OutreachDbTest.TestConfig.class})
+        com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator.class, com.dalai.llama.tenant.leadmanagement.outreach.OutreachSendTimes.class,
+        com.dalai.llama.tenant.leadmanagement.service.impl.CreatorEmailIdentityServiceImpl.class, OutreachDbTest.TestConfig.class})
 class OutreachDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-07T09:00:00Z"); // a Wednesday
 
     @TestConfiguration
-    @EnableConfigurationProperties({OutreachProperties.class, ShowcaseProperties.class})
+    @EnableConfigurationProperties({OutreachProperties.class, ShowcaseProperties.class,
+            com.dalai.llama.tenant.leadmanagement.config.LeadManagementProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -94,6 +96,8 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     @Autowired private DailyDigestJob digest;
     @Autowired private com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob dispatchJob;
     @Autowired private org.springframework.transaction.support.TransactionTemplate transactions;
+    @Autowired private com.dalai.llama.tenant.leadmanagement.service.CreatorEmailIdentityService identities;
+    @Autowired private RecipientHasher hasher;
     @Autowired private OutreachStore store;
     @Autowired private CreatorProfileService profileService;
     @Autowired private JdbcTemplate jdbc;
@@ -291,6 +295,85 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    @Test
+    void heldMailIsMergedWithEachCreatorsMessageAllTheirFilmsAndAReplyToThem() {
+        String arjunAddress = identities.provisionForCreator(arjun, "Arjun Frames").getEmail();
+        UUID kabir = creator("Kabir Reels", "UCkabir", "kabir000001", "pubkabir001", true);
+        film(kabir, "kabir000002", "pubkabir002", "UCkabir", true);
+        send(riya, "pubriya0001", "buyer@hearth.example"); // today's mail
+        send(arjun, "pubarjun001", "buyer@hearth.example"); // held, with the note "Hello"
+        outreach.send(kabir, new SendRequest(OutreachTemplate.CREATOR_PORTFOLIO, null, null, null,
+                List.of(new Recipient("buyer@hearth.example", "Asha", null)))); // held, two films
+
+        clock.set(NOW.plus(Duration.ofDays(1)));
+        assertThat(digest.run().digestsSent()).isEqualTo(1);
+
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(platformMailer).send(mail.capture());
+        assertThat(mail.getValue().subject()).isEqualTo("2 creators on Dalai Llama shared their work with you");
+        assertThat(mail.getValue().text()).contains("Arjun Frames wrote to you", "Hello", "Reply to Arjun Frames: " + arjunAddress,
+                "Kabir Reels wrote to you", "Video kabir000001", "Video kabir000002");
+        // Kabir has no address yet: no reply button for him.
+        assertThat(mail.getValue().text()).doesNotContain("Reply to Kabir Reels");
+        assertThat(mail.getValue().html()).contains("mailto:" + arjunAddress + "?subject=About%20Video%20arjun000001",
+                "https://api.dalaillama.in/api/v1/public/outreach/o/");
+    }
+
+    @Test
+    void heldMailThatIsDroppedIsGivenBackToTheCreator() {
+        for (String other : List.of("p1@x.example", "p2@x.example", "p3@x.example")) send(arjun, "pubarjun001", other);
+        send(riya, "pubriya0001", "buyer@hearth.example");
+        when(billing.purchaseAddon(eq(arjun), eq("OUTREACH_MAIL_PACK"), anyString()))
+                .thenReturn(new BillingServiceClient.AddonPurchase("OUTREACH_MAIL_PACK", 500, new BigDecimal("499"), "INR", BigDecimal.TEN));
+        outreach.buyPack(arjun, "k1");
+        assertThat(send(arjun, "pubarjun001", "buyer@hearth.example").results().get(0).outcome()).isEqualTo(Outcome.QUEUED);
+        assertThat(jdbc.queryForObject("SELECT remaining FROM lead_mail_pack", Integer.class)).isEqualTo(499);
+
+        clock.set(NOW.plus(Duration.ofDays(8)));
+        assertThat(digest.run().expired()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT remaining FROM lead_mail_pack", Integer.class)).isEqualTo(500);
+    }
+
+    @Test
+    void aFreeMailHeldForSomeoneWhoUnsubscribesComesBack() {
+        send(riya, "pubriya0001", "gone@x.example");
+        send(arjun, "pubarjun001", "gone@x.example"); // held
+        assertThat(outreach.overview(arjun).allowance().freeUsedThisWeek()).isEqualTo(1);
+
+        outreach.unsubscribe(jdbc.queryForObject("SELECT unsubscribe_token FROM lead_outreach_delivery", String.class));
+
+        assertThat(outreach.overview(arjun).allowance().freeUsedThisWeek()).isZero();
+    }
+
+    @Autowired private com.dalai.llama.tenant.leadmanagement.outreach.OutreachSendTimes sendTimes;
+
+    @Test
+    void theDigestGoesOutAtTheHourTheBrandOpensMail() {
+        // Nothing to learn from yet: the configured default.
+        assertThat(sendTimes.platformHour()).isEqualTo(13);
+        // buyer@ opened three earlier mails around 20:00 UTC and clicked one at 08:00.
+        String buyer = hasher.hash("buyer@hearth.example");
+        for (int day = 1; day <= 3; day++) {
+            java.time.LocalDate past = java.time.LocalDate.of(2026, 9, day);
+            OutreachStore.Delivery d = store.claimDay(buyer, past, "DIGEST", null, "buyer@hearth.example", "digest").orElseThrow();
+            store.recordOpen(d.id(), past.atTime(20, 10).toInstant(java.time.ZoneOffset.UTC));
+        }
+        assertThat(sendTimes.hourFor(buyer, 13)).isEqualTo(20);
+        // With too few signals of their own, a recipient gets the platform's hour (learned from everyone).
+        assertThat(sendTimes.hourFor(hasher.hash("quiet@x.example"), 13)).isEqualTo(13);
+        assertThat(sendTimes.platformHour()).isEqualTo(20);
+
+        send(riya, "pubriya0001", "buyer@hearth.example");
+        send(arjun, "pubarjun001", "buyer@hearth.example"); // held
+        clock.set(Instant.parse("2026-10-08T13:00:00Z"));
+        assertThat(digest.runDue().digestsSent()).isZero();
+        clock.set(Instant.parse("2026-10-08T20:00:00Z"));
+        assertThat(digest.runDue().digestsSent()).isEqualTo(1);
+        // Once a day: later hours don't send again.
+        clock.set(Instant.parse("2026-10-08T21:00:00Z"));
+        assertThat(digest.runDue().digestsSent()).isZero();
     }
 
     /** Mail already delivered today to other people. */

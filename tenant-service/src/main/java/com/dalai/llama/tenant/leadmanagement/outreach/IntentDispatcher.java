@@ -46,7 +46,7 @@ public class IntentDispatcher {
     public Result dispatch(QueuedIntent q) {
         Instant now = clock.instant();
         if (store.isSuppressed(q.recipientHash())) {
-            store.markIntents(List.of(q.id()), IntentStatus.EXPIRED, null, now);
+            store.expire(List.of(q.id()), now);
             return Result.SUPPRESSED;
         }
         List<MailableFilm> films = films(q);

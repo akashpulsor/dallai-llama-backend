@@ -77,10 +77,11 @@ public class BrandSearchStore {
                 industry == null ? null : industry.name(), countryCode == null ? null : countryCode.toUpperCase(), emailsAvailable, provider);
     }
 
-    public void saveSearch(String queryKey, String provider, String description, List<UUID> companyIds) {
+    /** {@code searchedAt} from the app clock, the same clock {@link #freshSearch} is asked with. */
+    public void saveSearch(String queryKey, String provider, String description, List<UUID> companyIds, Instant searchedAt) {
         jdbc.update("DELETE FROM lead_provider_search WHERE query_key = ?", queryKey);
-        jdbc.update("INSERT INTO lead_provider_search (query_key, provider, description, result_count) VALUES (?, ?, ?, ?)",
-                queryKey, provider, description, companyIds.size());
+        jdbc.update("INSERT INTO lead_provider_search (query_key, provider, description, result_count, searched_at) VALUES (?, ?, ?, ?, ?)",
+                queryKey, provider, description, companyIds.size(), Timestamp.from(searchedAt));
         for (int i = 0; i < companyIds.size(); i++) {
             jdbc.update("INSERT INTO lead_provider_search_result (query_key, company_id, rank) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
                     queryKey, companyIds.get(i), i);

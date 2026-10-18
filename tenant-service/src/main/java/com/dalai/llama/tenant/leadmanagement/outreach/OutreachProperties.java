@@ -18,8 +18,14 @@ public record OutreachProperties(
         /* All outreach deliveries (creator mail + digests) per UTC day. The shared Hostinger
          * mailbox sends at most 1000 a day; the rest is kept for sign-in, brief and alert mail. */
         int dailySendCap,
+        SendTime sendTime,
         /* Public base of the tracked-link and unsubscribe endpoints, e.g.
          * https://api.dalaillama.in/api/v1/public/outreach */
         String publicApiBaseUrl
 ) {
+    /** When digests go out ({@link OutreachSendTimes}): each recipient's busiest engagement hour
+     * over {@code lookbackDays} once they have {@code minSignals} opens/clicks, else the platform's,
+     * else {@code defaultHourUtc}. */
+    public record SendTime(int defaultHourUtc, int lookbackDays, int minSignals) {
+    }
 }

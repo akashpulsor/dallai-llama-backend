@@ -6,5 +6,5 @@
 See more films from our creators: {{discoverUrl}}
 
 --
-Dalai Llama sends at most one email a day to this address, grouping what creators wanted you to see.
+Dalai Llama sends at most one email a day to this address, grouping what creators wanted you to see. Replies to a creator go straight to them.
 Unsubscribe: {{unsubscribeUrl}}

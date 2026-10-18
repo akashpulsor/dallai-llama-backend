@@ -20,7 +20,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * pepper is set, forgetting every unsubscribe and cooldown. */
 class OutreachOffWithoutPepperTest {
 
-    private final OutreachProperties properties = new OutreachProperties("", 100, 25, 14, 4, 7, 30, 900, "https://api.example/outreach");
+    private final OutreachProperties properties = new OutreachProperties("", 100, 25, 14, 4, 7, 30, 900,
+                new OutreachProperties.SendTime(13, 90, 3), "https://api.example/outreach");
     private final OutreachStore store = mock(OutreachStore.class);
     private final CreatorEmailSender sender = mock(CreatorEmailSender.class);
     private final IntentDispatcher dispatcher = mock(IntentDispatcher.class);

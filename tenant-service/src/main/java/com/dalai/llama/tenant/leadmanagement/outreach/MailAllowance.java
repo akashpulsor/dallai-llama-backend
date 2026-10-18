@@ -67,7 +67,8 @@ public class MailAllowance {
     private int freeUsed(UUID tenantId) {
         Integer used = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM lead_outreach_intent
-                WHERE tenant_id = ? AND origin = 'CREATOR' AND mail_pack_id IS NULL AND status <> 'FAILED' AND created_at >= ?""",
+                WHERE tenant_id = ? AND origin = 'CREATOR' AND mail_pack_id IS NULL
+                  AND status NOT IN ('FAILED', 'EXPIRED') AND created_at >= ?""",
                 Integer.class, tenantId, Timestamp.from(weekStart()));
         return used == null ? 0 : used;
     }

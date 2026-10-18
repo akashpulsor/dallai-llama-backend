@@ -66,7 +66,7 @@ public class BrandAccountService {
                 VALUES (?, ?, ?, ?, ?)""",
                 PublicTokens.sha256Hex(token), contact.getId(), blankToNull(request.pendingAction()),
                 Timestamp.from(now.plusMinutes(properties.signInLinkMinutes()).toInstant()), Timestamp.from(now.toInstant()));
-        mailer.send(signInMail(contact, properties.signInPageUrl() + token));
+        mailer.sendAfterCommit(signInMail(contact, properties.signInPageUrl() + token));
     }
 
     /**

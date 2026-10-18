@@ -125,7 +125,7 @@ public class BrandSearchService {
                 ids.add(store.upsertCompany(o.domain(), o.name(), r.industry(), country, 0, "APOLLO"));
             }
         }
-        store.saveSearch(key, properties.configured() ? PROVIDER : "APOLLO", describe(r.industry(), country, query), ids);
+        store.saveSearch(key, properties.configured() ? PROVIDER : "APOLLO", describe(r.industry(), country, query), ids, clock.instant());
     }
 
     @Transactional

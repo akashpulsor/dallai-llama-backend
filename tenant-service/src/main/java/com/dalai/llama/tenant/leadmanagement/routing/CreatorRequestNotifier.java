@@ -56,6 +56,6 @@ public class CreatorRequestNotifier {
 
     private void send(UUID creatorTenantId, BrandContact brand, BrandInquiry inquiry, CreatorRequestMail.Copy copy) {
         tenantRepository.findById(creatorTenantId).map(Tenant::getPrimaryContactEmail)
-                .ifPresent(to -> mailer.send(CreatorRequestMail.render(to, copy, brand, inquiry, brandProperties.creatorRequestsUrl())));
+                .ifPresent(to -> mailer.sendAfterCommit(CreatorRequestMail.render(to, copy, brand, inquiry, brandProperties.creatorRequestsUrl())));
     }
 }

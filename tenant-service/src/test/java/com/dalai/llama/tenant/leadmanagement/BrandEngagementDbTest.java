@@ -124,7 +124,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         accounts.requestSignIn(signIn("Buyer@Hearth.example ", "follow:riya-motion"));
 
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer).send(mail.capture());
+        verify(mailer).sendAfterCommit(mail.capture());
         assertThat(mail.getValue().to()).isEqualTo("buyer@hearth.example");
         String token = mail.getValue().text().replaceAll("(?s).*/brands/sign-in/(\\S+).*", "$1");
         // Only the hash is stored.
@@ -142,7 +142,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     void anExpiredLinkDoesNotSignIn() {
         accounts.requestSignIn(signIn("late@hearth.example", null));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer).send(mail.capture());
+        verify(mailer).sendAfterCommit(mail.capture());
         String token = mail.getValue().text().replaceAll("(?s).*/brands/sign-in/(\\S+).*", "$1");
 
         clock.set(NOW.plus(Duration.ofMinutes(31)));
@@ -152,7 +152,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     @Test
     void signInLinksAreRateLimitedPerHourWithoutTellingTheCaller() {
         for (int i = 0; i < 7; i++) accounts.requestSignIn(signIn("busy@hearth.example", null));
-        verify(mailer, org.mockito.Mockito.times(5)).send(any());
+        verify(mailer, org.mockito.Mockito.times(5)).sendAfterCommit(any());
     }
 
     @Test
@@ -198,10 +198,10 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         // The brand goes straight to the brief, and is mailed it with what to pay now.
         assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
         assertThat(submitted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/share-abc");
-        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("ask@hearth.example")
+        verify(mailer).sendAfterCommit(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("ask@hearth.example")
                 && m.text().contains("https://creator.dalaillama.in/brief/share-abc") && m.text().contains("pay ₹1,200 now")));
         // The creator hears nothing until the brand pays; the film counted the brand's interest.
-        verify(mailer, never()).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
+        verify(mailer, never()).sendAfterCommit(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")));
         assertThat(jdbc.queryForObject("SELECT inquiry_count FROM showcase_item WHERE public_id = 'pub0000001'", Integer.class))
                 .isEqualTo(1);
         CreatorInquiryView seen = inquiries.forCreator(creator).get(0);
@@ -224,7 +224,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         inquiries.onBriefPaid(requirement, new java.math.BigDecimal("1800.00"), "INR");
         inquiries.onBriefPaid(UUID.randomUUID(), new java.math.BigDecimal("500"), "INR");
         ArgumentCaptor<PlatformMailer.Mail> toCreator = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer, org.mockito.Mockito.atLeastOnce()).send(toCreator.capture());
+        verify(mailer, org.mockito.Mockito.atLeastOnce()).sendAfterCommit(toCreator.capture());
         assertThat(toCreator.getAllValues()).filteredOn(m -> m.to().equals("owner@example.com")).singleElement()
                 .satisfies(m -> {
                     assertThat(m.subject()).isEqualTo("Paid: Hearth Foods wants a video from you");
@@ -244,7 +244,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
         assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.NEW);
         assertThat(submitted.briefUrl()).isNull();
         // The creator has to act, so they hear now.
-        verify(mailer).send(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")
+        verify(mailer).sendAfterCommit(org.mockito.ArgumentMatchers.argThat(m -> m.to().equals("owner@example.com")
                 && m.subject().equals("Hearth Foods asked you for a video") && m.html().contains("Make the brief")));
 
         org.mockito.Mockito.reset(briefClient);
@@ -287,7 +287,7 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     private UUID signedInBrand(String email) {
         accounts.requestSignIn(signIn(email, null));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer, atLeastOnce()).send(mail.capture());
+        verify(mailer, atLeastOnce()).sendAfterCommit(mail.capture());
         String token = mail.getValue().text().replaceAll("(?s).*/brands/sign-in/(\\S+).*", "$1");
         return sessions.resolve(accounts.completeSignIn(token).session().token()).orElseThrow();
     }

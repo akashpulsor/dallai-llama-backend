@@ -35,7 +35,7 @@ public class OutreachStore {
     }
 
     public record PendingIntent(UUID id, UUID tenantId, String email, String name, OutreachTemplate template, Origin origin,
-                                UUID showcaseItemId, Instant createdAt) {
+                                UUID showcaseItemId, String note, UUID emailTemplateId, Instant createdAt) {
     }
 
     public record IntentRow(UUID id, String email, String company, OutreachTemplate template, Origin origin,
@@ -57,10 +57,11 @@ public class OutreachStore {
     public void suppress(String recipientHash, String reason) {
         jdbc.update("INSERT INTO lead_suppression (recipient_hash, reason) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 recipientHash, reason);
-        // Nothing queued for them goes out any more.
-        jdbc.update("""
+        // Nothing queued for them goes out any more, and the creators get those mails back.
+        jdbc.queryForList("""
                 UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = NOW()
-                WHERE recipient_hash = ? AND status IN ('QUEUED', 'PENDING')""", recipientHash);
+                WHERE recipient_hash = ? AND status IN ('QUEUED', 'PENDING') RETURNING mail_pack_id""", UUID.class, recipientHash)
+                .forEach(this::refundPack);
     }
 
     public Optional<String> recipientOfUnsubscribeToken(String token) {
@@ -109,9 +110,18 @@ public class OutreachStore {
     }
 
     /** A mail that will never go out gives its pack mail back (free mails come back on their own:
-     * FAILED intents don't count against the week). */
+     * FAILED and EXPIRED intents don't count against the week). */
     public void refundPack(UUID packId) {
         if (packId != null) jdbc.update("UPDATE lead_mail_pack SET remaining = remaining + 1 WHERE id = ? AND remaining < quantity", packId);
+    }
+
+    /** Drops mail that will never go out (unsubscribed, film no longer mailable) and gives the
+     * creator their pack mail back. */
+    public void expire(List<UUID> ids, Instant now) {
+        for (UUID id : ids) {
+            jdbc.queryForList("UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = ? WHERE id = ? RETURNING mail_pack_id",
+                    UUID.class, Timestamp.from(now), id).forEach(this::refundPack);
+        }
     }
 
     public void markIntents(List<UUID> ids, IntentStatus status, UUID deliveryId, Instant now) {
@@ -127,17 +137,22 @@ public class OutreachStore {
 
     public List<PendingIntent> pendingFor(String recipientHash) {
         return jdbc.query("""
-                SELECT id, tenant_id, recipient_email, recipient_name, template, origin, showcase_item_id, created_at
+                SELECT id, tenant_id, recipient_email, recipient_name, template, origin, showcase_item_id, personal_note,
+                       email_template_id, created_at
                 FROM lead_outreach_intent WHERE recipient_hash = ? AND status = 'PENDING' ORDER BY created_at""",
                 (rs, n) -> new PendingIntent(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3),
                         rs.getString(4), OutreachTemplate.valueOf(rs.getString(5)), Origin.valueOf(rs.getString(6)),
-                        rs.getObject(7, UUID.class), rs.getTimestamp(8).toInstant()),
+                        rs.getObject(7, UUID.class), rs.getString(8), rs.getObject(9, UUID.class), rs.getTimestamp(10).toInstant()),
                 recipientHash);
     }
 
+    /** Mail that waited too long is dropped and given back to the creator. */
     public int expirePendingBefore(Instant cutoff) {
-        return jdbc.update("UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = NOW() WHERE status = 'PENDING' AND created_at < ?",
-                Timestamp.from(cutoff));
+        List<UUID> packs = jdbc.queryForList("""
+                UPDATE lead_outreach_intent SET status = 'EXPIRED', decided_at = NOW()
+                WHERE status = 'PENDING' AND created_at < ? RETURNING mail_pack_id""", UUID.class, Timestamp.from(cutoff));
+        packs.forEach(this::refundPack);
+        return packs.size();
     }
 
     public List<IntentRow> recentForCreator(UUID tenantId, Instant since) {
@@ -210,6 +225,12 @@ public class OutreachStore {
     /** A send that failed gives the day back, so the digest can try again. */
     public void releaseDay(UUID deliveryId) {
         jdbc.update("DELETE FROM lead_outreach_delivery WHERE id = ?", deliveryId);
+    }
+
+    /** The open pixel loaded: counts it, and the first open's time teaches the send hour. */
+    public void recordOpen(UUID deliveryId, Instant at) {
+        jdbc.update("UPDATE lead_outreach_delivery SET open_count = open_count + 1, first_opened_at = COALESCE(first_opened_at, ?) WHERE id = ?",
+                Timestamp.from(at), deliveryId);
     }
 
     public void addLink(String token, UUID deliveryId, UUID tenantId, UUID showcaseItemId, String targetUrl) {

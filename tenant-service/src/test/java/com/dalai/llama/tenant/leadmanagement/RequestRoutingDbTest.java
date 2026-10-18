@@ -215,7 +215,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
                 .containsEntry("company_name", "Ghar Pickles").containsEntry("website_url", null)
                 .containsEntry("industry", "FOOD_BEVERAGE");
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer, atLeastOnce()).send(mail.capture());
+        verify(mailer, atLeastOnce()).sendAfterCommit(mail.capture());
         assertThat(mail.getAllValues()).anySatisfy(m -> {
             assertThat(m.to()).isEqualTo("ravi@ghar.example");
             assertThat(m.subject()).isEqualTo("We've got your video request");
@@ -245,7 +245,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         verify(briefClient).createBrief(eq(akash), anyString(), eq("Ghar Pickles"), eq("food beverage"), any(), any(),
                 eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer, atLeastOnce()).send(mail.capture());
+        verify(mailer, atLeastOnce()).sendAfterCommit(mail.capture());
         assertThat(mail.getAllValues()).filteredOn(m -> m.to().equals("ravi@ghar.example")).singleElement()
                 .satisfies(m -> {
                     assertThat(m.subject()).isEqualTo("Your video brief is ready");
@@ -355,7 +355,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
         accounts.requestSignIn(new SignInRequest(email, "Asha", "Hearth Foods", "https://hearth.example",
                 ShowcaseIndustry.FOOD_BEVERAGE, "in", false, null));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
-        verify(mailer, atLeastOnce()).send(mail.capture());
+        verify(mailer, atLeastOnce()).sendAfterCommit(mail.capture());
         String token = mail.getValue().text().replaceAll("(?s).*/brands/sign-in/(\\S+).*", "$1");
         return sessions.resolve(accounts.completeSignIn(token).session().token()).orElseThrow();
     }
