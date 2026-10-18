@@ -28,7 +28,9 @@ public class InspirationControllers {
     private final InspirationStore store;
 
     public record AddPinRequest(@NotBlank String pinLink, @NotBlank @Size(max = 120) String title,
-                                @NotNull ShowcaseIndustry industry, @Size(max = 300) String note, Integer sortOrder) {
+                                @NotNull ShowcaseIndustry industry, @Size(max = 300) String note, Integer sortOrder,
+                                /* Pinterest's oEmbed "height" for the pin, to size its card. */
+                                @jakarta.validation.constraints.Min(100) @jakarta.validation.constraints.Max(2000) Integer embedHeight) {
     }
 
     @GetMapping("/api/v1/public/showcase/inspiration")
@@ -40,7 +42,7 @@ public class InspirationControllers {
     public InspirationItem add(@Valid @RequestBody AddPinRequest request) {
         return store.save(InspirationPins.idFrom(request.pinLink()), request.title().trim(), request.industry(),
                 request.note() == null || request.note().isBlank() ? null : request.note().trim(),
-                request.sortOrder() == null ? 0 : request.sortOrder());
+                request.sortOrder() == null ? 0 : request.sortOrder(), request.embedHeight());
     }
 
     @DeleteMapping("/api/v1/internal/admin/tenants/inspiration/{id}")

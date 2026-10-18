@@ -15,7 +15,8 @@ public class InspirationStore {
 
     private static final RowMapper<InspirationItem> ROW = (rs, n) -> new InspirationItem(
             rs.getObject("id", UUID.class), rs.getString("pin_id"), InspirationPins.url(rs.getString("pin_id")),
-            rs.getString("title"), ShowcaseIndustry.valueOf(rs.getString("industry")), rs.getString("note"));
+            rs.getString("title"), ShowcaseIndustry.valueOf(rs.getString("industry")), rs.getString("note"),
+            rs.getObject("embed_height", Integer.class));
 
     private final JdbcTemplate jdbc;
 
@@ -27,13 +28,15 @@ public class InspirationStore {
                         ROW, industry.name());
     }
 
-    /** Adds the pin, or updates its labels and shows it again when it is already on the board. */
-    public InspirationItem save(String pinId, String title, ShowcaseIndustry industry, String note, int sortOrder) {
+    /** Adds the pin, or updates its labels and shows it again when it is already on the board. A
+     * missing {@code embedHeight} keeps the one already known. */
+    public InspirationItem save(String pinId, String title, ShowcaseIndustry industry, String note, int sortOrder, Integer embedHeight) {
         jdbc.update("""
-                INSERT INTO inspiration_item (id, pin_id, title, industry, note, sort_order) VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO inspiration_item (id, pin_id, title, industry, note, sort_order, embed_height) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (pin_id) DO UPDATE SET title = EXCLUDED.title, industry = EXCLUDED.industry,
-                    note = EXCLUDED.note, sort_order = EXCLUDED.sort_order, active = TRUE""",
-                UUID.randomUUID(), pinId, title, industry.name(), note, sortOrder);
+                    note = EXCLUDED.note, sort_order = EXCLUDED.sort_order, active = TRUE,
+                    embed_height = COALESCE(EXCLUDED.embed_height, inspiration_item.embed_height)""",
+                UUID.randomUUID(), pinId, title, industry.name(), note, sortOrder, embedHeight);
         return jdbc.queryForObject("SELECT * FROM inspiration_item WHERE pin_id = ?", ROW, pinId);
     }
 
