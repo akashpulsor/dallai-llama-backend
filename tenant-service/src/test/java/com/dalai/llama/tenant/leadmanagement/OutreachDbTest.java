@@ -410,6 +410,12 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
             store.recordOpen(d.id(), past.atTime(20, 10).toInstant(java.time.ZoneOffset.UTC));
         }
         assertThat(sendTimes.hourFor(buyer, 13)).isEqualTo(20);
+        // Each open tells analytics what was opened, and whether it was the first time.
+        OutreachStore.Delivery again = store.claimDay(buyer, java.time.LocalDate.of(2026, 9, 9), "DIGEST", null, "buyer@hearth.example", "digest")
+                .orElseThrow();
+        assertThat(store.recordOpen(again.id(), NOW)).contains(new OutreachStore.Opened("DIGEST", buyer, null, true));
+        assertThat(store.recordOpen(again.id(), NOW)).hasValueSatisfying(o -> assertThat(o.firstOpen()).isFalse());
+        assertThat(store.recordOpen(UUID.randomUUID(), NOW)).isEmpty();
         // With too few signals of their own, a recipient gets the platform's hour (learned from everyone).
         assertThat(sendTimes.hourFor(hasher.hash("quiet@x.example"), 13)).isEqualTo(13);
         assertThat(sendTimes.platformHour()).isEqualTo(20);

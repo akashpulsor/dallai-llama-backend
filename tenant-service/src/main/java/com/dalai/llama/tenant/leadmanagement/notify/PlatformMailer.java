@@ -33,6 +33,7 @@ public class PlatformMailer {
     private static final String DISPLAY_NAME = "Dalai Llama";
 
     private final JavaMailSender mailSender;
+    private final MailSigner signer;
     private final Executor executor;
     private final String smtpUsername;
     private final String fromAddress;
@@ -40,17 +41,18 @@ public class PlatformMailer {
     private final boolean enabled;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public PlatformMailer(JavaMailSender mailSender,
+    public PlatformMailer(JavaMailSender mailSender, MailSigner signer,
                           @Value("${spring.mail.username:}") String smtpUsername,
                           @Value("${spring.mail.from:}") String fromAddress,
                           @Value("${brands.mail-from:}") String brandsFrom,
                           @Value("${spring.mail.enabled:true}") boolean enabled) {
-        this(mailSender, sendThreads(), smtpUsername, fromAddress, brandsFrom, enabled);
+        this(mailSender, signer, sendThreads(), smtpUsername, fromAddress, brandsFrom, enabled);
     }
 
-    PlatformMailer(JavaMailSender mailSender, Executor executor, String smtpUsername, String fromAddress, String brandsFrom,
-                   boolean enabled) {
+    PlatformMailer(JavaMailSender mailSender, MailSigner signer, Executor executor, String smtpUsername, String fromAddress,
+                   String brandsFrom, boolean enabled) {
         this.mailSender = mailSender;
+        this.signer = signer;
         this.executor = executor;
         this.smtpUsername = smtpUsername;
         this.fromAddress = fromAddress;
@@ -125,7 +127,8 @@ public class PlatformMailer {
             else helper.setText(mail.text(), false);
             for (Map.Entry<String, String> header : mail.headers().entrySet()) mime.setHeader(header.getKey(), header.getValue());
             // The envelope sender stays the relay's own mailbox (Hostinger refuses any other).
-            SMTPMessage out = new SMTPMessage(mime);
+            // DKIM-signed when From the outreach domain (the brands alias), see MailSigner.
+            SMTPMessage out = signer.prepare(mime);
             out.setEnvelopeFrom(mailbox);
             mailSender.send(out);
             return true;

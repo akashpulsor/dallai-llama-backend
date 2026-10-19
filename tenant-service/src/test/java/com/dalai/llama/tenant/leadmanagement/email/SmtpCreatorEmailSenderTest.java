@@ -31,7 +31,8 @@ class SmtpCreatorEmailSenderTest {
         CreatorEmailIdentityService identities = mock(CreatorEmailIdentityService.class);
         when(identities.findByTenant(creator)).thenReturn(Optional.of(CreatorEmailIdentity.builder().tenantId(creator)
                 .email("cr_abc@partner.dalaillama.in").displayName("Riya Motion").build()));
-        SmtpCreatorEmailSender sender = new SmtpCreatorEmailSender(smtp, identities, "outreach@dalaillama.in", "outreach@dalaillama.in", true);
+        SmtpCreatorEmailSender sender = new SmtpCreatorEmailSender(smtp, identities,
+                new com.dalai.llama.tenant.leadmanagement.notify.MailSigner("partner.dalaillama.in", "dl1", ""), "outreach@dalaillama.in", "outreach@dalaillama.in", true);
 
         EmailSendResult result = sender.send(CreatorEmailMessage.builder().fromCreatorId(creator).to(List.of("buyer@hearth.example"))
                 .subject("A film for you").bodyText("Hi").build());

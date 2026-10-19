@@ -228,9 +228,18 @@ public class OutreachStore {
     }
 
     /** The open pixel loaded: counts it, and the first open's time teaches the send hour. */
-    public void recordOpen(UUID deliveryId, Instant at) {
-        jdbc.update("UPDATE lead_outreach_delivery SET open_count = open_count + 1, first_opened_at = COALESCE(first_opened_at, ?) WHERE id = ?",
-                Timestamp.from(at), deliveryId);
+    /** An open of a delivered mail: what kind of mail, to whom (hashed), which template, the first open or not. */
+    public record Opened(String kind, String recipientHash, String template, boolean firstOpen) {
+    }
+
+    public Optional<Opened> recordOpen(UUID deliveryId, Instant at) {
+        return jdbc.query("""
+                UPDATE lead_outreach_delivery d SET open_count = open_count + 1, first_opened_at = COALESCE(first_opened_at, ?)
+                WHERE id = ?
+                RETURNING kind, recipient_hash, open_count = 1 AS first_open,
+                          (SELECT i.template FROM lead_outreach_intent i WHERE i.delivery_id = d.id LIMIT 1) AS template""",
+                (rs, n) -> new Opened(rs.getString("kind"), rs.getString("recipient_hash"), rs.getString("template"), rs.getBoolean("first_open")),
+                Timestamp.from(at), deliveryId).stream().findFirst();
     }
 
     public void addLink(String token, UUID deliveryId, UUID tenantId, UUID showcaseItemId, String targetUrl) {

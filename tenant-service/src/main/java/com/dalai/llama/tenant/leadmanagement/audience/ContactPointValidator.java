@@ -81,6 +81,13 @@ public class ContactPointValidator {
                 WHERE kind = 'EMAIL' AND value = ?""", reason, Timestamp.from(clock.instant()), ContactPointValues.normaliseEmail(email));
     }
 
+    /** The address bounced for good: never mailed again from any lead that has it. */
+    public void markInvalidByEmail(String email, String reason) {
+        jdbc.update("""
+                UPDATE lead_contact_point SET status = 'INVALID', status_reason = ?, last_checked_at = ?
+                WHERE kind = 'EMAIL' AND value = ?""", reason, Timestamp.from(clock.instant()), ContactPointValues.normaliseEmail(email));
+    }
+
     private void apply(UUID id, MailDomain domain) {
         Timestamp now = Timestamp.from(clock.instant());
         switch (domain) {

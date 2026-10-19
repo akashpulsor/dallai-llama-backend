@@ -24,6 +24,7 @@ import java.util.UUID;
 public class PublicOutreachController {
 
     private final OutreachStore store;
+    private final OpenAnalytics openAnalytics;
     private final OutreachService outreachService;
     private final ShowcaseProperties showcaseProperties;
     private final Clock clock;
@@ -42,7 +43,7 @@ public class PublicOutreachController {
     @GetMapping(value = "/o/{deliveryId}.gif", produces = MediaType.IMAGE_GIF_VALUE)
     public ResponseEntity<byte[]> open(@PathVariable String deliveryId) {
         try {
-            store.recordOpen(UUID.fromString(deliveryId), clock.instant());
+            store.recordOpen(UUID.fromString(deliveryId), clock.instant()).ifPresent(openAnalytics::opened);
         } catch (IllegalArgumentException ignored) {
             // Not one of ours; the image is the same either way.
         }

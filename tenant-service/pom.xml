@@ -105,6 +105,23 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
+        <!-- DKIM-signs outreach mail as partner.dalaillama.in (Hostinger signs only its own domains).
+             Jakarta Mail and Angus come from spring-boot-starter-mail. -->
+        <dependency>
+            <groupId>org.simplejavamail</groupId>
+            <artifactId>utils-mail-dkim</artifactId>
+            <version>3.2.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>jakarta.mail</groupId>
+                    <artifactId>jakarta.mail-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.angus</groupId>
+                    <artifactId>angus-mail</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
 
         <!-- ===== Security ===== -->
         <dependency>

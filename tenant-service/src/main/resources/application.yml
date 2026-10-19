@@ -169,6 +169,13 @@ services:
 # LEAD MANAGEMENT (Phase 1: creator email identities on partner.dalaillama.in;
 # inbound webhook shim only, no processing yet — see leadmanagement package)
 # ================================================================
+# DKIM for mail From the outreach domain, signed by tenant-service (notify/MailSigner); Hostinger
+# signs only its own domains. Public key: TXT dl1._domainkey.partner.dalaillama.in. No key = unsigned.
+mail-dkim:
+  domain: ${MAIL_DKIM_DOMAIN:partner.dalaillama.in}
+  selector: ${MAIL_DKIM_SELECTOR:dl1}
+  private-key: ${SMTP_DKIM_PRIVATE_KEY:}
+
 lead-management:
   # Creator email namespace. NEVER change this at runtime; existing identities in the DB
   # already carry the full address string, so a domain change here would silently desync.
@@ -225,6 +232,15 @@ outreach:
     lookback-days: 90
     min-signals: 3
   public-api-base-url: ${OUTREACH_PUBLIC_API_BASE_URL:https://api.dalaillama.in/api/v1/public/outreach}
+  # Every mail open is also a GA4 "email_open" event on the landing site's property (OpenAnalytics).
+  # With an API secret it uses the Measurement Protocol; without one, a plain collect hit.
+  analytics:
+    measurement-id: ${OUTREACH_GA_MEASUREMENT_ID:G-KCK0RY0YPP}
+    api-secret: ${OUTREACH_GA_API_SECRET:}
+  # Bounce reports come back to the SMTP mailbox; read over IMAP every half hour (BounceInbox).
+  bounces:
+    imap-host: ${SMTP_IMAP_HOST:imap.hostinger.com}
+    imap-port: 993
 showcase:
   public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
   public-data-max-age-days: 30

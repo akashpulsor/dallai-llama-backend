@@ -39,6 +39,7 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
 
     private final JavaMailSender mailSender;
     private final CreatorEmailIdentityService identityService;
+    private final com.dalai.llama.tenant.leadmanagement.notify.MailSigner signer;
     private final String smtpUsername;
     private final String envelopeFrom;
     private final boolean enabled;
@@ -46,11 +47,13 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
     public SmtpCreatorEmailSender(
             JavaMailSender mailSender,
             CreatorEmailIdentityService identityService,
+            com.dalai.llama.tenant.leadmanagement.notify.MailSigner signer,
             @Value("${spring.mail.username:}") String smtpUsername,
             @Value("${spring.mail.from:}") String envelopeFrom,
             @Value("${spring.mail.enabled:true}") boolean enabled) {
         this.mailSender = mailSender;
         this.identityService = identityService;
+        this.signer = signer;
         this.smtpUsername = smtpUsername;
         this.envelopeFrom = envelopeFrom;
         this.enabled = enabled;
@@ -110,7 +113,8 @@ public class SmtpCreatorEmailSender implements CreatorEmailSender {
                     mime.setHeader(header.getKey(), header.getValue());
                 }
             }
-            SMTPMessage out = new SMTPMessage(mime);
+            // DKIM-signed as the outreach domain (d=partner.dalaillama.in), see MailSigner.
+            SMTPMessage out = signer.prepare(mime);
             out.setEnvelopeFrom(envelope);
             mailSender.send(out);
             log.info("Sent creator email tenantId={} from={} to={} subject={}",

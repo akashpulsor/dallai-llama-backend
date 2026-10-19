@@ -28,7 +28,7 @@ class PlatformMailerTest {
 
     private final JavaMailSender smtp = mock(JavaMailSender.class);
     private final List<Runnable> background = new ArrayList<>();
-    private final PlatformMailer mailer = new PlatformMailer(smtp, background::add, "outreach@dalaillama.in", "",
+    private final PlatformMailer mailer = new PlatformMailer(smtp, new MailSigner("partner.dalaillama.in", "dl1", ""), background::add, "outreach@dalaillama.in", "",
             "brands@partner.dalaillama.in", true);
     private final PlatformMailer.Mail mail = new PlatformMailer.Mail("brand@x.example", "Your video brief is ready", "text", null);
 
@@ -86,7 +86,8 @@ class PlatformMailerTest {
 
     @Test
     void withNoAliasSetItFallsBackToTheMailbox() throws Exception {
-        PlatformMailer plain = new PlatformMailer(smtp, background::add, "outreach@dalaillama.in", "", "", true);
+        PlatformMailer plain = new PlatformMailer(smtp, new MailSigner("partner.dalaillama.in", "dl1", ""), background::add,
+                "outreach@dalaillama.in", "", "", true);
         org.mockito.ArgumentCaptor<MimeMessage> sent = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
         plain.send(mail);
         verify(smtp).send(sent.capture());
