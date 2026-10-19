@@ -83,6 +83,29 @@ public class ProductServiceClient {
 
 
 
+    /** The outreach caps of a creator's video plan: emails to brands a month, and how many brands
+     * their work reaches (null = every brand). Their free plan's when they have no subscription. */
+    public record OutreachCaps(int monthlyOutreachEmails, Integer brandReach) {
+    }
+
+    private record CreatorVideoEntitlementsBody(OutreachCaps entitlements) {
+    }
+
+    /** Empty when product-service can't be reached; the caller decides the fallback. */
+    public java.util.Optional<OutreachCaps> creatorVideoOutreachCaps(UUID tenantId) {
+        try {
+            CreatorVideoEntitlementsBody body = client().get()
+                    .uri("/api/v1/internal/products/tenants/{tenantId}/creator-video/entitlements", tenantId)
+                    .retrieve()
+                    .bodyToMono(CreatorVideoEntitlementsBody.class)
+                    .block(Duration.ofSeconds(5));
+            return java.util.Optional.ofNullable(body).map(CreatorVideoEntitlementsBody::entitlements);
+        } catch (Exception e) {
+            log.warn("Creator plan caps not read for tenant {}: {}", tenantId, e.getMessage());
+            return java.util.Optional.empty();
+        }
+    }
+
     /**
      * Get subscription details for tenant
      */

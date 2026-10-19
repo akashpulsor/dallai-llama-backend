@@ -216,7 +216,8 @@ brands:
 # Creator Showcase, Phase C: outreach mail (rules 15-17).
 outreach:
   hash-pepper: ${OUTREACH_HASH_PEPPER:}
-  free-per-week: ${OUTREACH_FREE_PER_WEEK:100}
+  # Fallback only: each creator's monthly free mails come from their video plan (OutreachPlans).
+  free-per-month: ${OUTREACH_FREE_PER_MONTH:100}
   max-recipients-per-send: 25
   cooldown-days: 14
   digest-max-cards: 4

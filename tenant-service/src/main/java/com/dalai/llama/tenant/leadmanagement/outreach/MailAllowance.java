@@ -7,16 +7,15 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Clock;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Rule 16: each creator sends {@code freePerWeek} mails a week (ISO week, UTC) for free, then
- * from paid packs, oldest pack first. One accepted recipient = one mail. */
+/** Rule 16: each creator sends their plan's mails a month (calendar month, UTC) for free -- Free
+ * 100, Studio 1,000, Pro 3,000 ({@link OutreachPlans}) -- then from paid packs, oldest pack first.
+ * One accepted recipient = one mail. */
 @Component
 @RequiredArgsConstructor
 public class MailAllowance {
@@ -26,23 +25,23 @@ public class MailAllowance {
         static final Charge FREE = new Charge(null);
     }
 
-    public record AllowanceView(int freePerWeek, int freeUsedThisWeek, int packMailsLeft) {
+    public record AllowanceView(int freePerMonth, int freeUsedThisMonth, int packMailsLeft) {
         public int left() {
-            return Math.max(0, freePerWeek - freeUsedThisWeek) + packMailsLeft;
+            return Math.max(0, freePerMonth - freeUsedThisMonth) + packMailsLeft;
         }
     }
 
     private final JdbcTemplate jdbc;
-    private final OutreachProperties properties;
+    private final OutreachPlans plans;
     private final Clock clock;
 
     public AllowanceView view(UUID tenantId) {
-        return new AllowanceView(properties.freePerWeek(), freeUsed(tenantId), packMailsLeft(tenantId));
+        return new AllowanceView(plans.caps(tenantId).monthlyOutreachEmails(), freeUsed(tenantId), packMailsLeft(tenantId));
     }
 
     /** Must run inside the send's transaction, after {@link #lock}. Empty = nothing left. */
     public Optional<Charge> take(UUID tenantId) {
-        if (freeUsed(tenantId) < properties.freePerWeek()) return Optional.of(Charge.FREE);
+        if (freeUsed(tenantId) < plans.caps(tenantId).monthlyOutreachEmails()) return Optional.of(Charge.FREE);
         List<UUID> pack = jdbc.queryForList("""
                 UPDATE lead_mail_pack SET remaining = remaining - 1
                 WHERE id = (SELECT id FROM lead_mail_pack WHERE tenant_id = ? AND remaining > 0
@@ -69,7 +68,7 @@ public class MailAllowance {
                 SELECT COUNT(*) FROM lead_outreach_intent
                 WHERE tenant_id = ? AND origin = 'CREATOR' AND mail_pack_id IS NULL
                   AND status NOT IN ('FAILED', 'EXPIRED') AND created_at >= ?""",
-                Integer.class, tenantId, Timestamp.from(weekStart()));
+                Integer.class, tenantId, Timestamp.from(monthStart()));
         return used == null ? 0 : used;
     }
 
@@ -79,8 +78,7 @@ public class MailAllowance {
         return left == null ? 0 : left;
     }
 
-    private java.time.Instant weekStart() {
-        return LocalDate.now(clock.withZone(ZoneOffset.UTC)).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                .atStartOfDay(ZoneOffset.UTC).toInstant();
+    private java.time.Instant monthStart() {
+        return LocalDate.now(clock.withZone(ZoneOffset.UTC)).withDayOfMonth(1).atStartOfDay(ZoneOffset.UTC).toInstant();
     }
 }

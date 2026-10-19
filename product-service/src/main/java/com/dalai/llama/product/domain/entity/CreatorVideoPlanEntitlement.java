@@ -61,6 +61,16 @@ public class CreatorVideoPlanEntitlement {
     @Builder.Default
     private boolean briefUrlShareEnabled = false;
 
+    /** Outreach emails to brands a month (rule 16's allowance). */
+    @Column(name = "monthly_outreach_emails", nullable = false)
+    @Builder.Default
+    private int monthlyOutreachEmails = 100;
+
+    /** How many brands the creator's work reaches through automatic outreach; null = every brand. */
+    @Column(name = "brand_reach")
+    @Builder.Default
+    private Integer brandReach = 10;
+
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 

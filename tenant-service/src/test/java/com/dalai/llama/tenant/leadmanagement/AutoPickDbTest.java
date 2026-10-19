@@ -54,7 +54,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({AutoPickJob.class, BrandDirectoryService.class, FollowService.class, OutreachService.class, OutreachStore.class,
         MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class, MailRenderer.class, RecipientHasher.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.leadmanagement.outreach.OutreachPlans.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class, MailRenderer.class, RecipientHasher.class,
         DailyDigestJob.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
         com.dalai.llama.tenant.leadmanagement.outreach.EmailTemplateService.class,
@@ -78,6 +78,8 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private CreatorEmailSender creatorSender;
     @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
+    // Unreachable unless a test says otherwise: the free plan's caps apply.
+    @MockBean private com.dalai.llama.tenant.service.client.ProductServiceClient products;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
@@ -137,6 +139,25 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
         clock.set(NOW.plus(Duration.ofDays(8)));
         assertThat(autoPicks.run(clock.instant()).picksQueued()).isEqualTo(1);
         assertThat(pendingFilm()).isEqualTo("pubriya0001"); // rotated to the film they haven't seen
+    }
+
+    @Test
+    void aCreatorsPicksReachNoMoreBrandsAMonthThanTheirPlanAllows() {
+        // Arjun's plan reaches one brand a month; Riya's (unread) is the free plan's ten.
+        when(products.creatorVideoOutreachCaps(arjun))
+                .thenReturn(java.util.Optional.of(new com.dalai.llama.tenant.service.client.ProductServiceClient.OutreachCaps(100, 1)));
+        directory.importCsv("""
+                asha@hearth.example,Asha,Hearth Foods,FOOD_BEVERAGE,IN,
+                ravi@ghar.example,Ravi,Ghar Pickles,FOOD_BEVERAGE,IN,
+                """, true);
+
+        assertThat(autoPicks.run(NOW).picksQueued()).isEqualTo(2);
+
+        // Arjun's spotlighted film went to one brand; the other got Riya's.
+        assertThat(jdbc.queryForList("""
+                SELECT s.public_id FROM lead_outreach_intent i JOIN showcase_item s ON s.id = i.showcase_item_id
+                WHERE i.origin = 'AUTO_PICK' ORDER BY s.public_id""", String.class))
+                .containsExactly("pubarjun001", "pubriya0001");
     }
 
     @Test

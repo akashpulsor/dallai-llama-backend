@@ -214,6 +214,7 @@ public class Subscription {
         return switch (billingCycle) {
             case MONTHLY -> java.time.Duration.ofDays(30);
             case QUARTERLY -> java.time.Duration.ofDays(91);
+            case HALF_YEARLY -> java.time.Duration.ofDays(182);
             case YEARLY -> java.time.Duration.ofDays(365);
         };
     }

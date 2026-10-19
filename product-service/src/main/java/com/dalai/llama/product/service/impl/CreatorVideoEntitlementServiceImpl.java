@@ -1,6 +1,5 @@
 package com.dalai.llama.product.service.impl;
 
-import com.dalai.llama.product.domain.entity.CreatorVideoPlanEntitlement;
 import com.dalai.llama.product.domain.entity.Plan;
 import com.dalai.llama.product.domain.entity.Subscription;
 import com.dalai.llama.product.domain.entity.enums.SubscriptionStatus;
@@ -81,7 +80,7 @@ public class CreatorVideoEntitlementServiceImpl implements CreatorVideoEntitleme
         Plan plan = paidEntitlementsApply ? subscription.getPlan() : freePlan();
 
         CreatorVideoEntitlements entitlements = entitlementRepository.findByPlan_Id(plan.getId())
-                .map(this::toEntitlements)
+                .map(CreatorVideoEntitlements::of)
                 .orElseGet(CreatorVideoEntitlements::freeDefaults);
 
         return CreatorVideoEntitlementsResponse.builder()
@@ -93,19 +92,6 @@ public class CreatorVideoEntitlementServiceImpl implements CreatorVideoEntitleme
                 .currentPeriodEnd(paidEntitlementsApply ? subscription.getExpiresAt() : null)
                 .entitlements(entitlements)
                 .build();
-    }
-
-    private CreatorVideoEntitlements toEntitlements(CreatorVideoPlanEntitlement e) {
-        return new CreatorVideoEntitlements(
-                e.isVideoCreationEnabled(),
-                e.isVideoDownloadEnabled(),
-                e.isEditsEnabled(),
-                e.isImageUploadEnabled(),
-                e.isUpscalingEnabled(),
-                e.isUpscalePreviewEnabled(),
-                e.isCharacterVoiceUploadEnabled(),
-                e.isBriefUrlShareEnabled()
-        );
     }
 
     private Plan freePlan() {

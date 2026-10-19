@@ -46,7 +46,7 @@ public class RecurringCharge {
 
     @Column(nullable = false, length = 20)
     @Builder.Default
-    private String frequency = "MONTHLY"; // MONTHLY, WEEKLY, YEARLY
+    private String frequency = "MONTHLY"; // MONTHLY, WEEKLY, QUARTERLY, HALF_YEARLY, YEARLY
 
     @Column(name = "next_charge_date", nullable = false)
     private LocalDate nextChargeDate;
@@ -110,6 +110,7 @@ public class RecurringCharge {
         return switch (frequency) {
             case "WEEKLY" -> nextChargeDate.plusWeeks(1);
             case "QUARTERLY" -> nextChargeDate.plusMonths(3);
+            case "HALF_YEARLY" -> nextChargeDate.plusMonths(6);
             case "YEARLY" -> nextChargeDate.plusYears(1);
             default -> nextChargeDate.plusMonths(1); // MONTHLY
         };

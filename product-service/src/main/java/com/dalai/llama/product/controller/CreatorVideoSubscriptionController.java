@@ -1,6 +1,5 @@
 package com.dalai.llama.product.controller;
 
-import com.dalai.llama.product.domain.entity.CreatorVideoPlanEntitlement;
 import com.dalai.llama.product.domain.entity.Plan;
 import com.dalai.llama.product.dto.creatorvideo.CreatorVideoEntitlements;
 import com.dalai.llama.product.dto.creatorvideo.CreatorVideoEntitlementsResponse;
@@ -58,7 +57,7 @@ public class CreatorVideoSubscriptionController {
 
     private CreatorVideoPlanResponse toPlanResponse(Plan plan) {
         CreatorVideoEntitlements entitlements = planEntitlementRepository.findByPlan_Id(plan.getId())
-                .map(this::toEntitlements)
+                .map(CreatorVideoEntitlements::of)
                 .orElseGet(CreatorVideoEntitlements::freeDefaults);
         return CreatorVideoPlanResponse.builder()
                 .planCode(plan.getCode())
@@ -71,12 +70,7 @@ public class CreatorVideoSubscriptionController {
                 .build();
     }
 
-    private CreatorVideoEntitlements toEntitlements(CreatorVideoPlanEntitlement e) {
-        return new CreatorVideoEntitlements(
-                e.isVideoCreationEnabled(), e.isVideoDownloadEnabled(), e.isEditsEnabled(),
-                e.isImageUploadEnabled(), e.isUpscalingEnabled(), e.isUpscalePreviewEnabled(),
-                e.isCharacterVoiceUploadEnabled(), e.isBriefUrlShareEnabled());
-    }
+
 
     @PostMapping("/subscriptions")
     @Operation(summary = "Subscribe", description = "Charges the wallet immediately and activates the subscription; returns PAYMENT_REQUIRED with a Razorpay order when the wallet is short, or PAYMENT_UNAVAILABLE when that order could not be created")

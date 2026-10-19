@@ -57,16 +57,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Phase C on a real Postgres: one mail per recipient per day (now, or in the next digest), the
- * daily send cap, the creator cooldown, the weekly allowance and paid packs, unsubscribe, tracked
+ * daily send cap, the creator cooldown, the monthly allowance (from the creator's plan) and paid packs, unsubscribe, tracked
  * links and the purge.
  * SMTP and billing are the only fakes. */
 @Testcontainers(disabledWithoutDocker = true)
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true",
-        "outreach.free-per-week=3", "outreach.hash-pepper=pepper", "outreach.daily-send-cap=5"})
+        "outreach.free-per-month=3", "outreach.hash-pepper=pepper", "outreach.daily-send-cap=5"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.leadmanagement.outreach.OutreachPlans.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
         MailRenderer.class, RecipientHasher.class, DailyDigestJob.class,
         com.dalai.llama.tenant.leadmanagement.outreach.OutreachDispatchJob.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.IntentDispatcher.class,
@@ -91,6 +91,8 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private CreatorEmailSender creatorSender;
     @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
+    // Unreachable unless a test says otherwise: the free plan's caps apply.
+    @MockBean private com.dalai.llama.tenant.service.client.ProductServiceClient products;
     @MockBean private PlatformMailer platformMailer;
     @MockBean private BillingServiceClient billing;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
@@ -196,9 +198,25 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         assertThat(send(riya, "pubriya0001", "4@x.example").results().get(0).outcome()).isEqualTo(Outcome.SENT);
         assertThat(jdbc.queryForObject("SELECT remaining FROM lead_mail_pack", Integer.class)).isEqualTo(499);
 
-        // A new ISO week brings the free mails back.
+        // The free mails are a month's: a new week changes nothing, a new month brings them back.
         clock.set(Instant.parse("2026-10-12T00:00:01Z"));
-        assertThat(outreach.overview(riya).allowance().freeUsedThisWeek()).isZero();
+        assertThat(outreach.overview(riya).allowance().freeUsedThisMonth()).isEqualTo(3);
+        clock.set(Instant.parse("2026-11-01T00:00:01Z"));
+        assertThat(outreach.overview(riya).allowance().freeUsedThisMonth()).isZero();
+    }
+
+    @Test
+    void aCreatorOnAPaidPlanGetsThatPlansMonthlyMails() {
+        when(products.creatorVideoOutreachCaps(arjun))
+                .thenReturn(java.util.Optional.of(new com.dalai.llama.tenant.service.client.ProductServiceClient.OutreachCaps(1000, 100)));
+
+        SendResult sent = outreach.send(arjun, new SendRequest(OutreachTemplate.CREATOR_PORTFOLIO, null, null, null, List.of(
+                new Recipient("1@x.example", null, null), new Recipient("2@x.example", null, null),
+                new Recipient("3@x.example", null, null), new Recipient("4@x.example", null, null))));
+
+        assertThat(sent.results()).extracting(r -> r.outcome()).doesNotContain(Outcome.OVER_ALLOWANCE);
+        assertThat(sent.allowance().freePerMonth()).isEqualTo(1000);
+        assertThat(sent.allowance().left()).isEqualTo(996);
     }
 
     @Test
@@ -254,7 +272,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         assertThat(dispatchJob.run().sent()).isEqualTo(1);
         verify(creatorSender, times(2)).send(any());
         // Charged once, when it was accepted: 2 of the 3 free mails used, none given back or taken again.
-        assertThat(outreach.overview(riya).allowance().freeUsedThisWeek()).isEqualTo(2);
+        assertThat(outreach.overview(riya).allowance().freeUsedThisMonth()).isEqualTo(2);
     }
 
     @Test
@@ -389,11 +407,11 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
     void aFreeMailHeldForSomeoneWhoUnsubscribesComesBack() {
         send(riya, "pubriya0001", "gone@x.example");
         send(arjun, "pubarjun001", "gone@x.example"); // held
-        assertThat(outreach.overview(arjun).allowance().freeUsedThisWeek()).isEqualTo(1);
+        assertThat(outreach.overview(arjun).allowance().freeUsedThisMonth()).isEqualTo(1);
 
         outreach.unsubscribe(jdbc.queryForObject("SELECT unsubscribe_token FROM lead_outreach_delivery", String.class));
 
-        assertThat(outreach.overview(arjun).allowance().freeUsedThisWeek()).isZero();
+        assertThat(outreach.overview(arjun).allowance().freeUsedThisMonth()).isZero();
     }
 
     @Autowired private com.dalai.llama.tenant.leadmanagement.outreach.OutreachSendTimes sendTimes;

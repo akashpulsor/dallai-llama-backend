@@ -8,7 +8,8 @@ public record OutreachProperties(
         /* Secret mixed into recipient hashes, from a k8s secret. Changing it forgets every
          * suppression and cooldown, so set it once. */
         String hashPepper,
-        int freePerWeek,
+        /* Free outreach mails a month when the creator's plan can't be read (the Free plan's). */
+        int freePerMonth,
         int maxRecipientsPerSend,
         int cooldownDays,
         int digestMaxCards,

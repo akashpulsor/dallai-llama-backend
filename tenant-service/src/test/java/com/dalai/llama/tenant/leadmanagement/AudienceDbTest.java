@@ -78,7 +78,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({LeadImportService.class, AudienceService.class, AudienceStore.class, ContactPointValidator.class, RecipientHasher.class,
         OutreachService.class, OutreachStore.class, MailAllowance.class, MailableFilms.class, OutreachComposer.class,
-        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.leadmanagement.outreach.OutreachPlans.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
         MailRenderer.class, IntentDispatcher.class, EmailTemplateService.class, EmailTemplateStore.class,
         OutreachDispatchJob.class, OutreachAnalyticsService.class, OutreachAnalyticsStore.class, CreatorProfileService.class,
         HandlePolicy.class, AudienceDbTest.TestConfig.class})
@@ -97,6 +97,8 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
 
     @MockBean private CreatorEmailSender creatorSender;
     @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
+    // Unreachable unless a test says otherwise: the free plan's caps apply.
+    @MockBean private com.dalai.llama.tenant.service.client.ProductServiceClient products;
     @MockBean private BillingServiceClient billing;
     @MockBean private MailDomainResolver domains;
     @Autowired private LeadImportService imports;
@@ -249,7 +251,7 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         var sent = outreach.send(riya, new SendRequest(OutreachTemplate.SHOWCASE_WORK, null, "pubriya0001", null,
                 List.of(new Recipient("x@nomail.example", null, null))));
         assertThat(sent.results().get(0).outcome()).isEqualTo(Outcome.UNDELIVERABLE);
-        assertThat(sent.allowance().freeUsedThisWeek()).isZero();
+        assertThat(sent.allowance().freeUsedThisMonth()).isZero();
         verify(creatorSender, times(0)).send(any());
     }
 

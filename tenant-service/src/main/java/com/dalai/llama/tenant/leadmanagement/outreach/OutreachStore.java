@@ -242,6 +242,15 @@ public class OutreachStore {
                 Timestamp.from(at), deliveryId).stream().findFirst();
     }
 
+    /** Distinct brands a creator's automatic picks went to since {@code since}. */
+    public int autoPickBrandsSince(UUID tenantId, Instant since) {
+        Integer brands = jdbc.queryForObject("""
+                SELECT COUNT(DISTINCT recipient_hash) FROM lead_outreach_intent
+                WHERE tenant_id = ? AND origin = 'AUTO_PICK' AND status NOT IN ('FAILED', 'EXPIRED') AND created_at >= ?""",
+                Integer.class, tenantId, Timestamp.from(since));
+        return brands == null ? 0 : brands;
+    }
+
     public void addLink(String token, UUID deliveryId, UUID tenantId, UUID showcaseItemId, String targetUrl) {
         jdbc.update("INSERT INTO lead_outreach_link (token, delivery_id, tenant_id, showcase_item_id, target_url) VALUES (?, ?, ?, ?, ?)",
                 token, deliveryId, tenantId, showcaseItemId, targetUrl);
