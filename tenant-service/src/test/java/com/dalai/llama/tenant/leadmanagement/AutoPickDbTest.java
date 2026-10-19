@@ -158,7 +158,7 @@ class AutoPickDbTest extends ShowcaseDbTestSupport {
         assertThat(digest.run().digestsSent()).isEqualTo(1);
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(platformMailer).send(mail.capture());
-        assertThat(mail.getValue().text()).contains("NEW FROM A CREATOR YOU FOLLOW", "posted a new film");
+        assertThat(mail.getValue().text()).contains("NEW FROM A CREATOR YOU FOLLOW", "Posted a new film");
     }
 
     private String pendingFilm() {

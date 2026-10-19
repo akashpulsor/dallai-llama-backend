@@ -130,7 +130,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         // A letter from the creator showing the film: who it was for, its format and length, a way to watch it.
         assertThat(mail.getValue().subject()).isEqualTo("A video I made recently: Video riya0000001");
         assertThat(mail.getValue().bodyText()).contains("Hi Asha,", "Hello", "Video riya0000001", "Made for a food & beverage brand",
-                "Product ad · 0:30 · Widescreen · Made on Dalai Llama for a paying client", "Watch the film: ", "Riya Motion\nSee all my work: https://dalaillama.in/c/riya-motion");
+                "Product ad · 0:30 · Widescreen\n✓ Made on Dalai Llama for a paying client", "Watch the film: ", "Riya Motion\nSee all my work: https://dalaillama.in/c/riya-motion");
         assertThat(mail.getValue().bodyHtml()).contains("/showcase/pubriya0001/poster", "Watch the film", "Request one like this",
                 "Request a video from me", "/o/");
         // "Request" opens the brands site's request form for this creator, not a reply.
@@ -327,7 +327,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
                 "A CREATOR WROTE TO YOU: Kabir Reels", "Video kabir000001", "Video kabir000002", "Request a video from Kabir Reels",
                 "Made for a food & beverage brand", "Made on Dalai Llama for a paying client");
         // Every film is shown in full, with its own poster and both buttons; nobody is asked to reply by mail.
-        assertThat(mail.getValue().html()).contains("/showcase/pubkabir002/poster", "Ask Kabir Reels for one like this")
+        assertThat(mail.getValue().html()).contains("/showcase/pubkabir002/poster", "Request one like this")
                 .doesNotContain("https://i/kabir000002.jpg", "mailto:", "Reply to");
         assertThat(mail.getValue().html().split("Watch the film", -1)).hasSize(4);
         assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class))
@@ -358,12 +358,15 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         verify(creatorSender).send(mail.capture());
         assertThat(mail.getValue().subject()).isEqualTo("Video ideas for your brand");
         assertThat(mail.getValue().bodyText()).contains("videos food & beverage brands are running", "Healthy juice benefits reel",
-                "Found on Pinterest · by Dadu Fresh", "An idea for your brand, not made on Dalai Llama", "Watch on Pinterest",
-                "Request a video from me").doesNotContain("Mochi launch");
-        assertThat(mail.getValue().bodyHtml()).contains("https://i.pinimg.com/564x/juice.jpg", "width=\"300\"");
+                "By Dadu Fresh", "Food & beverage · Video idea\nAn idea for your brand, not made on Dalai Llama", "Watch the video",
+                "Request a video from me").doesNotContain("Mochi launch", "Pinterest", "pinterest");
+        assertThat(mail.getValue().bodyHtml()).contains("https://i.pinimg.com/564x/juice.jpg", "width=\"240\"");
         assertThat(jdbc.queryForObject("SELECT template FROM lead_outreach_intent", String.class)).isEqualTo("INSPIRATION");
-        assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class)).contains(
-                "https://www.pinterest.com/pin/1037376095420175260/")
+        assertThat(mail.getValue().bodyHtml()).doesNotContain("Pinterest", "pinterest.com");
+        // "Watch" plays it on our own inspiration board; nothing in the mail leads off the brands site.
+        assertThat(jdbc.queryForList("SELECT target_url FROM lead_outreach_link", String.class))
+                .anyMatch(t -> t.startsWith("https://dalaillama.in/inspiration?industry=FOOD_BEVERAGE&ref="))
+                .noneMatch(t -> t.contains("pinterest"))
                 .anyMatch(t -> t.startsWith("https://dalaillama.in/creators?then=request&creator=neha-studio&inspiration=1037376095420175260"));
     }
 

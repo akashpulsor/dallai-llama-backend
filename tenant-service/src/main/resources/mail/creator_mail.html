@@ -1,16 +1,31 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{subject}}</title></head>
-<body style="margin:0;padding:0">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0">{{preheader}}</div>
-<div style="max-width:600px;padding:16px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#222222">
-<p style="margin:0 0 14px">{{greeting}}</p>
-<p style="margin:0 0 14px">{{intro}}</p>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>{{subject}}</title></head>
+<body style="margin:0;padding:0;background:#f6f4fa;-webkit-text-size-adjust:100%">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#f6f4fa">{{preheader}}&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f4fa"><tr><td align="center" style="padding:28px 12px 32px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #ebe6f3;border-radius:18px;border-collapse:separate;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#16121f">
+<tr><td style="height:6px;background:#6d28d9;border-radius:18px 18px 0 0;font-size:0;line-height:0">&nbsp;</td></tr>
+<tr><td style="padding:24px 28px 4px">{{{avatarHtml}}}</td></tr>
+<tr><td style="padding:18px 28px 8px">
+<p style="margin:0 0 14px;font-size:16px;line-height:1.6;color:#16121f">{{greeting}}</p>
+<p style="margin:0 0 16px;font-size:16px;line-height:1.65;color:#3d3550">{{intro}}</p>
 {{{noteHtml}}}
+</td></tr>
 {{{filmsHtml}}}
-<p style="margin:0 0 14px">{{ask}}</p>
+<tr><td style="padding:2px 28px 24px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3eefe;border-radius:14px;border-collapse:separate"><tr><td style="padding:20px 22px">
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#3d3550">{{ask}}</p>
 {{{requestHtml}}}
-<p style="margin:18px 0 0">{{creatorName}}<br><a href="{{profileUrl}}" target="_blank" rel="noopener noreferrer" style="color:#666666">See all my work</a></p>
-<p style="margin:28px 0 0;font-size:12px;color:#888888">Sent through Dalai Llama. You'll get at most one email a day from creators here. <a href="{{unsubscribeUrl}}" style="color:#888888">Unsubscribe</a></p>
-</div>
+</td></tr></table>
+</td></tr>
+<tr><td style="padding:0 28px 26px;font-size:15px;line-height:1.5;color:#16121f">
+<span style="font-weight:800">{{creatorName}}</span><br>
+<a href="{{profileUrl}}" target="_blank" rel="noopener noreferrer" style="font-size:13px;font-weight:700;color:#6d28d9;text-decoration:none">See all my work &rarr;</a>
+</td></tr>
+</table>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px"><tr><td style="padding:16px 28px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#8b7fa3;text-align:center">
+{{creatorName}} sent you this through Dalai Llama, where brands get videos made by creators. At most one email a day from creators here.<br><a href="{{unsubscribeUrl}}" style="color:#8b7fa3">Unsubscribe</a>
+</td></tr></table>
+</td></tr></table>
 {{{openPixelHtml}}}
 </body></html>

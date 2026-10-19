@@ -1,4 +1,4 @@
-{{label}}: {{heading}}
+{{label}}: {{headingText}}
 {{messageText}}
 
 {{filmsText}}{{requestText}}

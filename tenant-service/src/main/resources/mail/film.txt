@@ -1,6 +1,7 @@
 {{title}}
 {{madeFor}}
 {{details}}
+{{proof}}
 {{watchLabel}}: {{watchUrl}}
 {{requestLabel}}: {{requestUrl}}
 
