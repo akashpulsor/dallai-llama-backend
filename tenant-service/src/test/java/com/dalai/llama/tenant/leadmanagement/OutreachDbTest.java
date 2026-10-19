@@ -130,7 +130,7 @@ class OutreachDbTest extends ShowcaseDbTestSupport {
         // A letter from the creator showing the film: who it was for, its format and length, a way to watch it.
         assertThat(mail.getValue().subject()).isEqualTo("A video I made recently: Video riya0000001");
         assertThat(mail.getValue().bodyText()).contains("Hi Asha,", "Hello", "Video riya0000001", "Made for a food & beverage brand",
-                "Product ad · 0:30 · Widescreen · Made on Dalai Llama for a paying client", "Watch the film: ", "Riya Motion\ndalaillama.in/c/riya-motion");
+                "Product ad · 0:30 · Widescreen · Made on Dalai Llama for a paying client", "Watch the film: ", "Riya Motion\nSee all my work: https://dalaillama.in/c/riya-motion");
         assertThat(mail.getValue().bodyHtml()).contains("/showcase/pubriya0001/poster", "Watch the film", "Request one like this",
                 "Request a video from me", "/o/");
         // "Request" opens the brands site's request form for this creator, not a reply.

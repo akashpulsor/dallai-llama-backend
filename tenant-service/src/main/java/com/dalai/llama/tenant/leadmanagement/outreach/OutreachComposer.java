@@ -102,7 +102,9 @@ public class OutreachComposer {
     public Mail creatorMail(EmailTemplateStore.EmailTemplate template, Content content, UUID tenantId, String creatorName, String handle,
                             String recipientName, String note, OutreachStore.Delivery delivery) {
         Content shown = limit(content, template.layout().maxFilms());
-        Videos videos = videos(shown, tenantId, handle, delivery, "Request one like this");
+        // Reads as a personal email, not a newsletter (plain text style, links not buttons), so it
+        // lands in the inbox rather than Promotions.
+        Videos videos = videos(shown, tenantId, handle, delivery, "Request one like this", "letter_film");
         String unsubscribe = unsubscribeUrl(delivery);
         String subject = fill(template.subject(), shown, creatorName, recipientName);
         String intro = fill(template.intro(), shown, creatorName, recipientName);
@@ -114,8 +116,8 @@ public class OutreachComposer {
                 : "If you have a video coming up, I'd be glad to make it for you. Send me a request and you'll get a brief with "
                 + "the price straight away.";
         CreatorMailContext context = new CreatorMailContext(subject, preheader(shown), greeting(recipientName), intro,
-                personal.isEmpty() ? "" : renderer.html("note", new TextContext(personal)), personal,
-                videos.html, videos.text, ask, renderer.html("button", request), renderer.text("button", request),
+                personal.isEmpty() ? "" : renderer.html("letter_note", new TextContext(personal)), personal,
+                videos.html, videos.text, ask, renderer.html("link", request), renderer.text("link", request),
                 creatorName, handle, profileUrl(handle, null, null), unsubscribe, openPixel(delivery));
         return new Mail(subject, renderer.text("creator_mail", context),
                 renderer.html("creator_mail", context), unsubscribeHeaders(unsubscribe));
@@ -152,7 +154,7 @@ public class OutreachComposer {
 
     private SectionContext section(DigestSection section, OutreachStore.Delivery delivery) {
         Videos videos = videos(section.content(), section.tenantId(), section.handle(), delivery,
-                "Ask " + section.creatorName() + " for one like this");
+                "Ask " + section.creatorName() + " for one like this", "film");
         String message = blank(section.message());
         ButtonContext request = new ButtonContext("Request a video from " + section.creatorName(),
                 requestUrl(section.tenantId(), section.handle(), null, null, section.content().industry(), delivery));
@@ -190,15 +192,16 @@ public class OutreachComposer {
     private record Videos(String html, String text) {
     }
 
-    private Videos videos(Content content, UUID tenantId, String handle, OutreachStore.Delivery delivery, String requestLabel) {
+    private Videos videos(Content content, UUID tenantId, String handle, OutreachStore.Delivery delivery, String requestLabel,
+                          String template) {
         StringBuilder html = new StringBuilder();
         StringBuilder text = new StringBuilder();
         List<FilmContext> blocks = new ArrayList<>();
         for (MailableFilm f : content.films()) blocks.add(film(f, delivery, requestLabel));
         for (MailIdea i : content.ideas()) blocks.add(idea(i, tenantId, handle, delivery, requestLabel));
         for (FilmContext block : blocks) {
-            html.append(renderer.html("film", block));
-            text.append(renderer.text("film", block));
+            html.append(renderer.html(template, block));
+            text.append(renderer.text(template, block));
         }
         return new Videos(html.toString(), text.toString());
     }
