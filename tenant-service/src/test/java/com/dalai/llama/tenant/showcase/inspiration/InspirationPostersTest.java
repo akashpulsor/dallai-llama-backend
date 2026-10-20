@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Reads the picture and maker out of Pinterest's pin info, the shape its widgets endpoint answers with. */
+/** Reads the picture, video and maker out of Pinterest's pin info, the shape its widgets endpoint answers with. */
 class InspirationPostersTest {
 
     private final ObjectMapper json = new ObjectMapper();
@@ -15,10 +15,11 @@ class InspirationPostersTest {
         var pin = json.readTree("""
                 {"images":{"237x":{"width":236,"height":419,"url":"https://i.pinimg.com/236x/a.jpg"},
                            "564x":{"width":564,"height":1002,"url":"https://i.pinimg.com/564x/a.jpg"}},
+                 "videos":{"video_list":{"V_720P":{"url":"https://v1.pinimg.com/videos/720p/a.mp4","duration":29967.0}}},
                  "native_creator":{"full_name":"Dadu Fresh "},"pinner":{"full_name":"Someone"}}""");
 
-        assertThat(InspirationPosters.poster(pin)).contains(
-                new InspirationPosters.Poster("https://i.pinimg.com/564x/a.jpg", 564, 1002, "Dadu Fresh"));
+        assertThat(InspirationPosters.poster(pin)).contains(new InspirationPosters.Poster("https://i.pinimg.com/564x/a.jpg", 564, 1002,
+                "Dadu Fresh", "https://v1.pinimg.com/videos/720p/a.mp4", new java.math.BigDecimal("29.97")));
     }
 
     @Test
@@ -28,6 +29,7 @@ class InspirationPostersTest {
         assertThat(InspirationPosters.poster(small)).hasValueSatisfying(p -> {
             assertThat(p.url()).isEqualTo("https://i.pinimg.com/236x/a.jpg");
             assertThat(p.makerName()).isEqualTo("Someone");
+            assertThat(p.videoUrl()).isNull();
         });
         assertThat(InspirationPosters.poster(json.readTree("{\"images\":{}}"))).isEmpty();
     }

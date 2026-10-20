@@ -16,7 +16,9 @@ public class InspirationStore {
     private static final RowMapper<InspirationItem> ROW = (rs, n) -> new InspirationItem(
             rs.getObject("id", UUID.class), rs.getString("pin_id"), InspirationPins.url(rs.getString("pin_id")),
             rs.getString("title"), ShowcaseIndustry.valueOf(rs.getString("industry")), rs.getString("note"),
-            rs.getObject("embed_height", Integer.class));
+            rs.getObject("embed_height", Integer.class), rs.getString("poster_url"), rs.getObject("poster_width", Integer.class),
+            rs.getObject("poster_height", Integer.class), rs.getString("video_url"), rs.getBigDecimal("duration_seconds"),
+            rs.getString("maker_name"));
 
     private final JdbcTemplate jdbc;
 
@@ -64,8 +66,16 @@ public class InspirationStore {
     }
 
     public void setPoster(UUID id, InspirationPosters.Poster poster) {
-        jdbc.update("UPDATE inspiration_item SET poster_url = ?, poster_width = ?, poster_height = ?, maker_name = ? WHERE id = ?",
-                poster.url(), poster.width(), poster.height(), poster.makerName(), id);
+        jdbc.update("""
+                UPDATE inspiration_item SET poster_url = ?, poster_width = ?, poster_height = ?, maker_name = ?, video_url = ?,
+                    duration_seconds = ? WHERE id = ?""",
+                poster.url(), poster.width(), poster.height(), poster.makerName(), poster.videoUrl(), poster.durationSeconds(), id);
+    }
+
+    /** Active items whose picture or video isn't known yet. */
+    public List<InspirationItem> withoutMedia(int limit) {
+        return jdbc.query("SELECT * FROM inspiration_item WHERE active AND (poster_url IS NULL OR video_url IS NULL) "
+                + "ORDER BY created_at LIMIT ?", ROW, limit);
     }
 
     public boolean hide(UUID id) {

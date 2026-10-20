@@ -13,16 +13,17 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Optional;
 
-/** A pin's picture and maker from Pinterest's public pin info (the data its embed widget reads), for
- * mail: an inbox can't play the embed, so a mailed inspiration video shows its picture and links to
- * the pin. Empty when Pinterest doesn't answer; the pin is then left out of mail until it does. */
+/** A pin's picture, video file and maker from its public pin info (the data the embed widget
+ * reads), so inspiration shows in mail and plays in our own player with no third-party embed.
+ * Empty when the pin info doesn't answer; the item is then left out until it does. */
 @Slf4j
 @Component
 public class InspirationPosters {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(8);
 
-    public record Poster(String url, int width, int height, String makerName) {
+    /** {@code videoUrl}/{@code durationSeconds} null for a pin that is an image. */
+    public record Poster(String url, int width, int height, String makerName, String videoUrl, java.math.BigDecimal durationSeconds) {
     }
 
     private final ObjectMapper json;
@@ -57,7 +58,11 @@ public class InspirationPosters {
         String url = image.path("url").asText("");
         if (!url.startsWith("https://")) return Optional.empty();
         String maker = pin.path("native_creator").path("full_name").asText(pin.path("pinner").path("full_name").asText(""));
+        JsonNode video = pin.path("videos").path("video_list").path("V_720P");
+        String videoUrl = video.path("url").asText("");
         return Optional.of(new Poster(url, image.path("width").asInt(0), image.path("height").asInt(0),
-                maker.isBlank() ? null : maker.trim()));
+                maker.isBlank() ? null : maker.trim(), videoUrl.startsWith("https://") ? videoUrl : null,
+                video.has("duration") ? java.math.BigDecimal.valueOf(video.path("duration").asDouble() / 1000.0)
+                        .setScale(2, java.math.RoundingMode.HALF_UP) : null));
     }
 }

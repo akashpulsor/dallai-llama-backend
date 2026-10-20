@@ -5,11 +5,15 @@ import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import java.util.UUID;
 
 /**
- * A Pinterest video ops picked as a reference for brands in an industry (V47).
+ * A video ops picked as a reference for brands in an industry (V47), shown tagged "Inspiration":
+ * an idea of what a creator can make, never presented as a creator's own work.
  *
- * @param pinUrl       the pin on Pinterest, which the embed credits and links to
- * @param embedHeight  the player's height at Pinterest's 450px width (V50), to size the card; null when unknown
+ * @param embedHeight   the old embed's height (V50); kept for the board's layout until the picture is known
+ * @param posterUrl     its picture, and {@code videoUrl} its file (V56, V57), to play in our own player;
+ *                      null until filled from the pin's info
+ * @param makerName     who made it, credited on the card
  */
 public record InspirationItem(UUID id, String pinId, String pinUrl, String title, ShowcaseIndustry industry, String note,
-                              Integer embedHeight) {
+                              Integer embedHeight, String posterUrl, Integer posterWidth, Integer posterHeight, String videoUrl,
+                              java.math.BigDecimal durationSeconds, String makerName) {
 }

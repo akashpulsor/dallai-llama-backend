@@ -69,6 +69,27 @@ public class PublicShowcaseService {
                 .map(this::toProfileView);
     }
 
+    /** The creators with films to show, most followed first (then most films): the catalogue on the
+     * landing page and the brands site. At most {@code limit}. */
+    public List<com.dalai.llama.tenant.showcase.dto.PublicCreatorCard> catalogue(int limit) {
+        boolean self = hostProperties.platformFilmsSelfHosted();
+        return profileRepository.findByStatus(ProfileStatus.ACTIVE).stream()
+                .map(p -> {
+                    List<PublicShowcaseCard> films = toCards(itemRepository.findPublicForCreator(p.getTenantId(), freshAfter(), minItems(), self));
+                    if (films.isEmpty()) return null;
+                    PublicShowcaseCard cover = films.get(0);
+                    return new com.dalai.llama.tenant.showcase.dto.PublicCreatorCard(p.getHandle(), p.getDisplayName(), p.getHeadline(),
+                            cover.creator().avatarUrl(),
+                            p.getIndustries().isEmpty() ? EnumSet.noneOf(ShowcaseIndustry.class) : EnumSet.copyOf(p.getIndustries()),
+                            films.size(), p.getFollowerCount(), cover.thumbnailUrl(), cover.creator().profileUrl());
+                })
+                .filter(java.util.Objects::nonNull)
+                .sorted(java.util.Comparator.comparingInt(com.dalai.llama.tenant.showcase.dto.PublicCreatorCard::followerCount).reversed()
+                        .thenComparing(java.util.Comparator.comparingInt(com.dalai.llama.tenant.showcase.dto.PublicCreatorCard::filmCount).reversed()))
+                .limit(limit)
+                .toList();
+    }
+
     /** Discover's tabs: NEW is newest first for everyone public; TOP is by score, limited to
      * creators at or above the top floor (rule 12); ALL is by score for everyone public. */
     public enum FeedTab { NEW, TOP, ALL }

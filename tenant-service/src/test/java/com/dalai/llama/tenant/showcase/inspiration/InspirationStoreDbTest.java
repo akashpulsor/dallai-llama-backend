@@ -38,4 +38,24 @@ class InspirationStoreDbTest extends ShowcaseDbTestSupport {
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("Face wash ad with motion graphics", 899),
                         org.assertj.core.groups.Tuple.tuple("Chocolate edit", 352));
     }
+
+    @Test
+    void anItemGetsItsPictureVideoAndMaker_thenNoLongerNeedsThem() {
+        InspirationItem juice = store.save("1037376095420175260", "Healthy juice reel", ShowcaseIndustry.FOOD_BEVERAGE, null, 0, 899);
+        assertThat(store.withoutMedia(10)).extracting(InspirationItem::id).containsExactly(juice.id());
+
+        InspirationPosters posters = org.mockito.Mockito.mock(InspirationPosters.class);
+        InspirationMediaJob job = new InspirationMediaJob(store, posters);
+        org.mockito.Mockito.when(posters.fetch("1037376095420175260")).thenReturn(java.util.Optional.of(new InspirationPosters.Poster(
+                "https://i.pinimg.com/564x/juice.jpg", 564, 1002, "Dadu Fresh", "https://v1.pinimg.com/videos/720p/juice.mp4",
+                new java.math.BigDecimal("29.97"))));
+        assertThat(job.run()).isEqualTo(1);
+
+        InspirationItem filled = store.active(ShowcaseIndustry.FOOD_BEVERAGE).get(0);
+        assertThat(filled.posterUrl()).isEqualTo("https://i.pinimg.com/564x/juice.jpg");
+        assertThat(filled.videoUrl()).isEqualTo("https://v1.pinimg.com/videos/720p/juice.mp4");
+        assertThat(filled.durationSeconds()).isEqualByComparingTo("29.97");
+        assertThat(filled.makerName()).isEqualTo("Dadu Fresh");
+        assertThat(store.withoutMedia(10)).isEmpty();
+    }
 }

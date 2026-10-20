@@ -120,6 +120,23 @@ class ShowcaseDbTest {
     }
 
     @Test
+    void theCatalogueListsCreatorsWithFilmsToShow_withTheirLatestFilmAsCover() {
+        UUID riya = creatorWithChannel("Riya Motion", "UCriya");
+        video("short1", "UCriya", 405, 720, true);
+        video("film1", "UCriya", 1280, 720, true);
+        pickService.pick(riya, pick("short1"));
+        pickService.pick(riya, pick("film1"));
+        creatorWithChannel("Kabir Frames", "UCkabir"); // nothing picked: not listed
+
+        assertThat(publicService.catalogue(12)).singleElement().satisfies(card -> {
+            assertThat(card.handle()).isEqualTo("riya-motion");
+            assertThat(card.filmCount()).isEqualTo(2);
+            assertThat(card.coverUrl()).isNotBlank();
+            assertThat(card.profileUrl()).isEqualTo("https://dalaillama.in/c/riya-motion");
+        });
+    }
+
+    @Test
     void aConnectedChannelFillsTheProfile_aiMarkedFirst_andNeverBringsBackWhatTheCreatorRemoved() {
         UUID tenant = creatorWithChannel("Riya Motion", "UCriya");
         jdbc.update("INSERT INTO creator_profile_industry (tenant_id, industry) VALUES (?, 'BEAUTY')", tenant);

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /** No-login endpoints behind the public site. {@code /api/v1/public/**} is already permitAll in
@@ -31,6 +32,14 @@ public class PublicShowcaseController {
     private final ShowcaseEngagementService engagementService;
     private final ShowcaseModerationService moderation;
     private final com.dalai.llama.tenant.showcase.service.LandingAssembler landingAssembler;
+
+    /** The creator catalogue: creators with films to show, most followed first. */
+    @GetMapping("/api/v1/public/creators")
+    public ResponseEntity<List<com.dalai.llama.tenant.showcase.dto.PublicCreatorCard>> creators(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "12") int limit) {
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.maxAge(java.time.Duration.ofMinutes(10)).cachePublic())
+                .body(showcaseService.catalogue(Math.max(1, Math.min(limit, 48))));
+    }
 
     /** A handle the creator gave up within the redirect window answers 301 to the new one, so old
      * links in mails keep working; the body's {@code handle} is the current one. */
