@@ -241,15 +241,15 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
 
         assertThat(submitted.status()).isEqualTo(BrandInquiry.Status.CONVERTED);
         assertThat(submitted.briefUrl()).isEqualTo("https://creator.dalaillama.in/brief/brief-" + akash);
-        // The platform's rate (Rs 4,999 a minute), 30% upfront: a 30s video is Rs 2,500.
+        // The platform's rate (Rs 1,999 a minute), 30% upfront: a 30s video is Rs 1,000.
         verify(briefClient).createBrief(eq(akash), anyString(), eq("Ghar Pickles"), eq("food beverage"), any(), any(),
-                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
+                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("33.3167"), 30)));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(mailer, atLeastOnce()).sendAfterCommit(mail.capture());
         assertThat(mail.getAllValues()).filteredOn(m -> m.to().equals("ravi@ghar.example")).singleElement()
                 .satisfies(m -> {
                     assertThat(m.subject()).isEqualTo("Your video brief is ready");
-                    assertThat(m.text()).contains("costs ₹2,500; pay ₹750 now");
+                    assertThat(m.text()).contains("costs ₹1,000; pay ₹300 now");
                 });
     }
 
@@ -297,7 +297,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
                 BrandInquiry.Timeline.THIS_MONTH, "A 90s brand film", null, null, null, null, 90, List.of("English"),
                 ShowcaseIndustry.FOOD_BEVERAGE, null), List.of(), List.of());
         verify(briefClient).createBrief(any(), anyString(), any(), any(), any(), any(),
-                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("83.3167"), 30)));
+                eq(new CreativePlanningBriefClient.Pricing(new java.math.BigDecimal("33.3167"), 30)));
     }
 
     @Test

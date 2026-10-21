@@ -207,10 +207,10 @@ brands:
   creator-requests-url: ${BRANDS_CREATOR_REQUESTS_URL:https://creator.dalaillama.in/requests}
   review-page-url: ${BRANDS_REVIEW_PAGE_URL:https://creator.dalaillama.in/review/}
   # A request sent to Dalaillama (no creator chosen) is priced from the platform's 60-second price,
-  # per second (30s: Rs 2,500; 90s: Rs 7,499); a request sent to a creator uses the creator's own
-  # rate and upfront share (default 40%).
+  # the base the landing page shows ("from Rs 1,999"), per second (30s: Rs 1,000; 90s: Rs 2,999); a
+  # request sent to a creator uses the creator's own rate and upfront share (default 40%).
   request-pricing:
-    platform-minute-price: 4999
+    platform-minute-price: 1999
     platform-prepayment-percent: 30
 
 # Creator Showcase, Phase C: outreach mail (rules 15-17).
