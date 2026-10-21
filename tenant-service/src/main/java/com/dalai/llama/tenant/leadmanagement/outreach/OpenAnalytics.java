@@ -17,8 +17,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Each open of an outreach mail (our open pixel) is also an {@code email_open} event in Google
- * Analytics, on the landing site's GA4 property, so opens sit next to site traffic. An inbox runs no
+ * Each open of an outreach mail (our open pixel) is also an event in Google Analytics, on the
+ * landing site's GA4 property, named for what was opened -- {@code email_open_showcase_work},
+ * {@code email_open_similar_brand_work}, {@code email_open_creator_portfolio},
+ * {@code email_open_inspiration}, {@code email_open_digest} -- so each template is its own event. An inbox runs no
  * scripts, so the event goes server to server: through the Measurement Protocol when an API secret
  * is set (GA Admin, Data streams, Measurement Protocol API secrets), else as a plain collect hit.
  * The GA user is the recipient (a short prefix of their hash, never the address), so repeat opens
@@ -61,19 +63,26 @@ public class OpenAnalytics {
 
     HttpRequest request(OutreachStore.Opened open) throws Exception {
         String clientId = "rcpt." + open.recipientHash().substring(0, 16);
+        String name = eventName(open);
         Map<String, Object> params = params(open);
         if (apiSecret != null && !apiSecret.isBlank()) {
-            Map<String, Object> event = Map.of("name", "email_open", "params", params);
+            Map<String, Object> event = Map.of("name", name, "params", params);
             String body = json.writeValueAsString(Map.of("client_id", clientId, "events", List.of(event)));
             return HttpRequest.newBuilder(URI.create(endpoint + "/mp/collect?measurement_id=" + encode(measurementId)
                             + "&api_secret=" + encode(apiSecret)))
                     .timeout(TIMEOUT).header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build();
         }
         StringBuilder url = new StringBuilder(endpoint).append("/g/collect?v=2&tid=").append(encode(measurementId))
-                .append("&cid=").append(encode(clientId)).append("&en=email_open");
+                .append("&cid=").append(encode(clientId)).append("&en=").append(encode(name));
         params.forEach((k, v) -> url.append(v instanceof Number ? "&epn." : "&ep.").append(encode(k)).append('=').append(encode(String.valueOf(v))));
         return HttpRequest.newBuilder(URI.create(url.toString())).timeout(TIMEOUT)
                 .header("User-Agent", "Mozilla/5.0 (compatible; DalaiLlamaMail/1.0)").POST(HttpRequest.BodyPublishers.noBody()).build();
+    }
+
+    /** email_open_<template> for a creator's mail, email_open_digest for the merged mail. */
+    static String eventName(OutreachStore.Opened open) {
+        String what = "DIGEST".equals(open.kind()) || open.template() == null ? "digest" : open.template();
+        return "email_open_" + what.toLowerCase(java.util.Locale.ROOT);
     }
 
     /** mail_kind: CREATOR_MAIL or DIGEST; template: the creator's template (none for a digest). */

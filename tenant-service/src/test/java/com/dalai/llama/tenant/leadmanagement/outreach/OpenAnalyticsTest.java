@@ -25,9 +25,17 @@ class OpenAnalyticsTest {
     void withoutOneItIsACollectHit_keyedOnTheRecipientHashNotTheAddress() throws Exception {
         String url = new OpenAnalytics(new ObjectMapper(), "G-KCK0RY0YPP", "", "https://ga.example").request(open).uri().toString();
 
-        assertThat(url).startsWith("https://ga.example/g/collect?v=2&tid=G-KCK0RY0YPP&cid=rcpt.0123456789abcdef&en=email_open")
+        assertThat(url).startsWith("https://ga.example/g/collect?v=2&tid=G-KCK0RY0YPP&cid=rcpt.0123456789abcdef&en=email_open_showcase_work")
                 .contains("&ep.mail_kind=CREATOR_MAIL", "&ep.template=SHOWCASE_WORK", "&epn.first_open=1")
                 .doesNotContain("@");
+    }
+
+    @Test
+    void eachTemplateIsItsOwnEvent() {
+        assertThat(OpenAnalytics.eventName(open)).isEqualTo("email_open_showcase_work");
+        assertThat(OpenAnalytics.eventName(new OutreachStore.Opened("CREATOR_MAIL", HASH, "INSPIRATION", true))).isEqualTo("email_open_inspiration");
+        assertThat(OpenAnalytics.eventName(new OutreachStore.Opened("DIGEST", HASH, "SHOWCASE_WORK", false))).isEqualTo("email_open_digest");
+        assertThat(OpenAnalytics.eventName(new OutreachStore.Opened("DIGEST", HASH, null, false))).isEqualTo("email_open_digest");
     }
 
     @Test
