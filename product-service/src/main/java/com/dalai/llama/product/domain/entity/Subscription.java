@@ -122,6 +122,14 @@ public class Subscription {
     @Column(name = "billing_cycle", length = 20)
     private BillingCycle billingCycle;
 
+    /** Given free by ops for a set time: never charged or renewed, ends at {@code expiresAt}. */
+    @Column(name = "complimentary", nullable = false)
+    @Builder.Default
+    private boolean complimentary = false;
+
+    @Column(name = "grant_note", length = 300)
+    private String grantNote;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -166,6 +174,21 @@ public class Subscription {
         this.status = SubscriptionStatus.ACTIVE;
         this.activatedAt = Instant.now();
         this.expiresAt = Instant.now().plus(cycleDuration());
+    }
+
+    /** A complimentary grant from ops: the plan's entitlements until {@code until}, free. */
+    public void grantFree(Instant until, String note) {
+        this.status = SubscriptionStatus.ACTIVE;
+        this.activatedAt = Instant.now();
+        this.expiresAt = until;
+        this.complimentary = true;
+        this.grantNote = note;
+    }
+
+    /** Whether the plan's entitlements apply now: an active subscription, and for a complimentary
+     * grant only until it ends (a paid one is ended by its renewal failing instead). */
+    public boolean entitledAt(Instant now) {
+        return status == SubscriptionStatus.ACTIVE && (!complimentary || (expiresAt != null && expiresAt.isAfter(now)));
     }
 
     public void suspend() {

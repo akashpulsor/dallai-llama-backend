@@ -76,7 +76,7 @@ public class CreatorVideoEntitlementServiceImpl implements CreatorVideoEntitleme
     }
 
     private CreatorVideoEntitlementsResponse resolve(UUID tenantId, Subscription subscription) {
-        boolean paidEntitlementsApply = subscription != null && subscription.getStatus() == SubscriptionStatus.ACTIVE;
+        boolean paidEntitlementsApply = subscription != null && subscription.entitledAt(java.time.Instant.now());
         Plan plan = paidEntitlementsApply ? subscription.getPlan() : freePlan();
 
         CreatorVideoEntitlements entitlements = entitlementRepository.findByPlan_Id(plan.getId())
@@ -88,7 +88,10 @@ public class CreatorVideoEntitlementServiceImpl implements CreatorVideoEntitleme
                 .subscriptionId(subscription != null ? subscription.getId() : null)
                 .planCode(plan.getCode())
                 .planName(plan.getName())
-                .status(subscription != null ? subscription.getStatus().name() : "UNSUBSCRIBED")
+                // A complimentary grant past its end reads as expired before the hourly job closes it.
+                .status(subscription == null ? "UNSUBSCRIBED"
+                        : subscription.isComplimentary() && !paidEntitlementsApply && subscription.getStatus() == SubscriptionStatus.ACTIVE
+                        ? SubscriptionStatus.EXPIRED.name() : subscription.getStatus().name())
                 .currentPeriodEnd(paidEntitlementsApply ? subscription.getExpiresAt() : null)
                 .entitlements(entitlements)
                 .build();
