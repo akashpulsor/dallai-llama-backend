@@ -52,12 +52,15 @@ public class CreatorVideoGrantService {
     }
 
     /** The paid plans ops can grant: one per tier (its monthly row; a grant has no billing cycle). */
+    @Transactional(readOnly = true)
     public List<Plan> grantablePlans() {
         return plans.findByProduct_CodeAndActiveTrue(PRODUCT_CODE).stream()
                 .filter(p -> p.getTier() != PlanTier.FREE && p.getBillingCycle() != null && p.getBillingCycle().name().equals("MONTHLY"))
                 .toList();
     }
 
+    // Read in a transaction: the view reads the subscription's (lazily loaded) plan.
+    @Transactional(readOnly = true)
     public GrantView view(UUID tenantId) {
         return current(tenantId).map(s -> toView(s, clock.instant()))
                 .orElse(new GrantView(tenantId, null, null, null, "UNSUBSCRIBED", false, null, null));
