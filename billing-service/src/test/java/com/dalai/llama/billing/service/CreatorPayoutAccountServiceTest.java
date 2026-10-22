@@ -29,40 +29,60 @@ class CreatorPayoutAccountServiceTest {
     private final CreatorPayoutAccountService service = new CreatorPayoutAccountService(accounts, gateway);
 
     @Test
-    void aBankAccountGoesToRazorpayAndOnlyItsLastFourDigitsAreKept() {
+    void savingKeepsTheDetailsForOpsToPayFrom_withoutCallingRazorpay() {
         when(accounts.findById(tenantId)).thenReturn(Optional.empty());
         when(accounts.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(gateway.createContact(tenantId, "Asha Rao")).thenReturn("cont_1");
-        when(gateway.createFundAccount("cont_1", PayoutMethod.BANK_ACCOUNT, "Asha Rao", "HDFC0001234", "50100012345678", null))
-                .thenReturn("fa_1");
 
         CreatorPayoutAccount saved = service.save(tenantId,
                 new Details(PayoutMethod.BANK_ACCOUNT, " Asha Rao ", "hdfc0001234", "5010 0012 3456 78", null));
 
-        assertThat(saved.getAccountLast4()).isEqualTo("5678");
+        assertThat(saved.getHolderName()).isEqualTo("Asha Rao");
         assertThat(saved.getIfsc()).isEqualTo("HDFC0001234");
-        assertThat(saved.getFundAccountId()).isEqualTo("fa_1");
-        assertThat(saved.getContactId()).isEqualTo("cont_1");
+        assertThat(saved.getAccountNumber()).isEqualTo("50100012345678");
+        assertThat(saved.getAccountLast4()).isEqualTo("5678");
+        assertThat(saved.getFundAccountId()).isNull();
+        verifyNoInteractions(gateway);
     }
 
     @Test
-    void changingTheAccountKeepsTheSameRazorpayContact() {
-        when(accounts.findById(tenantId)).thenReturn(Optional.of(CreatorPayoutAccount.builder().tenantId(tenantId)
-                .method(PayoutMethod.BANK_ACCOUNT).holderName("Asha Rao").contactId("cont_1").fundAccountId("fa_1")
-                .createdAt(Instant.now()).build()));
+    void changingTheDetailsClearsTheOldFundAccountButKeepsTheContact() {
+        when(accounts.findById(tenantId)).thenReturn(Optional.of(account("cont_1", "fa_1")));
         when(accounts.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(gateway.createFundAccount("cont_1", PayoutMethod.UPI, "Asha Rao", null, null, "asha@okhdfc")).thenReturn("fa_2");
 
         CreatorPayoutAccount saved = service.save(tenantId, new Details(PayoutMethod.UPI, "Asha Rao", null, null, "asha@okhdfc"));
 
-        verify(gateway, never()).createContact(any(), anyString());
-        assertThat(saved.getFundAccountId()).isEqualTo("fa_2");
+        assertThat(saved.getFundAccountId()).isNull();
+        assertThat(saved.getContactId()).isEqualTo("cont_1");
+        assertThat(saved.getAccountNumber()).isNull();
         assertThat(saved.getAccountLast4()).isNull();
         assertThat(saved.getVpa()).isEqualTo("asha@okhdfc");
     }
 
     @Test
-    void badDetailsAreRefusedBeforeAnythingReachesRazorpay() {
+    void theFirstAutomaticPayoutRegistersTheContactAndFundAccountOnce() {
+        CreatorPayoutAccount account = account(null, null);
+        when(gateway.createContact(tenantId, "Asha Rao")).thenReturn("cont_1");
+        when(gateway.createFundAccount("cont_1", PayoutMethod.BANK_ACCOUNT, "Asha Rao", "HDFC0001234", "50100012345678", null))
+                .thenReturn("fa_1");
+
+        assertThat(service.fundAccountId(account)).isEqualTo("fa_1");
+        assertThat(service.fundAccountId(account)).isEqualTo("fa_1");
+
+        verify(gateway).createContact(tenantId, "Asha Rao");
+        verify(accounts).save(account);
+    }
+
+    @Test
+    void anExistingContactIsReusedForANewFundAccount() {
+        CreatorPayoutAccount account = account("cont_1", null);
+        when(gateway.createFundAccount(anyString(), any(), anyString(), any(), any(), any())).thenReturn("fa_2");
+
+        assertThat(service.fundAccountId(account)).isEqualTo("fa_2");
+        verify(gateway, never()).createContact(any(), anyString());
+    }
+
+    @Test
+    void badDetailsAreRefused() {
         assertThatThrownBy(() -> service.save(tenantId, new Details(PayoutMethod.BANK_ACCOUNT, "Asha Rao", "HDFC1234", "50100012345678", null)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("IFSC");
         assertThatThrownBy(() -> service.save(tenantId, new Details(PayoutMethod.BANK_ACCOUNT, "Asha Rao", "HDFC0001234", "12ab", null)))
@@ -72,14 +92,9 @@ class CreatorPayoutAccountServiceTest {
         verifyNoInteractions(gateway, accounts);
     }
 
-    @Test
-    void razorpayRefusingTheDetailsIsTheCreatorsToFix() {
-        when(accounts.findById(tenantId)).thenReturn(Optional.empty());
-        when(gateway.createContact(any(), anyString())).thenReturn("cont_1");
-        when(gateway.createFundAccount(anyString(), any(), anyString(), any(), any(), any()))
-                .thenThrow(new PayoutGateway.PayoutRejectedException("bad ifsc"));
-
-        assertThatThrownBy(() -> service.save(tenantId, new Details(PayoutMethod.BANK_ACCOUNT, "Asha Rao", "HDFC0001234", "50100012345678", null)))
-                .isInstanceOf(IllegalArgumentException.class);
+    private CreatorPayoutAccount account(String contactId, String fundAccountId) {
+        return CreatorPayoutAccount.builder().tenantId(tenantId).method(PayoutMethod.BANK_ACCOUNT).holderName("Asha Rao")
+                .ifsc("HDFC0001234").accountNumber("50100012345678").accountLast4("5678")
+                .contactId(contactId).fundAccountId(fundAccountId).createdAt(Instant.now()).build();
     }
 }

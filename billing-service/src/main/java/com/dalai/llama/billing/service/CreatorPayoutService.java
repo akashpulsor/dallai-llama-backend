@@ -21,6 +21,7 @@ import com.dalai.llama.billing.service.payment.PayoutGateway.PayoutResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,10 +30,13 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.dalai.llama.billing.domain.entity.enums.CreatorPayoutStatus.AWAITING_ACCOUNT;
@@ -48,7 +52,9 @@ import static com.dalai.llama.billing.domain.entity.enums.CreatorPayoutStatus.SE
  * client paid lands in the creator's wallet first (the brief upfront, then the lock), and the
  * project's AI production is charged to that same wallet. What is left of the client's money
  * after production -- provider cost plus the platform's margin, as charged -- and after Razorpay's
- * fees on the client's payments, is the creator's, and goes to their bank or UPI through RazorpayX.
+ * fees on the client's payments, is the creator's, and goes to their bank or UPI -- through
+ * RazorpayX when {@code razorpayx.payouts-enabled} is on, otherwise paid by hand by ops, who then
+ * record the transfer's UTR ({@link #markPaid}).
  * <p>
  * The amount is worked out when the payout is prepared, then taken out of the wallet before it is
  * sent, so it can't also be spent on generation; a payout RazorpayX rejects or reverses gives it
@@ -75,6 +81,11 @@ public class CreatorPayoutService {
     private final PaymentGateway paymentGateway;
     private final PayoutGateway payoutGateway;
     private final WalletService walletService;
+    private final CreatorPayoutAccountService accountService;
+
+    /** Off: ops pays each prepared payout by hand and marks it paid ({@link #markPaid}). */
+    @Value("${razorpayx.payouts-enabled:false}")
+    private boolean automatic;
 
     /** Opens the project's payout; a second call for the same project changes nothing. */
     @Transactional
@@ -150,9 +161,10 @@ public class CreatorPayoutService {
             return;
         }
         try {
+            String fundAccountId = accountService.fundAccountId(account);
             PayoutResult result = payoutGateway.createPayout(
-                    account.getFundAccountId(), account.getMethod(), payout.getAmount(), payout.attemptReference());
-            payout.setFundAccountId(account.getFundAccountId());
+                    fundAccountId, account.getMethod(), payout.getAmount(), payout.attemptReference());
+            payout.setFundAccountId(fundAccountId);
             payout.setGatewayPayoutId(result.id());
             apply(payout, result.status(), result.utr(), null);
         } catch (PayoutRejectedException ex) {
@@ -188,6 +200,29 @@ public class CreatorPayoutService {
         return true;
     }
 
+    /** Ops paid a prepared payout by hand -- a bank or UPI transfer from outside the platform --
+     * and records its reference. The amount already left the wallet when it was prepared. Refused
+     * while automatic payouts are on, when the same payout may already be on its way via RazorpayX. */
+    @Transactional
+    public CreatorPayout markPaid(UUID payoutId, String utr) {
+        if (automatic) {
+            throw new IllegalArgumentException("Automatic payouts are on -- RazorpayX is sending this one");
+        }
+        String reference = utr == null ? "" : utr.trim();
+        if (reference.isEmpty() || reference.length() > 64) {
+            throw new IllegalArgumentException("Enter the UTR / UPI reference of the transfer");
+        }
+        CreatorPayout payout = payouts.findById(payoutId)
+                .orElseThrow(() -> new IllegalArgumentException("No payout " + payoutId));
+        if (payout.getStatus() != READY) {
+            throw new IllegalArgumentException("Only a payout ready to send can be marked paid; this one is " + payout.getStatus());
+        }
+        payout.setUtr(reference);
+        payout.setPaidAt(Instant.now());
+        payout.moveTo(PAID, null);
+        return payouts.save(payout);
+    }
+
     /** Ops: send a failed payout again. The amount is worked out afresh. */
     @Transactional
     public CreatorPayout retry(UUID payoutId) {
@@ -205,10 +240,17 @@ public class CreatorPayoutService {
         return payouts.findByTenantIdOrderByCreatedAtDesc(tenantId);
     }
 
+    /** The last 200 payouts with where each one is to be paid -- what ops needs to pay by hand. */
     @Transactional(readOnly = true)
-    public List<CreatorPayout> recent() {
-        return payouts.findTop200ByOrderByCreatedAtDesc();
+    public List<OpsPayout> recentForOps() {
+        List<CreatorPayout> recent = payouts.findTop200ByOrderByCreatedAtDesc();
+        Map<UUID, CreatorPayoutAccount> payees = accounts.findAllById(
+                        recent.stream().map(CreatorPayout::getTenantId).distinct().toList()).stream()
+                .collect(Collectors.toMap(CreatorPayoutAccount::getTenantId, Function.identity()));
+        return recent.stream().map(p -> new OpsPayout(p, payees.get(p.getTenantId()))).toList();
     }
+
+    public record OpsPayout(CreatorPayout payout, CreatorPayoutAccount payee) {}
 
     /** Moves a payout by RazorpayX's status. A payout already settled one way is never moved back,
      * except a reversal after it was processed, which really does return the money. */

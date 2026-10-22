@@ -6,6 +6,7 @@ import com.dalai.llama.billing.dto.AdminCreditRequest;
 import com.dalai.llama.billing.dto.AdminWalletView;
 import com.dalai.llama.billing.repository.WalletRepository;
 import com.dalai.llama.billing.dto.response.CreatorPayoutView;
+import com.dalai.llama.billing.dto.response.OpsPayoutView;
 import com.dalai.llama.billing.service.CreatorPayoutService;
 import com.dalai.llama.billing.service.EmailService;
 import com.dalai.llama.billing.service.ProjectEconomics;
@@ -51,11 +52,20 @@ public class AdminBillingController {
     private final ProjectEconomicsService projectEconomicsService;
     private final CreatorPayoutService creatorPayoutService;
 
-    /** Ops view of creator payouts across every tenant, newest first (last 200). */
+    /** Ops view of creator payouts across every tenant, newest first (last 200), each with the
+     * bank / UPI details to pay it by hand. */
     @GetMapping("/payouts")
-    public ResponseEntity<List<CreatorPayoutView>> payouts() {
-        return ResponseEntity.ok(creatorPayoutService.recent().stream().map(CreatorPayoutView::of).toList());
+    public ResponseEntity<List<OpsPayoutView>> payouts() {
+        return ResponseEntity.ok(creatorPayoutService.recentForOps().stream().map(OpsPayoutView::of).toList());
     }
+
+    /** Ops paid a READY payout by hand; records the transfer's UTR and marks it PAID. */
+    @PostMapping("/payouts/{payoutId}/mark-paid")
+    public ResponseEntity<CreatorPayoutView> markPayoutPaid(@PathVariable UUID payoutId, @RequestBody MarkPaidRequest request) {
+        return ResponseEntity.ok(CreatorPayoutView.of(creatorPayoutService.markPaid(payoutId, request.utr())));
+    }
+
+    public record MarkPaidRequest(String utr) {}
 
     /** Sends a FAILED payout again; the amount is worked out afresh on the next dispatcher run. */
     @PostMapping("/payouts/{payoutId}/retry")

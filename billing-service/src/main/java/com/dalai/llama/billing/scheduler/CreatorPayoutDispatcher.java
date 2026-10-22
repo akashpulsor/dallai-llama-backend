@@ -12,9 +12,9 @@ import java.util.function.Consumer;
 
 /**
  * Moves creator payouts along, one at a time, off the request path: works out the amount of each
- * opened payout, then sends each prepared one to RazorpayX. Off until {@code
- * razorpayx.payouts-enabled} is set, so nothing leaves the account before RazorpayX is set up --
- * payouts opened meanwhile just wait.
+ * opened payout and takes it from the wallet, then -- only when {@code razorpayx.payouts-enabled}
+ * is on -- sends each prepared one to RazorpayX. While it is off, prepared payouts wait for ops to
+ * pay them by hand and mark them paid.
  */
 @Slf4j
 @Component
@@ -24,15 +24,14 @@ public class CreatorPayoutDispatcher {
     private final CreatorPayoutService creatorPayoutService;
 
     @Value("${razorpayx.payouts-enabled:false}")
-    private boolean enabled;
+    private boolean automatic;
 
     @Scheduled(fixedDelayString = "${razorpayx.dispatch-interval-ms:60000}", initialDelay = 60_000)
     public void dispatch() {
-        if (!enabled) {
-            return;
-        }
         each(creatorPayoutService.toPrepare(), creatorPayoutService::prepare, "prepare");
-        each(creatorPayoutService.toSend(), creatorPayoutService::send, "send");
+        if (automatic) {
+            each(creatorPayoutService.toSend(), creatorPayoutService::send, "send");
+        }
     }
 
     private static void each(Iterable<UUID> ids, Consumer<UUID> step, String name) {

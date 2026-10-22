@@ -16,8 +16,9 @@ import lombok.Setter;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Where a creator is paid. The RazorpayX fund account holds the real bank details; this keeps
- * only what the creator needs to recognise it (IFSC, last four digits, or the UPI ID). */
+/** Where a creator is paid. The full account number is kept for ops to pay by hand and to register
+ * the RazorpayX fund account from; the creator's own view only ever shows {@code accountLast4}.
+ * {@code contactId}/{@code fundAccountId} are empty until the first automatic payout. */
 @Getter
 @Setter
 @Builder
@@ -41,16 +42,19 @@ public class CreatorPayoutAccount {
     @Column(name = "ifsc", length = 11)
     private String ifsc;
 
+    @Column(name = "account_number", length = 18)
+    private String accountNumber;
+
     @Column(name = "account_last4", length = 4)
     private String accountLast4;
 
     @Column(name = "vpa", length = 100)
     private String vpa;
 
-    @Column(name = "contact_id", nullable = false, length = 64)
+    @Column(name = "contact_id", length = 64)
     private String contactId;
 
-    @Column(name = "fund_account_id", nullable = false, length = 64)
+    @Column(name = "fund_account_id", length = 64)
     private String fundAccountId;
 
     @Column(name = "created_at", nullable = false)

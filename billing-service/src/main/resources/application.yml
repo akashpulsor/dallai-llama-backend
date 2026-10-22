@@ -95,7 +95,8 @@ razorpay:
   mock-enabled: ${RAZORPAY_MOCK_ENABLED:true}
 # RazorpayX Payouts: a creator's share of a project, paid to their bank / UPI (CreatorPayoutService).
 # Same API key as checkout; account-number is the RazorpayX business account money leaves from.
-# Off until payouts-enabled -- payouts opened before then wait in QUEUED.
+# Off: amounts are still worked out and taken from the wallet, and ops pays each one by hand from
+# the ops Payouts tab. On: RazorpayX sends them.
 razorpayx:
   payouts-enabled: ${RAZORPAYX_PAYOUTS_ENABLED:false}
   account-number: ${RAZORPAYX_ACCOUNT_NUMBER:}

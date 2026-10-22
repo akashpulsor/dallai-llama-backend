@@ -4,7 +4,6 @@ import com.dalai.llama.billing.domain.entity.CreatorPayoutAccount;
 import com.dalai.llama.billing.domain.entity.enums.PayoutMethod;
 import com.dalai.llama.billing.repository.CreatorPayoutAccountRepository;
 import com.dalai.llama.billing.service.payment.PayoutGateway;
-import com.dalai.llama.billing.service.payment.PayoutGateway.PayoutRejectedException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,10 +15,10 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Where a creator is paid. Saving registers the bank account or UPI ID with RazorpayX as a fund
- * account (under one contact per creator) and keeps only what the creator needs to recognise it --
- * the full account number goes to RazorpayX and nowhere else. Changing it creates a new fund
- * account; payouts already sent stay with the old one.
+ * Where a creator is paid. Saving only checks and keeps the details -- ops pays by hand from them
+ * while RazorpayX payouts are off. The RazorpayX contact and fund account are registered the first
+ * time an automatic payout needs them ({@link #fundAccountId}); changing the details clears the
+ * fund account so the next automatic payout registers the new one.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,30 +39,38 @@ public class CreatorPayoutAccountService {
     @Transactional
     public CreatorPayoutAccount save(UUID tenantId, Details details) {
         Details valid = details.validated();
-        Optional<CreatorPayoutAccount> existing = accounts.findById(tenantId);
-        String contactId;
-        String fundAccountId;
-        try {
-            contactId = existing.map(CreatorPayoutAccount::getContactId)
-                    .orElseGet(() -> payoutGateway.createContact(tenantId, valid.holderName()));
-            fundAccountId = payoutGateway.createFundAccount(contactId, valid.method(), valid.holderName(),
-                    valid.ifsc(), valid.accountNumber(), valid.vpa());
-        } catch (PayoutRejectedException ex) {
-            throw new IllegalArgumentException("Razorpay didn't accept these details -- check them and try again");
-        }
-
         Instant now = Instant.now();
-        CreatorPayoutAccount account = existing.orElseGet(() -> CreatorPayoutAccount.builder()
-                .tenantId(tenantId).contactId(contactId).createdAt(now).build());
+        CreatorPayoutAccount account = accounts.findById(tenantId).orElseGet(() -> CreatorPayoutAccount.builder()
+                .tenantId(tenantId).createdAt(now).build());
         account.setMethod(valid.method());
         account.setHolderName(valid.holderName());
         account.setIfsc(valid.ifsc());
+        account.setAccountNumber(valid.accountNumber());
         account.setAccountLast4(valid.accountNumber() == null ? null
                 : valid.accountNumber().substring(valid.accountNumber().length() - 4));
         account.setVpa(valid.vpa());
-        account.setFundAccountId(fundAccountId);
+        account.setFundAccountId(null);
         account.setUpdatedAt(now);
         return accounts.save(account);
+    }
+
+    /** The RazorpayX fund account to pay {@code account} into, registering it (and the creator's
+     * contact) on first use.
+     *
+     * @throws PayoutGateway.PayoutRejectedException when RazorpayX refuses the details */
+    @Transactional
+    public String fundAccountId(CreatorPayoutAccount account) {
+        if (account.getFundAccountId() != null) {
+            return account.getFundAccountId();
+        }
+        if (account.getContactId() == null) {
+            account.setContactId(payoutGateway.createContact(account.getTenantId(), account.getHolderName()));
+        }
+        account.setFundAccountId(payoutGateway.createFundAccount(account.getContactId(), account.getMethod(),
+                account.getHolderName(), account.getIfsc(), account.getAccountNumber(), account.getVpa()));
+        account.setUpdatedAt(Instant.now());
+        accounts.save(account);
+        return account.getFundAccountId();
     }
 
     /** What the creator types in: a bank account (holder, IFSC, number) or a UPI ID. */

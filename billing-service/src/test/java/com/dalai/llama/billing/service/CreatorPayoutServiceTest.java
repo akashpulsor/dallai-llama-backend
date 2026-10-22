@@ -22,6 +22,7 @@ import com.dalai.llama.billing.service.payment.PayoutGateway.PayoutResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -30,6 +31,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -55,8 +57,9 @@ class CreatorPayoutServiceTest {
     private final PaymentGateway paymentGateway = mock(PaymentGateway.class);
     private final PayoutGateway payoutGateway = mock(PayoutGateway.class);
     private final WalletService walletService = mock(WalletService.class);
+    private final CreatorPayoutAccountService accountService = mock(CreatorPayoutAccountService.class);
     private final CreatorPayoutService service = new CreatorPayoutService(payouts, accounts, reviewPayments,
-            paymentRepository, usage, creativePlanning, paymentGateway, payoutGateway, walletService);
+            paymentRepository, usage, creativePlanning, paymentGateway, payoutGateway, walletService, accountService);
 
     private CreatorPayout payout;
 
@@ -248,6 +251,53 @@ class CreatorPayoutServiceTest {
     }
 
     @Test
+    void opsMarkAPreparedPayoutPaidByHandWithItsUtr() {
+        ready("500.00");
+
+        service.markPaid(payout.getId(), "  412345678901 ");
+
+        assertThat(payout.getStatus()).isEqualTo(CreatorPayoutStatus.PAID);
+        assertThat(payout.getUtr()).isEqualTo("412345678901");
+        assertThat(payout.getPaidAt()).isNotNull();
+        verifyNoInteractions(payoutGateway);
+        // The amount already left the wallet when the payout was prepared.
+        verify(walletService, never()).debit(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void onlyAPreparedPayoutCanBeMarkedPaid_andNeverWithoutAUtr() {
+        assertThatThrownBy(() -> service.markPaid(payout.getId(), "412345678901"))
+                .isInstanceOf(IllegalArgumentException.class); // still QUEUED: nothing taken from the wallet yet
+        ready("500.00");
+        assertThatThrownBy(() -> service.markPaid(payout.getId(), "  "))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(payout.getStatus()).isEqualTo(CreatorPayoutStatus.READY);
+    }
+
+    @Test
+    void markingPaidByHandIsRefusedWhileRazorpayXIsSending() {
+        ReflectionTestUtils.setField(service, "automatic", true);
+        ready("500.00");
+
+        assertThatThrownBy(() -> service.markPaid(payout.getId(), "412345678901"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(payout.getStatus()).isEqualTo(CreatorPayoutStatus.READY);
+    }
+
+    @Test
+    void razorpayRefusingTheCreatorsDetailsAtFirstSendFailsThePayoutAndRefundsIt() {
+        ready("500.00");
+        CreatorPayoutAccount account = account();
+        when(accountService.fundAccountId(account)).thenThrow(new PayoutRejectedException("bad ifsc"));
+
+        service.send(payout.getId());
+
+        assertThat(payout.getStatus()).isEqualTo(CreatorPayoutStatus.FAILED);
+        verify(walletService).credit(eq(tenantId), eq(new BigDecimal("500.00")), eq(TransactionType.CREATOR_PAYOUT_REVERSAL),
+                any(), isNull(), any(), any());
+    }
+
+    @Test
     void openingTwiceIsHarmless() {
         when(payouts.openIfAbsent(any(), eq(tenantId), eq(projectId))).thenReturn(1, 0);
 
@@ -279,6 +329,7 @@ class CreatorPayoutServiceTest {
         CreatorPayoutAccount account = CreatorPayoutAccount.builder().tenantId(tenantId).method(PayoutMethod.UPI)
                 .holderName("Asha Rao").vpa("asha@okhdfc").contactId("cont_1").fundAccountId("fa_1").build();
         when(accounts.findById(tenantId)).thenReturn(Optional.of(account));
+        when(accountService.fundAccountId(account)).thenReturn("fa_1");
         return account;
     }
 
