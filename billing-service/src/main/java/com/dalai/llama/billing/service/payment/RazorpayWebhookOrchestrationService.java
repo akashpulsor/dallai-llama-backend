@@ -13,6 +13,7 @@ import com.dalai.llama.billing.repository.PaymentRepository;
 import com.dalai.llama.billing.repository.RecurringChargeRepository;
 import com.dalai.llama.billing.service.BillingStateService;
 import com.dalai.llama.billing.service.ClientReviewPaymentService;
+import com.dalai.llama.billing.service.CreatorPayoutService;
 import com.dalai.llama.billing.service.TransactionService;
 import com.dalai.llama.billing.service.WalletService;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +40,7 @@ public class RazorpayWebhookOrchestrationService {
     private final ProductServiceClient productServiceClient;
     private final BillingEventProducer eventProducer;
     private final ClientReviewPaymentService clientReviewPaymentService;
+    private final CreatorPayoutService creatorPayoutService;
 
     public void processWebhook(String eventType, String payload) {
         switch (eventType) {
@@ -46,7 +48,13 @@ public class RazorpayWebhookOrchestrationService {
             case "payment.failed"   -> handlePaymentFailed(payload);
             case "refund.created"   -> handleRefundCreated(payload);
             case "order.paid"       -> handleOrderPaid(payload);
-            default -> log.info("Unhandled webhook event: {}", eventType);
+            default -> {
+                if (eventType.startsWith("payout.")) {
+                    handlePayoutEvent(eventType, payload);
+                } else {
+                    log.info("Unhandled webhook event: {}", eventType);
+                }
+            }
         }
     }
 
@@ -210,6 +218,15 @@ public class RazorpayWebhookOrchestrationService {
                         payment.getId(), payment.getStatus());
             }
         });
+    }
+
+    /* ================================================================
+       payout.* (RazorpayX) -- a creator's share of a project
+       ================================================================ */
+    private void handlePayoutEvent(String eventType, String payload) {
+        if (!creatorPayoutService.onGatewayEvent(razorpayService.extractPayoutEntity(payload))) {
+            log.warn("{} for a payout that isn't a creator payout", eventType);
+        }
     }
 
     /* ================================================================

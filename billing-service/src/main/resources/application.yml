@@ -93,6 +93,13 @@ razorpay:
   key-secret: ${RAZORPAY_KEY_SECRET:xxxxx}
   webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:xxxxx}
   mock-enabled: ${RAZORPAY_MOCK_ENABLED:true}
+# RazorpayX Payouts: a creator's share of a project, paid to their bank / UPI (CreatorPayoutService).
+# Same API key as checkout; account-number is the RazorpayX business account money leaves from.
+# Off until payouts-enabled -- payouts opened before then wait in QUEUED.
+razorpayx:
+  payouts-enabled: ${RAZORPAYX_PAYOUTS_ENABLED:false}
+  account-number: ${RAZORPAYX_ACCOUNT_NUMBER:}
+  dispatch-interval-ms: ${RAZORPAYX_DISPATCH_INTERVAL_MS:60000}
 # Billing Configuration
 billing:
   creator-video-package:

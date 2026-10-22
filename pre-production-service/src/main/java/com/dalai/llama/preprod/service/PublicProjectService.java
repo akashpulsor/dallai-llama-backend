@@ -174,6 +174,9 @@ public class PublicProjectService {
                     .formatted(quote.currency(), quote.totalAmount()));
         }
         projectService.recordMarketingConsent(identity.tenantId(), identity.projectId(), acceptedTermsVersion);
+        // No lock payment will be captured to open the creator's payout, so open it here -- before
+        // the lock, so a billing outage fails the lock (and the client retries) instead of losing it.
+        billingClient.openCreatorPayout(identity.tenantId(), identity.projectId());
         projectLockService.lock(identity.tenantId(), identity.projectId());
         return view(token);
     }

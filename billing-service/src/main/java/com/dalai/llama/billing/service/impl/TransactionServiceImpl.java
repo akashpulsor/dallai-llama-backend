@@ -118,6 +118,8 @@ public class TransactionServiceImpl implements TransactionService {
             case DID_RENTAL -> "DID rental charge";
             case SUBSCRIPTION -> "Subscription fee";
             case ADDON -> "Add-on purchase";
+            case CREATOR_PAYOUT -> "Paid out to your bank / UPI";
+            case CREATOR_PAYOUT_REVERSAL -> "Payout returned to your wallet";
         };
     }
 }

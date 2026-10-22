@@ -35,12 +35,13 @@ class PublicProjectServiceLockSettledTest {
 
         assertThatThrownBy(() -> service.lockSettled("tok", "2026-10")).isInstanceOf(PreProductionException.class);
         verify(projectLockService, never()).lock(any(), any());
+        verify(billingClient, never()).openCreatorPayout(any(), any());
         // Nothing was paid, so no marketing consent is recorded either.
         verify(projectService, never()).recordMarketingConsent(any(), any(), any());
     }
 
     @Test
-    void aSettledLockRecordsTheMarketingConsentBeforeLocking() {
+    void aSettledLockRecordsConsentAndOpensTheCreatorsPayoutBeforeLocking() {
         UUID tenantId = UUID.randomUUID();
         UUID projectId = UUID.randomUUID();
         when(projectService.resolveByClientReviewToken("tok")).thenReturn(new ProjectService.ProjectIdentity(tenantId, projectId));
@@ -52,8 +53,9 @@ class PublicProjectServiceLockSettledTest {
             // view(token) needs collaborators this test doesn't wire; the order of the two calls is the point.
         }
 
-        org.mockito.InOrder order = org.mockito.Mockito.inOrder(projectService, projectLockService);
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(projectService, billingClient, projectLockService);
         order.verify(projectService).recordMarketingConsent(tenantId, projectId, "2026-10");
+        order.verify(billingClient).openCreatorPayout(tenantId, projectId);
         order.verify(projectLockService).lock(tenantId, projectId);
     }
 

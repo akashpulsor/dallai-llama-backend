@@ -55,7 +55,8 @@ public class CreativePlanningServiceClient {
             BigDecimal quotedCreatorMarginPercent,
             String quotedCurrency,
             BigDecimal requiredAmount,
-            boolean funded
+            boolean funded,
+            UUID requirementId
     ) {
         /** What the client already paid on the brief -- the upfront amount, only once funded. */
         public BigDecimal paidUpfront() {

@@ -100,6 +100,23 @@ public class RazorpayService implements PaymentGateway {
         }
     }
 
+    @Override
+    public BigDecimal fee(String paymentId) {
+        if (mockEnabled) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            Object fee = razorpayClient.payments.fetch(paymentId).get("fee");
+            if (fee instanceof Number paise) {
+                return BigDecimal.valueOf(paise.longValue()).movePointLeft(2);
+            }
+            log.warn("Razorpay payment {} has no fee set", paymentId);
+            return BigDecimal.ZERO;
+        } catch (RazorpayException e) {
+            throw new PaymentFailedException("Failed to fetch Razorpay payment " + paymentId, e);
+        }
+    }
+
     public String initiateRefund(String paymentId, BigDecimal amount) {
         if (mockEnabled) {
             String mockRefundId = "rfnd_MOCK" + UUID.randomUUID().toString().replace("-", "").substring(0, 14);
@@ -137,6 +154,14 @@ public class RazorpayService implements PaymentGateway {
             return objectMapper.readTree(payload).path("payload").path("payment").path("entity");
         } catch (Exception e) {
             throw new PaymentFailedException("Invalid payment webhook payload", e);
+        }
+    }
+
+    public JsonNode extractPayoutEntity(String payload) {
+        try {
+            return objectMapper.readTree(payload).path("payload").path("payout").path("entity");
+        } catch (Exception e) {
+            throw new PaymentFailedException("Invalid payout webhook payload", e);
         }
     }
 

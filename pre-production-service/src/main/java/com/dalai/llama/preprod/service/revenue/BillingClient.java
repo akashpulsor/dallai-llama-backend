@@ -76,6 +76,12 @@ public class BillingClient {
                 new VerifyRequest(gatewayOrderId, gatewayPaymentId, gatewaySignature), VerifyResult.class);
     }
 
+    /** The package is locked and paid for: billing opens the creator's payout for it -- what is
+     * left of the client's money after production. Idempotent per project. */
+    public void openCreatorPayout(UUID tenantId, UUID projectId) {
+        post("/api/v1/internal/tenants/%s/creator-payouts/%s".formatted(tenantId, projectId), null, Void.class);
+    }
+
     private <T> T post(String uri, Object body, Class<T> type) {
         try {
             WebClient.RequestBodySpec spec = webClient.post().uri(uri);

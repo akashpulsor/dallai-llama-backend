@@ -31,7 +31,7 @@ class ProjectEconomicsServiceTest {
         // City Professional: 1299 quoted, 25% (324.75) paid on the brief, balance paid at lock.
         when(creativePlanning.getProjectQuote(tenantId, projectId)).thenReturn(Optional.of(new ProjectQuote(
                 10, new BigDecimal("1046.83"), new BigDecimal("1299.00"), new BigDecimal("24.09"), "INR",
-                new BigDecimal("324.75"), true)));
+                new BigDecimal("324.75"), true, null)));
         when(reviewPayments.findByTenantIdAndProjectIdAndStatus(tenantId, projectId, "SUCCESS"))
                 .thenReturn(List.of(payment("LOCK", "785.14", "189.11")));
         when(usage.sumCostByProjectId(tenantId, projectId)).thenReturn(new BigDecimal("120.00"));

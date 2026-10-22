@@ -36,13 +36,14 @@ class ClientReviewPaymentServiceTest {
     private final CreativePlanningServiceClient creativePlanning = mock(CreativePlanningServiceClient.class);
     private final WalletService walletService = mock(WalletService.class);
     private final ClientReviewPaymentRepository payments = mock(ClientReviewPaymentRepository.class);
+    private final CreatorPayoutService creatorPayouts = mock(CreatorPayoutService.class);
     private ClientReviewPaymentService service;
 
     @BeforeEach
     void setUp() {
         service = new ClientReviewPaymentService(paymentGateway, tenantServiceClient, walletService,
                 payments, mock(PreProductionServiceClient.class), creativePlanning,
-                VideoPricingFixture.withDefaults());
+                VideoPricingFixture.withDefaults(), creatorPayouts);
         ReflectionTestUtils.setField(service, "platformBase", new BigDecimal("5299"));
         ReflectionTestUtils.setField(service, "defaultCreatorMarginPercent", new BigDecimal("22.6"));
         ReflectionTestUtils.setField(service, "currency", "INR");
@@ -53,7 +54,7 @@ class ClientReviewPaymentServiceTest {
     @Test
     void quotedProjectLocksForTheBalanceLeftAfterTheUpfrontPayment() {
         // 25% of a 3450 quote was paid on the brief; margin 15% is already inside the 3450.
-        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("862.50"), true));
+        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("862.50"), true, null));
 
         ClientReviewPaymentService.Quote quote = service.quote(tenantId, projectId);
 
@@ -70,7 +71,7 @@ class ClientReviewPaymentServiceTest {
     void aQuoteOverriddenBelowCostNeverSplitsIntoMoreThanTheClientPays() {
         // The Verified Difference: quoted 1300 against a 7586 platform cost (margin -82.85), 1% upfront.
         quote(new ProjectQuote(60, new BigDecimal("1300.00"), new BigDecimal("1300.00"), new BigDecimal("-82.85"), "INR",
-                new BigDecimal("13.00"), true));
+                new BigDecimal("13.00"), true, null));
 
         ClientReviewPaymentService.Quote quote = service.quote(tenantId, projectId);
 
@@ -81,14 +82,14 @@ class ClientReviewPaymentServiceTest {
 
     @Test
     void unfundedBriefChargesTheFullQuoteAtLock() {
-        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("862.50"), false));
+        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("862.50"), false, null));
 
         assertThat(service.quote(tenantId, projectId).totalAmount()).isEqualByComparingTo("3450.00");
     }
 
     @Test
     void briefPaidInFullLeavesNothingToPayAndRefusesAnOrder() {
-        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("3450.00"), true));
+        quote(new ProjectQuote(30, new BigDecimal("3000.00"), new BigDecimal("3450.00"), new BigDecimal("15"), "INR", new BigDecimal("3450.00"), true, null));
 
         assertThat(service.quote(tenantId, projectId).totalAmount()).isEqualByComparingTo("0");
         assertThatThrownBy(() -> service.createOrder(tenantId, projectId, "token"))
@@ -122,6 +123,21 @@ class ClientReviewPaymentServiceTest {
                 "CLIENT_REVIEW_PAYMENT:" + projectId, null, "clr-credit-" + lock.getId());
         verify(walletService).credit(eq(tenantId), eq(new BigDecimal("1046.82")), eq(TransactionType.RECHARGE),
                 eq("CLIENT_PRODUCTION_FUNDING:" + projectId), isNull(), eq("clr-production-" + lock.getId()), anyString());
+        // The lock is the final payment, so it opens the creator's payout for the project.
+        verify(creatorPayouts).open(tenantId, projectId);
+    }
+
+    @Test
+    void anExtraReviewRoundOpensNoPayout() {
+        ClientReviewPayment review = ClientReviewPayment.builder()
+                .id(UUID.randomUUID()).tenantId(tenantId).projectId(projectId).kind("EXTRA_REVIEW").status("PENDING")
+                .platformBase(new BigDecimal("100.00")).creatorAmount(new BigDecimal("22.60"))
+                .totalAmount(new BigDecimal("122.60")).currency("INR").gatewayOrderId("order_2").build();
+        when(payments.findByGatewayOrderId("order_2")).thenReturn(Optional.of(review));
+
+        service.captureFromWebhook("order_2", "pay_2");
+
+        verifyNoInteractions(creatorPayouts);
     }
 
     @Test

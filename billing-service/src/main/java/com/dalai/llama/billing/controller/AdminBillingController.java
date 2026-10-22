@@ -5,6 +5,8 @@ import com.dalai.llama.billing.domain.entity.enums.TransactionType;
 import com.dalai.llama.billing.dto.AdminCreditRequest;
 import com.dalai.llama.billing.dto.AdminWalletView;
 import com.dalai.llama.billing.repository.WalletRepository;
+import com.dalai.llama.billing.dto.response.CreatorPayoutView;
+import com.dalai.llama.billing.service.CreatorPayoutService;
 import com.dalai.llama.billing.service.EmailService;
 import com.dalai.llama.billing.service.ProjectEconomics;
 import com.dalai.llama.billing.service.ProjectEconomicsService;
@@ -47,6 +49,19 @@ public class AdminBillingController {
     private final WalletService walletService;
     private final EmailService emailService;
     private final ProjectEconomicsService projectEconomicsService;
+    private final CreatorPayoutService creatorPayoutService;
+
+    /** Ops view of creator payouts across every tenant, newest first (last 200). */
+    @GetMapping("/payouts")
+    public ResponseEntity<List<CreatorPayoutView>> payouts() {
+        return ResponseEntity.ok(creatorPayoutService.recent().stream().map(CreatorPayoutView::of).toList());
+    }
+
+    /** Sends a FAILED payout again; the amount is worked out afresh on the next dispatcher run. */
+    @PostMapping("/payouts/{payoutId}/retry")
+    public ResponseEntity<CreatorPayoutView> retryPayout(@PathVariable UUID payoutId) {
+        return ResponseEntity.ok(CreatorPayoutView.of(creatorPayoutService.retry(payoutId)));
+    }
 
     /** Ops view of every project for a tenant: provider cost vs what was charged vs what the
      * client paid, with both the creator's and the platform's profit. */

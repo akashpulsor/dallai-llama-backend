@@ -312,7 +312,7 @@ public class ProjectRequirementService {
                 .map(requirement -> new ProjectQuoteView(requirement.getDurationSeconds(),
                         requirement.getQuotedPlatformCost(), requirement.getQuotedTotalPrice(),
                         requirement.getQuotedCreatorMarginPercent(), requirement.getQuotedCurrency(),
-                        requirement.getRequiredAmount(), requirement.isFunded()));
+                        requirement.getRequiredAmount(), requirement.isFunded(), requirement.getId()));
     }
 
     /** The brief's payment and the project its locked idea became: the reverse of

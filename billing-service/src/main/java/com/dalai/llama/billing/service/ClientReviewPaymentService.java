@@ -44,6 +44,7 @@ public class ClientReviewPaymentService {
     private final PreProductionServiceClient preProductionServiceClient;
     private final CreativePlanningServiceClient creativePlanningServiceClient;
     private final VideoPricingService videoPricingService;
+    private final CreatorPayoutService creatorPayoutService;
 
     @Value("${billing.client-review.platform-base-inr:5299}")
     private BigDecimal platformBase;
@@ -209,6 +210,10 @@ public class ClientReviewPaymentService {
             walletService.credit(payment.getTenantId(), payment.productionFunding(), TransactionType.RECHARGE,
                     "CLIENT_PRODUCTION_FUNDING:" + payment.getProjectId(), null, "clr-production-" + payment.getId(),
                     "Client payment for this project's production");
+        }
+        // The lock is the client's final payment: what's left after production is now the creator's.
+        if ("LOCK".equals(payment.getKind())) {
+            creatorPayoutService.open(payment.getTenantId(), payment.getProjectId());
         }
     }
 

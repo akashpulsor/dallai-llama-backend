@@ -42,6 +42,6 @@ class VideoPricingServiceProductionChargesTest {
 
     private static ProjectQuote quote(Integer seconds, String platformCost, String total) {
         return new ProjectQuote(seconds, platformCost == null ? null : new BigDecimal(platformCost),
-                new BigDecimal(total), new BigDecimal("24"), "INR", BigDecimal.ZERO, false);
+                new BigDecimal(total), new BigDecimal("24"), "INR", BigDecimal.ZERO, false, null);
     }
 }

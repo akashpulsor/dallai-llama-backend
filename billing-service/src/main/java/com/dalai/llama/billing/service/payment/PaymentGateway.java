@@ -20,4 +20,10 @@ public interface PaymentGateway {
      * @throws RuntimeException if verification fails
      */
     void verify(String orderId, String paymentId, String signature);
+
+    /**
+     * The gateway's fee on a captured payment, GST included, in major units -- what the platform
+     * actually received is the amount minus this. Zero when the gateway hasn't set one.
+     */
+    BigDecimal fee(String paymentId);
 }

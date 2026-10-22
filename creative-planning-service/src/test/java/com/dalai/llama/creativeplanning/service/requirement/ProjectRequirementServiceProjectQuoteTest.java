@@ -54,6 +54,7 @@ class ProjectRequirementServiceProjectQuoteTest {
         assertThat(quote.requiredAmount()).isEqualByComparingTo("862.50");
         assertThat(quote.funded()).isTrue();
         assertThat(quote.quotedCurrency()).isEqualTo("INR");
+        assertThat(quote.requirementId()).isEqualTo(requirementId);
     }
 
     @Test
