@@ -28,6 +28,12 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
     private static final char[] PASSWORD_ALPHABET =
             "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789".toCharArray();
     private static final int PASSWORD_LENGTH = 24;
+    /** Addresses minted before readable ones: cr_ + the tenant UUID's 32 hex chars. */
+    private static final String LEGACY_PREFIX = "cr_";
+    /** Never a creator's: the platform's own aliases on the outreach domain and role names. */
+    private static final java.util.Set<String> RESERVED = java.util.Set.of("brands", "outreach", "noreply", "no.reply", "admin",
+            "support", "help", "hello", "info", "team", "ops", "billing", "postmaster", "abuse", "security", "dalai", "dalaillama",
+            "dalai.llama", "creator", "creators");
 
     private final CreatorEmailIdentityRepository repository;
     private final LeadManagementProperties properties;
@@ -35,25 +41,35 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
     @Override
     @Transactional
     public CreatorEmailIdentity provisionForCreator(UUID tenantId, String displayName) {
-        String email = computeEmail(tenantId);
         Optional<CreatorEmailIdentity> existing = repository.findByTenantId(tenantId);
         if (existing.isPresent()) {
             CreatorEmailIdentity row = existing.get();
             // Rename-safe: local_part and email are held stable across renames. Only the
-            // display-name and updated_at move. Skipping the save when displayName is
-            // unchanged avoids the write and the updated_at churn.
+            // display-name and updated_at move. Skipping the save when nothing changed
+            // avoids the write and the updated_at churn.
+            boolean changed = false;
             if (displayName != null && !displayName.equals(row.getDisplayName())) {
                 row.setDisplayName(displayName);
-                repository.save(row);
+                changed = true;
             }
+            // A cr_<uuid> address reads as machine mail; it gets a readable one, once.
+            if (row.getLocalPart().startsWith(LEGACY_PREFIX)) {
+                String localPart = freeLocalPart(displayName != null ? displayName : row.getDisplayName());
+                log.info("Creator email identity tenantId={} renamed {} -> {}", tenantId, row.getLocalPart(), localPart);
+                row.setLocalPart(localPart);
+                row.setEmail(localPart + "@" + properties.domain());
+                changed = true;
+            }
+            if (changed) repository.save(row);
             return row;
         }
 
+        String localPart = freeLocalPart(displayName);
         CreatorEmailIdentity minted = CreatorEmailIdentity.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .localPart(localPart(tenantId))
-                .email(email)
+                .localPart(localPart)
+                .email(localPart + "@" + properties.domain())
                 .displayName(displayName)
                 .emailPassword(generatePassword())
                 .status(CreatorEmailIdentityStatus.PROVISIONED)
@@ -98,17 +114,25 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
         return saved;
     }
 
-    @Override
-    public String computeEmail(UUID tenantId) {
-        return localPart(tenantId) + "@" + properties.domain();
+    /** The first free of {@code asha.rao}, {@code asha.rao2}, {@code asha.rao3}... on the domain. */
+    private String freeLocalPart(String displayName) {
+        String base = readableLocalPart(displayName);
+        String candidate = base;
+        for (int n = 2; RESERVED.contains(candidate)
+                || repository.findByEmailIgnoreCase(candidate + "@" + properties.domain()).isPresent(); n++) {
+            candidate = base + n;
+        }
+        return candidate;
     }
 
-    /** cr_ + the 32 lower-case hex chars of the UUID, hyphens stripped. Standard Java
-     * {@code UUID.toString()} already emits lower-case, but the explicit
-     * {@code toLowerCase(Locale.ROOT)} guards against a future JVM change and makes the
-     * intent explicit. */
-    private static String localPart(UUID tenantId) {
-        return "cr_" + tenantId.toString().replace("-", "").toLowerCase(java.util.Locale.ROOT);
+    /** "Asha Rao's Studio" -> {@code asha.raos.studio}: lower-case ASCII letters and digits,
+     * words joined by dots, at most 30 chars; {@code creator} when nothing is left. */
+    static String readableLocalPart(String displayName) {
+        String ascii = java.text.Normalizer.normalize(displayName == null ? "" : displayName, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "").toLowerCase(java.util.Locale.ROOT).replace("'", "");
+        String joined = String.join(".", ascii.split("[^a-z0-9]+")).replaceAll("^\\.+|\\.+$", "");
+        if (joined.length() > 30) joined = joined.substring(0, 30).replaceAll("\\.+$", "");
+        return joined.isEmpty() ? "creator" : joined;
     }
 
     private static String generatePassword() {

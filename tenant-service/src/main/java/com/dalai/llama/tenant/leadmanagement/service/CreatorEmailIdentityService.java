@@ -11,8 +11,8 @@ public interface CreatorEmailIdentityService {
      * re-delivered event MUST NOT create a duplicate row or a second identity for the same
      * creator. Returns the identity that exists (whether just created or already there);
      * {@code displayName} is refreshed on the existing row but the {@code email} field is
-     * held stable across renames -- that is the entire point of using the immutable tenant
-     * UUID as the local-part source. */
+     * held stable across renames. The address is readable, from the creator's name
+     * ({@code asha.rao@}); a legacy {@code cr_<uuid>@} address is replaced by one once. */
     CreatorEmailIdentity provisionForCreator(UUID tenantId, String displayName);
 
     Optional<CreatorEmailIdentity> findByTenant(UUID tenantId);
@@ -23,9 +23,4 @@ public interface CreatorEmailIdentityService {
      * plaintext password. Throws {@link IllegalArgumentException} if no identity exists for
      * the tenant (caller should provision first). */
     CreatorEmailIdentity rotatePassword(UUID tenantId);
-
-    /** Pure function: same input, same output, no I/O. Public so callers (e.g. the inbound
-     * router) can compute the expected address without hitting the DB, and so tests can pin
-     * the format. Format: {@code cr_<32-hex-chars-no-dashes>@<configured-domain>}. */
-    String computeEmail(UUID tenantId);
 }

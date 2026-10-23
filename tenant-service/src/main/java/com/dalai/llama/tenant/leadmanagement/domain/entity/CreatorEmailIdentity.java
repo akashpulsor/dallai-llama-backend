@@ -46,7 +46,7 @@ public class CreatorEmailIdentity {
     private String email;
 
     /** Rendered "From" name -- may change when the tenant renames themselves. The email address
-     * itself must NOT change on rename (that's the whole point of using the immutable UUID); the
+     * itself must NOT change on rename (brands keep writing to it); the
      * caller updating this field is expected to leave {@link #email} and {@link #localPart}
      * untouched. */
     @Column(name = "display_name", length = 200)

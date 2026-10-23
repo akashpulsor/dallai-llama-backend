@@ -20,8 +20,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Guards the deterministic creator-email-identity provisioning. Key contract points:
- *   1. same tenantId always maps to the same email address (immutable UUID → immutable local
- *      part; a display-name change must never rewrite the email string);
+ *   1. the address reads as the creator's name, is unique on the domain, and a display-name
+ *      change never rewrites it (only a legacy cr_<uuid> address is replaced, once);
  *   2. the provisioning call is idempotent (safe to re-drive from a re-delivered
  *      subscription.activated Kafka event);
  *   3. a UNIQUE-constraint race between two concurrent activators for the same tenant is
@@ -41,31 +41,61 @@ class CreatorEmailIdentityServiceImplTest {
     }
 
     @Test
-    void computeEmail_isDeterministicFromTenantId() {
-        UUID tenantId = UUID.fromString("8f42c91a-62f8-4e53-a971-9a73c10f1001");
-        // Local part is UUID with hyphens stripped, lower-case, prefixed with cr_. This exact
-        // spec is baked into the migration comment and mirrored in the entity's local_part
-        // column; if this test fails, at least one of those two documents is now lying.
-        assertThat(service.computeEmail(tenantId))
-                .isEqualTo("cr_8f42c91a62f84e53a9719a73c10f1001@partner.dalaillama.in");
+    void readableLocalPart_fromTheCreatorsName() {
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart("Akash Tripathi")).isEqualTo("akash.tripathi");
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart("Asha Rao's Studio")).isEqualTo("asha.raos.studio");
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart("  Zoë  Films!! ")).isEqualTo("zoe.films");
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart("A very long creator studio name indeed")).hasSizeLessThanOrEqualTo(30)
+                .doesNotEndWith(".");
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart("???")).isEqualTo("creator");
+        assertThat(CreatorEmailIdentityServiceImpl.readableLocalPart(null)).isEqualTo("creator");
     }
 
     @Test
-    void computeEmail_sameInputSameOutput() {
+    void provisionForCreator_takesTheNextFreeAddressWhenTheNameIsTaken() {
         UUID tenantId = UUID.randomUUID();
-        assertThat(service.computeEmail(tenantId)).isEqualTo(service.computeEmail(tenantId));
+        when(repository.findByTenantId(tenantId)).thenReturn(Optional.empty());
+        when(repository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
+        when(repository.findByEmailIgnoreCase("asha@partner.dalaillama.in")).thenReturn(Optional.of(new CreatorEmailIdentity()));
+        when(repository.save(any(CreatorEmailIdentity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.provisionForCreator(tenantId, "Asha").getEmail()).isEqualTo("asha2@partner.dalaillama.in");
+        // The platform's own aliases are never handed to a creator.
+        assertThat(service.provisionForCreator(UUID.randomUUID(), "Brands").getEmail()).isEqualTo("brands2@partner.dalaillama.in");
+    }
+
+    @Test
+    void provisionForCreator_givesALegacyAddressAReadableOneOnce() {
+        UUID tenantId = UUID.randomUUID();
+        CreatorEmailIdentity legacy = CreatorEmailIdentity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .localPart("cr_8f42c91a62f84e53a9719a73c10f1001")
+                .email("cr_8f42c91a62f84e53a9719a73c10f1001@partner.dalaillama.in")
+                .displayName("Asha Rao")
+                .status(CreatorEmailIdentityStatus.PROVISIONED)
+                .build();
+        when(repository.findByTenantId(tenantId)).thenReturn(Optional.of(legacy));
+        when(repository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
+
+        CreatorEmailIdentity out = service.provisionForCreator(tenantId, "Asha Rao");
+
+        assertThat(out.getEmail()).isEqualTo("asha.rao@partner.dalaillama.in");
+        assertThat(out.getLocalPart()).isEqualTo("asha.rao");
+        verify(repository, times(1)).save(legacy);
     }
 
     @Test
     void provisionForCreator_createsRowWhenNoneExists() {
         UUID tenantId = UUID.fromString("11111111-2222-3333-4444-555555555555");
         when(repository.findByTenantId(tenantId)).thenReturn(Optional.empty());
+        when(repository.findByEmailIgnoreCase(any())).thenReturn(Optional.empty());
         when(repository.save(any(CreatorEmailIdentity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CreatorEmailIdentity out = service.provisionForCreator(tenantId, "Akash Tripathi");
 
-        assertThat(out.getEmail()).isEqualTo("cr_11111111222233334444555555555555@partner.dalaillama.in");
-        assertThat(out.getLocalPart()).isEqualTo("cr_11111111222233334444555555555555");
+        assertThat(out.getEmail()).isEqualTo("akash.tripathi@partner.dalaillama.in");
+        assertThat(out.getLocalPart()).isEqualTo("akash.tripathi");
         assertThat(out.getDisplayName()).isEqualTo("Akash Tripathi");
         assertThat(out.getStatus()).isEqualTo(CreatorEmailIdentityStatus.PROVISIONED);
         assertThat(out.getTenantId()).isEqualTo(tenantId);
@@ -78,8 +108,8 @@ class CreatorEmailIdentityServiceImplTest {
         CreatorEmailIdentity existing = CreatorEmailIdentity.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .localPart("cr_originalabcd")
-                .email("cr_originalabcd@partner.dalaillama.in")
+                .localPart("original.name")
+                .email("original.name@partner.dalaillama.in")
                 .displayName("Original Name")
                 .status(CreatorEmailIdentityStatus.PROVISIONED)
                 .build();
@@ -90,8 +120,8 @@ class CreatorEmailIdentityServiceImplTest {
 
         // Renaming updates display_name; email/local_part stay put -- the whole point of
         // pinning the address to the immutable UUID.
-        assertThat(out.getEmail()).isEqualTo("cr_originalabcd@partner.dalaillama.in");
-        assertThat(out.getLocalPart()).isEqualTo("cr_originalabcd");
+        assertThat(out.getEmail()).isEqualTo("original.name@partner.dalaillama.in");
+        assertThat(out.getLocalPart()).isEqualTo("original.name");
         assertThat(out.getDisplayName()).isEqualTo("Renamed Creator");
         verify(repository, times(1)).save(existing);
     }
@@ -102,8 +132,8 @@ class CreatorEmailIdentityServiceImplTest {
         CreatorEmailIdentity existing = CreatorEmailIdentity.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .localPart("cr_x")
-                .email("cr_x@partner.dalaillama.in")
+                .localPart("same.name")
+                .email("same.name@partner.dalaillama.in")
                 .displayName("Same Name")
                 .status(CreatorEmailIdentityStatus.PROVISIONED)
                 .build();
@@ -121,8 +151,8 @@ class CreatorEmailIdentityServiceImplTest {
         CreatorEmailIdentity winner = CreatorEmailIdentity.builder()
                 .id(UUID.randomUUID())
                 .tenantId(tenantId)
-                .localPart("cr_race")
-                .email("cr_race@partner.dalaillama.in")
+                .localPart("first.writer")
+                .email("first.writer@partner.dalaillama.in")
                 .displayName("First Writer")
                 .status(CreatorEmailIdentityStatus.PROVISIONED)
                 .build();
