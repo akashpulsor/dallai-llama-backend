@@ -17,4 +17,11 @@ public interface CreatorEmailIdentityRepository extends JpaRepository<CreatorEma
      * a case-insensitive match because Cloudflare Email Routing has been observed to
      * lower-case the recipient before delivering the event. */
     Optional<CreatorEmailIdentity> findByEmailIgnoreCase(String email);
+
+    /** Holds the address-allocation lock until the transaction ends, so two creators with the
+     * same name provisioned at once get {@code asha@} and {@code asha2@}, not a UNIQUE(email)
+     * failure. */
+    @org.springframework.data.jpa.repository.Query(nativeQuery = true,
+            value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext('creator_email_identity.email'))) l")
+    Integer lockAddresses();
 }

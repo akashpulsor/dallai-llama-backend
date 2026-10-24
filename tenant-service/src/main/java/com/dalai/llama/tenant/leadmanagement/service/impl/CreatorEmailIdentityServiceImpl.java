@@ -41,6 +41,8 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
     @Override
     @Transactional
     public CreatorEmailIdentity provisionForCreator(UUID tenantId, String displayName) {
+        // Picking a free address and inserting it must not interleave with another provision.
+        repository.lockAddresses();
         Optional<CreatorEmailIdentity> existing = repository.findByTenantId(tenantId);
         if (existing.isPresent()) {
             CreatorEmailIdentity row = existing.get();
