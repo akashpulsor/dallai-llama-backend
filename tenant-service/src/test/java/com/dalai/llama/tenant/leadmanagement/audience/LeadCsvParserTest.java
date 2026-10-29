@@ -44,9 +44,16 @@ class LeadCsvParserTest {
     }
 
     @Test
-    void needsAHeaderWithAnEmailOrPhoneColumn() {
-        assertThatThrownBy(() -> LeadCsvParser.parse("name,company\nAsha,Hearth\n")).isInstanceOf(IllegalArgumentException.class);
+    void needsAHeaderNamingSomethingToKnowTheLeadBy() {
+        assertThatThrownBy(() -> LeadCsvParser.parse("industry,country\nFASHION,IN\n")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> LeadCsvParser.parse("")).isInstanceOf(IllegalArgumentException.class);
+
+        // Brands without an email yet are fine: they're kept and flagged.
+        List<LeadCsvParser.ParsedRow> rows = LeadCsvParser.parse("name,company,size\nAsha,Hearth,SME\n,,\n");
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).hasContact()).isFalse();
+        assertThat(rows.get(0).identifiable()).isTrue();
+        assertThat(rows.get(0).size()).isEqualTo(CompanySize.SMALL);
     }
 
     @Test

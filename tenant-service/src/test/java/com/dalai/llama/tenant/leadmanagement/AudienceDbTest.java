@@ -3,6 +3,7 @@ package com.dalai.llama.tenant.leadmanagement;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceDtos.ImportReport;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceDtos.LeadView;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceService;
+import com.dalai.llama.tenant.leadmanagement.audience.CompanySize;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceStore;
 import com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator;
 import com.dalai.llama.tenant.leadmanagement.audience.LeadImportService;
@@ -152,10 +153,11 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
                 """);
 
         assertThat(report.rowsTotal()).isEqualTo(7);
-        assertThat(report.rowsRejected()).isEqualTo(1);       // no email or phone
-        assertThat(report.leadsCreated()).isEqualTo(3);       // Asha, Ravi, Typo
-        assertThat(report.audienceSize()).isEqualTo(2);       // row 6 merged Asha and Ravi into one lead
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_creator_lead WHERE tenant_id = ?", Integer.class, riya)).isEqualTo(2);
+        assertThat(report.rowsRejected()).isZero();           // "Nobody" has no contact but is kept, flagged
+        assertThat(report.leadsCreated()).isEqualTo(4);       // Asha, Ravi, Nobody, Typo
+        assertThat(report.audienceSize()).isEqualTo(3);       // row 5 merged Asha and Ravi into one lead
+        assertThat(report.leadsWithoutEmail()).isEqualTo(2);  // Nobody, and Typo (its only email is broken)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_creator_lead WHERE tenant_id = ?", Integer.class, riya)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_creator_lead_source WHERE tenant_id = ?", Integer.class, riya))
                 .isEqualTo(7);
 
@@ -168,6 +170,33 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         assertThat(typo.emails()).isEmpty();
         assertThat(typo.discarded()).isEqualTo(1);
         assertThat(typo.reachable()).isFalse();
+        LeadView nobody = lead("Nobody");
+        assertThat(nobody.company()).isEqualTo("No Contact");
+        assertThat(nobody.emails()).isEmpty();
+        assertThat(nobody.reachable()).isFalse();
+    }
+
+    @Test
+    void sizeIsKeptAndALeadWithoutContactsIsNotDuplicatedOnReupload() {
+        ImportReport first = upload("""
+                name,company,size,email
+                Meera,Hearth Foods,SME,
+                Ravi,Spice Co,250+,ravi@spice.example
+                Jo,Big Retail,Enterprise,jo@bigretail.example
+                """);
+        assertThat(first.leadsCreated()).isEqualTo(3);
+        assertThat(first.leadsWithoutEmail()).isEqualTo(1);
+
+        ImportReport again = upload("""
+                company,size
+                hearth foods,Large
+                """);
+        assertThat(again.leadsCreated()).as("matched by company to the lead waiting for an email").isZero();
+        assertThat(again.leadsMerged()).isEqualTo(1);
+
+        assertThat(lead("Meera").size()).as("a later row never overwrites").isEqualTo(CompanySize.SMALL);
+        assertThat(lead("Ravi").size()).isEqualTo(CompanySize.LARGE);
+        assertThat(lead("Jo").size()).isEqualTo(CompanySize.ENTERPRISE);
     }
 
     @Test

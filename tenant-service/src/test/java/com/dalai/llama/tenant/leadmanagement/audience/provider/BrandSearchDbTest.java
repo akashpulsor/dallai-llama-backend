@@ -150,6 +150,7 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         assertThat(report.companies()).isEqualTo(1);
         assertThat(report.contacts()).isEqualTo(2);
         assertThat(report.rejected()).isEqualTo(1);
+        assertThat(report.companiesWithoutEmail()).isZero();
 
         FAIL_DISCOVER.set(true);
         BrandSearchService.SearchResult result = brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", null));
@@ -170,6 +171,29 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         FAIL_DISCOVER.set(false);
         assertThat(brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", "tea")).companies())
                 .extracting(BrandSearchService.CompanyView::domain).startsWith("tealeaf.example");
+    }
+
+    @Test
+    void brandsWithoutAnEmailAreListedAndTheSizeFilterKeepsOnlyKnownSizes() {
+        BrandDirectoryImportService.ImportReport report = directoryImport.importCsv((
+                "company,email,industry,website,country,size\n"
+                + "Tea Leaf Co,meera@tealeaf.example,FOOD_BEVERAGE,https://tealeaf.example,IN,Small\n"
+                + "Chai Point,,FOOD_BEVERAGE,https://chaipoint.example,IN,51-200\n"
+                + "No Website,,FOOD_BEVERAGE,,IN,Small\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(report.companies()).isEqualTo(2);
+        assertThat(report.companiesWithoutEmail()).isEqualTo(1);
+        assertThat(report.rejected()).as("no website and no email: no way to know the brand").isEqualTo(1);
+
+        FAIL_DISCOVER.set(true);
+        List<BrandSearchService.CompanyView> all = brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", null)).companies();
+        BrandSearchService.CompanyView chai = all.stream().filter(c -> c.domain().equals("chaipoint.example")).findFirst().orElseThrow();
+        assertThat(chai.contactsKnown()).as("shown as email not available").isZero();
+        assertThat(chai.size()).isEqualTo(com.dalai.llama.tenant.leadmanagement.audience.CompanySize.MEDIUM);
+
+        BrandSearchService.SearchRequest searchBySize = new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", null,
+                com.dalai.llama.tenant.leadmanagement.audience.CompanySize.SMALL);
+        assertThat(brands.search(searchBySize).companies()).extracting(BrandSearchService.CompanyView::domain).containsExactly("tealeaf.example");
+        FAIL_DISCOVER.set(false);
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean FAIL_DISCOVER = new java.util.concurrent.atomic.AtomicBoolean();

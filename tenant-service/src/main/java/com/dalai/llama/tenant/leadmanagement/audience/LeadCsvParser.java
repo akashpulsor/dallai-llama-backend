@@ -18,16 +18,21 @@ public final class LeadCsvParser {
     public record ParsedRow(int rowNumber, String raw, List<String> emails, List<String> phones, String name, String designation,
                             String company, ShowcaseIndustry industry, String website,
                             /* ISO-2 when the file says, e.g. "IN" or "India"; null otherwise. */
-                            String country) {
+                            String country, CompanySize size) {
         public boolean hasContact() {
             return !emails.isEmpty() || !phones.isEmpty();
+        }
+
+        /** Something to know the lead by when it has no email or phone yet. */
+        public boolean identifiable() {
+            return company != null || name != null || website != null;
         }
     }
 
     private record Record(String raw, List<String> fields) {
     }
 
-    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, DESIGNATION, COMPANY, COUNTRY, INDUSTRY, WEBSITE, IGNORED }
+    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, DESIGNATION, COMPANY, COUNTRY, INDUSTRY, WEBSITE, SIZE, IGNORED }
 
     private LeadCsvParser() {
     }
@@ -36,8 +41,8 @@ public final class LeadCsvParser {
         List<Record> records = records(csv.startsWith("﻿") ? csv.substring(1) : csv);
         if (records.isEmpty()) throw new IllegalArgumentException("The file is empty");
         List<Column> columns = records.get(0).fields().stream().map(LeadCsvParser::column).toList();
-        if (!columns.contains(Column.EMAIL) && !columns.contains(Column.PHONE)) {
-            throw new IllegalArgumentException("The first row must name the columns, with at least an 'email' or 'phone' column");
+        if (java.util.Collections.disjoint(columns, Set.of(Column.EMAIL, Column.PHONE, Column.NAME, Column.FIRST_NAME, Column.COMPANY, Column.WEBSITE))) {
+            throw new IllegalArgumentException("The first row must name the columns, with at least an 'email', 'phone', 'name' or 'company' column");
         }
         if (records.size() - 1 > MAX_ROWS) throw new IllegalArgumentException("Upload at most " + MAX_ROWS + " rows at a time");
 
@@ -49,6 +54,7 @@ public final class LeadCsvParser {
             Set<String> phones = new LinkedHashSet<>();
             String name = null, first = null, last = null, designation = null, company = null, website = null, country = null;
             ShowcaseIndustry industry = null;
+            CompanySize size = null;
             for (int c = 0; c < columns.size() && c < record.fields().size(); c++) {
                 String value = record.fields().get(c).trim();
                 if (value.isEmpty()) continue;
@@ -63,12 +69,13 @@ public final class LeadCsvParser {
                     case COUNTRY -> country = countryCode(value);
                     case INDUSTRY -> industry = industry(value);
                     case WEBSITE -> website = value;
+                    case SIZE -> size = CompanySize.parse(value);
                     default -> { }
                 }
             }
             if (name == null && (first != null || last != null)) name = ((first == null ? "" : first) + " " + (last == null ? "" : last)).trim();
             rows.add(new ParsedRow(r + 1, record.raw(), List.copyOf(emails), List.copyOf(phones), cap(name, 120), cap(designation, 120), cap(company, 160),
-                    industry, website != null && website.startsWith("http") ? cap(website, 255) : null, country));
+                    industry, website != null && website.startsWith("http") ? cap(website, 255) : null, country, size));
         }
         return rows;
     }
@@ -85,6 +92,7 @@ public final class LeadCsvParser {
         if (h.matches("industry|sector|category")) return Column.INDUSTRY;
         if (h.matches("country|countrycode|location")) return Column.COUNTRY;
         if (h.matches("website|url|site|web")) return Column.WEBSITE;
+        if (h.matches("size|companysize|brandsize|segment|tier|employees|employeecount|headcount|companytype")) return Column.SIZE;
         return Column.IGNORED;
     }
 

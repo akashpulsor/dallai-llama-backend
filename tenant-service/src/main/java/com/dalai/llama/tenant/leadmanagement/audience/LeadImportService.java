@@ -41,24 +41,30 @@ public class LeadImportService {
         UUID batch = store.insertBatch(tenantId, audienceId, fileName);
         Instant now = clock.instant();
         int imported = 0, rejected = 0, created = 0, merged = 0, added = 0;
+        Set<UUID> touched = new LinkedHashSet<>();
         for (ParsedRow row : rows) {
             Set<UUID> points = contactPoints(row);
-            if (points.isEmpty()) {
-                store.insertSource(batch, tenantId, null, row.rowNumber(), row.raw(), "No email or phone");
+            if (points.isEmpty() && !row.identifiable()) {
+                store.insertSource(batch, tenantId, null, row.rowNumber(), row.raw(), "No email, phone, name or company");
                 rejected++;
                 continue;
             }
-            List<UUID> owners = store.leadsOwning(tenantId, points);
+            // No email or phone: the lead is still kept (shown as email not available), matched by
+            // company or name to one already waiting for a contact.
+            List<UUID> owners = points.isEmpty()
+                    ? store.leadWithoutContacts(tenantId, row.company(), row.name()).map(List::of).orElse(List.of())
+                    : store.leadsOwning(tenantId, points);
             UUID lead;
             if (owners.isEmpty()) {
-                lead = store.createLead(tenantId, row.name(), row.designation(), row.company(), row.industry(), row.website(), now);
+                lead = store.createLead(tenantId, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size(), now);
                 created++;
             } else {
                 lead = owners.get(0);
                 if (owners.size() > 1) store.merge(tenantId, lead, owners.subList(1, owners.size()));
-                store.fillBlanks(lead, row.name(), row.designation(), row.company(), row.industry(), row.website());
+                store.fillBlanks(lead, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size());
                 merged++;
             }
+            touched.add(lead);
             for (UUID point : points) if (store.link(tenantId, lead, point)) added++;
             store.addMember(audienceId, lead);
             store.insertSource(batch, tenantId, lead, row.rowNumber(), row.raw(), null);
@@ -67,7 +73,7 @@ public class LeadImportService {
         BatchCounts counts = new BatchCounts(rows.size(), imported, rejected, created, merged, added);
         store.finishBatch(batch, counts);
         return new ImportReport(batch, counts.total(), counts.imported(), counts.rejected(), counts.leadsCreated(),
-                counts.leadsMerged(), counts.contactPointsAdded(), store.memberCount(audienceId));
+                counts.leadsMerged(), counts.contactPointsAdded(), store.memberCount(audienceId), store.countWithoutEmail(touched));
     }
 
     private Set<UUID> contactPoints(ParsedRow row) {

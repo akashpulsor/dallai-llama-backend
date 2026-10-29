@@ -35,24 +35,29 @@ public class BrandDirectoryImportService {
     private final RecipientHasher hasher;
     private final Clock clock;
 
-    public record ImportReport(int rows, int companies, int contacts, int rejected) {
+    /** {@code companiesWithoutEmail}: brands kept with no email known (creators see "email not available"). */
+    public record ImportReport(int rows, int companies, int contacts, int rejected, int companiesWithoutEmail) {
     }
 
     @Transactional
     public ImportReport importCsv(byte[] file) {
         if (file.length > 2 * 1024 * 1024) throw new IllegalArgumentException("Upload a file of at most 2 MB");
         Instant now = clock.instant();
-        int companies = 0, contacts = 0, rejected = 0;
+        int companies = 0, contacts = 0, rejected = 0, withoutEmail = 0;
         Set<UUID> seen = new java.util.HashSet<>();
         var rows = LeadCsvParser.parse(new String(file, StandardCharsets.UTF_8));
         for (LeadCsvParser.ParsedRow row : rows) {
             String domain = domain(row);
-            if (domain == null || !row.hasContact()) {
+            if (domain == null) {
                 rejected++;
                 continue;
             }
-            UUID company = store.upsertCompany(domain, row.company() != null ? row.company() : domain, row.industry(), row.country(), 0, SOURCE);
+            UUID company = store.upsertCompany(domain, row.company() != null ? row.company() : domain, row.industry(), row.country(), 0, SOURCE,
+                    row.size());
             if (seen.add(company)) companies++;
+            if (row.emails().isEmpty()) withoutEmail++;
+            // No contact in the file: the brand is still listed, and left for a provider lookup to fill.
+            if (!row.hasContact()) continue;
             for (String raw : row.emails()) {
                 String email = ContactPointValues.normaliseEmail(raw);
                 if (!ContactPointValues.validEmail(email)) continue;
@@ -71,7 +76,7 @@ public class BrandDirectoryImportService {
             // Known contacts: no outside lookup needed for this company.
             store.markContactsFetched(company, now);
         }
-        return new ImportReport(rows.size(), companies, contacts, rejected);
+        return new ImportReport(rows.size(), companies, contacts, rejected, withoutEmail);
     }
 
     /** The website's host, else a work email's domain (never a personal mailbox). */

@@ -68,10 +68,11 @@ public final class BrandSearchControllers {
         public ResponseEntity<BrandSearchService.SearchResult> search(@AuthenticationPrincipal Jwt jwt,
                                                                       @RequestParam(required = false) ShowcaseIndustry industry,
                                                                       @RequestParam(required = false) String country,
-                                                                      @RequestParam(required = false) String q) {
+                                                                      @RequestParam(required = false) String q,
+                                                                      @RequestParam(required = false) com.dalai.llama.tenant.leadmanagement.audience.CompanySize size) {
             if (country != null && country.length() > 2) throw new IllegalArgumentException("Use a two-letter country code");
             if (q != null && q.length() > 120) throw new IllegalArgumentException("Keep the search under 120 characters");
-            return ResponseEntity.of(tenant(jwt).map(t -> brands.search(new BrandSearchService.SearchRequest(industry, country, q))));
+            return ResponseEntity.of(tenant(jwt).map(t -> brands.search(new BrandSearchService.SearchRequest(industry, country, q, size))));
         }
 
         /** Looks up the chosen companies' emails (once, shared) and adds them as leads. */

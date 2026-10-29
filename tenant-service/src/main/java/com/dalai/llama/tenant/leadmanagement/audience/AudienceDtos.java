@@ -20,8 +20,9 @@ public final class AudienceDtos {
     public record AudienceView(UUID id, String name, Instant createdAt, int leads, int reachable) {
     }
 
+    /** {@code leadsWithoutEmail}: leads this upload touched that have no usable email (kept; the creator adds one). */
     public record ImportReport(UUID batchId, int rowsTotal, int rowsImported, int rowsRejected, int leadsCreated, int leadsMerged,
-                               int contactPointsAdded, int audienceSize) {
+                               int contactPointsAdded, int audienceSize, int leadsWithoutEmail) {
     }
 
     /** A contact point as the creator sees it. {@code status} is VERIFIED, LIKELY_VALID or UNVERIFIED
@@ -31,7 +32,7 @@ public final class AudienceDtos {
 
     /** Rule 25: per kind, validated contact points if there are any, else the unvalidated ones. */
     public record LeadView(UUID id, String name, String designation, String company, ShowcaseIndustry industry, String website,
-                           List<ContactPointView> emails, List<ContactPointView> phones, int discarded, boolean reachable) {
+                           CompanySize size, List<ContactPointView> emails, List<ContactPointView> phones, int discarded, boolean reachable) {
     }
 
     public record LeadPage(List<LeadView> leads, int page, int size, int total) {

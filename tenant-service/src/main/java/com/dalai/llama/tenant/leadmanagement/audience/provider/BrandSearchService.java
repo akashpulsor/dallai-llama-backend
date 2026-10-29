@@ -2,6 +2,7 @@ package com.dalai.llama.tenant.leadmanagement.audience.provider;
 
 import com.dalai.llama.tenant.common.token.PublicTokens;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceStore;
+import com.dalai.llama.tenant.leadmanagement.audience.CompanySize;
 import com.dalai.llama.tenant.leadmanagement.audience.ContactPointValues;
 import com.dalai.llama.tenant.leadmanagement.audience.provider.BrandSearchStore.Company;
 import com.dalai.llama.tenant.leadmanagement.audience.provider.BrandSearchStore.CompanyContact;
@@ -50,11 +51,15 @@ public class BrandSearchService {
     private final RecipientHasher hasher;
     private final Clock clock;
 
-    public record SearchRequest(ShowcaseIndustry industry, @Size(max = 2) String countryCode, @Size(max = 120) String query) {
+    /** {@code size} null = any size; set, only brands known to be that size. */
+    public record SearchRequest(ShowcaseIndustry industry, @Size(max = 2) String countryCode, @Size(max = 120) String query, CompanySize size) {
+        public SearchRequest(ShowcaseIndustry industry, String countryCode, String query) {
+            this(industry, countryCode, query, null);
+        }
     }
 
     public record CompanyView(UUID id, String name, String domain, ShowcaseIndustry industry, String countryCode, Integer emailsAvailable,
-                              int contactsKnown, boolean contactsLookedUp) {
+                              int contactsKnown, boolean contactsLookedUp, CompanySize size) {
     }
 
     public record Credits(boolean configured, int monthlyCredits, int usedThisMonth, int leftThisMonth) {
@@ -83,21 +88,21 @@ public class BrandSearchService {
         if (r.industry() == null && country == null && query == null) {
             throw new IllegalArgumentException("Choose an industry or a country, or type what you're looking for");
         }
-        List<Company> directory = store.directory(r.industry(), country, query, 25);
+        List<Company> directory = store.directory(r.industry(), country, query, r.size(), 25);
         if (store.freshSearch(key, now.minus(Duration.ofDays(properties.searchCacheDays())))) {
-            return new SearchResult(views(merge(directory, store.searchResults(key))), true, credits());
+            return new SearchResult(views(merge(directory, store.searchResults(key)), r.size()), true, credits());
         }
         if (!properties.configured() && !apolloProperties.configured()) {
-            return new SearchResult(views(directory), true, credits());
+            return new SearchResult(views(directory, r.size()), true, credits());
         }
         try {
             fromProvider(key, r, country, query);
         } catch (RuntimeException e) {
             log.warn("Brand search provider failed ({}); serving the directory", e.getMessage());
-            return new SearchResult(views(directory), true, credits(),
+            return new SearchResult(views(directory, r.size()), true, credits(),
                     "Brand search outside Dalai Llama is unavailable right now; showing brands we already have.");
         }
-        return new SearchResult(views(merge(directory, store.searchResults(key))), false, credits());
+        return new SearchResult(views(merge(directory, store.searchResults(key)), r.size()), false, credits());
     }
 
     /** Directory brands first (they usually come with contacts), then the provider's, without repeats. */
@@ -144,7 +149,8 @@ public class BrandSearchService {
             if (contacts.isEmpty()) {
                 // No email known (Apollo's free plan, or this month's lookups are used up): the company
                 // still joins the audience and the creator adds the contact on the lead.
-                UUID lead = audiences.createLead(tenantId, null, null, company.name(), company.industry(), "https://" + company.domain(), now);
+                UUID lead = audiences.createLead(tenantId, null, null, company.name(), company.industry(), "https://" + company.domain(),
+                        company.size(), now);
                 audiences.addMember(audienceId, lead);
                 added++;
                 without++;
@@ -157,11 +163,12 @@ public class BrandSearchService {
             UUID lead;
             if (owners.isEmpty()) {
                 lead = audiences.createLead(tenantId, best.fullName(), best.position(), company.name(), company.industry(),
-                        "https://" + company.domain(), now);
+                        "https://" + company.domain(), company.size(), now);
             } else {
                 lead = owners.get(0);
                 if (owners.size() > 1) audiences.merge(tenantId, lead, owners.subList(1, owners.size()));
-                audiences.fillBlanks(lead, best.fullName(), best.position(), company.name(), company.industry(), "https://" + company.domain());
+                audiences.fillBlanks(lead, best.fullName(), best.position(), company.name(), company.industry(), "https://" + company.domain(),
+                        company.size());
             }
             for (UUID point : points) if (audiences.link(tenantId, lead, point)) contactsAdded++;
             audiences.addMember(audienceId, lead);
@@ -191,9 +198,11 @@ public class BrandSearchService {
         store.markContactsFetched(company.id(), now);
     }
 
-    private List<CompanyView> views(List<Company> companies) {
-        return companies.stream().map(c -> new CompanyView(c.id(), c.name(), c.domain(), c.industry(), c.countryCode(), c.emailsAvailable(),
-                c.contactsKnown(), c.contactsFetchedAt() != null)).toList();
+    /** Provider results rarely say how big a brand is, so a size filter keeps only brands known to be that size. */
+    private List<CompanyView> views(List<Company> companies, CompanySize size) {
+        return companies.stream().filter(c -> size == null || size == c.size())
+                .map(c -> new CompanyView(c.id(), c.name(), c.domain(), c.industry(), c.countryCode(), c.emailsAvailable(),
+                        c.contactsKnown(), c.contactsFetchedAt() != null, c.size())).toList();
     }
 
     private String month() {

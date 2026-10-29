@@ -114,10 +114,10 @@ public class PeopleSearchService {
             }
             if (lead == null) {
                 lead = audiences.createLead(tenantId, displayName(current), current.title(), current.companyName(), null,
-                        current.companyDomain() == null ? null : "https://" + current.companyDomain(), now);
+                        current.companyDomain() == null ? null : "https://" + current.companyDomain(), null, now);
             } else {
                 audiences.fillBlanks(lead, displayName(current), current.title(), current.companyName(), null,
-                        current.companyDomain() == null ? null : "https://" + current.companyDomain());
+                        current.companyDomain() == null ? null : "https://" + current.companyDomain(), null);
             }
             if (point != null) {
                 audiences.link(tenantId, lead, point);

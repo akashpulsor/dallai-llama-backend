@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.leadmanagement.audience.provider;
 
+import com.dalai.llama.tenant.leadmanagement.audience.CompanySize;
 import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,7 +21,7 @@ import java.util.stream.Collectors;
 public class BrandSearchStore {
 
     public record Company(UUID id, String domain, String name, ShowcaseIndustry industry, String countryCode, Integer emailsAvailable,
-                          Instant contactsFetchedAt, int contactsKnown) {
+                          Instant contactsFetchedAt, int contactsKnown, CompanySize size) {
     }
 
     public record CompanyContact(UUID contactPointId, String email, String fullName, String position) {
@@ -28,11 +29,11 @@ public class BrandSearchStore {
 
     private static final String COMPANY = """
             SELECT c.id, c.domain, c.name, c.industry, c.country_code, c.emails_available, c.contacts_fetched_at,
-                   (SELECT COUNT(*) FROM lead_company_contact cc WHERE cc.company_id = c.id)
+                   (SELECT COUNT(*) FROM lead_company_contact cc WHERE cc.company_id = c.id), c.size_band
             FROM lead_company c""";
     private static final RowMapper<Company> ROW = (rs, n) -> new Company(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
             rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5), (Integer) rs.getObject(6),
-            rs.getTimestamp(7) == null ? null : rs.getTimestamp(7).toInstant(), rs.getInt(8));
+            rs.getTimestamp(7) == null ? null : rs.getTimestamp(7).toInstant(), rs.getInt(8), CompanySize.of(rs.getString(9)));
 
     private final JdbcTemplate jdbc;
 
@@ -56,25 +57,34 @@ public class BrandSearchStore {
 
     /** Directory companies for a search: matching industry/country/keywords, ones with known
      * contacts first. Serves bootstrapping (ops uploads) and any provider outage. */
-    public List<Company> directory(ShowcaseIndustry industry, String countryCode, String query, int limit) {
+    public List<Company> directory(ShowcaseIndustry industry, String countryCode, String query, CompanySize size, int limit) {
         String like = query == null ? null : "%" + query.toLowerCase(java.util.Locale.ROOT) + "%";
+        String band = size == null ? null : size.name();
         return jdbc.query(COMPANY + " WHERE (?::text IS NULL OR c.industry = ?) AND (?::text IS NULL OR c.country_code = ?)"
-                        + " AND (?::text IS NULL OR LOWER(c.name) LIKE ? OR c.domain LIKE ?)"
+                        + " AND (?::text IS NULL OR LOWER(c.name) LIKE ? OR c.domain LIKE ?) AND (?::text IS NULL OR c.size_band = ?)"
                         + " ORDER BY (SELECT COUNT(*) FROM lead_company_contact cc WHERE cc.company_id = c.id) DESC, c.last_seen_at DESC LIMIT ?",
                 ROW, industry == null ? null : industry.name(), industry == null ? null : industry.name(), countryCode, countryCode,
-                like, like, like, limit);
+                like, like, like, band, band, limit);
     }
 
     public UUID upsertCompany(String domain, String name, ShowcaseIndustry industry, String countryCode, int emailsAvailable, String provider) {
+        return upsertCompany(domain, name, industry, countryCode, emailsAvailable, provider, null);
+    }
+
+    /** {@code size} null keeps what the directory already knows; a given size replaces it. */
+    public UUID upsertCompany(String domain, String name, ShowcaseIndustry industry, String countryCode, int emailsAvailable, String provider,
+                              CompanySize size) {
         return jdbc.queryForObject("""
-                INSERT INTO lead_company (id, domain, name, industry, country_code, emails_available, provider)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO lead_company (id, domain, name, industry, country_code, emails_available, provider, size_band)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (domain) DO UPDATE SET name = COALESCE(EXCLUDED.name, lead_company.name),
                     industry = COALESCE(lead_company.industry, EXCLUDED.industry),
                     country_code = COALESCE(lead_company.country_code, EXCLUDED.country_code),
+                    size_band = COALESCE(EXCLUDED.size_band, lead_company.size_band),
                     emails_available = EXCLUDED.emails_available, last_seen_at = NOW()
                 RETURNING id""", UUID.class, UUID.randomUUID(), domain.toLowerCase(), name,
-                industry == null ? null : industry.name(), countryCode == null ? null : countryCode.toUpperCase(), emailsAvailable, provider);
+                industry == null ? null : industry.name(), countryCode == null ? null : countryCode.toUpperCase(), emailsAvailable, provider,
+                size == null ? null : size.name());
     }
 
     /** {@code searchedAt} from the app clock, the same clock {@link #freshSearch} is asked with. */
