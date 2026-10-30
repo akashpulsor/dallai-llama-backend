@@ -35,6 +35,22 @@ public final class AudienceDtos {
                            CompanySize size, List<ContactPointView> emails, List<ContactPointView> phones, int discarded, boolean reachable) {
     }
 
+    /** One lead typed in by the creator: the same fields as the CSV columns. */
+    public record AddLeadRequest(
+            @jakarta.validation.constraints.Size(max = 120) String name,
+            @jakarta.validation.constraints.Size(max = 120) String designation,
+            @jakarta.validation.constraints.Size(max = 160) String company,
+            @jakarta.validation.constraints.Size(max = 600) String email,
+            @jakarta.validation.constraints.Size(max = 200) String phone,
+            ShowcaseIndustry industry,
+            @jakarta.validation.constraints.Size(max = 255) String website,
+            CompanySize size) {
+    }
+
+    /** {@code merged}: it matched a lead the creator already had (same email/phone, or same company). */
+    public record AddLeadResult(UUID leadId, boolean merged, int audienceSize) {
+    }
+
     public record LeadPage(List<LeadView> leads, int page, int size, int total) {
     }
 }

@@ -18,6 +18,9 @@ public interface CreatorEmailIdentityRepository extends JpaRepository<CreatorEma
      * lower-case the recipient before delivering the event. */
     Optional<CreatorEmailIdentity> findByEmailIgnoreCase(String email);
 
+    /** Identities still on a legacy {@code cr_<uuid>} address. */
+    java.util.List<CreatorEmailIdentity> findByLocalPartStartingWith(String prefix);
+
     /** Holds the address-allocation lock until the transaction ends, so two creators with the
      * same name provisioned at once get {@code asha@} and {@code asha2@}, not a UNIQUE(email)
      * failure. */

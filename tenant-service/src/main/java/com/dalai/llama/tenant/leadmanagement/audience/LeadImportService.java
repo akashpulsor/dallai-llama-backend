@@ -49,31 +49,67 @@ public class LeadImportService {
                 rejected++;
                 continue;
             }
-            // No email or phone: the lead is still kept (shown as email not available), matched by
-            // company or name to one already waiting for a contact.
-            List<UUID> owners = points.isEmpty()
-                    ? store.leadWithoutContacts(tenantId, row.company(), row.name()).map(List::of).orElse(List.of())
-                    : store.leadsOwning(tenantId, points);
-            UUID lead;
-            if (owners.isEmpty()) {
-                lead = store.createLead(tenantId, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size(), now);
-                created++;
-            } else {
-                lead = owners.get(0);
-                if (owners.size() > 1) store.merge(tenantId, lead, owners.subList(1, owners.size()));
-                store.fillBlanks(lead, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size());
-                merged++;
-            }
-            touched.add(lead);
-            for (UUID point : points) if (store.link(tenantId, lead, point)) added++;
-            store.addMember(audienceId, lead);
-            store.insertSource(batch, tenantId, lead, row.rowNumber(), row.raw(), null);
+            Placed placed = place(tenantId, audienceId, row, points, now);
+            if (placed.created()) created++;
+            else merged++;
+            added += placed.contactPointsAdded();
+            touched.add(placed.leadId());
+            store.insertSource(batch, tenantId, placed.leadId(), row.rowNumber(), row.raw(), null);
             imported++;
         }
         BatchCounts counts = new BatchCounts(rows.size(), imported, rejected, created, merged, added);
         store.finishBatch(batch, counts);
         return new ImportReport(batch, counts.total(), counts.imported(), counts.rejected(), counts.leadsCreated(),
                 counts.leadsMerged(), counts.contactPointsAdded(), store.memberCount(audienceId), store.countWithoutEmail(touched));
+    }
+
+    /** The creator types one lead in (the CSV's columns as fields); it joins the audience exactly as
+     * an uploaded row would: an existing lead with the same email or phone, or the same company
+     * still waiting for an email, is filled in rather than duplicated. */
+    @Transactional
+    public AudienceDtos.AddLeadResult addLead(UUID tenantId, UUID audienceId, AudienceDtos.AddLeadRequest r) {
+        if (!store.owns(tenantId, audienceId)) throw new IllegalArgumentException("Unknown audience");
+        ParsedRow row = new ParsedRow(0, null, blankless(r.email(), "[;,\\s]+"), blankless(r.phone(), "[;,/]+"), blank(r.name()),
+                blank(r.designation()), blank(r.company()), r.industry(),
+                r.website() == null || r.website().isBlank() ? null : (r.website().trim().startsWith("http") ? r.website().trim() : "https://" + r.website().trim()),
+                null, r.size());
+        Set<UUID> points = contactPoints(row);
+        if (points.isEmpty() && !row.identifiable()) throw new IllegalArgumentException("Give at least a company, a name or an email");
+        Placed placed = place(tenantId, audienceId, row, points, clock.instant());
+        return new AudienceDtos.AddLeadResult(placed.leadId(), !placed.created(), store.memberCount(audienceId));
+    }
+
+    private record Placed(UUID leadId, boolean created, int contactPointsAdded) {
+    }
+
+    /** A row joins the lead that already has one of its emails or phones; failing that, the lead for
+     * the same company (or person) still waiting for a contact, so an email found later fills it in.
+     * With no email or phone the lead is still kept (shown as "email not available"). */
+    private Placed place(UUID tenantId, UUID audienceId, ParsedRow row, Set<UUID> points, Instant now) {
+        List<UUID> owners = points.isEmpty() ? List.of() : store.leadsOwning(tenantId, points);
+        if (owners.isEmpty()) owners = store.leadWithoutContacts(tenantId, row.company(), row.name()).map(List::of).orElse(List.of());
+        UUID lead;
+        boolean created = owners.isEmpty();
+        if (created) {
+            lead = store.createLead(tenantId, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size(), now);
+        } else {
+            lead = owners.get(0);
+            if (owners.size() > 1) store.merge(tenantId, lead, owners.subList(1, owners.size()));
+            store.fillBlanks(lead, row.name(), row.designation(), row.company(), row.industry(), row.website(), row.size());
+        }
+        int added = 0;
+        for (UUID point : points) if (store.link(tenantId, lead, point)) added++;
+        store.addMember(audienceId, lead);
+        return new Placed(lead, created, added);
+    }
+
+    private static List<String> blankless(String raw, String separators) {
+        if (raw == null || raw.isBlank()) return List.of();
+        return java.util.Arrays.stream(raw.split(separators)).map(String::trim).filter(s -> !s.isEmpty()).distinct().toList();
+    }
+
+    private static String blank(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private Set<UUID> contactPoints(ParsedRow row) {

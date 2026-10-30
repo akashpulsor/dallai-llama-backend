@@ -29,7 +29,7 @@ public class CreatorEmailIdentityServiceImpl implements CreatorEmailIdentityServ
             "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789".toCharArray();
     private static final int PASSWORD_LENGTH = 24;
     /** Addresses minted before readable ones: cr_ + the tenant UUID's 32 hex chars. */
-    private static final String LEGACY_PREFIX = "cr_";
+    static final String LEGACY_PREFIX = "cr_";
     /** Never a creator's: the platform's own aliases on the outreach domain and role names. */
     private static final java.util.Set<String> RESERVED = java.util.Set.of("brands", "outreach", "noreply", "no.reply", "admin",
             "support", "help", "hello", "info", "team", "ops", "billing", "postmaster", "abuse", "security", "dalai", "dalaillama",

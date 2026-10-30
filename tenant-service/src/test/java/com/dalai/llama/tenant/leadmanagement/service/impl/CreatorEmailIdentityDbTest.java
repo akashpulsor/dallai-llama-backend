@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @EnableConfigurationProperties(LeadManagementProperties.class)
-@Import(CreatorEmailIdentityServiceImpl.class)
+@Import({CreatorEmailIdentityServiceImpl.class, LegacyCreatorAddressUpgrade.class})
 class CreatorEmailIdentityDbTest extends ShowcaseDbTestSupport {
 
     @Autowired
@@ -72,6 +72,25 @@ class CreatorEmailIdentityDbTest extends ShowcaseDbTestSupport {
 
         assertThat(service.provisionForCreator(tenantId, "Ravi Kumar").getEmail()).isEqualTo("ravi.kumar@partner.dalaillama.in");
         assertThat(service.provisionForCreator(tenantId, "Ravi K Films").getEmail()).isEqualTo("ravi.kumar@partner.dalaillama.in");
+    }
+
+    @Autowired
+    private LegacyCreatorAddressUpgrade upgrade;
+
+    @Test
+    void startupGivesEveryLegacyAddressAReadableOne() {
+        UUID pragya = tenant(jdbc, "PragyaTalks");
+        UUID acme = tenant(jdbc, "ACME");
+        for (UUID[] t : new UUID[][]{{pragya}, {acme}}) {
+            String legacy = "cr_" + t[0].toString().replace("-", "");
+            jdbc.update("INSERT INTO creator_email_identity (id, tenant_id, local_part, email, display_name, status) VALUES (?, ?, ?, ?, ?, 'PROVISIONED')",
+                    UUID.randomUUID(), t[0], legacy, legacy + "@partner.dalaillama.in", t[0] == pragya ? "PragyaTalks" : "ACME");
+        }
+
+        assertThat(upgrade.upgrade()).isEqualTo(2);
+        assertThat(jdbc.queryForList("SELECT email FROM creator_email_identity ORDER BY email", String.class))
+                .containsExactly("acme@partner.dalaillama.in", "pragyatalks@partner.dalaillama.in");
+        assertThat(upgrade.upgrade()).as("nothing left to do").isZero();
     }
 
     private static <T> T get(Future<T> future) {

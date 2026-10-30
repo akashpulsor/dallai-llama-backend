@@ -6,7 +6,9 @@ import com.dalai.llama.tenant.leadmanagement.audience.AudienceService;
 import com.dalai.llama.tenant.leadmanagement.audience.CompanySize;
 import com.dalai.llama.tenant.leadmanagement.audience.AudienceStore;
 import com.dalai.llama.tenant.leadmanagement.audience.ContactPointValidator;
+import com.dalai.llama.tenant.leadmanagement.audience.AudienceDtos;
 import com.dalai.llama.tenant.leadmanagement.audience.LeadImportService;
+import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
 import com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver;
 import com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver.MailDomain;
 import com.dalai.llama.tenant.leadmanagement.email.CreatorEmailMessage;
@@ -174,6 +176,27 @@ class AudienceDbTest extends ShowcaseDbTestSupport {
         assertThat(nobody.company()).isEqualTo("No Contact");
         assertThat(nobody.emails()).isEmpty();
         assertThat(nobody.reachable()).isFalse();
+    }
+
+    @Test
+    void aLeadTypedInByHandJoinsTheAudienceLikeAnUploadedRow() {
+        var first = imports.addLead(riya, list, new AudienceDtos.AddLeadRequest("Meera Shah", "Founder", "Hearth Foods", null, null,
+                ShowcaseIndustry.FOOD_BEVERAGE, "hearthfoods.example", CompanySize.SMALL));
+        assertThat(first.merged()).isFalse();
+        LeadView meera = lead("Meera Shah");
+        assertThat(meera.emails()).as("email not available yet").isEmpty();
+        assertThat(meera.website()).isEqualTo("https://hearthfoods.example");
+        assertThat(meera.size()).isEqualTo(CompanySize.SMALL);
+
+        // Later the creator finds her email: the same company fills in the lead instead of a second one.
+        var second = imports.addLead(riya, list, new AudienceDtos.AddLeadRequest(null, null, "hearth foods", " meera@hearthfoods.example ",
+                null, null, null, null));
+        assertThat(second.merged()).isTrue();
+        assertThat(second.audienceSize()).isEqualTo(1);
+        assertThat(lead("Meera Shah").emails()).extracting(e -> e.value()).containsExactly("meera@hearthfoods.example");
+
+        assertThatThrownBy(() -> imports.addLead(riya, list, new AudienceDtos.AddLeadRequest(" ", null, null, null, null, null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

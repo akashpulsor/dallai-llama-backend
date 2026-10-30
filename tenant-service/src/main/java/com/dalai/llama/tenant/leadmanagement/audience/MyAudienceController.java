@@ -67,6 +67,14 @@ public class MyAudienceController {
         return ResponseEntity.of(tenant(jwt).map(t -> imports.importCsv(t.getId(), audienceId, file.getOriginalFilename(), bytes(file))));
     }
 
+    /** Add one lead by hand (the CSV's columns as fields). */
+    @PostMapping("/audiences/{audienceId}/leads")
+    public ResponseEntity<AudienceDtos.AddLeadResult> addLead(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID audienceId,
+                                                              @Valid @RequestBody AudienceDtos.AddLeadRequest request) {
+        return tenant(jwt).map(t -> ResponseEntity.status(HttpStatus.CREATED).body(imports.addLead(t.getId(), audienceId, request)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @GetMapping("/audiences/{audienceId}/leads")
     public ResponseEntity<LeadPage> leads(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID audienceId,
                                           @RequestParam(required = false) String q, @RequestParam(defaultValue = "0") int page) {
