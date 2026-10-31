@@ -22,10 +22,14 @@ public class CreatorMailStore {
      * yet, the uploaded creator leads (not on the platform), or one address as a test. */
     public enum Audience { ALL, CHOSEN, NO_VIDEO, LEADS, TEST }
 
+    /** How a template's mail looks: a plain personal letter (best for the main inbox), or the
+     * designed platform mail with picture cards and a button (Gmail usually files it under Promotions). */
+    public enum MailStyle { PLAIN, STYLED }
+
     /** {@code ctaLabel}/{@code ctaUrl}: the button the mail ends with; both null for none.
      * {@code ideaVideos}: how many inspiration-board videos the mail shows (0-3). */
     public record Template(UUID id, String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos,
-                           boolean active, OffsetDateTime lastSentAt) {
+                           MailStyle style, boolean active, OffsetDateTime lastSentAt) {
     }
 
     /** {@code queued}/{@code sent}: where its mails are now. */
@@ -42,11 +46,11 @@ public class CreatorMailStore {
     public record Lead(String email, String name, String profileUrl) {
     }
 
-    private static final String TEMPLATE_SELECT = "SELECT t.id, t.name, t.subject, t.body, t.active, t.cta_label, t.cta_url, t.idea_videos,"
+    private static final String TEMPLATE_SELECT = "SELECT t.id, t.name, t.subject, t.body, t.active, t.cta_label, t.cta_url, t.idea_videos, t.style,"
             + " (SELECT MAX(s.created_at) FROM ops_creator_mail_send s WHERE s.template_id = t.id AND s.audience <> 'TEST')"
             + " FROM ops_creator_mail_template t";
     private static final RowMapper<Template> TEMPLATE = (rs, n) -> new Template(rs.getObject(1, UUID.class), rs.getString(2),
-            rs.getString(3), rs.getString(4), rs.getString(6), rs.getString(7), rs.getInt(8), rs.getBoolean(5), rs.getObject(9, OffsetDateTime.class));
+            rs.getString(3), rs.getString(4), rs.getString(6), rs.getString(7), rs.getInt(8), MailStyle.valueOf(rs.getString(9)), rs.getBoolean(5), rs.getObject(10, OffsetDateTime.class));
 
     private final JdbcTemplate jdbc;
 
@@ -60,17 +64,18 @@ public class CreatorMailStore {
         return jdbc.query(TEMPLATE_SELECT + " WHERE t.id = ?", TEMPLATE, id).stream().findFirst();
     }
 
-    public Template insert(String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos) {
+    public Template insert(String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos, MailStyle style) {
         UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO ops_creator_mail_template (id, name, subject, body, cta_label, cta_url, idea_videos) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                id, name, subject, body, ctaLabel, ctaUrl, ideaVideos);
+        jdbc.update("INSERT INTO ops_creator_mail_template (id, name, subject, body, cta_label, cta_url, idea_videos, style)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, name, subject, body, ctaLabel, ctaUrl, ideaVideos, style.name());
         return find(id).orElseThrow();
     }
 
     public Optional<Template> update(UUID id, String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos,
-                                     boolean active) {
+                                     MailStyle style, boolean active) {
         jdbc.update("UPDATE ops_creator_mail_template SET name = ?, subject = ?, body = ?, cta_label = ?, cta_url = ?, idea_videos = ?,"
-                + " active = ?, updated_at = NOW() WHERE id = ?", name, subject, body, ctaLabel, ctaUrl, ideaVideos, active, id);
+                + " style = ?, active = ?, updated_at = NOW() WHERE id = ?", name, subject, body, ctaLabel, ctaUrl, ideaVideos, style.name(),
+                active, id);
         return find(id);
     }
 

@@ -285,6 +285,27 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aStyledTemplateSendsTheDesignedMailWithPictureCardsAndAButton() {
+        jdbc.update("""
+                INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url, poster_width, poster_height, maker_name)
+                VALUES (?, '1234567892', 'Phone unboxing in one take', 'TECH', 'https://img.example/phone.jpg', 720, 1280, 'Ckim')""",
+                UUID.randomUUID());
+        Template styled = service.create(new TemplateRequest("Styled", "{name}, ideas", "Hi {name}", "Make a video",
+                "https://creator.dalaillama.in", 1, CreatorMailStore.MailStyle.STYLED, null));
+        assertThat(styled.style()).isEqualTo(CreatorMailStore.MailStyle.STYLED);
+
+        service.send(new SendRequest(styled.id(), Audience.TEST, null, "ops@example.com"));
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer).sendAfterCommit(mail.capture());
+        assertThat(mail.getValue().html()).contains("FOR CREATORS").contains("https://img.example/phone.jpg").contains("Watch the video")
+                .contains("By Ckim").contains("href=\"https://creator.dalaillama.in\"");
+        assertThat(mail.getValue().headers()).containsKey("List-Unsubscribe");
+        assertThat(mail.getValue().sender().name()).isEqualTo("Akash from Dalai Llama");
+        // Templates are plain unless chosen otherwise.
+        assertThat(service.create(new TemplateRequest("Plain", "S", "B", null)).style()).isEqualTo(CreatorMailStore.MailStyle.PLAIN);
+    }
+
+    @Test
     void switchedOffTemplateIsNotSent() {
         Template template = service.create(new TemplateRequest("Old", "Old", "Body", null));
         service.update(template.id(), new TemplateRequest("Old", "Old", "Body", false));
