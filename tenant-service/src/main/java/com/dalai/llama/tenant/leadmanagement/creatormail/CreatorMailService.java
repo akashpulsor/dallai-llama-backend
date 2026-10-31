@@ -251,10 +251,12 @@ public class CreatorMailService {
         Audience audience = audience(request);
         if (audience == Audience.TEST) {
             String testEmail = ContactPointValues.normaliseEmail(request.testEmail());
-            Recipient tester = recipient(testEmail, store.nameOf(testEmail).orElse(null));
+            // The first known name that reads as a name (an account named after its address doesn't).
+            String testName = store.namesOf(testEmail).stream().filter(n -> firstName(n) != null).findFirst().orElse(null);
+            Recipient tester = recipient(testEmail, testName);
             UUID sendId = store.logSend(template.id(), template.subject(), Audience.TEST, 1);
             String token = store.recordTest(sendId, template.id(), tester);
-            mailer.sendAfterCommit(mail(template, tester.email(), null, token, ideasFor(template)));
+            mailer.sendAfterCommit(mail(template, tester.email(), tester.name(), token, ideasFor(template)));
             return new SendResult(Audience.TEST, 1);
         }
         if (audience == Audience.LEADS && !hasher.configured()) {

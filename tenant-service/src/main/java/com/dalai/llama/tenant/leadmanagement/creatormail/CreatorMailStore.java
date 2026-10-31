@@ -176,14 +176,17 @@ public class CreatorMailStore {
                 ORDER BY l.created_at""", (rs, n) -> new Lead(rs.getString(1), rs.getString(2), rs.getString(3)));
     }
 
-    /** The name we know an address by: its account's contact name, else its creator lead's. */
-    public Optional<String> nameOf(String email) {
+    /** The names we know an address by, best first: an active creator account's contact name, then any
+     * other account's, then its creator lead's (one address can have several accounts). */
+    public List<String> namesOf(String email) {
         return jdbc.queryForList("""
                 SELECT name FROM (
-                    SELECT t.primary_contact_name AS name, 0 AS rank FROM tenants t WHERE LOWER(t.primary_contact_email) = ?
+                    SELECT t.primary_contact_name AS name,
+                           CASE WHEN t.account_type = 'CREATOR' AND t.status = 'ACTIVE' THEN 0 ELSE 1 END AS rank, t.created_at
+                    FROM tenants t WHERE LOWER(t.primary_contact_email) = ?
                     UNION ALL
-                    SELECT l.name, 1 FROM ops_creator_lead l WHERE l.email = ?
-                ) known WHERE name IS NOT NULL AND name <> '' ORDER BY rank LIMIT 1""", String.class, email, email).stream().findFirst();
+                    SELECT l.name, 2, l.created_at FROM ops_creator_lead l WHERE l.email = ?
+                ) known WHERE name IS NOT NULL AND name <> '' ORDER BY rank, created_at""", String.class, email, email);
     }
 
     public int leadCount() {

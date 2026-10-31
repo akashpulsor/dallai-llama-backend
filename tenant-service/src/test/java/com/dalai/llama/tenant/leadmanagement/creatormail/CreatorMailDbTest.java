@@ -291,6 +291,20 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aTestToAnAddressWithSeveralAccountsGreetsTheCreatorsRealName() {
+        // The same person also has a brand account whose "name" is their address.
+        account("dev.k@example.com", "dev.k@example.com", "BRAND", "ACTIVE");
+        account("Devika K", "dev.k@example.com", "CREATOR", "ACTIVE");
+        Template template = service.create(new TemplateRequest("Hi", "{name}, hello", "Hi {name},", null));
+
+        service.send(new SendRequest(template.id(), Audience.TEST, null, "dev.k@example.com"));
+
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer).sendAfterCommit(mail.capture());
+        assertThat(mail.getValue().subject()).isEqualTo("Devika, hello");
+    }
+
+    @Test
     void anActiveCreatorWhoseNameIsTheirAddressStillGetsTheMailWithAFallbackGreeting() {
         account("akashtripathi.2801@gmail.com", "akashtripathi.2801@gmail.com", "CREATOR", "ACTIVE");
         Template template = service.create(new TemplateRequest("Hi", "{name}, hello", "Hi {name},", null));
