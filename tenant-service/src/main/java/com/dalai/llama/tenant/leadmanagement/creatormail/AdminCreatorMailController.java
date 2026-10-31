@@ -45,6 +45,12 @@ public class AdminCreatorMailController {
         return ResponseEntity.ok(service.update(templateId, request));
     }
 
+    /** A draft rendered as the recipient will see it (HTML for the ops page to show). */
+    @PostMapping("/preview")
+    public ResponseEntity<CreatorMailService.Preview> preview(@Valid @RequestBody CreatorMailService.PreviewRequest request) {
+        return ResponseEntity.ok(service.preview(request));
+    }
+
     @GetMapping("/creators")
     public ResponseEntity<List<CreatorView>> creators() {
         return ResponseEntity.ok(service.creators());

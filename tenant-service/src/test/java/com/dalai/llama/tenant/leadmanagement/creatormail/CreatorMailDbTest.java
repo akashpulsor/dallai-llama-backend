@@ -196,6 +196,26 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aTemplateCanEndWithAButtonAndThePreviewShowsTheRealMail() {
+        Template template = service.create(new TemplateRequest("Join", "{name}, join", "Hello {name}", "Join free, {name}",
+                "https://creator.dalaillama.in", null));
+        assertThat(template.ctaUrl()).isEqualTo("https://creator.dalaillama.in");
+
+        service.send(new SendRequest(template.id(), Audience.TEST, null, "ops@example.com"));
+        ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
+        verify(mailer).sendAfterCommit(mail.capture());
+        assertThat(mail.getValue().html()).contains("href=\"https://creator.dalaillama.in\"").contains("Join free, there");
+        assertThat(mail.getValue().text()).contains("Join free, there: https://creator.dalaillama.in");
+
+        CreatorMailService.Preview preview = service.preview(new CreatorMailService.PreviewRequest("{name}, ideas", "Hi {name}", "Go", "https://x.example"));
+        assertThat(preview.subject()).isEqualTo("Asha, ideas");
+        assertThat(preview.html()).contains("Hi Asha").contains("href=\"https://x.example\"").contains("FOR CREATORS");
+
+        assertThatThrownBy(() -> service.create(new TemplateRequest("Half", "S", "B", "Label only", null, null)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void switchedOffTemplateIsNotSent() {
         Template template = service.create(new TemplateRequest("Old", "Old", "Body", null));
         service.update(template.id(), new TemplateRequest("Old", "Old", "Body", false));

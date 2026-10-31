@@ -51,12 +51,29 @@ public class CreatorMailService {
 
     private static final Pattern URL = Pattern.compile("https?://[^\\s<]+[^\\s<.,;:!?)\\]'\"]");
 
+    /** {@code ctaLabel} + {@code ctaUrl}: an optional button the mail ends with (both, or neither). */
     public record TemplateRequest(
             @NotBlank @Size(max = 80) String name,
             @NotBlank @Size(max = 200) String subject,
             @NotBlank @Size(max = 10000) String body,
+            @Size(max = 40) String ctaLabel,
+            @Size(max = 300) @jakarta.validation.constraints.Pattern(regexp = "^$|https?://\\S+", message = "The button link must start with https://") String ctaUrl,
             Boolean active
     ) {
+        public TemplateRequest(String name, String subject, String body, Boolean active) {
+            this(name, subject, body, null, null, active);
+        }
+    }
+
+    /** A draft as the recipient will see it. */
+    public record PreviewRequest(@Size(max = 200) String subject, @Size(max = 10000) String body, @Size(max = 40) String ctaLabel,
+                                 @Size(max = 300) String ctaUrl) {
+    }
+
+    public record Preview(String subject, String html) {
+    }
+
+    record ButtonContext(String label, String url) {
     }
 
     /** {@code audience} null: {@code testEmail} set = TEST, {@code tenantIds} given = CHOSEN, else ALL. */
@@ -123,12 +140,38 @@ public class CreatorMailService {
     }
 
     public Template create(TemplateRequest request) {
-        return store.insert(request.name().trim(), request.subject().trim(), request.body());
+        return store.insert(request.name().trim(), request.subject().trim(), request.body(), ctaLabel(request), ctaUrl(request));
     }
 
     public Template update(UUID id, TemplateRequest request) {
-        return store.update(id, request.name().trim(), request.subject().trim(), request.body(),
+        return store.update(id, request.name().trim(), request.subject().trim(), request.body(), ctaLabel(request), ctaUrl(request),
                 request.active() == null || request.active()).orElseThrow(CreatorMailService::notFound);
+    }
+
+    /** The draft rendered exactly as it will be mailed (first name "Asha" for {name}). */
+    public Preview preview(PreviewRequest r) {
+        Template draft = new Template(null, "preview", blankTo(r.subject(), "(no subject)"), blankTo(r.body(), ""),
+                blank(r.ctaLabel()) ? null : r.ctaLabel().trim(), blank(r.ctaUrl()) ? null : r.ctaUrl().trim(), true, null);
+        PlatformMailer.Mail mail = mail(draft, "preview@example.com", "Asha", null);
+        return new Preview(mail.subject(), mail.html());
+    }
+
+    /** Both button fields, or neither. */
+    private static String ctaLabel(TemplateRequest r) {
+        if (blank(r.ctaLabel()) != blank(r.ctaUrl())) throw new IllegalArgumentException("Give the button both a label and a link, or neither");
+        return blank(r.ctaLabel()) ? null : r.ctaLabel().trim();
+    }
+
+    private static String ctaUrl(TemplateRequest r) {
+        return blank(r.ctaUrl()) ? null : r.ctaUrl().trim();
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static String blankTo(String s, String fallback) {
+        return blank(s) ? fallback : s;
     }
 
     public List<Send> recentSends() {
@@ -259,7 +302,14 @@ public class CreatorMailService {
         String subject = fill(template.subject(), name);
         String body = fill(template.body(), name);
         String unsubscribe = outreach.publicApiBaseUrl() + "/unsubscribe/" + (unsubscribeToken == null ? "preview" : unsubscribeToken);
-        MailLayout layout = new MailLayout(subject, preview(body), "FOR CREATORS", html(body), body,
+        String contentHtml = html(body);
+        String contentText = body;
+        if (template.ctaLabel() != null && template.ctaUrl() != null) {
+            ButtonContext button = new ButtonContext(fill(template.ctaLabel(), name), template.ctaUrl());
+            contentHtml += "<div style=\"margin:8px 0 6px\">" + renderer.html("button", button) + "</div>";
+            contentText += "\n\n" + renderer.text("button", button);
+        }
+        MailLayout layout = new MailLayout(subject, preheader(body), "FOR CREATORS", contentHtml, contentText,
                 "You're getting this from Dalai Llama, the platform where brands find creators for their videos. ",
                 "<a href=\"" + MailRenderer.escape(unsubscribe) + "\" style=\"color:#7a7088\">Unsubscribe</a>",
                 "Unsubscribe: " + unsubscribe, "");
@@ -289,7 +339,7 @@ public class CreatorMailService {
         return out.toString();
     }
 
-    private static String preview(String body) {
+    private static String preheader(String body) {
         String flat = body.replaceAll("\\s+", " ").trim();
         return flat.length() > 120 ? flat.substring(0, 120) : flat;
     }

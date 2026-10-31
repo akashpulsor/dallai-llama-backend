@@ -131,6 +131,8 @@ public class PlatformMailer {
             SMTPMessage out = signer.prepare(mime);
             out.setEnvelopeFrom(mailbox);
             mailSender.send(out);
+            // The relay accepted it; if it never arrives, look at the recipient's spam folder and bounces.
+            log.info("Platform mail sent to={} subject={}", mail.to(), mail.subject());
             return true;
         } catch (Exception e) {
             log.warn("Platform mail failed to={} subject={}: {}", mail.to(), mail.subject(), e.getMessage());
