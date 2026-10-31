@@ -32,6 +32,11 @@ public class MailIdeas {
         return ideas;
     }
 
+    /** {@code limit} random videos with a picture, all from one industry: {@code industry}, or a random one when null. */
+    public List<MailIdea> pick(ShowcaseIndustry industry, int limit) {
+        return store.randomForMail(industry, limit);
+    }
+
     private Optional<MailIdea> withPoster(MailIdea idea) {
         if (idea.posterUrl() != null) return Optional.of(idea);
         return posters.fetch(idea.pinId()).map(poster -> {

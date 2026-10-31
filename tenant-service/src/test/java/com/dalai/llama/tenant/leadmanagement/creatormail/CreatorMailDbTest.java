@@ -257,6 +257,12 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(CreatorMailService.nameFromEmail("akashtripathi.2801@gmail.com")).isNull();
         assertThat(CreatorMailService.nameFromEmail("ab@x.in")).isNull();
 
+        // A contact name that is really an address or a handle is read like one.
+        assertThat(CreatorMailService.firstName("ASHA RAO")).isEqualTo("Asha");
+        assertThat(CreatorMailService.firstName("asha_rao92")).isEqualTo("Asha");
+        assertThat(CreatorMailService.firstName("akashtripathi.2801@gmail.com")).isNull();
+        assertThat(CreatorMailService.firstName("x")).isNull();
+
         Template template = service.create(new TemplateRequest("Hi", "Hi {name}", "Hello {name}", null));
         jdbc.update("INSERT INTO ops_creator_lead (id, email) VALUES (?, 'meera.k@example.com')", UUID.randomUUID());
         service.send(new SendRequest(template.id(), Audience.LEADS, null, null));
@@ -282,6 +288,44 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
 
         assertThatThrownBy(() -> service.create(new TemplateRequest("Half", "S", "B", "Label only", null, null)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void anActiveCreatorWhoseNameIsTheirAddressStillGetsTheMailWithAFallbackGreeting() {
+        account("akashtripathi.2801@gmail.com", "akashtripathi.2801@gmail.com", "CREATOR", "ACTIVE");
+        Template template = service.create(new TemplateRequest("Hi", "{name}, hello", "Hi {name},", null));
+
+        assertThat(service.send(new SendRequest(template.id(), Audience.ALL, null, null)).recipients()).isEqualTo(3);
+        service.dispatch();
+        PlatformMailer.Mail toAkash = sent().stream().filter(m -> m.to().equals("akashtripathi.2801@gmail.com")).findFirst().orElseThrow();
+        assertThat(toAkash.subject()).isEqualTo("Hello");
+        assertThat(toAkash.text()).startsWith("Hi creator,");
+    }
+
+    @Test
+    void ideasComeFromTheTemplatesIndustryOrARandomOneEachMail() {
+        for (int i = 0; i < 3; i++) {
+            jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, ?, ?, 'TECH', 'https://img.example/t.jpg')",
+                    UUID.randomUUID(), "77700000" + i, "Tech idea " + i);
+            jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, ?, ?, 'TRAVEL', 'https://img.example/v.jpg')",
+                    UUID.randomUUID(), "88800000" + i, "Travel idea " + i);
+        }
+        Template tech = service.create(new TemplateRequest("Tech", "Ideas", "Hi", null, null, 2,
+                com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.TECH, null, null));
+        assertThat(tech.ideaIndustry()).isEqualTo(com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.TECH);
+        for (int i = 0; i < 5; i++) {
+            String html = service.preview(new CreatorMailService.PreviewRequest("Ideas", "Hi", null, null, 2,
+                    com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.TECH, null)).html();
+            assertThat(html).contains("Tech idea").doesNotContain("Travel idea");
+        }
+        // Random: each mail's videos are all from one industry, and over a few mails both industries show up.
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < 40 && seen.size() < 2; i++) {
+            String html = service.preview(new CreatorMailService.PreviewRequest("Ideas", "Hi", null, null, 2)).html();
+            assertThat(html.contains("Tech idea") && html.contains("Travel idea")).isFalse();
+            seen.add(html.contains("Tech idea") ? "TECH" : "TRAVEL");
+        }
+        assertThat(seen).containsExactlyInAnyOrder("TECH", "TRAVEL");
     }
 
     @Test

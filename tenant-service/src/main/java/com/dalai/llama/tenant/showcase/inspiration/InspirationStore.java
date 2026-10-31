@@ -65,6 +65,16 @@ public class InspirationStore {
         }, MAIL_ROW);
     }
 
+    /** Random active items that have a picture, all of one industry: the given one, or one picked at random
+     * among the industries that have any. */
+    public List<MailIdea> randomForMail(ShowcaseIndustry industry, int limit) {
+        return jdbc.query("""
+                SELECT * FROM inspiration_item WHERE active AND poster_url IS NOT NULL
+                  AND industry = COALESCE(?, (SELECT industry FROM inspiration_item WHERE active AND poster_url IS NOT NULL
+                                              GROUP BY industry ORDER BY random() LIMIT 1))
+                ORDER BY random() LIMIT ?""", MAIL_ROW, industry == null ? null : industry.name(), limit);
+    }
+
     public void setPoster(UUID id, InspirationPosters.Poster poster) {
         jdbc.update("""
                 UPDATE inspiration_item SET poster_url = ?, poster_width = ?, poster_height = ?, maker_name = ?, video_url = ?,

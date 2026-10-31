@@ -27,9 +27,10 @@ public class CreatorMailStore {
     public enum MailStyle { PLAIN, STYLED }
 
     /** {@code ctaLabel}/{@code ctaUrl}: the button the mail ends with; both null for none.
-     * {@code ideaVideos}: how many inspiration-board videos the mail shows (0-3). */
+     * {@code ideaVideos}: how many inspiration-board videos the mail shows (0-3); {@code ideaIndustry}: which
+     * industry they come from, null for a random one each mail. */
     public record Template(UUID id, String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos,
-                           MailStyle style, boolean active, OffsetDateTime lastSentAt) {
+                           com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry ideaIndustry, MailStyle style, boolean active, OffsetDateTime lastSentAt) {
     }
 
     /** {@code queued}/{@code sent}: where its mails are now. */
@@ -46,11 +47,13 @@ public class CreatorMailStore {
     public record Lead(String email, String name, String profileUrl) {
     }
 
-    private static final String TEMPLATE_SELECT = "SELECT t.id, t.name, t.subject, t.body, t.active, t.cta_label, t.cta_url, t.idea_videos, t.style,"
+    private static final String TEMPLATE_SELECT = "SELECT t.id, t.name, t.subject, t.body, t.active, t.cta_label, t.cta_url, t.idea_videos, t.style, t.idea_industry,"
             + " (SELECT MAX(s.created_at) FROM ops_creator_mail_send s WHERE s.template_id = t.id AND s.audience <> 'TEST')"
             + " FROM ops_creator_mail_template t";
     private static final RowMapper<Template> TEMPLATE = (rs, n) -> new Template(rs.getObject(1, UUID.class), rs.getString(2),
-            rs.getString(3), rs.getString(4), rs.getString(6), rs.getString(7), rs.getInt(8), MailStyle.valueOf(rs.getString(9)), rs.getBoolean(5), rs.getObject(10, OffsetDateTime.class));
+            rs.getString(3), rs.getString(4), rs.getString(6), rs.getString(7), rs.getInt(8),
+            rs.getString(10) == null ? null : com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.valueOf(rs.getString(10)), MailStyle.valueOf(rs.getString(9)), rs.getBoolean(5),
+            rs.getObject(11, OffsetDateTime.class));
 
     private final JdbcTemplate jdbc;
 
@@ -64,19 +67,24 @@ public class CreatorMailStore {
         return jdbc.query(TEMPLATE_SELECT + " WHERE t.id = ?", TEMPLATE, id).stream().findFirst();
     }
 
-    public Template insert(String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos, MailStyle style) {
+    public Template insert(String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos,
+                           com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry ideaIndustry, MailStyle style) {
         UUID id = UUID.randomUUID();
-        jdbc.update("INSERT INTO ops_creator_mail_template (id, name, subject, body, cta_label, cta_url, idea_videos, style)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, name, subject, body, ctaLabel, ctaUrl, ideaVideos, style.name());
+        jdbc.update("INSERT INTO ops_creator_mail_template (id, name, subject, body, cta_label, cta_url, idea_videos, idea_industry, style)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", id, name, subject, body, ctaLabel, ctaUrl, ideaVideos, code(ideaIndustry), style.name());
         return find(id).orElseThrow();
     }
 
     public Optional<Template> update(UUID id, String name, String subject, String body, String ctaLabel, String ctaUrl, int ideaVideos,
-                                     MailStyle style, boolean active) {
+                                     com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry ideaIndustry, MailStyle style, boolean active) {
         jdbc.update("UPDATE ops_creator_mail_template SET name = ?, subject = ?, body = ?, cta_label = ?, cta_url = ?, idea_videos = ?,"
-                + " style = ?, active = ?, updated_at = NOW() WHERE id = ?", name, subject, body, ctaLabel, ctaUrl, ideaVideos, style.name(),
-                active, id);
+                + " idea_industry = ?, style = ?, active = ?, updated_at = NOW() WHERE id = ?", name, subject, body, ctaLabel, ctaUrl,
+                ideaVideos, code(ideaIndustry), style.name(), active, id);
         return find(id);
+    }
+
+    private static String code(com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry) {
+        return industry == null ? null : industry.name();
     }
 
     // ---- sends and the queue ----
