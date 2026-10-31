@@ -55,7 +55,9 @@ import static org.mockito.Mockito.when;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({CreatorMailService.class, CreatorMailStore.class, MailRenderer.class, RecipientHasher.class, OutreachStore.class,
-        CreatorProfileLinks.class, CreatorProfileService.class, HandlePolicy.class, CreatorMailDbTest.TestConfig.class})
+        CreatorProfileLinks.class, CreatorProfileService.class, HandlePolicy.class,
+        com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
+        CreatorMailDbTest.TestConfig.class})
 class CreatorMailDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-31T10:00:00Z");
@@ -77,6 +79,7 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     @Autowired private CreatorProfileService profiles;
     @Autowired private JdbcTemplate jdbc;
     @MockBean private PlatformMailer mailer;
+    @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
 
     private UUID asha;
     private UUID ravi;
@@ -193,6 +196,44 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(mail.getValue().subject()).isEqualTo("Hi there");
         assertThat(mail.getValue().html()).contains("&lt;b&gt;Body&lt;/b&gt;");
         assertThat(service.templates().get(0).lastSentAt()).isNull();
+
+        // Its unsubscribe link is real: it resolves to the tester, and the test doesn't use up the template.
+        String token = jdbc.queryForObject("SELECT unsubscribe_token FROM ops_creator_mail_delivery WHERE status = 'TEST'", String.class);
+        assertThat(mail.getValue().html()).contains("/unsubscribe/" + token);
+        assertThat(outreach.recipientOfUnsubscribeToken(token)).contains(hasher.hash("ops@example.com"));
+        account("Ops Person", "ops@example.com", "CREATOR", "ACTIVE");
+        assertThat(service.send(new SendRequest(template.id(), Audience.ALL, null, null)).recipients()).isEqualTo(3);
+    }
+
+    @Test
+    void anIdeasTemplateCarriesVideosFromTheInspirationBoard() {
+        jdbc.update("""
+                INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url, poster_width, poster_height, maker_name)
+                VALUES (?, '1234567890', 'Coffee pour in slow motion', 'FOOD_BEVERAGE', 'https://img.example/coffee.jpg', 720, 1280, 'Studio K')""",
+                UUID.randomUUID());
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry) VALUES (?, '1234567891', 'No picture yet', 'FASHION')",
+                UUID.randomUUID());
+        Template ideas = service.create(new TemplateRequest("Ideas", "{name}, ideas", "Hi {name}, a few ideas:", "Make a video",
+                "https://creator.dalaillama.in", 3, null));
+        assertThat(ideas.ideaVideos()).isEqualTo(3);
+
+        service.send(new SendRequest(ideas.id(), Audience.ALL, null, null));
+        service.dispatch();
+        PlatformMailer.Mail mail = sent().get(0);
+        assertThat(mail.html()).contains("Coffee pour in slow motion").contains("By Studio K").contains("https://img.example/coffee.jpg")
+                .contains("/inspiration?industry=FOOD_BEVERAGE").contains("Watch the video")
+                .doesNotContain("No picture yet");
+        assertThat(mail.text()).contains("Coffee pour in slow motion");
+
+        // The preview shows the same cards.
+        assertThat(service.preview(new CreatorMailService.PreviewRequest("Ideas", "Hi", null, null, 2)).html()).contains("Coffee pour in slow motion");
+    }
+
+    @Test
+    void aMissingNameDropsOutOfTheSubjectCleanly() {
+        assertThat(CreatorMailService.fill("{name}, brands are searching for you", null)).isEqualTo("Brands are searching for you");
+        assertThat(CreatorMailService.fill("Hi {name},", null)).isEqualTo("Hi there,");
+        assertThat(CreatorMailService.fill("{name}, join", "Asha")).isEqualTo("Asha, join");
     }
 
     @Test

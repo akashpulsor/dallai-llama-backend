@@ -11,7 +11,10 @@ import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailStore.Send;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailStore.Template;
 import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.notify.PlatformMailer;
+import com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties;
+import com.dalai.llama.tenant.showcase.config.ShowcaseProperties;
+import com.dalai.llama.tenant.showcase.inspiration.InspirationStore.MailIdea;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachStore;
 import com.dalai.llama.tenant.leadmanagement.outreach.RecipientHasher;
 import com.dalai.llama.tenant.repository.TenantRepository;
@@ -58,22 +61,36 @@ public class CreatorMailService {
             @NotBlank @Size(max = 10000) String body,
             @Size(max = 40) String ctaLabel,
             @Size(max = 300) @jakarta.validation.constraints.Pattern(regexp = "^$|https?://\\S+", message = "The button link must start with https://") String ctaUrl,
+            @jakarta.validation.constraints.Min(0) @jakarta.validation.constraints.Max(3) Integer ideaVideos,
             Boolean active
     ) {
         public TemplateRequest(String name, String subject, String body, Boolean active) {
-            this(name, subject, body, null, null, active);
+            this(name, subject, body, null, null, null, active);
+        }
+
+        public TemplateRequest(String name, String subject, String body, String ctaLabel, String ctaUrl, Boolean active) {
+            this(name, subject, body, ctaLabel, ctaUrl, null, active);
         }
     }
 
     /** A draft as the recipient will see it. */
     public record PreviewRequest(@Size(max = 200) String subject, @Size(max = 10000) String body, @Size(max = 40) String ctaLabel,
-                                 @Size(max = 300) String ctaUrl) {
+                                 @Size(max = 300) String ctaUrl,
+                                 @jakarta.validation.constraints.Min(0) @jakarta.validation.constraints.Max(3) Integer ideaVideos) {
+        public PreviewRequest(String subject, String body, String ctaLabel, String ctaUrl) {
+            this(subject, body, ctaLabel, ctaUrl, null);
+        }
     }
 
     public record Preview(String subject, String html) {
     }
 
     record ButtonContext(String label, String url) {
+    }
+
+    /** One inspiration video as a card (classpath:mail/idea_card.html). */
+    record IdeaCard(String title, String imageUrl, int imageWidth, String framePadding, String imageRadius, String details, String credit,
+                    String watchUrl) {
     }
 
     /** {@code audience} null: {@code testEmail} set = TEST, {@code tenantIds} given = CHOSEN, else ALL. */
@@ -114,14 +131,19 @@ public class CreatorMailService {
     private final RecipientHasher hasher;
     private final OutreachStore suppression;
     private final OutreachProperties outreach;
+    private final MailIdeas mailIdeas;
+    private final ShowcaseProperties showcase;
     private final Clock clock;
     private final int dailyCap;
     private final int perRun;
 
     public CreatorMailService(CreatorMailStore store, TenantRepository tenants, CreatorProfileLinks profiles, PlatformMailer mailer,
                               MailRenderer renderer, RecipientHasher hasher, OutreachStore suppression, OutreachProperties outreach,
-                              Clock clock, @Value("${creator-mail.daily-cap:150}") int dailyCap,
+                              MailIdeas mailIdeas, ShowcaseProperties showcase, Clock clock,
+                              @Value("${creator-mail.daily-cap:150}") int dailyCap,
                               @Value("${creator-mail.per-run:20}") int perRun) {
+        this.mailIdeas = mailIdeas;
+        this.showcase = showcase;
         this.store = store;
         this.tenants = tenants;
         this.profiles = profiles;
@@ -140,19 +162,22 @@ public class CreatorMailService {
     }
 
     public Template create(TemplateRequest request) {
-        return store.insert(request.name().trim(), request.subject().trim(), request.body(), ctaLabel(request), ctaUrl(request));
+        return store.insert(request.name().trim(), request.subject().trim(), request.body(), ctaLabel(request), ctaUrl(request),
+                ideaVideos(request.ideaVideos()));
     }
 
     public Template update(UUID id, TemplateRequest request) {
         return store.update(id, request.name().trim(), request.subject().trim(), request.body(), ctaLabel(request), ctaUrl(request),
+                ideaVideos(request.ideaVideos()),
                 request.active() == null || request.active()).orElseThrow(CreatorMailService::notFound);
     }
 
     /** The draft rendered exactly as it will be mailed (first name "Asha" for {name}). */
     public Preview preview(PreviewRequest r) {
         Template draft = new Template(null, "preview", blankTo(r.subject(), "(no subject)"), blankTo(r.body(), ""),
-                blank(r.ctaLabel()) ? null : r.ctaLabel().trim(), blank(r.ctaUrl()) ? null : r.ctaUrl().trim(), true, null);
-        PlatformMailer.Mail mail = mail(draft, "preview@example.com", "Asha", null);
+                blank(r.ctaLabel()) ? null : r.ctaLabel().trim(), blank(r.ctaUrl()) ? null : r.ctaUrl().trim(), ideaVideos(r.ideaVideos()),
+                true, null);
+        PlatformMailer.Mail mail = mail(draft, "preview@example.com", "Asha", null, ideasFor(draft));
         return new Preview(mail.subject(), mail.html());
     }
 
@@ -202,8 +227,10 @@ public class CreatorMailService {
         if (!template.active()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Template is switched off");
         Audience audience = audience(request);
         if (audience == Audience.TEST) {
-            mailer.sendAfterCommit(mail(template, request.testEmail().trim(), null, null));
-            store.logSend(template.id(), template.subject(), Audience.TEST, 1);
+            Recipient tester = recipient(request.testEmail(), null);
+            UUID sendId = store.logSend(template.id(), template.subject(), Audience.TEST, 1);
+            String token = store.recordTest(sendId, template.id(), tester);
+            mailer.sendAfterCommit(mail(template, tester.email(), null, token, ideasFor(template)));
             return new SendResult(Audience.TEST, 1);
         }
         if (audience == Audience.LEADS && !hasher.configured()) {
@@ -233,6 +260,8 @@ public class CreatorMailService {
         int room = Math.min(perRun, dailyCap - store.sentOn(today()));
         if (room <= 0) return 0;
         Map<UUID, Template> templates = new java.util.HashMap<>();
+        // The same inspiration videos for every mail of a template in this run.
+        Map<UUID, List<MailIdea>> ideas = new java.util.HashMap<>();
         int sent = 0;
         for (QueuedMail queued : store.nextQueued(room)) {
             if (queued.recipientHash() != null && suppression.isSuppressed(queued.recipientHash())) {
@@ -240,7 +269,8 @@ public class CreatorMailService {
                 continue;
             }
             Template template = templates.computeIfAbsent(queued.templateId(), id -> store.find(id).orElseThrow());
-            boolean ok = mailer.send(mail(template, queued.email(), queued.name(), queued.unsubscribeToken()));
+            boolean ok = mailer.send(mail(template, queued.email(), queued.name(), queued.unsubscribeToken(),
+                    ideas.computeIfAbsent(template.id(), id -> ideasFor(template))));
             store.mark(queued.id(), ok ? "SENT" : "FAILED");
             if (ok) sent++;
         }
@@ -297,13 +327,44 @@ public class CreatorMailService {
     }
 
     /** {@code unsubscribeToken} null for a test: the link then goes nowhere. */
-    PlatformMailer.Mail mail(Template template, String to, String fullName, String unsubscribeToken) {
+    /** Videos from the inspiration board (only ones with a picture), as many as the template asks for. */
+    private List<MailIdea> ideasFor(Template template) {
+        return template.ideaVideos() > 0 ? mailIdeas.forIndustries(List.of(), template.ideaVideos()) : List.of();
+    }
+
+    private static int ideaVideos(Integer n) {
+        return n == null ? 0 : Math.max(0, Math.min(3, n));
+    }
+
+    /** An inspiration video, credited to its maker; it plays on the public inspiration board. */
+    private IdeaCard card(MailIdea idea) {
+        boolean vertical = idea.posterWidth() != null && idea.posterHeight() != null && idea.posterHeight() > idea.posterWidth();
+        String industry = com.dalai.llama.tenant.leadmanagement.notify.MailLabels.industry(idea.industry());
+        String watch = showcase.publicBaseUrl() + "/inspiration" + (idea.industry() == null ? "" : "?industry=" + idea.industry().name());
+        return new IdeaCard(idea.title(), idea.posterUrl(), vertical ? 240 : 542, vertical ? "18px 0" : "0", vertical ? "10px" : "14px 14px 0 0",
+                (industry == null ? "" : industry + " · ") + "Video idea", idea.makerName() == null ? "From the inspiration board" : "By " + idea.makerName(),
+                watch);
+    }
+
+    PlatformMailer.Mail mail(Template template, String to, String fullName, String unsubscribeToken, List<MailIdea> ideas) {
         String name = firstName(fullName);
         String subject = fill(template.subject(), name);
         String body = fill(template.body(), name);
         String unsubscribe = outreach.publicApiBaseUrl() + "/unsubscribe/" + (unsubscribeToken == null ? "preview" : unsubscribeToken);
         String contentHtml = html(body);
         String contentText = body;
+        if (!ideas.isEmpty()) {
+            // Cards are rows of the layout's table: close the text cell, add them, reopen a cell.
+            StringBuilder cards = new StringBuilder("</td></tr>");
+            StringBuilder cardsText = new StringBuilder();
+            for (MailIdea idea : ideas) {
+                IdeaCard card = card(idea);
+                cards.append(renderer.html("idea_card", card));
+                cardsText.append(renderer.text("idea_card", card));
+            }
+            contentHtml += cards.append("<tr><td style=\"padding:0 28px 10px\">");
+            contentText += "\n\n" + cardsText;
+        }
         if (template.ctaLabel() != null && template.ctaUrl() != null) {
             ButtonContext button = new ButtonContext(fill(template.ctaLabel(), name), template.ctaUrl());
             contentHtml += "<div style=\"margin:8px 0 6px\">" + renderer.html("button", button) + "</div>";
@@ -318,8 +379,15 @@ public class CreatorMailService {
     }
 
     /** "Hi {name}" with no name reads "Hi there". */
-    private static String fill(String s, String firstName) {
-        return s.replace("{name}", firstName == null ? "there" : firstName);
+    static String fill(String s, String firstName) {
+        if (firstName != null) return s.replace("{name}", firstName);
+        // No name: "{name}, brands are..." becomes "Brands are...", and "Hi {name}" reads "Hi there".
+        String trimmed = s.stripLeading();
+        if (trimmed.startsWith("{name}")) {
+            String rest = trimmed.substring("{name}".length()).replaceFirst("^[,:\\s-]+", "");
+            s = rest.isEmpty() ? rest : Character.toUpperCase(rest.charAt(0)) + rest.substring(1);
+        }
+        return s.replace("{name}", "there");
     }
 
     private static String firstName(String full) {
