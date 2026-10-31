@@ -199,7 +199,7 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(mail.getValue().to()).isEqualTo("ops@example.com");
         assertThat(mail.getValue().subject()).isEqualTo("Hi creator");
         assertThat(mail.getValue().html()).contains("&lt;b&gt;Body&lt;/b&gt;");
-        assertThat(service.templates().get(0).lastSentAt()).isNull();
+        assertThat(service.templates(null).get(0).lastSentAt()).isNull();
 
         // Its unsubscribe link is real: it resolves to the tester, and the test doesn't use up the template.
         String token = jdbc.queryForObject("SELECT unsubscribe_token FROM ops_creator_mail_delivery WHERE status = 'TEST'", String.class);
@@ -370,6 +370,57 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
 
         assertThatThrownBy(() -> service.send(new SendRequest(template.id(), Audience.ALL, null, null)))
                 .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void aBrandTemplateGoesToOneContactPerMatchingBrand_withItsNameCompanyAndIndustryVideos() {
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        UUID hearth = brand("hearth-test.in", "Hearth Foods", "FOOD_BEVERAGE", "IN", "SMALL");
+        contact(hearth, "asha@hearth-test.in", "Asha Rao", 90);
+        contact(hearth, "hello@hearth-test.in", null, 10);
+        contact(brand("bigco-test.com", "BigCo", "FOOD_BEVERAGE", "IN", "LARGE"), "ceo@bigco-test.com", "Ravi", 90);
+        contact(brand("gadget-test.in", "Gadget", "TECH", "IN", "SMALL"), "team@gadget-test.in", null, 50);
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '99900001', 'Food idea', 'FOOD_BEVERAGE', 'https://img.example/f.jpg')",
+                UUID.randomUUID());
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '99900002', 'Tech idea', 'TECH', 'https://img.example/t.jpg')",
+                UUID.randomUUID());
+        Template template = service.create(new TemplateRequest("Brands", "{name}, ideas for {company}", "Hi {name},", null, null, 1, null, null,
+                CreatorMailStore.MailFor.BRANDS, null));
+
+        // Brand templates are listed apart from creator ones.
+        assertThat(service.templates(CreatorMailStore.MailFor.BRANDS)).extracting(Template::id).contains(template.id());
+        assertThat(service.templates(null)).extracting(Template::id).doesNotContain(template.id());
+
+        var smallFoodInIndia = new CreatorMailStore.BrandFilter(List.of(com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.FOOD_BEVERAGE),
+                List.of(com.dalai.llama.tenant.leadmanagement.audience.CompanySize.SMALL), List.of("in"));
+        assertThat(service.brandAudience(smallFoodInIndia).brands()).isEqualTo(1);
+        assertThat(service.brandAudience(new CreatorMailStore.BrandFilter(List.of(), List.of(), List.of())).brands()).isEqualTo(3);
+        // A brand template doesn't go to creators.
+        assertThatThrownBy(() -> service.send(new SendRequest(template.id(), Audience.ALL, null, null)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        SendResult result = service.send(new SendRequest(template.id(), Audience.BRANDS, null, null, smallFoodInIndia));
+        assertThat(result.recipients()).isEqualTo(1); // one contact per brand: its best
+        service.dispatch();
+        PlatformMailer.Mail mail = sent().get(0);
+        assertThat(mail.to()).isEqualTo("asha@hearth-test.in");
+        assertThat(mail.subject()).isEqualTo("Asha, ideas for Hearth Foods");
+        assertThat(mail.html()).contains("Food idea").doesNotContain("Tech idea"); // the brand's own industry
+    }
+
+    private UUID brand(String domain, String name, String industry, String country, String size) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO lead_company (id, domain, name, industry, country_code, provider, size_band) VALUES (?, ?, ?, ?, ?, 'TEST', ?)",
+                id, domain, name, industry, country, size);
+        return id;
+    }
+
+    private void contact(UUID company, String email, String name, int confidence) {
+        UUID point = jdbc.queryForObject("""
+                INSERT INTO lead_contact_point (id, kind, value) VALUES (?, 'EMAIL', ?)
+                ON CONFLICT (kind, value) DO UPDATE SET last_seen_at = NOW() RETURNING id""", UUID.class, UUID.randomUUID(), email);
+        jdbc.update("INSERT INTO lead_company_contact (company_id, contact_point_id, full_name, confidence) VALUES (?, ?, ?, ?)",
+                company, point, name, confidence);
     }
 
     private List<PlatformMailer.Mail> sent() {

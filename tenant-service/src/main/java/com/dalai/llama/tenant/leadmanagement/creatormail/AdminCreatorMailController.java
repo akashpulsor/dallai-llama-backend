@@ -29,9 +29,17 @@ public class AdminCreatorMailController {
 
     private final CreatorMailService service;
 
+    /** {@code for}: CREATORS (default) or BRANDS. */
     @GetMapping("/templates")
-    public ResponseEntity<List<Template>> templates() {
-        return ResponseEntity.ok(service.templates());
+    public ResponseEntity<List<Template>> templates(
+            @org.springframework.web.bind.annotation.RequestParam(name = "for", required = false) CreatorMailStore.MailFor mailFor) {
+        return ResponseEntity.ok(service.templates(mailFor));
+    }
+
+    /** How many brands a brand mail with this filter reaches (one contact each). */
+    @PostMapping("/brands/count")
+    public ResponseEntity<CreatorMailService.BrandAudience> brandAudience(@RequestBody CreatorMailStore.BrandFilter filter) {
+        return ResponseEntity.ok(service.brandAudience(filter));
     }
 
     @PostMapping("/templates")
