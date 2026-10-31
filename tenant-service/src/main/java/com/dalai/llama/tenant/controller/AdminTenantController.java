@@ -43,12 +43,14 @@ import java.util.UUID;
 public class AdminTenantController {
 
     private final TenantRepository tenantRepository;
+    private final com.dalai.llama.tenant.showcase.service.CreatorProfileLinks profileLinks;
 
     @GetMapping
     public ResponseEntity<List<AdminTenantSummary>> list() {
+        var profiles = profileLinks.all();
         List<AdminTenantSummary> summaries = tenantRepository.findAll().stream()
                 .sorted(Comparator.comparing(t -> t.getCreatedAt(), Comparator.nullsLast(Comparator.reverseOrder())))
-                .map(AdminTenantSummary::from)
+                .map(t -> AdminTenantSummary.from(t, profiles.get(t.getId())))
                 .toList();
         return ResponseEntity.ok(summaries);
     }

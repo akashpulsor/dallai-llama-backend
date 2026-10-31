@@ -25,9 +25,17 @@ public record AdminTenantSummary(
         Boolean keycloakConfigured,
         String accountType,
         OffsetDateTime createdAt,
-        OffsetDateTime expiresAt
+        OffsetDateTime expiresAt,
+        /* The creator's public profile page; null until they have a profile. */
+        String publicProfileUrl,
+        /* Videos showing on that profile; null with no profile. */
+        Integer liveVideos
 ) {
     public static AdminTenantSummary from(Tenant t) {
+        return from(t, null);
+    }
+
+    public static AdminTenantSummary from(Tenant t, com.dalai.llama.tenant.showcase.service.CreatorProfileLinks.Link profile) {
         return new AdminTenantSummary(
                 t.getId(),
                 t.getName(),
@@ -44,7 +52,9 @@ public record AdminTenantSummary(
                 t.getKeycloakRealmName() != null && !t.getKeycloakRealmName().isBlank(),
                 t.getAccountType() == null ? null : t.getAccountType().name(),
                 t.getCreatedAt(),
-                t.getExpiresAt()
+                t.getExpiresAt(),
+                profile == null ? null : profile.url(),
+                profile == null ? null : profile.liveVideos()
         );
     }
 

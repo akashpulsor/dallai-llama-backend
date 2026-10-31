@@ -242,6 +242,12 @@ outreach:
   bounces:
     imap-host: ${SMTP_IMAP_HOST:imap.hostinger.com}
     imap-port: 993
+# Ops mail to creators and creator leads (CreatorMailService): queued, sent every minute, at most
+# daily-cap a UTC day. The mailbox's 1000 a day is shared with outreach (outreach.daily-send-cap)
+# and sign-in/brief mail, so keep the two caps together under it.
+creator-mail:
+  daily-cap: ${CREATOR_MAIL_DAILY_CAP:150}
+  per-run: 20
 showcase:
   public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
   public-data-max-age-days: 30

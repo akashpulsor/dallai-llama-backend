@@ -1,6 +1,6 @@
 package com.dalai.llama.tenant.leadmanagement.creatormail;
 
-import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.Recipient;
+import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.CreatorView;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.SendRequest;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.SendResult;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.TemplateRequest;
@@ -46,8 +46,21 @@ public class AdminCreatorMailController {
     }
 
     @GetMapping("/creators")
-    public ResponseEntity<List<Recipient>> creators() {
+    public ResponseEntity<List<CreatorView>> creators() {
         return ResponseEntity.ok(service.creators());
+    }
+
+    /** Creator leads (not on the platform yet) and the queue: how many, sent today, the day's cap. */
+    @GetMapping("/overview")
+    public ResponseEntity<CreatorMailService.Overview> overview() {
+        return ResponseEntity.ok(service.overview());
+    }
+
+    /** Creator leads CSV (multipart field {@code file}): email, name, website (their channel or page). */
+    @PostMapping(path = "/leads/import", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<CreatorMailService.LeadImportResult> importLeads(
+            @org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {
+        return ResponseEntity.ok(service.importLeads(file.getBytes()));
     }
 
     @PostMapping("/send")

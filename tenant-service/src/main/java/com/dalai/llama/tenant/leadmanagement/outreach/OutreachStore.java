@@ -65,8 +65,12 @@ public class OutreachStore {
     }
 
     public Optional<String> recipientOfUnsubscribeToken(String token) {
-        return jdbc.queryForList("SELECT recipient_hash FROM lead_outreach_delivery WHERE unsubscribe_token = ?", String.class, token)
-                .stream().findFirst();
+        // Ops mail to creators (ops_creator_mail_delivery) shares the unsubscribe page and the suppression list.
+        return jdbc.queryForList("""
+                SELECT recipient_hash FROM lead_outreach_delivery WHERE unsubscribe_token = ?
+                UNION ALL
+                SELECT recipient_hash FROM ops_creator_mail_delivery WHERE unsubscribe_token = ? AND recipient_hash IS NOT NULL""",
+                String.class, token, token).stream().findFirst();
     }
 
     // ---- intents ----
