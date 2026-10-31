@@ -51,6 +51,13 @@ public class InspirationPosters {
         }
     }
 
+    /** The maker as stored (at most 120 chars; some pinners write a whole bio in their name). */
+    private static String maker(String name) {
+        String trimmed = name.trim().replaceAll("\s+", " ");
+        if (trimmed.isEmpty()) return null;
+        return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 119).trim() + "…";
+    }
+
     /** The 564px picture (sharp in a 600px mail), else the largest there is. */
     static Optional<Poster> poster(JsonNode pin) {
         JsonNode images = pin.path("images");
@@ -61,7 +68,7 @@ public class InspirationPosters {
         JsonNode video = pin.path("videos").path("video_list").path("V_720P");
         String videoUrl = video.path("url").asText("");
         return Optional.of(new Poster(url, image.path("width").asInt(0), image.path("height").asInt(0),
-                maker.isBlank() ? null : maker.trim(), videoUrl.startsWith("https://") ? videoUrl : null,
+                maker(maker), videoUrl.startsWith("https://") && videoUrl.length() <= 500 ? videoUrl : null,
                 video.has("duration") ? java.math.BigDecimal.valueOf(video.path("duration").asDouble() / 1000.0)
                         .setScale(2, java.math.RoundingMode.HALF_UP) : null));
     }

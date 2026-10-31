@@ -33,4 +33,11 @@ class InspirationPostersTest {
         });
         assertThat(InspirationPosters.poster(json.readTree("{\"images\":{}}"))).isEmpty();
     }
+
+    @Test
+    void aMakerNameLongerThanTheColumnIsCut() throws Exception {
+        var pin = json.readTree("{\"images\":{\"564x\":{\"width\":564,\"height\":1002,\"url\":\"https://i.pinimg.com/564x/a.jpg\"}},"
+                + "\"pinner\":{\"full_name\":\"" + "Studio ".repeat(30) + "\"}}");
+        assertThat(InspirationPosters.poster(pin).orElseThrow().makerName()).hasSizeLessThanOrEqualTo(120).startsWith("Studio Studio");
+    }
 }

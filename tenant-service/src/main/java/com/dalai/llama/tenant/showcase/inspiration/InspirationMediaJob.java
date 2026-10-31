@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class InspirationMediaJob {
 
-    private static final int BATCH = 50;
+    private static final int BATCH = 200;
 
     private final InspirationStore store;
     private final InspirationPosters posters;
@@ -28,8 +28,13 @@ public class InspirationMediaJob {
         for (InspirationItem item : store.withoutMedia(BATCH)) {
             var poster = posters.fetch(item.pinId());
             if (poster.isEmpty()) continue;
-            store.setPoster(item.id(), poster.get());
-            filled++;
+            try {
+                store.setPoster(item.id(), poster.get());
+                filled++;
+            } catch (RuntimeException e) {
+                // One pin that can't be stored must not hold up the rest.
+                log.warn("Inspiration media not stored for pin {}: {}", item.pinId(), e.getMessage());
+            }
         }
         return filled;
     }
