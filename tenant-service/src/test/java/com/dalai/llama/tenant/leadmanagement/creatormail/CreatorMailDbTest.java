@@ -119,8 +119,12 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(sent).extracting(PlatformMailer.Mail::to).containsExactlyInAnyOrder("asha@example.com", "ravi@example.com");
         PlatformMailer.Mail toAsha = sent.stream().filter(m -> m.to().equals("asha@example.com")).findFirst().orElseThrow();
         assertThat(toAsha.subject()).isEqualTo("Hi Asha, a tip");
-        assertThat(toAsha.html()).contains("<a href=\"https://dalaillama.in/tips\"").contains("FOR CREATORS").contains("/unsubscribe/");
-        assertThat(toAsha.headers()).containsKey("List-Unsubscribe");
+        // A plain letter from a person: no pictures, layout or bulk-mail headers, so Gmail doesn't file it under Promotions.
+        assertThat(toAsha.html()).contains("<a href=\"https://dalaillama.in/tips\"").contains("/unsubscribe/")
+                .contains("Akash<br>Dalai Llama").doesNotContain("<img").doesNotContain("<table");
+        assertThat(toAsha.text()).contains("Unsubscribe and I won't write again: ");
+        assertThat(toAsha.headers()).isEmpty();
+        assertThat(toAsha.sender()).isEqualTo(new PlatformMailer.Sender("Akash from Dalai Llama", "hello@partner.dalaillama.in"));
 
         // Sending the same template again reaches nobody twice.
         SendResult again = service.send(new SendRequest(template.id(), Audience.ALL, null, null));
@@ -193,7 +197,7 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(mailer).sendAfterCommit(mail.capture());
         assertThat(mail.getValue().to()).isEqualTo("ops@example.com");
-        assertThat(mail.getValue().subject()).isEqualTo("Hi there");
+        assertThat(mail.getValue().subject()).isEqualTo("Hi creator");
         assertThat(mail.getValue().html()).contains("&lt;b&gt;Body&lt;/b&gt;");
         assertThat(service.templates().get(0).lastSentAt()).isNull();
 
@@ -203,6 +207,12 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(outreach.recipientOfUnsubscribeToken(token)).contains(hasher.hash("ops@example.com"));
         account("Ops Person", "ops@example.com", "CREATOR", "ACTIVE");
         assertThat(service.send(new SendRequest(template.id(), Audience.ALL, null, null)).recipients()).isEqualTo(3);
+
+        // A test to an address we know by name greets that name.
+        clearInvocations(mailer);
+        service.send(new SendRequest(template.id(), Audience.TEST, null, "Asha@Example.com"));
+        verify(mailer).sendAfterCommit(mail.capture());
+        assertThat(mail.getValue().subject()).isEqualTo("Hi Asha");
     }
 
     @Test
@@ -220,20 +230,38 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         service.send(new SendRequest(ideas.id(), Audience.ALL, null, null));
         service.dispatch();
         PlatformMailer.Mail mail = sent().get(0);
-        assertThat(mail.html()).contains("Coffee pour in slow motion").contains("By Studio K").contains("https://img.example/coffee.jpg")
-                .contains("/inspiration?industry=FOOD_BEVERAGE").contains("Watch the video")
+        // Listed as titles with one link to watch them, no pictures.
+        assertThat(mail.html()).contains("<li").contains("Coffee pour in slow motion (by Studio K)")
+                .contains("/inspiration?industry=FOOD_BEVERAGE").doesNotContain("https://img.example/coffee.jpg")
                 .doesNotContain("No picture yet");
-        assertThat(mail.text()).contains("Coffee pour in slow motion");
+        assertThat(mail.text()).contains("- Coffee pour in slow motion (by Studio K)").contains("You can watch them here: https://");
 
-        // The preview shows the same cards.
+        // The preview shows the same list.
         assertThat(service.preview(new CreatorMailService.PreviewRequest("Ideas", "Hi", null, null, 2)).html()).contains("Coffee pour in slow motion");
     }
 
     @Test
     void aMissingNameDropsOutOfTheSubjectCleanly() {
         assertThat(CreatorMailService.fill("{name}, brands are searching for you", null)).isEqualTo("Brands are searching for you");
-        assertThat(CreatorMailService.fill("Hi {name},", null)).isEqualTo("Hi there,");
+        assertThat(CreatorMailService.fill("Hi {name},", null)).isEqualTo("Hi creator,");
         assertThat(CreatorMailService.fill("{name}, join", "Asha")).isEqualTo("Asha, join");
+    }
+
+    @Test
+    void withNoNameOnFileTheFirstNameComesFromTheAddressWhenItPlainlyHasOne() {
+        assertThat(CreatorMailService.nameFromEmail("asha.rao@gmail.com")).isEqualTo("Asha");
+        assertThat(CreatorMailService.nameFromEmail("ravi_92@gmail.com")).isEqualTo("Ravi");
+        assertThat(CreatorMailService.nameFromEmail("neha+yt@gmail.com")).isEqualTo("Neha");
+        assertThat(CreatorMailService.nameFromEmail("info@studio.in")).isNull();
+        assertThat(CreatorMailService.nameFromEmail("hello.films@studio.in")).isNull();
+        assertThat(CreatorMailService.nameFromEmail("akashtripathi.2801@gmail.com")).isNull();
+        assertThat(CreatorMailService.nameFromEmail("ab@x.in")).isNull();
+
+        Template template = service.create(new TemplateRequest("Hi", "Hi {name}", "Hello {name}", null));
+        jdbc.update("INSERT INTO ops_creator_lead (id, email) VALUES (?, 'meera.k@example.com')", UUID.randomUUID());
+        service.send(new SendRequest(template.id(), Audience.LEADS, null, null));
+        service.dispatch();
+        assertThat(sent().get(0).subject()).isEqualTo("Hi Meera");
     }
 
     @Test
@@ -245,12 +273,12 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         service.send(new SendRequest(template.id(), Audience.TEST, null, "ops@example.com"));
         ArgumentCaptor<PlatformMailer.Mail> mail = ArgumentCaptor.forClass(PlatformMailer.Mail.class);
         verify(mailer).sendAfterCommit(mail.capture());
-        assertThat(mail.getValue().html()).contains("href=\"https://creator.dalaillama.in\"").contains("Join free, there");
-        assertThat(mail.getValue().text()).contains("Join free, there: https://creator.dalaillama.in");
+        assertThat(mail.getValue().html()).contains("href=\"https://creator.dalaillama.in\"").contains("Join free, creator");
+        assertThat(mail.getValue().text()).contains("Join free, creator: https://creator.dalaillama.in");
 
         CreatorMailService.Preview preview = service.preview(new CreatorMailService.PreviewRequest("{name}, ideas", "Hi {name}", "Go", "https://x.example"));
         assertThat(preview.subject()).isEqualTo("Asha, ideas");
-        assertThat(preview.html()).contains("Hi Asha").contains("href=\"https://x.example\"").contains("FOR CREATORS");
+        assertThat(preview.html()).contains("Hi Asha").contains("href=\"https://x.example\"");
 
         assertThatThrownBy(() -> service.create(new TemplateRequest("Half", "S", "B", "Label only", null, null)))
                 .isInstanceOf(IllegalArgumentException.class);

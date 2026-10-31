@@ -1,4 +1,0 @@
-{{title}}
-{{credit}}
-Watch the video: {{watchUrl}}
-

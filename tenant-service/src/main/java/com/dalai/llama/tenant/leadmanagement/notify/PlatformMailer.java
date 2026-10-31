@@ -60,10 +60,19 @@ public class PlatformMailer {
         this.enabled = enabled;
     }
 
-    public record Mail(String to, String subject, String text, String html, Map<String, String> headers) {
+    /** {@code sender}: who it shows as, when not the brands alias (null keeps it). */
+    public record Mail(String to, String subject, String text, String html, Map<String, String> headers, Sender sender) {
+        public Mail(String to, String subject, String text, String html, Map<String, String> headers) {
+            this(to, subject, text, html, headers, null);
+        }
+
         public Mail(String to, String subject, String text, String html) {
             this(to, subject, text, html, Map.of());
         }
+    }
+
+    /** A person on the outreach domain ("Akash from Dalai Llama" &lt;hello@partner...&gt;); replies go to the mailbox. */
+    public record Sender(String name, String address) {
     }
 
     /** For mail a request triggers: sent off the request thread, once the request's transaction
@@ -120,7 +129,12 @@ public class PlatformMailer {
             String from = brandsFrom == null || brandsFrom.isBlank() ? mailbox : brandsFrom;
             MimeMessage mime = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mime, true, StandardCharsets.UTF_8.name());
-            helper.setFrom(new InternetAddress(from, DISPLAY_NAME, StandardCharsets.UTF_8.name()));
+            if (mail.sender() == null) {
+                helper.setFrom(new InternetAddress(from, DISPLAY_NAME, StandardCharsets.UTF_8.name()));
+            } else {
+                helper.setFrom(new InternetAddress(mail.sender().address(), mail.sender().name(), StandardCharsets.UTF_8.name()));
+                helper.setReplyTo(mailbox);
+            }
             helper.setTo(mail.to());
             helper.setSubject(mail.subject());
             if (mail.html() != null) helper.setText(mail.text(), mail.html());

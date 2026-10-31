@@ -93,4 +93,15 @@ class PlatformMailerTest {
         verify(smtp).send(sent.capture());
         assertThat(sent.getValue().getFrom()[0].toString()).isEqualTo("Dalai Llama <outreach@dalaillama.in>");
     }
+
+    @Test
+    void aPersonalSenderShowsTheirNameAndRepliesGoToTheMailbox() throws Exception {
+        org.mockito.ArgumentCaptor<MimeMessage> sent = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
+        mailer.send(new PlatformMailer.Mail("asha@x.example", "Hi", "text", null, java.util.Map.of(),
+                new PlatformMailer.Sender("Akash from Dalai Llama", "hello@partner.dalaillama.in")));
+        verify(smtp).send(sent.capture());
+        assertThat(sent.getValue().getFrom()[0].toString()).isEqualTo("Akash from Dalai Llama <hello@partner.dalaillama.in>");
+        assertThat(sent.getValue().getReplyTo()[0].toString()).isEqualTo("outreach@dalaillama.in");
+        assertThat(((org.eclipse.angus.mail.smtp.SMTPMessage) sent.getValue()).getEnvelopeFrom()).isEqualTo("outreach@dalaillama.in");
+    }
 }

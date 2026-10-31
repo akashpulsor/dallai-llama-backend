@@ -47,7 +47,8 @@ import java.util.regex.Pattern;
  * uploaded (people not on the platform yet); or to one address as a test. {name} becomes the first
  * name. Mail is queued and leaves a limited number a day ({@code creator-mail.daily-cap}; the mailbox
  * is shared with outreach and sign-in mail), each with an unsubscribe link into the shared
- * suppression list. A template reaches an address once. Sent as Dalai Llama (the brands alias). */
+ * suppression list. A template reaches an address once. Sent as a plain letter from a
+ * person ({@code creator-mail.from-name}) on the outreach domain. */
 @Slf4j
 @Service
 public class CreatorMailService {
@@ -85,14 +86,6 @@ public class CreatorMailService {
     public record Preview(String subject, String html) {
     }
 
-    record ButtonContext(String label, String url) {
-    }
-
-    /** One inspiration video as a card (classpath:mail/idea_card.html). */
-    record IdeaCard(String title, String imageUrl, int imageWidth, String framePadding, String imageRadius, String details, String credit,
-                    String watchUrl) {
-    }
-
     /** {@code audience} null: {@code testEmail} set = TEST, {@code tenantIds} given = CHOSEN, else ALL. */
     public record SendRequest(@NotNull UUID templateId, Audience audience, List<UUID> tenantIds, @Email String testEmail) {
         public SendRequest(UUID templateId, List<UUID> tenantIds, String testEmail) {
@@ -118,16 +111,10 @@ public class CreatorMailService {
     public record Overview(int creatorLeads, int queued, int dailyCap, int sentToday) {
     }
 
-    /** The shared layout's fields (classpath:mail/layout.html). */
-    record MailLayout(String title, String preheader, String audience, String contentHtml, String contentText, String footer,
-                      String unsubscribeHtml, String unsubscribeText, String openPixelHtml) {
-    }
-
     private final CreatorMailStore store;
     private final TenantRepository tenants;
     private final CreatorProfileLinks profiles;
     private final PlatformMailer mailer;
-    private final MailRenderer renderer;
     private final RecipientHasher hasher;
     private final OutreachStore suppression;
     private final OutreachProperties outreach;
@@ -136,19 +123,22 @@ public class CreatorMailService {
     private final Clock clock;
     private final int dailyCap;
     private final int perRun;
+    private final PlatformMailer.Sender sender;
 
     public CreatorMailService(CreatorMailStore store, TenantRepository tenants, CreatorProfileLinks profiles, PlatformMailer mailer,
-                              MailRenderer renderer, RecipientHasher hasher, OutreachStore suppression, OutreachProperties outreach,
+                              RecipientHasher hasher, OutreachStore suppression, OutreachProperties outreach,
                               MailIdeas mailIdeas, ShowcaseProperties showcase, Clock clock,
                               @Value("${creator-mail.daily-cap:150}") int dailyCap,
-                              @Value("${creator-mail.per-run:20}") int perRun) {
+                              @Value("${creator-mail.per-run:20}") int perRun,
+                              @Value("${creator-mail.from-name:Akash from Dalai Llama}") String fromName,
+                              @Value("${creator-mail.from-address:hello@partner.dalaillama.in}") String fromAddress) {
+        this.sender = new PlatformMailer.Sender(fromName, fromAddress);
         this.mailIdeas = mailIdeas;
         this.showcase = showcase;
         this.store = store;
         this.tenants = tenants;
         this.profiles = profiles;
         this.mailer = mailer;
-        this.renderer = renderer;
         this.hasher = hasher;
         this.suppression = suppression;
         this.outreach = outreach;
@@ -227,7 +217,8 @@ public class CreatorMailService {
         if (!template.active()) throw new ResponseStatusException(HttpStatus.CONFLICT, "Template is switched off");
         Audience audience = audience(request);
         if (audience == Audience.TEST) {
-            Recipient tester = recipient(request.testEmail(), null);
+            String testEmail = ContactPointValues.normaliseEmail(request.testEmail());
+            Recipient tester = recipient(testEmail, store.nameOf(testEmail).orElse(null));
             UUID sendId = store.logSend(template.id(), template.subject(), Audience.TEST, 1);
             String token = store.recordTest(sendId, template.id(), tester);
             mailer.sendAfterCommit(mail(template, tester.email(), null, token, ideasFor(template)));
@@ -326,7 +317,6 @@ public class CreatorMailService {
         return new Recipient(normalised, name, hasher.configured() ? hasher.hash(normalised) : null);
     }
 
-    /** {@code unsubscribeToken} null for a test: the link then goes nowhere. */
     /** Videos from the inspiration board (only ones with a picture), as many as the template asks for. */
     private List<MailIdea> ideasFor(Template template) {
         return template.ideaVideos() > 0 ? mailIdeas.forIndustries(List.of(), template.ideaVideos()) : List.of();
@@ -336,63 +326,97 @@ public class CreatorMailService {
         return n == null ? 0 : Math.max(0, Math.min(3, n));
     }
 
-    /** An inspiration video, credited to its maker; it plays on the public inspiration board. */
-    private IdeaCard card(MailIdea idea) {
-        boolean vertical = idea.posterWidth() != null && idea.posterHeight() != null && idea.posterHeight() > idea.posterWidth();
-        String industry = com.dalai.llama.tenant.leadmanagement.notify.MailLabels.industry(idea.industry());
-        String watch = showcase.publicBaseUrl() + "/inspiration" + (idea.industry() == null ? "" : "?industry=" + idea.industry().name());
-        return new IdeaCard(idea.title(), idea.posterUrl(), vertical ? 240 : 542, vertical ? "18px 0" : "0", vertical ? "10px" : "14px 14px 0 0",
-                (industry == null ? "" : industry + " · ") + "Video idea", idea.makerName() == null ? "From the inspiration board" : "By " + idea.makerName(),
-                watch);
+    /** Where an inspiration video plays: the public inspiration board, on its industry. */
+    private String watchUrl(MailIdea idea) {
+        return showcase.publicBaseUrl() + "/inspiration" + (idea.industry() == null ? "" : "?industry=" + idea.industry().name());
     }
 
+    /** A plain personal letter, the way one person writes to another: no layout, pictures, buttons,
+     * badges or bulk-mail headers, few links, from a person. Gmail files designed newsletter mail
+     * under Promotions whoever sends it; this keeps creator mail in the main inbox. The ideas are a
+     * short list of titles with one link to watch them; the button is a plain link.
+     * {@code unsubscribeToken} null only for the preview. */
     PlatformMailer.Mail mail(Template template, String to, String fullName, String unsubscribeToken, List<MailIdea> ideas) {
         String name = firstName(fullName);
+        if (name == null) name = nameFromEmail(to);
         String subject = fill(template.subject(), name);
         String body = fill(template.body(), name);
         String unsubscribe = outreach.publicApiBaseUrl() + "/unsubscribe/" + (unsubscribeToken == null ? "preview" : unsubscribeToken);
-        String contentHtml = html(body);
-        String contentText = body;
+        StringBuilder html = new StringBuilder(html(body));
+        StringBuilder text = new StringBuilder(body.trim());
         if (!ideas.isEmpty()) {
-            // Cards are rows of the layout's table: close the text cell, add them, reopen a cell.
-            StringBuilder cards = new StringBuilder("</td></tr>");
-            StringBuilder cardsText = new StringBuilder();
+            html.append("<ul style=\"margin:0 0 14px;padding-left:20px\">");
+            text.append("\n");
             for (MailIdea idea : ideas) {
-                IdeaCard card = card(idea);
-                cards.append(renderer.html("idea_card", card));
-                cardsText.append(renderer.text("idea_card", card));
+                String credit = idea.makerName() == null ? "" : " (by " + idea.makerName() + ")";
+                html.append("<li style=\"margin:0 0 6px\">").append(MailRenderer.escape(idea.title() + credit)).append("</li>");
+                text.append("\n- ").append(idea.title()).append(credit);
             }
-            contentHtml += cards.append("<tr><td style=\"padding:0 28px 10px\">");
-            contentText += "\n\n" + cardsText;
+            String watch = watchUrl(ideas.get(0));
+            html.append("</ul>").append(paragraph("You can watch them here: " + link(watch, MailRenderer.escape(watch))));
+            text.append("\n\nYou can watch them here: ").append(watch);
         }
         if (template.ctaLabel() != null && template.ctaUrl() != null) {
-            ButtonContext button = new ButtonContext(fill(template.ctaLabel(), name), template.ctaUrl());
-            contentHtml += "<div style=\"margin:8px 0 6px\">" + renderer.html("button", button) + "</div>";
-            contentText += "\n\n" + renderer.text("button", button);
+            String label = fill(template.ctaLabel(), name);
+            html.append(paragraph(link(template.ctaUrl(), MailRenderer.escape(label))));
+            text.append("\n\n").append(label).append(": ").append(template.ctaUrl());
         }
-        MailLayout layout = new MailLayout(subject, preheader(body), "FOR CREATORS", contentHtml, contentText,
-                "You're getting this from Dalai Llama, the platform where brands find creators for their videos. ",
-                "<a href=\"" + MailRenderer.escape(unsubscribe) + "\" style=\"color:#7a7088\">Unsubscribe</a>",
-                "Unsubscribe: " + unsubscribe, "");
-        return new PlatformMailer.Mail(to, subject, renderer.text("layout", layout), renderer.html("layout", layout),
-                Map.of("List-Unsubscribe", "<" + unsubscribe + ">", "List-Unsubscribe-Post", "List-Unsubscribe=One-Click"));
+        // "Akash from Dalai Llama" signs as "Akash" over "Dalai Llama".
+        String signature = sender.name().replaceFirst("\\s+from\\s+", "\n");
+        html.append(paragraph(MailRenderer.escape(signature).replace("\n", "<br>")));
+        text.append("\n\n").append(signature);
+        html.append("<p style=\"margin:22px 0 0;font-size:12px;color:#888\">Not interested? ")
+                .append(link(unsubscribe, "Unsubscribe")).append(" and I won't write again.</p>");
+        text.append("\n\n--\nNot interested? Unsubscribe and I won't write again: ").append(unsubscribe);
+        String page = "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#222\">" + html + "</div>";
+        return new PlatformMailer.Mail(to, subject, text.toString(), page, Map.of(), sender);
     }
 
-    /** "Hi {name}" with no name reads "Hi there". */
+    private static String paragraph(String innerHtml) {
+        return "<p style=\"margin:0 0 14px\">" + innerHtml + "</p>";
+    }
+
+    private static String link(String url, String labelHtml) {
+        return "<a href=\"" + MailRenderer.escape(url) + "\">" + labelHtml + "</a>";
+    }
+
+    /** "{name}" becomes the first name. With none: a leading "{name}," drops out ("{name}, brands are..."
+     * reads "Brands are..."), anywhere else it reads "creator" ("Hi creator,"). */
     static String fill(String s, String firstName) {
         if (firstName != null) return s.replace("{name}", firstName);
-        // No name: "{name}, brands are..." becomes "Brands are...", and "Hi {name}" reads "Hi there".
         String trimmed = s.stripLeading();
         if (trimmed.startsWith("{name}")) {
             String rest = trimmed.substring("{name}".length()).replaceFirst("^[,:\\s-]+", "");
             s = rest.isEmpty() ? rest : Character.toUpperCase(rest.charAt(0)) + rest.substring(1);
         }
-        return s.replace("{name}", "there");
+        return s.replace("{name}", "creator");
+    }
+
+    /** Words an address starts with that are not a person's name (info@, hello.studio@, team_x@). */
+    private static final Set<String> NOT_NAMES = Set.of("info", "contact", "hello", "hey", "team", "admin", "support", "sales", "mail",
+            "email", "studio", "studios", "media", "films", "film", "official", "business", "collab", "collabs", "work", "enquiry",
+            "enquiries", "inquiry", "booking", "bookings", "marketing", "creator", "creators", "office", "manager", "management", "care",
+            "help", "noreply", "partner", "partners", "partnerships", "brand", "brands", "ads", "connect", "social", "youtube", "insta",
+            "instagram", "the", "real", "its", "itsme", "music", "photo", "photos", "photography", "video", "videos", "vlogs",
+            "press", "ops", "jobs", "career", "careers", "accounts", "billing", "mrs");
+
+    /** The first name an address plainly carries: asha.rao@ and asha_92@ give "Asha"; info@, a short
+     * word, or one long run of letters (akashtripathi@, two names run together) give none. */
+    static String nameFromEmail(String email) {
+        if (email == null || !email.contains("@")) return null;
+        String local = email.substring(0, email.indexOf('@')).replaceFirst("\\+.*", "").toLowerCase(java.util.Locale.ROOT);
+        String[] words = local.split("[._\\-0-9]+");
+        String first = words.length > 0 && !words[0].isEmpty() ? words[0] : words.length > 1 ? words[1] : "";
+        if (!first.matches("[a-z]{3,10}") || NOT_NAMES.contains(first)) return null;
+        if (words.length == 1 && first.length() > 8) return null;
+        return Character.toUpperCase(first.charAt(0)) + first.substring(1);
     }
 
     private static String firstName(String full) {
         if (full == null || full.isBlank()) return null;
-        return full.trim().split("\\s+")[0];
+        String first = full.trim().split("\\s+")[0].replaceAll("[^\\p{L}'-]", "");
+        if (first.length() < 2) return null;
+        return Character.toUpperCase(first.charAt(0)) + first.substring(1).toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Paragraphs on blank lines, line breaks kept, links clickable; everything else escaped. */
@@ -400,16 +424,10 @@ public class CreatorMailService {
         StringBuilder out = new StringBuilder();
         for (String paragraph : body.trim().split("\\r?\\n\\s*\\r?\\n")) {
             String escaped = MailRenderer.escape(paragraph.trim());
-            String linked = URL.matcher(escaped).replaceAll(m -> "<a href=\"" + m.group() + "\" style=\"color:#6d28d9\">" + m.group() + "</a>");
-            out.append("<p style=\"margin:0 0 16px;font-size:16px;line-height:1.6;color:#3d3550\">")
-                    .append(linked.replaceAll("\\r?\\n", "<br>")).append("</p>");
+            String linked = URL.matcher(escaped).replaceAll(m -> "<a href=\"" + m.group() + "\">" + m.group() + "</a>");
+            out.append(paragraph(linked.replaceAll("\\r?\\n", "<br>")));
         }
         return out.toString();
-    }
-
-    private static String preheader(String body) {
-        String flat = body.replaceAll("\\s+", " ").trim();
-        return flat.length() > 120 ? flat.substring(0, 120) : flat;
     }
 
     private LocalDate today() {

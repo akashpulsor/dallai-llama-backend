@@ -248,6 +248,9 @@ outreach:
 creator-mail:
   daily-cap: ${CREATOR_MAIL_DAILY_CAP:150}
   per-run: 20
+  # Creator mail comes from a person, as a plain letter (keeps it out of Gmail Promotions).
+  from-name: ${CREATOR_MAIL_FROM_NAME:Akash from Dalai Llama}
+  from-address: ${CREATOR_MAIL_FROM_ADDRESS:hello@partner.dalaillama.in}
 showcase:
   public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
   public-data-max-age-days: 30
