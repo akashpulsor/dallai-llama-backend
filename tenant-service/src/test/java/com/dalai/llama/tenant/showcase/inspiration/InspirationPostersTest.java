@@ -40,4 +40,10 @@ class InspirationPostersTest {
                 + "\"pinner\":{\"full_name\":\"" + "Studio ".repeat(30) + "\"}}");
         assertThat(InspirationPosters.poster(pin).orElseThrow().makerName()).hasSizeLessThanOrEqualTo(120).startsWith("Studio Studio");
     }
+
+    @Test
+    void anHtmlEncodedMakerNameIsDecoded() {
+        assertThat(InspirationPosters.maker("dreamy rafeia &#127872;")).isEqualTo("dreamy rafeia " + new String(Character.toChars(127872)));
+        assertThat(InspirationPosters.maker("Tom &amp; Jerry\tStudio")).isEqualTo("Tom & Jerry Studio");
+    }
 }

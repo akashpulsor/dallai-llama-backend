@@ -52,10 +52,22 @@ public class InspirationPosters {
     }
 
     /** The maker as stored (at most 120 chars; some pinners write a whole bio in their name). */
-    private static String maker(String name) {
-        String trimmed = name.trim().replaceAll("\s+", " ");
+    static String maker(String name) {
+        String trimmed = decodeEntities(name).trim().replaceAll("\\s+", " ");
         if (trimmed.isEmpty()) return null;
         return trimmed.length() <= 120 ? trimmed : trimmed.substring(0, 119).trim() + "…";
+    }
+
+    /** Pinterest sends some names HTML-encoded ("dreamy rafeia &#127872;"); the mail escapes them itself. */
+    static String decodeEntities(String s) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("&#(x?)([0-9a-fA-F]+);").matcher(s);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            int code = Integer.parseInt(m.group(2), m.group(1).isEmpty() ? 10 : 16);
+            m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(Character.isValidCodePoint(code) ? new String(Character.toChars(code)) : ""));
+        }
+        m.appendTail(out);
+        return out.toString().replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
     }
 
     /** The 564px picture (sharp in a 600px mail), else the largest there is. */
