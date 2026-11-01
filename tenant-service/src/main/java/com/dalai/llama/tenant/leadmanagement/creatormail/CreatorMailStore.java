@@ -192,9 +192,10 @@ public class CreatorMailStore {
                         rs.getString(5), rs.getString(6), rs.getString(7), industry(rs.getString(8))), limit);
     }
 
-    public void mark(UUID deliveryId, String status) {
-        jdbc.update("UPDATE ops_creator_mail_delivery SET status = ?, sent_at = CASE WHEN ? = 'SENT' THEN NOW() ELSE sent_at END WHERE id = ?",
-                status, status, deliveryId);
+    /** {@code at}: when it went (the service's clock, the same one the day's cap counts by). */
+    public void mark(UUID deliveryId, String status, java.time.Instant at) {
+        jdbc.update("UPDATE ops_creator_mail_delivery SET status = ?, sent_at = CASE WHEN ? = 'SENT' THEN ? ELSE sent_at END WHERE id = ?",
+                status, status, java.sql.Timestamp.from(at), deliveryId);
     }
 
     public int queuedCount() {

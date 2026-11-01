@@ -327,13 +327,13 @@ public class CreatorMailService {
         int sent = 0;
         for (QueuedMail queued : store.nextQueued(room)) {
             if (queued.recipientHash() != null && suppression.isSuppressed(queued.recipientHash())) {
-                store.mark(queued.id(), "SKIPPED");
+                store.mark(queued.id(), "SKIPPED", clock.instant());
                 continue;
             }
             Template template = templates.computeIfAbsent(queued.templateId(), id -> store.find(id).orElseThrow());
             Recipient to = new Recipient(queued.email(), queued.name(), queued.recipientHash(), queued.company(), queued.industry());
             boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideasFor(template, to.industry())));
-            store.mark(queued.id(), ok ? "SENT" : "FAILED");
+            store.mark(queued.id(), ok ? "SENT" : "FAILED", clock.instant());
             if (ok) sent++;
         }
         return sent;
