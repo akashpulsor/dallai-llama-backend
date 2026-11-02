@@ -75,6 +75,29 @@ public class InspirationStore {
                 ORDER BY random() LIMIT ?""", MAIL_ROW, industry == null ? null : industry.name(), limit);
     }
 
+    /** A video for mail, and when the address was last sent it (null: never). */
+    public record SeenIdea(MailIdea idea, java.time.Instant lastSent) {
+    }
+
+    /** Every active video that has a picture, each with when {@code email} was last sent it. */
+    public List<SeenIdea> forMailTo(String email) {
+        return jdbc.query("""
+                SELECT i.*, s.sent_at AS last_sent FROM inspiration_item i
+                LEFT JOIN ops_mail_idea_sent s ON s.item_id = i.id AND s.email = ?
+                WHERE i.active AND i.poster_url IS NOT NULL""",
+                (rs, n) -> new SeenIdea(MAIL_ROW.mapRow(rs, n), rs.getTimestamp("last_sent") == null ? null : rs.getTimestamp("last_sent").toInstant()),
+                email == null ? "" : email);
+    }
+
+    /** Remembers that {@code email} was sent these videos. */
+    public void recordSent(String email, List<UUID> itemIds, java.time.Instant at) {
+        for (UUID item : itemIds) {
+            jdbc.update("""
+                    INSERT INTO ops_mail_idea_sent (email, item_id, sent_at) VALUES (?, ?, ?)
+                    ON CONFLICT (email, item_id) DO UPDATE SET sent_at = EXCLUDED.sent_at""", email, item, java.sql.Timestamp.from(at));
+        }
+    }
+
     public void setPoster(UUID id, InspirationPosters.Poster poster) {
         jdbc.update("""
                 UPDATE inspiration_item SET poster_url = ?, poster_width = ?, poster_height = ?, maker_name = ?, video_url = ?,

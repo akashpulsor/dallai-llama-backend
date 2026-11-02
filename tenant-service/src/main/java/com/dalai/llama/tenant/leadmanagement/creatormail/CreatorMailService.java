@@ -232,9 +232,9 @@ public class CreatorMailService {
                 blank(r.ctaLabel()) ? null : r.ctaLabel().trim(), blank(r.ctaUrl()) ? null : r.ctaUrl().trim(), ideaVideos(r.ideaVideos()),
                 r.ideaIndustry(), style(r.style()), mailFor, true, null);
         Recipient to = mailFor == MailFor.BRANDS
-                ? new Recipient("preview@example.com", "Asha", null, "Hearth Foods", ShowcaseIndustry.FOOD_BEVERAGE)
+                ? new Recipient("preview@example.com", "Asha", null, "Hearth Foods", ShowcaseIndustry.FOOD_BEVERAGE, "Snacks Hearth Foods")
                 : new Recipient("preview@example.com", "Asha", null);
-        PlatformMailer.Mail mail = mail(draft, to, null, ideasFor(draft, to.industry()));
+        PlatformMailer.Mail mail = mail(draft, to, null, ideasFor(draft, to));
         return new Preview(mail.subject(), mail.html());
     }
 
@@ -287,7 +287,7 @@ public class CreatorMailService {
             Recipient tester = tester(template, ContactPointValues.normaliseEmail(request.testEmail()));
             UUID sendId = store.logSend(template.id(), template.subject(), Audience.TEST, 1);
             String token = store.recordTest(sendId, template.id(), tester);
-            mailer.sendAfterCommit(mail(template, tester, token, ideasFor(template, tester.industry())));
+            mailer.sendAfterCommit(mail(template, tester, token, ideasFor(template, tester)));
             return new SendResult(Audience.TEST, 1);
         }
         if ((audience == Audience.BRANDS) != (template.mailFor() == MailFor.BRANDS)) {
@@ -300,7 +300,7 @@ public class CreatorMailService {
         }
         List<Recipient> recipients = audience == Audience.BRANDS
                 ? store.brandContacts(request.brands() == null ? new BrandFilter(List.of(), List.of(), List.of()) : request.brands()).stream()
-                        .map(b -> recipient(b.email(), b.name(), b.company(), b.industry())).toList()
+                        .map(b -> recipient(b.email(), b.name(), b.company(), b.industry(), b.topics())).toList()
                 : recipients(audience, request.tenantIds());
         UUID sendId = store.logSend(template.id(), template.subject(), audience, 0);
         int queued = 0, alreadyHad = 0, unsubscribed = 0;
@@ -331,8 +331,12 @@ public class CreatorMailService {
                 continue;
             }
             Template template = templates.computeIfAbsent(queued.templateId(), id -> store.find(id).orElseThrow());
-            Recipient to = new Recipient(queued.email(), queued.name(), queued.recipientHash(), queued.company(), queued.industry());
-            boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideasFor(template, to.industry())));
+            Recipient to = new Recipient(queued.email(), queued.name(), queued.recipientHash(), queued.company(), queued.industry(),
+                    queued.topics());
+            List<MailIdea> ideas = ideasFor(template, to);
+            boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideas));
+            // Remembered, so their next mail brings videos they haven't seen.
+            if (ok) mailIdeas.recordSent(to.email(), ideas, clock.instant());
             store.mark(queued.id(), ok ? "SENT" : "FAILED", clock.instant());
             if (ok) sent++;
         }
@@ -384,12 +388,12 @@ public class CreatorMailService {
     }
 
     private Recipient recipient(String email, String name) {
-        return recipient(email, name, null, null);
+        return recipient(email, name, null, null, null);
     }
 
-    private Recipient recipient(String email, String name, String company, ShowcaseIndustry industry) {
+    private Recipient recipient(String email, String name, String company, ShowcaseIndustry industry, String topics) {
         String normalised = ContactPointValues.normaliseEmail(email);
-        return new Recipient(normalised, name, hasher.configured() ? hasher.hash(normalised) : null, company, industry);
+        return new Recipient(normalised, name, hasher.configured() ? hasher.hash(normalised) : null, company, industry, topics);
     }
 
     /** Who a test goes to, as the real mail would see them: a brand contact of the directory for a
@@ -397,7 +401,7 @@ public class CreatorMailService {
     private Recipient tester(Template template, String email) {
         if (template.mailFor() == MailFor.BRANDS) {
             var brand = store.brandContact(email);
-            if (brand.isPresent()) return recipient(email, brand.get().name(), brand.get().company(), brand.get().industry());
+            if (brand.isPresent()) return recipient(email, brand.get().name(), brand.get().company(), brand.get().industry(), brand.get().topics());
         }
         String name = store.namesOf(email).stream().filter(n -> firstName(n) != null).findFirst().orElse(null);
         return recipient(email, name);
@@ -405,15 +409,13 @@ public class CreatorMailService {
 
     /** Videos from the inspiration board (only ones with a picture), as many as the template asks for, drawn
      * fresh for every mail: from the template's industry, or from a random industry when it names none. */
-    private List<MailIdea> ideasFor(Template template, ShowcaseIndustry recipientIndustry) {
+    private List<MailIdea> ideasFor(Template template, Recipient to) {
         if (template.ideaVideos() == 0) return List.of();
-        ShowcaseIndustry industry = template.ideaIndustry() != null ? template.ideaIndustry()
-                : template.mailFor() == MailFor.BRANDS ? recipientIndustry : null;
-        return mailIdeas.pick(industry, template.ideaVideos());
-    }
-
-    private List<MailIdea> ideasFor(Template template) {
-        return ideasFor(template, null);
+        boolean brand = template.mailFor() == MailFor.BRANDS;
+        ShowcaseIndustry industry = template.ideaIndustry() != null ? template.ideaIndustry() : brand ? to.industry() : null;
+        // A template that names an industry keeps to it; otherwise a brand's videos follow what it sells.
+        String topics = brand && template.ideaIndustry() == null ? to.topics() : null;
+        return mailIdeas.forRecipient(industry, topics, to.email(), template.ideaVideos());
     }
 
     private static MailStyle style(MailStyle style) {

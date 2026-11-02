@@ -18,7 +18,14 @@ public final class LeadCsvParser {
     public record ParsedRow(int rowNumber, String raw, List<String> emails, List<String> phones, String name, String designation,
                             String company, ShowcaseIndustry industry, String website,
                             /* ISO-2 when the file says, e.g. "IN" or "India"; null otherwise. */
-                            String country, CompanySize size) {
+                            String country, CompanySize size,
+                            /* what the brand sells, as the file writes it ("Jewellery", "Pet food"); null when not given */
+                            String category) {
+        public ParsedRow(int rowNumber, String raw, List<String> emails, List<String> phones, String name, String designation,
+                         String company, ShowcaseIndustry industry, String website, String country, CompanySize size) {
+            this(rowNumber, raw, emails, phones, name, designation, company, industry, website, country, size, null);
+        }
+
         public boolean hasContact() {
             return !emails.isEmpty() || !phones.isEmpty();
         }
@@ -32,7 +39,7 @@ public final class LeadCsvParser {
     private record Record(String raw, List<String> fields) {
     }
 
-    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, DESIGNATION, COMPANY, COUNTRY, INDUSTRY, WEBSITE, SIZE, IGNORED }
+    private enum Column { EMAIL, PHONE, NAME, FIRST_NAME, LAST_NAME, DESIGNATION, COMPANY, COUNTRY, INDUSTRY, CATEGORY, WEBSITE, SIZE, IGNORED }
 
     private LeadCsvParser() {
     }
@@ -52,7 +59,7 @@ public final class LeadCsvParser {
             if (record.fields().stream().allMatch(String::isBlank)) continue;
             Set<String> emails = new LinkedHashSet<>();
             Set<String> phones = new LinkedHashSet<>();
-            String name = null, first = null, last = null, designation = null, company = null, website = null, country = null;
+            String name = null, first = null, last = null, designation = null, company = null, website = null, country = null, category = null;
             ShowcaseIndustry industry = null;
             CompanySize size = null;
             for (int c = 0; c < columns.size() && c < record.fields().size(); c++) {
@@ -68,6 +75,7 @@ public final class LeadCsvParser {
                     case COMPANY -> company = value;
                     case COUNTRY -> country = countryCode(value);
                     case INDUSTRY -> industry = industry(value);
+                    case CATEGORY -> category = value;
                     case WEBSITE -> website = value;
                     case SIZE -> size = CompanySize.parse(value);
                     default -> { }
@@ -75,7 +83,8 @@ public final class LeadCsvParser {
             }
             if (name == null && (first != null || last != null)) name = ((first == null ? "" : first) + " " + (last == null ? "" : last)).trim();
             rows.add(new ParsedRow(r + 1, record.raw(), List.copyOf(emails), List.copyOf(phones), cap(name, 120), cap(designation, 120), cap(company, 160),
-                    industry, website != null && website.startsWith("http") ? cap(website, 255) : null, country, size));
+                    industry != null ? industry : category == null ? null : industry(category),
+                    website != null && website.startsWith("http") ? cap(website, 255) : null, country, size, cap(category, 80)));
         }
         return rows;
     }
@@ -89,7 +98,9 @@ public final class LeadCsvParser {
         if (h.matches("lastname|surname|familyname")) return Column.LAST_NAME;
         if (h.matches("designation|title|jobtitle|position|role")) return Column.DESIGNATION;
         if (h.matches("company|companyname|organi[sz]ation|brand|business")) return Column.COMPANY;
-        if (h.matches("industry|sector|category")) return Column.INDUSTRY;
+        if (h.matches("industry|sector")) return Column.INDUSTRY;
+        // Also read as the industry when there's no industry column.
+        if (h.matches("category|subcategory|productcategory|products|niche")) return Column.CATEGORY;
         if (h.matches("country|countrycode|location")) return Column.COUNTRY;
         if (h.matches("website|url|site|web")) return Column.WEBSITE;
         if (h.matches("size|companysize|brandsize|segment|tier|employees|employeecount|headcount|companytype")) return Column.SIZE;

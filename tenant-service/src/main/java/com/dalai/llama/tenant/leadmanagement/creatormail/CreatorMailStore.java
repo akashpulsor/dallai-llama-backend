@@ -47,15 +47,16 @@ public class CreatorMailStore {
                        int queued, int sent) {
     }
 
-    /** {@code company}/{@code industry}: the brand, for a brand mail; null for a creator. */
-    public record Recipient(String email, String name, String recipientHash, String company, com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry) {
+    /** {@code company}/{@code industry}/{@code topics}: the brand, for a brand mail ({@code topics}: its
+     * category, name and website, to match inspiration videos by); null for a creator. */
+    public record Recipient(String email, String name, String recipientHash, String company, com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry, String topics) {
         public Recipient(String email, String name, String recipientHash) {
-            this(email, name, recipientHash, null, null);
+            this(email, name, recipientHash, null, null, null);
         }
     }
 
     public record QueuedMail(UUID id, UUID templateId, String email, String name, String recipientHash, String unsubscribeToken,
-                             String company, com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry) {
+                             String company, com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry, String topics) {
     }
 
     public record Lead(String email, String name, String profileUrl) {
@@ -108,7 +109,7 @@ public class CreatorMailStore {
     public List<Recipient> brandContacts(BrandFilter filter) {
         return jdbc.query(con -> {
             var ps = con.prepareStatement("""
-                    SELECT DISTINCT ON (c.id) LOWER(cp.value), cc.full_name, c.name, c.industry
+                    SELECT DISTINCT ON (c.id) LOWER(cp.value), cc.full_name, c.name, c.industry, c.category, c.domain
                     FROM lead_company c
                     JOIN lead_company_contact cc ON cc.company_id = c.id
                     JOIN lead_contact_point cp ON cp.id = cc.contact_point_id AND cp.kind = 'EMAIL' AND cp.status <> 'INVALID'
@@ -124,7 +125,16 @@ public class CreatorMailStore {
                 ps.setArray(2 * i + 2, array);
             }
             return ps;
-        }, (rs, n) -> new Recipient(rs.getString(1), rs.getString(2), null, rs.getString(3), industry(rs.getString(4))));
+        }, BRAND_CONTACT);
+    }
+
+    /** A brand contact; its topics are what the brand is known by: category, name and website. */
+    private static final RowMapper<Recipient> BRAND_CONTACT = (rs, n) -> new Recipient(rs.getString(1), rs.getString(2), null, rs.getString(3),
+            industry(rs.getString(4)), topics(rs.getString(5), rs.getString(3), rs.getString(6)));
+
+    private static String topics(String... parts) {
+        String joined = java.util.Arrays.stream(parts).filter(p -> p != null && !p.isBlank()).collect(java.util.stream.Collectors.joining(" "));
+        return joined.length() > 400 ? joined.substring(0, 400) : joined;
     }
 
     private static String[] codes(List<? extends Enum<?>> values) {
@@ -134,11 +144,11 @@ public class CreatorMailStore {
     /** The brand contact an address belongs to, for a test of a brand mail. */
     public Optional<Recipient> brandContact(String email) {
         return jdbc.query("""
-                SELECT LOWER(cp.value), cc.full_name, c.name, c.industry FROM lead_company c
+                SELECT LOWER(cp.value), cc.full_name, c.name, c.industry, c.category, c.domain FROM lead_company c
                 JOIN lead_company_contact cc ON cc.company_id = c.id
                 JOIN lead_contact_point cp ON cp.id = cc.contact_point_id AND cp.kind = 'EMAIL'
                 WHERE LOWER(cp.value) = ? LIMIT 1""",
-                (rs, n) -> new Recipient(rs.getString(1), rs.getString(2), null, rs.getString(3), industry(rs.getString(4))), email)
+                BRAND_CONTACT, email)
                 .stream().findFirst();
     }
 
@@ -162,10 +172,11 @@ public class CreatorMailStore {
     /** Queues one mail; false when this template already reached (or is queued for) the address. */
     public boolean enqueue(UUID sendId, UUID templateId, Recipient to) {
         return jdbc.update("""
-                INSERT INTO ops_creator_mail_delivery (id, send_id, template_id, email, name, recipient_hash, unsubscribe_token, company, industry)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (template_id, email) WHERE status <> 'TEST' DO NOTHING""",
+                INSERT INTO ops_creator_mail_delivery (id, send_id, template_id, email, name, recipient_hash, unsubscribe_token, company, industry,
+                    topics)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (template_id, email) WHERE status <> 'TEST' DO NOTHING""",
                 UUID.randomUUID(), sendId, templateId, to.email(), to.name(), to.recipientHash(), newToken(), to.company(),
-                code(to.industry())) == 1;
+                code(to.industry()), to.topics()) == 1;
     }
 
     /** Records a test mail (sent straight away) and returns its unsubscribe token, so the link in a
@@ -174,9 +185,10 @@ public class CreatorMailStore {
         String token = newToken();
         jdbc.update("""
                 INSERT INTO ops_creator_mail_delivery (id, send_id, template_id, email, name, recipient_hash, unsubscribe_token, status, sent_at,
-                    company, industry)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST', NOW(), ?, ?)""",
-                UUID.randomUUID(), sendId, templateId, to.email(), to.name(), to.recipientHash(), token, to.company(), code(to.industry()));
+                    company, industry, topics)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'TEST', NOW(), ?, ?, ?)""",
+                UUID.randomUUID(), sendId, templateId, to.email(), to.name(), to.recipientHash(), token, to.company(), code(to.industry()),
+                to.topics());
         return token;
     }
 
@@ -186,10 +198,10 @@ public class CreatorMailStore {
 
     public List<QueuedMail> nextQueued(int limit) {
         return jdbc.query("""
-                SELECT id, template_id, email, name, recipient_hash, unsubscribe_token, company, industry FROM ops_creator_mail_delivery
+                SELECT id, template_id, email, name, recipient_hash, unsubscribe_token, company, industry, topics FROM ops_creator_mail_delivery
                 WHERE status = 'QUEUED' ORDER BY created_at, id LIMIT ?""",
                 (rs, n) -> new QueuedMail(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class), rs.getString(3), rs.getString(4),
-                        rs.getString(5), rs.getString(6), rs.getString(7), industry(rs.getString(8))), limit);
+                        rs.getString(5), rs.getString(6), rs.getString(7), industry(rs.getString(8)), rs.getString(9)), limit);
     }
 
     /** {@code at}: when it went (the service's clock, the same one the day's cap counts by). */

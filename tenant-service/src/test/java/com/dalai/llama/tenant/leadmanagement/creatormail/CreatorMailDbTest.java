@@ -408,6 +408,39 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(mail.html()).contains("Food idea").doesNotContain("Tech idea"); // the brand's own industry
     }
 
+    @Test
+    void aBrandGetsVideosAboutWhatItSells_andNewOnesInItsNextMail() {
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        jdbc.update("DELETE FROM inspiration_item");
+        // A pet brand filed under e-commerce: its videos are the pet ones (filed under other), not e-commerce ones.
+        UUID muttley = brand("muttley-test.in", "Muttley Crew", "ECOMMERCE", "IN", "SMALL");
+        jdbc.update("UPDATE lead_company SET category = 'Pet' WHERE id = ?", muttley);
+        contact(muttley, "woof@muttley-test.in", "Riya", 90);
+        for (int i = 0; i < 4; i++) {
+            jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, ?, ?, 'OTHER', 'https://img.example/p.jpg')",
+                    UUID.randomUUID(), "55500000" + i, "Pet product " + i);
+            jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, ?, ?, 'ECOMMERCE', 'https://img.example/e.jpg')",
+                    UUID.randomUUID(), "66600000" + i, "Online store hook " + i);
+        }
+        var everyone = new CreatorMailStore.BrandFilter(List.of(), List.of(), List.of());
+        Template first = service.create(new TemplateRequest("One", "Ideas", "Hi", null, null, 2, null, null, CreatorMailStore.MailFor.BRANDS, null));
+        Template second = service.create(new TemplateRequest("Two", "More ideas", "Hi", null, null, 2, null, null, CreatorMailStore.MailFor.BRANDS, null));
+
+        service.send(new SendRequest(first.id(), Audience.BRANDS, null, null, everyone));
+        service.dispatch();
+        service.send(new SendRequest(second.id(), Audience.BRANDS, null, null, everyone));
+        service.dispatch();
+
+        List<PlatformMailer.Mail> mails = sent();
+        java.util.regex.Pattern pet = java.util.regex.Pattern.compile("Pet product \\d");
+        List<String> firstVideos = pet.matcher(mails.get(0).html()).results().map(m -> m.group()).toList();
+        List<String> secondVideos = pet.matcher(mails.get(1).html()).results().map(m -> m.group()).toList();
+        assertThat(firstVideos).hasSize(2);
+        assertThat(secondVideos).hasSize(2).doesNotContainAnyElementsOf(firstVideos); // new ones the second time
+        assertThat(mails.get(0).html() + mails.get(1).html()).doesNotContain("Online store hook");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_mail_idea_sent WHERE email = 'woof@muttley-test.in'", Integer.class)).isEqualTo(4);
+    }
+
     private UUID brand(String domain, String name, String industry, String country, String size) {
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO lead_company (id, domain, name, industry, country_code, provider, size_band) VALUES (?, ?, ?, ?, ?, 'TEST', ?)",

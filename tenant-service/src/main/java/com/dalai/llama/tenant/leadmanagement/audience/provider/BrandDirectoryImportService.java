@@ -53,7 +53,7 @@ public class BrandDirectoryImportService {
                 continue;
             }
             UUID company = store.upsertCompany(domain, row.company() != null ? row.company() : domain, row.industry(), row.country(), 0, SOURCE,
-                    row.size());
+                    row.size(), row.category());
             if (seen.add(company)) companies++;
             if (row.emails().isEmpty()) withoutEmail++;
             // No contact in the file: the brand is still listed, and left for a provider lookup to fill.

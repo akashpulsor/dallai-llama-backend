@@ -71,20 +71,26 @@ public class BrandSearchStore {
         return upsertCompany(domain, name, industry, countryCode, emailsAvailable, provider, null);
     }
 
-    /** {@code size} null keeps what the directory already knows; a given size replaces it. */
     public UUID upsertCompany(String domain, String name, ShowcaseIndustry industry, String countryCode, int emailsAvailable, String provider,
                               CompanySize size) {
+        return upsertCompany(domain, name, industry, countryCode, emailsAvailable, provider, size, null);
+    }
+
+    /** {@code size}/{@code category} null keep what the directory already knows; a given one replaces it. */
+    public UUID upsertCompany(String domain, String name, ShowcaseIndustry industry, String countryCode, int emailsAvailable, String provider,
+                              CompanySize size, String category) {
         return jdbc.queryForObject("""
-                INSERT INTO lead_company (id, domain, name, industry, country_code, emails_available, provider, size_band)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO lead_company (id, domain, name, industry, country_code, emails_available, provider, size_band, category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (domain) DO UPDATE SET name = COALESCE(EXCLUDED.name, lead_company.name),
                     industry = COALESCE(lead_company.industry, EXCLUDED.industry),
                     country_code = COALESCE(lead_company.country_code, EXCLUDED.country_code),
                     size_band = COALESCE(EXCLUDED.size_band, lead_company.size_band),
+                    category = COALESCE(EXCLUDED.category, lead_company.category),
                     emails_available = EXCLUDED.emails_available, last_seen_at = NOW()
                 RETURNING id""", UUID.class, UUID.randomUUID(), domain.toLowerCase(), name,
                 industry == null ? null : industry.name(), countryCode == null ? null : countryCode.toUpperCase(), emailsAvailable, provider,
-                size == null ? null : size.name());
+                size == null ? null : size.name(), category);
     }
 
     /** {@code searchedAt} from the app clock, the same clock {@link #freshSearch} is asked with. */
