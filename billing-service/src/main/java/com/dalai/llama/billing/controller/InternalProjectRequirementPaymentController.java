@@ -31,6 +31,7 @@ import java.util.UUID;
 public class InternalProjectRequirementPaymentController {
 
     private final PaymentService paymentService;
+    private final com.dalai.llama.billing.service.BriefPaymentTransferService transferService;
 
     @PostMapping("/{requirementId}/order")
     public ResponseEntity<PaymentService.PaymentOrderResult> createOrder(
@@ -60,6 +61,17 @@ public class InternalProjectRequirementPaymentController {
                 tenantId, requirementId, request.amount(), request.description());
         return ResponseEntity.ok(new WalletPayResult(paymentId));
     }
+
+    /** The brief was handed to another creator account (tenant-service's request matching): its
+     * payments, and the wallet credit they gave, go with it. */
+    @PostMapping("/{requirementId}/transfer")
+    public ResponseEntity<Void> transfer(@PathVariable UUID tenantId, @PathVariable UUID requirementId,
+                                         @jakarta.validation.Valid @RequestBody TransferRequest request) {
+        transferService.transfer(tenantId, requirementId, request.toTenantId());
+        return ResponseEntity.noContent().build();
+    }
+
+    public record TransferRequest(@jakarta.validation.constraints.NotNull UUID toTenantId) {}
 
     public record CreateOrderRequest(@NotBlank String currency, BigDecimal amount, String description) {}
 

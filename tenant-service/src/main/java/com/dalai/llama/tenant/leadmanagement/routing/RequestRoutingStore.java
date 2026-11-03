@@ -107,7 +107,7 @@ public class RequestRoutingStore {
     public List<UUID> offeredTo(UUID tenantId) {
         return jdbc.queryForList("""
                 SELECT o.inquiry_id FROM lead_inquiry_offer o JOIN lead_brand_inquiry q ON q.id = o.inquiry_id
-                WHERE o.tenant_id = ? AND o.status = 'OFFERED' AND q.tenant_id IS NULL""", UUID.class, tenantId);
+                WHERE o.tenant_id = ? AND o.status = 'OFFERED' AND (q.tenant_id IS NULL OR q.provisional)""", UUID.class, tenantId);
     }
 
     /** Gives the request to the creator if nobody has it yet; false when someone was quicker. */
@@ -115,6 +115,61 @@ public class RequestRoutingStore {
         return jdbc.update("""
                 UPDATE lead_brand_inquiry SET tenant_id = ?, status = 'NEW', updated_at = NOW()
                 WHERE id = ? AND tenant_id IS NULL""", tenantId, inquiryId) == 1;
+    }
+
+    /** Dalaillama's own creator account: the active creator profile of the account with this email. */
+    public java.util.Optional<UUID> houseCreator(String email) {
+        if (email == null || email.isBlank()) return java.util.Optional.empty();
+        return jdbc.queryForList("""
+                SELECT p.tenant_id FROM creator_public_profile p JOIN tenants t ON t.id = p.tenant_id
+                WHERE LOWER(t.admin_user_email) = LOWER(?) OR LOWER(t.primary_contact_email) = LOWER(?)
+                ORDER BY (p.status = 'ACTIVE') DESC, p.created_at LIMIT 1""", UUID.class, email.trim(), email.trim()).stream().findFirst();
+    }
+
+    /** Dalaillama's account holds a request nobody has, until a creator takes it. */
+    public boolean holdForHouse(UUID inquiryId, UUID house) {
+        return jdbc.update("""
+                UPDATE lead_brand_inquiry SET tenant_id = ?, provisional = TRUE, status = 'NEW', updated_at = NOW()
+                WHERE id = ? AND tenant_id IS NULL""", house, inquiryId) == 1;
+    }
+
+    /** Paid: offered to creators until {@code until}. */
+    public void startMatching(UUID inquiryId, OffsetDateTime until) {
+        jdbc.update("UPDATE lead_brand_inquiry SET matching_until = ?, updated_at = NOW() WHERE id = ? AND provisional",
+                Timestamp.from(until.toInstant()), inquiryId);
+    }
+
+    /** A creator (or ops for one) takes a request Dalaillama holds; false when someone was quicker or it already ended. */
+    public boolean takeFromHouse(UUID inquiryId, UUID tenantId) {
+        return jdbc.update("""
+                UPDATE lead_brand_inquiry SET tenant_id = ?, provisional = FALSE, matching_until = NULL, updated_at = NOW()
+                WHERE id = ? AND provisional""", tenantId, inquiryId) == 1;
+    }
+
+    /** Nobody took a paid request: Dalaillama's account keeps it for good. False when it already ended. */
+    public boolean keepForHouse(UUID inquiryId) {
+        return jdbc.update("""
+                UPDATE lead_brand_inquiry SET provisional = FALSE, matching_until = NULL, updated_at = NOW()
+                WHERE id = ? AND provisional AND paid_at IS NOT NULL""", inquiryId) == 1;
+    }
+
+    /** Paid requests whose matching time is up. */
+    public List<UUID> matchingEnded(OffsetDateTime now) {
+        return jdbc.queryForList("SELECT id FROM lead_brand_inquiry WHERE provisional AND matching_until < ? ORDER BY matching_until",
+                UUID.class, Timestamp.from(now.toInstant()));
+    }
+
+    public int openOffers(UUID inquiryId) {
+        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM lead_inquiry_offer WHERE inquiry_id = ? AND status = 'OFFERED'",
+                Integer.class, inquiryId);
+        return n == null ? 0 : n;
+    }
+
+    /** Whether this creator was ever offered (or passed on) the request. */
+    public boolean everOffered(UUID inquiryId, UUID tenantId) {
+        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM lead_inquiry_offer WHERE inquiry_id = ? AND tenant_id = ?",
+                Integer.class, inquiryId, tenantId);
+        return n != null && n > 0;
     }
 
     public void touchRouted(UUID tenantId, OffsetDateTime now) {
@@ -132,7 +187,9 @@ public class RequestRoutingStore {
 
     /** A request in the ops queue, with what ops need to pick its creator. */
     public record WaitingRequest(UUID id, String brand, String email, ShowcaseIndustry industry, String message,
-                                 OffsetDateTime createdAt) {
+                                 OffsetDateTime createdAt,
+                                 /* Held by Dalaillama's account: paid when, and offered to creators until when. */
+                                 OffsetDateTime paidAt, OffsetDateTime matchingUntil) {
     }
 
     /** A request a creator holds whose brief the brand hasn't paid yet: ops can expire it. */
@@ -151,11 +208,14 @@ public class RequestRoutingStore {
 
     public List<WaitingRequest> waiting() {
         return jdbc.query("""
-                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, q.industry, q.message, q.created_at
+                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, q.industry, q.message, q.created_at,
+                       q.paid_at, q.matching_until
                 FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
-                WHERE q.tenant_id IS NULL AND q.source = 'LANDING' AND q.status IN ('NEW', 'VIEWED') ORDER BY q.created_at""",
+                WHERE q.source = 'LANDING' AND ((q.tenant_id IS NULL AND q.status IN ('NEW', 'VIEWED'))
+                                                OR (q.provisional AND q.status <> 'EXPIRED'))
+                ORDER BY q.created_at""",
                 (rs, n) -> new WaitingRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
                         rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5),
-                        rs.getObject(6, OffsetDateTime.class)));
+                        rs.getObject(6, OffsetDateTime.class), rs.getObject(7, OffsetDateTime.class), rs.getObject(8, OffsetDateTime.class)));
     }
 }

@@ -72,7 +72,8 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     @TestConfiguration
     @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class,
             com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
-            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class})
+            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class,
+            com.dalai.llama.tenant.leadmanagement.routing.RequestMatchingProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
@@ -83,6 +84,7 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     @MockBean private PlatformMailer mailer;
     @MockBean private CreativePlanningBriefClient briefClient;
     @MockBean private ProjectReviewLinks reviewLinks;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.inquiry.BriefHandover handover;
     @MockBean private com.dalai.llama.tenant.leadmanagement.audience.MailDomainResolver domains;
     @Autowired private BrandAccountService accounts;
     @Autowired private BrandSessionService sessions;

@@ -111,6 +111,14 @@ public class BrandInquiry {
     @Column(name = "paid_at")
     private OffsetDateTime paidAt;
 
+    /** Held by Dalaillama's own creator account until a creator takes it (V73); the brand sees no creator yet. */
+    @Column(name = "provisional", nullable = false)
+    private boolean provisional;
+
+    /** Paid and offered to creators until then; past it, Dalaillama's own account keeps it. */
+    @Column(name = "matching_until")
+    private OffsetDateTime matchingUntil;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

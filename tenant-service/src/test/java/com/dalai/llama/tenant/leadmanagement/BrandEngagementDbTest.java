@@ -75,13 +75,16 @@ class BrandEngagementDbTest extends ShowcaseDbTestSupport {
     @TestConfiguration
     @EnableConfigurationProperties({BrandProperties.class, ShowcaseProperties.class,
             com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
-            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class})
+            com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class,
+            com.dalai.llama.tenant.leadmanagement.routing.RequestMatchingProperties.class})
     static class TestConfig {
         @Bean
         MutableClock clock() {
             return new MutableClock(NOW);
         }
     }
+
+    @MockBean private com.dalai.llama.tenant.leadmanagement.inquiry.BriefHandover handover;
 
     @MockBean private PlatformMailer mailer;
     @MockBean private CreativePlanningBriefClient briefClient;

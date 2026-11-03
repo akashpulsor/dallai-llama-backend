@@ -212,6 +212,11 @@ brands:
   request-pricing:
     platform-minute-price: 1999
     platform-prepayment-percent: 30
+  # A request sent to Dalaillama: the founder's creator account holds it so the brand pays at once,
+  # then it's offered to creators for the window; nobody takes it -> the founder makes it.
+  request-matching:
+    house-creator-email: ${BRANDS_HOUSE_CREATOR_EMAIL:akashtripathi.2801@gmail.com}
+    window: ${BRANDS_MATCHING_WINDOW:PT2H}
 
 # Creator Showcase, Phase C: outreach mail (rules 15-17).
 outreach:

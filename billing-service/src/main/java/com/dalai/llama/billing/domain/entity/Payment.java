@@ -144,6 +144,13 @@ public class Payment {
         return previous;
     }
 
+    /** The brief this pays for was handed to another creator account: the payment goes with it. */
+    public void handTo(UUID tenantId, UUID walletId) {
+        this.tenantId = tenantId;
+        this.walletId = walletId;
+        this.updatedAt = Instant.now();
+    }
+
     public PaymentStatus markRefunded(String reason) {
         PaymentStatus previous = this.status;
         if (this.status != PaymentStatus.SUCCESS) {

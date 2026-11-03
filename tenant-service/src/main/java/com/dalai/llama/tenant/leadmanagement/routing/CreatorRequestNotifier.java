@@ -44,6 +44,44 @@ public class CreatorRequestNotifier {
                 null, "See it and accept"));
     }
 
+    /** Paid already and offered to a few creators for the matching window: the first to accept takes it. */
+    public void offeredPaid(UUID creatorTenantId, BrandContact brand, BrandInquiry inquiry, java.time.Duration window) {
+        String who = CreatorRequestMail.brandName(brand);
+        send(creatorTenantId, brand, inquiry, new CreatorRequestMail.Copy(
+                "Paid: " + who + " needs a creator now",
+                who + " has paid and is waiting for a creator",
+                "The brand paid upfront. It's offered to a few creators for the next " + span(window)
+                        + "; the first to accept takes it, brief and payment included.",
+                "Already paid upfront", "See it and accept"));
+    }
+
+    /** They took a paid request from the matching (or ops gave it to them): it's theirs, start. */
+    public void matched(UUID creatorTenantId, BrandContact brand, BrandInquiry inquiry) {
+        String who = CreatorRequestMail.brandName(brand);
+        send(creatorTenantId, brand, inquiry, new CreatorRequestMail.Copy(
+                "It's yours: " + who + "'s video",
+                who + "'s video is yours",
+                "The brand has paid upfront, so you can start. Open the brief for the details, images and the brand's notes.",
+                "Already paid upfront", "Open the brief"));
+    }
+
+    /** Nobody took a paid request in time: Dalaillama's own account (the founder) makes it. */
+    public void keptForHouse(UUID houseTenantId, BrandContact brand, BrandInquiry inquiry) {
+        String who = CreatorRequestMail.brandName(brand);
+        send(houseTenantId, brand, inquiry, new CreatorRequestMail.Copy(
+                "No creator took it: " + who + "'s video is yours",
+                who + "'s paid video is yours to make",
+                "No creator accepted it in time, so it stays with you. The brand has paid upfront and has been told you're making it.",
+                "Already paid upfront", "Open the brief"));
+    }
+
+    /** "2 hours", "90 minutes". */
+    public static String span(java.time.Duration d) {
+        long minutes = d.toMinutes();
+        if (minutes % 60 == 0) return minutes / 60 == 1 ? "hour" : minutes / 60 + " hours";
+        return minutes + " minutes";
+    }
+
     /** Theirs, but the brief couldn't be made automatically: they make it from their requests. */
     public void needsBrief(UUID creatorTenantId, BrandContact brand, BrandInquiry inquiry) {
         String who = CreatorRequestMail.brandName(brand);

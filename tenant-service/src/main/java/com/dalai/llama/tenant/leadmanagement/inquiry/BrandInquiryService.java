@@ -67,6 +67,8 @@ public class BrandInquiryService {
     private final com.dalai.llama.tenant.leadmanagement.routing.RequestRoutingStore routingStore;
     private final com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier notifier;
     private final ProjectReviewLinks reviewLinks;
+    private final BriefHandover handover;
+    private final com.dalai.llama.tenant.leadmanagement.routing.RequestMatchingProperties matching;
     private final RequestPricing pricing;
     private final PlatformMailer mailer;
     private final BrandProperties brandProperties;
@@ -212,7 +214,8 @@ public class BrandInquiryService {
         Map<UUID, String> titles = filmTitles(inquiries);
         return inquiries.stream().map(i -> {
             // A request sent to Dalaillama has no creator until it is routed: "finding a creator".
-            Optional<CreatorPublicProfile> p = Optional.ofNullable(i.getTenantId()).map(creators::get);
+            // Held by Dalaillama until a creator is assigned: the brand sees "assigning your creator".
+            Optional<CreatorPublicProfile> p = Optional.ofNullable(i.isProvisional() ? null : i.getTenantId()).map(creators::get);
             // After it became a brief: paid yet, and the review link once the creator shared it.
             ProjectReviewLinks.Progress progress = i.getRequirementId() == null || i.getTenantId() == null
                     ? ProjectReviewLinks.Progress.UNKNOWN : reviewLinks.of(i.getTenantId(), i.getRequirementId());
@@ -220,7 +223,7 @@ public class BrandInquiryService {
                     p.map(CreatorPublicProfile::getDisplayName).orElse(null), p.map(CreatorPublicProfile::getAvatarUrl).orElse(null),
                     titles.get(i.getShowcaseItemId()), i.getBudgetBand(), i.getTimeline(), i.getMessage(), i.getStatus(),
                     i.getStatus() == BrandInquiry.Status.EXPIRED ? null : briefUrl(i), i.getCreatedAt(), InquiryDtos.BriefDetails.of(i),
-                    progress.funded(), progress.reviewUrl());
+                    progress.funded(), progress.reviewUrl(), i.getMatchingUntil());
         }).toList();
     }
 
@@ -251,7 +254,11 @@ public class BrandInquiryService {
     /** Takes a request offered to this creator (offer to all): theirs if they are first. */
     @Transactional
     public CreatorInquiryView accept(UUID tenantId, UUID inquiryId) {
+        BrandInquiry before = inquiryRepository.findById(inquiryId).orElseThrow(() -> new IllegalArgumentException("No such request"));
+        boolean held = before.isProvisional();
+        UUID house = before.getTenantId();
         if (!router.accept(tenantId, inquiryId)) throw new IllegalStateException("Another creator took this request first");
+        if (held) handOver(inquiryId, house, tenantId);
         briefOnceHeld(inquiryId);
         return forCreator(tenantId).stream().filter(v -> v.id().equals(inquiryId)).findFirst().orElseThrow();
     }
@@ -263,14 +270,17 @@ public class BrandInquiryService {
             throw new IllegalArgumentException("A request can only be marked VIEWED or DECLINED here");
         }
         BrandInquiry inquiry = visible(tenantId, inquiryId);
-        if (inquiry.getStatus() == BrandInquiry.Status.CONVERTED) {
+        // A paid brief Dalaillama holds and offers around: a creator offered it may still pass.
+        boolean offeredWhileHeld = inquiry.isProvisional() && !tenantId.equals(inquiry.getTenantId());
+        if (inquiry.getStatus() == BrandInquiry.Status.CONVERTED && !offeredWhileHeld) {
             throw new IllegalStateException("This request already became a brief");
         }
         // A request sent to Dalaillama isn't the creator's to close: passing on it sends it on to
         // another creator (or ops); merely reading an offer doesn't take it.
         if (inquiry.getSource() == BrandInquiry.Source.LANDING) {
             if (status == BrandInquiry.Status.DECLINED) {
-                router.decline(tenantId, inquiryId);
+                // Everyone it was offered to passed: Dalaillama's account keeps it now.
+                if (router.decline(tenantId, inquiryId)) keepForHouse(inquiryId);
                 briefOnceHeld(inquiryId);
             } else if (tenantId.equals(inquiry.getTenantId())) inquiryRepository.save(withStatus(inquiry, status));
             return;
@@ -316,8 +326,46 @@ public class BrandInquiryService {
     /** Ops hand a routed request to a creator; its brief is made at once. */
     @Transactional
     public void assignByOps(UUID inquiryId, UUID tenantId) {
+        BrandInquiry before = inquiryRepository.findById(inquiryId).orElseThrow(() -> new IllegalArgumentException("No such request"));
+        boolean held = before.isProvisional();
+        UUID house = before.getTenantId();
         router.assignByOps(inquiryId, tenantId);
+        if (held) handOver(inquiryId, house, tenantId);
         briefOnceHeld(inquiryId);
+    }
+
+    /**
+     * A request Dalaillama held goes to the creator who took it: its brief and payment move to
+     * them, and once paid both sides hear who makes the video. Ops keeping it for Dalaillama's own
+     * account moves nothing.
+     */
+    private void handOver(UUID inquiryId, UUID from, UUID to) {
+        BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
+        if (inquiry.getRequirementId() != null && !from.equals(to)) handover.handOver(from, inquiry.getRequirementId(), to);
+        if (inquiry.getPaidAt() == null) return;
+        BrandContact brand = contactRepository.findById(inquiry.getBrandContactId()).orElseThrow();
+        notifier.matched(to, brand, inquiry);
+        mailer.sendAfterCommit(MatchingMail.assigned(brand, creatorName(to), briefUrl(inquiry)));
+    }
+
+    /**
+     * Nobody took a paid request Dalaillama holds (time is up, or everyone passed): the founder's
+     * account keeps it and makes it. The brand only ever hears who is making their video.
+     */
+    @Transactional
+    public void keepForHouse(UUID inquiryId) {
+        if (!routingStore.keepForHouse(inquiryId)) return;
+        routingStore.withdrawAll(inquiryId, OffsetDateTime.now(clock));
+        BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
+        BrandContact brand = contactRepository.findById(inquiry.getBrandContactId()).orElseThrow();
+        notifier.keptForHouse(inquiry.getTenantId(), brand, inquiry);
+        mailer.sendAfterCommit(MatchingMail.assigned(brand, creatorName(inquiry.getTenantId()), briefUrl(inquiry)));
+        log.info("Request {} kept by Dalaillama's account: no creator took it", inquiryId);
+    }
+
+    private String creatorName(UUID tenantId) {
+        return profileRepository.findById(tenantId).map(CreatorPublicProfile::getDisplayName).filter(n -> !n.isBlank())
+                .orElse("Your Dalaillama creator");
     }
 
     private SubmittedInquiry submitted(UUID inquiryId) {
@@ -333,7 +381,11 @@ public class BrandInquiryService {
     private Optional<String> briefOnceHeld(UUID inquiryId) {
         BrandInquiry inquiry = inquiryRepository.findById(inquiryId).orElseThrow();
         // The router claims with plain SQL, so an entity loaded earlier in this transaction can't know.
-        inquiry.setTenantId(jdbc.queryForObject("SELECT tenant_id FROM lead_brand_inquiry WHERE id = ?", UUID.class, inquiryId));
+        jdbc.query("SELECT tenant_id, provisional, matching_until FROM lead_brand_inquiry WHERE id = ?", rs -> {
+            inquiry.setTenantId(rs.getObject(1, UUID.class));
+            inquiry.setProvisional(rs.getBoolean(2));
+            inquiry.setMatchingUntil(rs.getObject(3, OffsetDateTime.class));
+        }, inquiryId);
         if (inquiry.getTenantId() == null || inquiry.getStatus() == BrandInquiry.Status.CONVERTED) return Optional.empty();
         try {
             return Optional.of(makeBrief(inquiry));
@@ -354,7 +406,19 @@ public class BrandInquiryService {
         if (found.isEmpty()) return;
         BrandInquiry inquiry = found.get();
         inquiry.setPaidAt(OffsetDateTime.now(clock));
-        inquiryRepository.save(inquiry);
+        // Flushed now: matching below writes the same row with plain SQL.
+        inquiryRepository.saveAndFlush(inquiry);
+        if (inquiry.isProvisional()) {
+            // Paid while Dalaillama holds it: offered to creators for the window, or the founder's at once.
+            if (!router.startMatching(inquiry)) {
+                keepForHouse(inquiry.getId());
+                return;
+            }
+            BrandContact brand = contactRepository.findById(inquiry.getBrandContactId()).orElseThrow();
+            mailer.sendAfterCommit(MatchingMail.assigning(brand,
+                    com.dalai.llama.tenant.leadmanagement.routing.CreatorRequestNotifier.span(matching.window()), briefUrl(inquiry)));
+            return;
+        }
         notifier.paid(inquiry.getTenantId(), contactRepository.findById(inquiry.getBrandContactId()).orElseThrow(), inquiry,
                 amount == null ? "Your share" : BriefReadyMail.money(amount, currency));
     }
@@ -377,7 +441,8 @@ public class BrandInquiryService {
 
         CreatorPublicProfile creator = profileRepository.findById(inquiry.getTenantId()).orElseThrow();
         String link = briefUrl(inquiry);
-        mailer.sendAfterCommit(BriefReadyMail.of(brand, creator.getDisplayName(), link, brief));
+        // Held by Dalaillama: the creator is assigned once the brand pays, so none is named yet.
+        mailer.sendAfterCommit(BriefReadyMail.of(brand, inquiry.isProvisional() ? null : creator.getDisplayName(), link, brief));
         return link;
     }
 

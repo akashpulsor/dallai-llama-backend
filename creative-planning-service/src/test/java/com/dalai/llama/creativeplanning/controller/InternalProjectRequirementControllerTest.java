@@ -28,7 +28,8 @@ class InternalProjectRequirementControllerTest {
 
     private final ProjectRequirementCreationManager service = mock(ProjectRequirementCreationManager.class);
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new InternalProjectRequirementController(service,
-            org.mockito.Mockito.mock(com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService.class))).build();
+            org.mockito.Mockito.mock(com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService.class),
+            org.mockito.Mockito.mock(com.dalai.llama.creativeplanning.service.requirement.RequirementTransferService.class))).build();
 
     @Test
     void createsAStandaloneBriefForTheTenantInThePathWithNoUser() throws Exception {

@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
         com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties.class,
         com.dalai.llama.tenant.leadmanagement.audience.provider.HunterProperties.class,
         com.dalai.llama.tenant.leadmanagement.audience.provider.ApolloProperties.class,
-        com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class})
+        com.dalai.llama.tenant.leadmanagement.inquiry.RequestPricingProperties.class,
+        com.dalai.llama.tenant.leadmanagement.routing.RequestMatchingProperties.class})
 public class LeadManagementConfig {
 }

@@ -14,12 +14,15 @@ final class BriefReadyMail {
     private BriefReadyMail() {
     }
 
+    /** {@code creatorName} null: Dalaillama holds it, and the creator is assigned the moment the brand pays. */
     static PlatformMailer.Mail of(BrandContact brand, String creatorName, String link, CreativePlanningBriefClient.CreatedBrief brief) {
         String hello = brand.getContactName() == null ? "Hi," : "Hi " + brand.getContactName() + ",";
         String terms = brief.totalPrice() == null || brief.requiredAmount() == null ? ""
                 : "The video costs " + money(brief.totalPrice(), brief.currency()) + "; pay "
                 + money(brief.requiredAmount(), brief.currency()) + " now and production starts. ";
-        String lead = creatorName + " will make your video. Review the brief, change anything you like, and pay to start. " + terms;
+        String lead = creatorName == null
+                ? "Review the brief, change anything you like, and pay to start; your creator is assigned the moment you pay. " + terms
+                : creatorName + " will make your video. Review the brief, change anything you like, and pay to start. " + terms;
         String text = hello + "\n\n" + lead + "\n\n" + link + "\n";
         String html = "<p>" + HtmlUtils.htmlEscape(hello) + "</p><p>" + HtmlUtils.htmlEscape(lead) + "</p><p><a href=\""
                 + HtmlUtils.htmlEscape(link) + "\">Review the brief and pay</a></p>";

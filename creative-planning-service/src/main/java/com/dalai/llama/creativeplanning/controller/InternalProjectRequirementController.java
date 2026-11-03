@@ -27,10 +27,14 @@ public class InternalProjectRequirementController {
     private final ProjectRequirementCreationManager creationManager;
     private final com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService requirementService;
 
+    private final com.dalai.llama.creativeplanning.service.requirement.RequirementTransferService transferService;
+
     public InternalProjectRequirementController(ProjectRequirementCreationManager creationManager,
-                                                com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService requirementService) {
+                                                com.dalai.llama.creativeplanning.service.requirement.ProjectRequirementService requirementService,
+                                                com.dalai.llama.creativeplanning.service.requirement.RequirementTransferService transferService) {
         this.creationManager = creationManager;
         this.requirementService = requirementService;
+        this.transferService = transferService;
     }
 
     /** The new brief, and its price and upfront amount when it was priced at creation (else null). */
@@ -46,6 +50,17 @@ public class InternalProjectRequirementController {
     @PostMapping("/api/v1/internal/tenants/{tenantId}/project-requirements/{requirementId}/withdraw-link")
     public ResponseEntity<Void> withdrawLink(@PathVariable UUID tenantId, @PathVariable UUID requirementId) {
         requirementService.withdrawLink(tenantId, requirementId);
+        return ResponseEntity.noContent().build();
+    }
+
+    public record TransferRequest(@jakarta.validation.constraints.NotNull UUID toTenantId) {
+    }
+
+    /** A creator took a brief Dalaillama made for a brand's request: it becomes theirs (409 once production started). */
+    @PostMapping("/api/v1/internal/tenants/{tenantId}/project-requirements/{requirementId}/transfer")
+    public ResponseEntity<Void> transfer(@PathVariable UUID tenantId, @PathVariable UUID requirementId,
+                                         @Valid @RequestBody TransferRequest request) {
+        transferService.transfer(tenantId, requirementId, request.toTenantId());
         return ResponseEntity.noContent().build();
     }
 

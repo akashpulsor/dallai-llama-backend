@@ -74,7 +74,9 @@ public final class InquiryDtos {
             /* The brief has been paid for. */
             boolean funded,
             /* The project's review page, once paid and the creator has shared it. */
-            String reviewUrl
+            String reviewUrl,
+            /* Paid and being assigned a creator until then (no creator shown meanwhile); null otherwise. */
+            OffsetDateTime matchingUntil
     ) {
     }
 
