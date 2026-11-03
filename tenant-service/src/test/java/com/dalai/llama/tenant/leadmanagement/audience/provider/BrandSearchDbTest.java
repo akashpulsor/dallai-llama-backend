@@ -196,6 +196,31 @@ class BrandSearchDbTest extends ShowcaseDbTestSupport {
         FAIL_DISCOVER.set(false);
     }
 
+    @Test
+    void opsAddOneBrandWithoutAnEmail_thenItsFounderWhenFound() {
+        var noContact = directoryImport.addBrand(new BrandDirectoryImportService.AddBrandRequest("Kesar Kitchen", "kesarkitchen.example", null, null,
+                null, null, ShowcaseIndustry.FOOD_BEVERAGE, "India", com.dalai.llama.tenant.leadmanagement.audience.CompanySize.SMALL, "Pickles"));
+        assertThat(noContact.domain()).isEqualTo("kesarkitchen.example");
+        assertThat(noContact.contacts()).isZero();
+        assertThat(jdbc.queryForObject("SELECT category FROM lead_company WHERE domain = 'kesarkitchen.example'", String.class)).isEqualTo("Pickles");
+
+        FAIL_DISCOVER.set(true);
+        BrandSearchService.CompanyView listed = brands.search(new BrandSearchService.SearchRequest(ShowcaseIndustry.FOOD_BEVERAGE, "IN", null))
+                .companies().stream().filter(c -> c.domain().equals("kesarkitchen.example")).findFirst().orElseThrow();
+        assertThat(listed.contactsKnown()).as("shown as email not available").isZero();
+        FAIL_DISCOVER.set(false);
+
+        // The founder's email turns up later: added to the same brand, not a second one.
+        var founder = directoryImport.addBrand(new BrandDirectoryImportService.AddBrandRequest("Kesar Kitchen", "https://www.kesarkitchen.example",
+                "Anita Rao", "Founder", "anita@kesarkitchen.example", "+91 98765 43210", null, null, null, null));
+        assertThat(founder.companyId()).isEqualTo(noContact.companyId());
+        assertThat(founder.contacts()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM lead_company WHERE domain = 'kesarkitchen.example'", Integer.class)).isEqualTo(1);
+
+        assertThatThrownBy(() -> directoryImport.addBrand(new BrandDirectoryImportService.AddBrandRequest("Nowhere", null, null, null,
+                "someone@gmail.com", null, null, null, null, null))).isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static final java.util.concurrent.atomic.AtomicBoolean FAIL_DISCOVER = new java.util.concurrent.atomic.AtomicBoolean();
 
     @Test

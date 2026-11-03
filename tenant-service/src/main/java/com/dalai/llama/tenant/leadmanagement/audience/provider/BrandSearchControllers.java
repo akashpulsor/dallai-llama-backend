@@ -104,6 +104,13 @@ public final class BrandSearchControllers {
             return ResponseEntity.ok(directoryImport.importCsv(file.getBytes()));
         }
 
+        /** One brand typed in by ops; its email and phone are optional (found later). */
+        @org.springframework.web.bind.annotation.PostMapping("/brands")
+        public ResponseEntity<BrandDirectoryImportService.AddBrandResult> addBrand(
+                @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody BrandDirectoryImportService.AddBrandRequest request) {
+            return ResponseEntity.ok(directoryImport.addBrand(request));
+        }
+
         @GetMapping("/credits")
         public ResponseEntity<BrandSearchService.Credits> credits() {
             return ResponseEntity.ok(brands.credits());

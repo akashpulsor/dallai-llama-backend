@@ -108,7 +108,7 @@ public final class LeadCsvParser {
     }
 
     /** "IN", "in" or "India" -> "IN"; anything else -> null. */
-    static String countryCode(String raw) {
+    public static String countryCode(String raw) {
         String v = raw.trim();
         if (v.matches("[A-Za-z]{2}")) return v.toUpperCase(Locale.ROOT);
         for (String code : Locale.getISOCountries()) {
