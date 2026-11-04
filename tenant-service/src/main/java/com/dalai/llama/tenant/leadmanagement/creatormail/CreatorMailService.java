@@ -351,11 +351,13 @@ public class CreatorMailService {
                     queued.topics());
             List<MailIdea> ideas = ideasFor(template, to);
             TrackedLinks links = TrackedLinks.forDelivery(outreach.publicApiBaseUrl(), queued.id());
-            boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideas, links));
+            PlatformMailer.Mail mail = mail(template, to, queued.unsubscribeToken(), ideas, links);
+            boolean ok = mailer.send(mail);
             if (ok) {
                 // Remembered, so their next mail brings videos they haven't seen.
                 mailIdeas.recordSent(to.email(), ideas, clock.instant());
-                history.recordSent(queued.id(), ideas, links.links(), videosFit(template, to, ideas));
+                history.recordSent(queued.id(), ideas, links.links(), videosFit(template, to, ideas), mail.subject(),
+                        mail.html().replace(links.openPixelHtml(), ""));
             }
             store.mark(queued.id(), ok ? "SENT" : "FAILED", clock.instant());
             if (ok) sent++;
@@ -476,9 +478,7 @@ public class CreatorMailService {
     /** {@code links}: how its links are tracked (none for a preview or a test). */
     PlatformMailer.Mail mail(Template template, Recipient recipient, String unsubscribeToken, List<MailIdea> ideas, TrackedLinks links) {
         String to = recipient.email();
-        String first = firstName(recipient.name());
-        if (first == null) first = nameFromEmail(to);
-        Fill fill = new Fill(first, recipient.company(), template.mailFor());
+        Fill fill = Fill.of(to, recipient.name(), recipient.company(), template.mailFor());
         String unsubscribe = outreach.publicApiBaseUrl() + "/unsubscribe/" + (unsubscribeToken == null ? "preview" : unsubscribeToken);
         return template.style() == MailStyle.STYLED
                 ? styled(template, to, fill, unsubscribe, ideas, links)
@@ -487,6 +487,11 @@ public class CreatorMailService {
 
     /** What a mail's placeholders become for one recipient: {name} their first name, {company} their brand. */
     record Fill(String firstName, String company, MailFor mailFor) {
+        static Fill of(String email, String name, String company, MailFor mailFor) {
+            String first = CreatorMailService.firstName(name);
+            return new Fill(first != null ? first : nameFromEmail(email), company, mailFor);
+        }
+
         String apply(String s) {
             String filled = fill(s, firstName, mailFor == MailFor.BRANDS ? "there" : "creator");
             return filled.replace("{company}", company == null || company.isBlank() ? "your brand" : company.trim());

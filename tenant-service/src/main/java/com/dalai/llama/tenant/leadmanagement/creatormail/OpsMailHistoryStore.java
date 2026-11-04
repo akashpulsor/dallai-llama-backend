@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.leadmanagement.creatormail;
 
+import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailStore.MailFor;
 import com.dalai.llama.tenant.showcase.inspiration.InspirationStore.MailIdea;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,10 +27,11 @@ public class OpsMailHistoryStore {
     public record MailLink(String label, int clicks, OffsetDateTime firstClickedAt) {
     }
 
-    /** One mail a brand got. {@code subject} as the template had it then ({name} not filled in);
-     * {@code videosFit}: see V75, null when there was nothing to match. */
+    /** One mail a brand got. {@code subject} as the brand read it; {@code html} the mail as it went, without
+     * its open pixel (V76), null for mail sent before that was kept; {@code videosFit}: see V75, null when
+     * there was nothing to match. */
     public record SentMail(UUID deliveryId, OffsetDateTime sentAt, String templateName, String subject, OffsetDateTime openedAt,
-                           OffsetDateTime firstClickedAt, Boolean videosFit) {
+                           OffsetDateTime firstClickedAt, Boolean videosFit, String html) {
     }
 
     public record BrandRequest(UUID inquiryId, OffsetDateTime createdAt, OffsetDateTime paidAt, String status) {
@@ -51,7 +53,7 @@ public class OpsMailHistoryStore {
 
     // ---- recording ----
 
-    public void recordSent(UUID deliveryId, List<MailIdea> ideas, List<TrackedLinks.Link> links, Boolean videosFit) {
+    public void recordSent(UUID deliveryId, List<MailIdea> ideas, List<TrackedLinks.Link> links, Boolean videosFit, String subject, String html) {
         for (int i = 0; i < ideas.size(); i++) {
             MailIdea idea = ideas.get(i);
             jdbc.update("INSERT INTO ops_mail_delivery_video (delivery_id, position, item_id, title, poster_url) VALUES (?, ?, ?, ?, ?)",
@@ -61,7 +63,8 @@ public class OpsMailHistoryStore {
             jdbc.update("INSERT INTO ops_mail_delivery_link (delivery_id, position, label, url) VALUES (?, ?, ?, ?)",
                     deliveryId, link.position(), link.label(), truncate(link.url(), 1000));
         }
-        jdbc.update("UPDATE ops_creator_mail_delivery SET videos_fit = ? WHERE id = ?", videosFit, deliveryId);
+        jdbc.update("UPDATE ops_creator_mail_delivery SET videos_fit = ?, sent_subject = ?, sent_html = ? WHERE id = ?",
+                videosFit, subject, html, deliveryId);
     }
 
     /** Counts a click; the link's address, or empty when it isn't one of ours. A click is an open too. */
@@ -110,15 +113,21 @@ public class OpsMailHistoryStore {
                         rs.getInt(5), rs.getInt(6), rs.getInt(7)), like, like, limit);
     }
 
-    /** Every mail an address was sent, latest first. */
+    /** Every mail an address was sent, latest first. A mail from before V76 has no copy: its subject is
+     * filled in the way it was then, from the send's subject and the delivery's name and company. */
     public List<SentMail> mailsTo(String email) {
         return jdbc.query("""
-                SELECT d.id, d.sent_at, t.name, s.subject, d.opened_at, d.first_clicked_at, d.videos_fit
+                SELECT d.id, d.sent_at, t.name, s.subject, d.opened_at, d.first_clicked_at, d.videos_fit, d.sent_html,
+                       d.sent_subject, d.name, d.company, t.mail_for
                 FROM ops_creator_mail_delivery d JOIN ops_creator_mail_template t ON t.id = d.template_id
                 JOIN ops_creator_mail_send s ON s.id = d.send_id
                 WHERE d.email = ? AND d.status = 'SENT' ORDER BY d.sent_at DESC""",
-                (rs, n) -> new SentMail(rs.getObject(1, UUID.class), rs.getObject(2, OffsetDateTime.class), rs.getString(3), rs.getString(4),
-                        rs.getObject(5, OffsetDateTime.class), rs.getObject(6, OffsetDateTime.class), (Boolean) rs.getObject(7)), email);
+                (rs, n) -> {
+                    String subject = rs.getString(9) != null ? rs.getString(9)
+                            : CreatorMailService.Fill.of(email, rs.getString(10), rs.getString(11), MailFor.valueOf(rs.getString(12))).apply(rs.getString(4));
+                    return new SentMail(rs.getObject(1, UUID.class), rs.getObject(2, OffsetDateTime.class), rs.getString(3), subject,
+                            rs.getObject(5, OffsetDateTime.class), rs.getObject(6, OffsetDateTime.class), (Boolean) rs.getObject(7), rs.getString(8));
+                }, email);
     }
 
     public List<ShownVideo> videosOf(UUID deliveryId) {

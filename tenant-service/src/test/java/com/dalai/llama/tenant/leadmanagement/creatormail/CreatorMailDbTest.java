@@ -528,6 +528,22 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
                 .satisfies(b -> assertThat(List.of(b.mails(), b.opened(), b.clicked(), b.requests())).containsExactly(1, 1, 1, 1));
         assertThat(histories.templateStats()).singleElement()
                 .satisfies(t -> assertThat(List.of(t.sent(), t.opened(), t.clicked(), t.requested())).containsExactly(1, 1, 1, 1));
+
+        // Ops read the mail as it went, filled in and with its links, but with no pixel to count their reading as an open.
+        assertThat(mail.mail().subject()).isEqualTo("Ideas for Stride");
+        assertThat(mail.mail().html()).isEqualTo(html.replaceAll("<img src=\"[^\"]*/ops/o/[^>]*>", ""));
+        assertThat(mail.mail().html()).contains("Hi Meera,").contains("/ops/c/" + delivery + "/0").doesNotContain("/ops/o/");
+
+        // A later change to the template doesn't change what the brand was sent.
+        jdbc.update("UPDATE ops_creator_mail_template SET subject = 'Changed', body = 'Changed' WHERE id = ?", template.id());
+        assertThat(histories.brand("hi@stride-test.in").mails().get(0).mail().subject()).isEqualTo("Ideas for Stride");
+
+        // A mail from before copies were kept: no page, but the subject is still as the brand read it.
+        jdbc.update("UPDATE ops_creator_mail_delivery SET sent_subject = NULL, sent_html = NULL WHERE id = ?", delivery);
+        jdbc.update("UPDATE ops_creator_mail_send SET subject = '{name}, ideas for {company}' WHERE template_id = ?", template.id());
+        OpsMailHistoryStore.SentMail older = histories.brand("hi@stride-test.in").mails().get(0).mail();
+        assertThat(older.subject()).isEqualTo("Meera, ideas for Stride");
+        assertThat(older.html()).isNull();
     }
 
     @Test
