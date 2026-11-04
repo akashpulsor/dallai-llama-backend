@@ -49,9 +49,33 @@ public class OpenAnalytics {
     }
 
     public void opened(OutreachStore.Opened open) {
+        send(() -> request(open));
+    }
+
+    /** An ops mail opened: {@code email_open_ops_brands} or {@code email_open_ops_creators}, with the
+     * template's name. {@code recipientKey}: the recipient's hash, or the delivery's id when it has none. */
+    public void opsOpened(String mailFor, String recipientKey, String templateName, boolean firstOpen) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("mail_kind", "OPS_" + mailFor);
+        params.put("template", templateName.length() > 100 ? templateName.substring(0, 100) : templateName);
+        params.put("first_open", firstOpen ? 1 : 0);
+        params.put("engagement_time_msec", 1);
+        String key = recipientKey.replace("-", "");
+        send(() -> request(opsEventName(mailFor), "rcpt." + key.substring(0, Math.min(16, key.length())), params));
+    }
+
+    static String opsEventName(String mailFor) {
+        return "email_open_ops_" + mailFor.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private interface RequestSupplier {
+        HttpRequest get() throws Exception;
+    }
+
+    private void send(RequestSupplier request) {
         if (measurementId == null || measurementId.isBlank()) return;
         try {
-            http.sendAsync(request(open), HttpResponse.BodyHandlers.discarding())
+            http.sendAsync(request.get(), HttpResponse.BodyHandlers.discarding())
                     .whenComplete((response, error) -> {
                         if (error != null) log.debug("GA email_open not sent: {}", error.getMessage());
                         else if (response.statusCode() >= 300) log.debug("GA email_open answered {}", response.statusCode());
@@ -62,9 +86,10 @@ public class OpenAnalytics {
     }
 
     HttpRequest request(OutreachStore.Opened open) throws Exception {
-        String clientId = "rcpt." + open.recipientHash().substring(0, 16);
-        String name = eventName(open);
-        Map<String, Object> params = params(open);
+        return request(eventName(open), "rcpt." + open.recipientHash().substring(0, 16), params(open));
+    }
+
+    HttpRequest request(String name, String clientId, Map<String, Object> params) throws Exception {
         if (apiSecret != null && !apiSecret.isBlank()) {
             Map<String, Object> event = Map.of("name", name, "params", params);
             String body = json.writeValueAsString(Map.of("client_id", clientId, "events", List.of(event)));

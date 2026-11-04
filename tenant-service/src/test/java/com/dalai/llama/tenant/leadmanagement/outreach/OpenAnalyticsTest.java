@@ -39,6 +39,15 @@ class OpenAnalyticsTest {
     }
 
     @Test
+    void anOpsMailOpenIsItsOwnEventWithTheTemplatesName() throws Exception {
+        assertThat(OpenAnalytics.opsEventName("BRANDS")).isEqualTo("email_open_ops_brands");
+        assertThat(OpenAnalytics.opsEventName("CREATORS")).isEqualTo("email_open_ops_creators");
+        String url = new OpenAnalytics(new ObjectMapper(), "G-KCK0RY0YPP", "", "https://ga.example")
+                .request("email_open_ops_brands", "rcpt.abc", java.util.Map.of("template", "Video ideas for your brand")).uri().toString();
+        assertThat(url).contains("en=email_open_ops_brands").contains("ep.template=Video+ideas+for+your+brand").contains("cid=rcpt.abc");
+    }
+
+    @Test
     void noMeasurementIdSendsNothing() {
         // No exception, no request: analytics is simply off.
         new OpenAnalytics(new ObjectMapper(), "", "", "https://ga.example").opened(open);

@@ -46,7 +46,7 @@ public final class MailThemes {
         THEMES.put("pet", List.of("pet", "dog", "cat", "paw", "woof", "pup", "kitty", "meow"));
         THEMES.put("gifting", List.of("gift", "hamper", "unboxing", "box"));
         THEMES.put("gadgets", List.of("tech", "gadget", "phone", "headphone", "earbud", "smartwatch", "charger", "audio", "speaker", "electron", "mouse"));
-        THEMES.put("travelgear", List.of("luggage", "backpack", "travel", "bag"));
+        THEMES.put("travelgear", List.of("luggage", "backpack", "travel", "bag", "handbag", "tote", "purse", "duffle", "suitcase"));
     }
 
     /** Directory categories that name a theme outright (the research sheet's "Category" column). */

@@ -256,6 +256,9 @@ creator-mail:
   # Creator mail comes from a person, as a plain letter (keeps it out of Gmail Promotions).
   from-name: ${CREATOR_MAIL_FROM_NAME:Akash from Dalai Llama}
   from-address: ${CREATOR_MAIL_FROM_ADDRESS:hello@partner.dalaillama.in}
+  # Once a day (09:00 IST) ops hear which kinds of brand got mail with no video about what they sell.
+  alert-email: ${CREATOR_MAIL_ALERT_EMAIL:akashtripathi.2801@gmail.com}
+  shortfall-cron: "0 30 3 * * *"
 showcase:
   public-base-url: ${SHOWCASE_PUBLIC_BASE_URL:https://dalaillama.in}
   public-data-max-age-days: 30

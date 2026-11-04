@@ -57,7 +57,7 @@ import static org.mockito.Mockito.when;
 @Import({CreatorMailService.class, CreatorMailStore.class, MailRenderer.class, RecipientHasher.class, OutreachStore.class,
         CreatorProfileLinks.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
-        CreatorMailDbTest.TestConfig.class})
+        OpsMailHistoryStore.class, OpsMailHistoryService.class, OpsMailTrackingController.class, CreatorMailDbTest.TestConfig.class})
 class CreatorMailDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-31T10:00:00Z");
@@ -78,7 +78,11 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     @Autowired private RecipientHasher hasher;
     @Autowired private CreatorProfileService profiles;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private OpsMailHistoryService histories;
+    @Autowired private OpsMailTrackingController tracking;
+    @Autowired private com.dalai.llama.tenant.showcase.config.ShowcaseProperties showcase;
     @MockBean private PlatformMailer mailer;
+    @MockBean private com.dalai.llama.tenant.leadmanagement.outreach.OpenAnalytics analytics;
     @MockBean private com.dalai.llama.tenant.showcase.inspiration.InspirationPosters posters;
 
     private UUID asha;
@@ -232,8 +236,11 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         PlatformMailer.Mail mail = sent().get(0);
         // Listed as titles with one link to watch them, no pictures.
         assertThat(mail.html()).contains("<li").contains("Coffee pour in slow motion (by Studio K)")
-                .contains("/inspiration?industry=FOOD_BEVERAGE").doesNotContain("https://img.example/coffee.jpg")
-                .doesNotContain("No picture yet");
+                .contains(">watch them on the inspiration board</a>").contains("/ops/c/")
+                .doesNotContain("https://img.example/coffee.jpg").doesNotContain("No picture yet");
+        // The tracked link goes on to the board, on the video's industry.
+        assertThat(jdbc.queryForList("SELECT url FROM ops_mail_delivery_link", String.class))
+                .anySatisfy(url -> assertThat(url).endsWith("/inspiration?industry=FOOD_BEVERAGE"));
         assertThat(mail.text()).contains("- Coffee pour in slow motion (by Studio K)").contains("You can watch them here: https://");
 
         // The preview shows the same list.
@@ -461,6 +468,93 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         assertThat(secondVideos).hasSize(2).doesNotContainAnyElementsOf(firstVideos); // new ones the second time
         assertThat(mails.get(0).html() + mails.get(1).html()).doesNotContain("Online store hook");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_mail_idea_sent WHERE email = 'woof@muttley-test.in'", Integer.class)).isEqualTo(4);
+    }
+
+    @Test
+    void aBrandsHistoryShowsWhatItWasSentWhatItClickedAndTheRequestItSentAfter() {
+        jdbc.update("DELETE FROM lead_brand_inquiry WHERE brand_contact_id IN (SELECT id FROM lead_brand_contact WHERE email = 'hi@stride-test.in')");
+        jdbc.update("DELETE FROM lead_brand_contact WHERE email = 'hi@stride-test.in'");
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        jdbc.update("DELETE FROM inspiration_item");
+        UUID stride = brand("stride-test.in", "Stride", "FASHION", "IN", "SMALL");
+        jdbc.update("UPDATE lead_company SET category = 'Footwear & travel' WHERE id = ?", stride);
+        contact(stride, "hi@stride-test.in", "Meera", 90);
+        UUID sneaker = UUID.randomUUID();
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '88800001', 'Retro sneaker reveal', 'FASHION', 'https://img.example/s.jpg')",
+                sneaker);
+        Template template = service.create(new TemplateRequest("Shoes", "Ideas for {company}", "Hi {name},", "Request a video", "https://brands.dalaillama.in/request",
+                1, null, CreatorMailStore.MailStyle.STYLED, CreatorMailStore.MailFor.BRANDS, null));
+
+        service.send(new SendRequest(template.id(), Audience.BRANDS, null, null, new CreatorMailStore.BrandFilter(List.of(), List.of(), List.of())));
+        service.dispatch();
+
+        UUID delivery = jdbc.queryForObject("SELECT id FROM ops_creator_mail_delivery WHERE email = 'hi@stride-test.in'", UUID.class);
+        String html = sent().get(0).html();
+        // Its links and open pixel are tracked; the button still leads to the request page.
+        assertThat(html).contains("/ops/c/" + delivery + "/0").contains("/ops/c/" + delivery + "/1").contains("/ops/o/" + delivery + ".gif")
+                .doesNotContain("href=\"https://brands.dalaillama.in/request\"");
+        // Opening it is recorded and sent to Google Analytics as an ops brand mail open, once as the first.
+        tracking.open(delivery);
+        tracking.open(delivery);
+        org.mockito.Mockito.verify(analytics).opsOpened(org.mockito.ArgumentMatchers.eq("BRANDS"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("Shoes"), org.mockito.ArgumentMatchers.eq(true));
+        org.mockito.Mockito.verify(analytics).opsOpened(org.mockito.ArgumentMatchers.eq("BRANDS"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("Shoes"), org.mockito.ArgumentMatchers.eq(false));
+        tracking.open(UUID.randomUUID()); // not one of ours: no event
+        org.mockito.Mockito.verifyNoMoreInteractions(analytics);
+        org.springframework.http.ResponseEntity<Void> click = tracking.click(delivery, 1);
+        assertThat(click.getHeaders().getLocation()).hasToString("https://brands.dalaillama.in/request");
+        assertThat(tracking.click(delivery, 9).getHeaders().getLocation()).hasToString(showcase.publicBaseUrl()); // not one of its links
+
+        UUID contactId = UUID.randomUUID();
+        jdbc.update("INSERT INTO lead_brand_contact (id, email, source) VALUES (?, 'hi@stride-test.in', 'SIGNUP')", contactId);
+        jdbc.update("INSERT INTO lead_brand_inquiry (id, brand_contact_id, message, status, source) VALUES (?, ?, 'Shoe ad', 'NEW', 'LANDING')",
+                UUID.randomUUID(), contactId);
+        // The video is later taken off the board; the mail still shows it was sent.
+        jdbc.update("DELETE FROM inspiration_item WHERE id = ?", sneaker);
+
+        OpsMailHistoryService.BrandHistory history = histories.brand("Hi@Stride-Test.in");
+        assertThat(history.mails()).hasSize(1);
+        OpsMailHistoryService.MailEntry mail = history.mails().get(0);
+        assertThat(mail.mail().templateName()).isEqualTo("Shoes");
+        assertThat(mail.mail().openedAt()).isNotNull();
+        assertThat(mail.mail().videosFit()).isTrue(); // a footwear brand got a sneaker video
+        assertThat(mail.videos()).extracting(OpsMailHistoryStore.ShownVideo::title, OpsMailHistoryStore.ShownVideo::onBoard)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Retro sneaker reveal", false));
+        assertThat(mail.links()).extracting(OpsMailHistoryStore.MailLink::label, OpsMailHistoryStore.MailLink::clicks)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Retro sneaker reveal", 0), org.assertj.core.groups.Tuple.tuple("Request a video", 1));
+        assertThat(history.requests()).hasSize(1);
+        assertThat(histories.brands("stride")).singleElement()
+                .satisfies(b -> assertThat(List.of(b.mails(), b.opened(), b.clicked(), b.requests())).containsExactly(1, 1, 1, 1));
+        assertThat(histories.templateStats()).singleElement()
+                .satisfies(t -> assertThat(List.of(t.sent(), t.opened(), t.clicked(), t.requested())).containsExactly(1, 1, 1, 1));
+    }
+
+    @Test
+    void brandMailWithNoVideoAboutWhatTheBrandSellsIsMailedToOpsOnceADay() {
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        jdbc.update("DELETE FROM inspiration_item");
+        UUID carry = brand("carry-test.in", "Carry Co", "FASHION", "IN", "SMALL");
+        jdbc.update("UPDATE lead_company SET category = 'handbags' WHERE id = ?", carry);
+        contact(carry, "hi@carry-test.in", "Isha", 90);
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '88800002', 'Saree drape reel', 'FASHION', 'https://img.example/d.jpg')",
+                UUID.randomUUID());
+        Template template = service.create(new TemplateRequest("Bags", "Ideas", "Hi", null, null, 1, null, null, CreatorMailStore.MailFor.BRANDS, null));
+        service.send(new SendRequest(template.id(), Audience.BRANDS, null, null, new CreatorMailStore.BrandFilter(List.of(), List.of(), List.of())));
+        service.dispatch();
+
+        // The bag brand got the fashion video, its industry's; ops are told bags ran short.
+        assertThat(sent().get(0).html()).contains("Saree drape reel");
+        assertThat(histories.shortfalls()).singleElement().satisfies(s -> {
+            assertThat(s.theme()).isEqualTo("travelgear");
+            assertThat(s.brands()).containsExactly("Carry Co");
+        });
+        assertThat(histories.coverage()).anySatisfy(c -> assertThat(List.of(c.theme(), c.brands(), c.videos())).containsExactly("travelgear", 1, 0));
+        clearInvocations(mailer);
+        histories.mailShortfalls();
+        PlatformMailer.Mail alert = sent().get(0);
+        assertThat(alert.subject()).contains("travelgear");
+        assertThat(alert.text()).contains("travelgear: 1 brand (Carry Co)");
     }
 
     private UUID brand(String domain, String name, String industry, String country, String size) {

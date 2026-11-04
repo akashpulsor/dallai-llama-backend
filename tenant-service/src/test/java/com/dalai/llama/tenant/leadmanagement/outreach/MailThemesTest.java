@@ -15,6 +15,9 @@ class MailThemesTest {
         assertThat(MailThemes.of("Botanic Love botaniclove.in")).containsExactly("skincare");
         assertThat(MailThemes.of("Muttley Crew muttleycrew.in Pet")).containsExactly("pet"); // the directory category
         assertThat(MailThemes.of("Footwear & travel")).contains("footwear", "travelgear");
+        // A handbag brand gets bag videos.
+        assertThat(MailThemes.of("handbags Zouk zouk.co.in")).contains("travelgear");
+        assertThat(MailThemes.of("Leather bag product reel")).contains("travelgear");
     }
 
     @Test

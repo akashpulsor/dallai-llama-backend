@@ -15,6 +15,7 @@ import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailStore.Templa
 import com.dalai.llama.tenant.leadmanagement.notify.MailRenderer;
 import com.dalai.llama.tenant.leadmanagement.notify.PlatformMailer;
 import com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas;
+import com.dalai.llama.tenant.leadmanagement.outreach.MailThemes;
 import com.dalai.llama.tenant.leadmanagement.outreach.OutreachProperties;
 import com.dalai.llama.tenant.showcase.config.ShowcaseProperties;
 import com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry;
@@ -176,6 +177,7 @@ public class CreatorMailService {
     private final OutreachStore suppression;
     private final OutreachProperties outreach;
     private final MailIdeas mailIdeas;
+    private final OpsMailHistoryStore history;
     private final ShowcaseProperties showcase;
     private final Clock clock;
     private final int dailyCap;
@@ -184,13 +186,14 @@ public class CreatorMailService {
 
     public CreatorMailService(CreatorMailStore store, TenantRepository tenants, CreatorProfileLinks profiles, PlatformMailer mailer,
                               MailRenderer renderer, RecipientHasher hasher, OutreachStore suppression, OutreachProperties outreach,
-                              MailIdeas mailIdeas, ShowcaseProperties showcase, Clock clock,
+                              MailIdeas mailIdeas, OpsMailHistoryStore history, ShowcaseProperties showcase, Clock clock,
                               @Value("${creator-mail.daily-cap:150}") int dailyCap,
                               @Value("${creator-mail.per-run:20}") int perRun,
                               @Value("${creator-mail.from-name:Akash from Dalai Llama}") String fromName,
                               @Value("${creator-mail.from-address:hello@partner.dalaillama.in}") String fromAddress) {
         this.sender = new PlatformMailer.Sender(fromName, fromAddress);
         this.mailIdeas = mailIdeas;
+        this.history = history;
         this.showcase = showcase;
         this.store = store;
         this.tenants = tenants;
@@ -347,9 +350,13 @@ public class CreatorMailService {
             Recipient to = new Recipient(queued.email(), queued.name(), queued.recipientHash(), queued.company(), queued.industry(),
                     queued.topics());
             List<MailIdea> ideas = ideasFor(template, to);
-            boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideas));
-            // Remembered, so their next mail brings videos they haven't seen.
-            if (ok) mailIdeas.recordSent(to.email(), ideas, clock.instant());
+            TrackedLinks links = TrackedLinks.forDelivery(outreach.publicApiBaseUrl(), queued.id());
+            boolean ok = mailer.send(mail(template, to, queued.unsubscribeToken(), ideas, links));
+            if (ok) {
+                // Remembered, so their next mail brings videos they haven't seen.
+                mailIdeas.recordSent(to.email(), ideas, clock.instant());
+                history.recordSent(queued.id(), ideas, links.links(), videosFit(template, to, ideas));
+            }
             store.mark(queued.id(), ok ? "SENT" : "FAILED", clock.instant());
             if (ok) sent++;
         }
@@ -431,6 +438,15 @@ public class CreatorMailService {
         return mailIdeas.forRecipient(industry, topics, to.email(), template.ideaVideos());
     }
 
+    /** For a brand mail to a brand known to sell something (with the videos following what it sells):
+     * whether a video is about it. Null otherwise, when there was nothing to match. */
+    static Boolean videosFit(Template template, Recipient to, List<MailIdea> ideas) {
+        if (template.mailFor() != MailFor.BRANDS || template.ideaIndustry() != null || template.ideaVideos() == 0) return null;
+        Set<String> sells = MailThemes.of(to.topics());
+        if (sells.isEmpty()) return null;
+        return ideas.stream().anyMatch(idea -> MailThemes.overlap(sells, MailThemes.of(idea.title())) > 0);
+    }
+
     private static MailStyle style(MailStyle style) {
         return style == null ? MailStyle.PLAIN : style;
     }
@@ -454,14 +470,19 @@ public class CreatorMailService {
     }
 
     PlatformMailer.Mail mail(Template template, Recipient recipient, String unsubscribeToken, List<MailIdea> ideas) {
+        return mail(template, recipient, unsubscribeToken, ideas, TrackedLinks.none());
+    }
+
+    /** {@code links}: how its links are tracked (none for a preview or a test). */
+    PlatformMailer.Mail mail(Template template, Recipient recipient, String unsubscribeToken, List<MailIdea> ideas, TrackedLinks links) {
         String to = recipient.email();
         String first = firstName(recipient.name());
         if (first == null) first = nameFromEmail(to);
         Fill fill = new Fill(first, recipient.company(), template.mailFor());
         String unsubscribe = outreach.publicApiBaseUrl() + "/unsubscribe/" + (unsubscribeToken == null ? "preview" : unsubscribeToken);
         return template.style() == MailStyle.STYLED
-                ? styled(template, to, fill, unsubscribe, ideas)
-                : plain(template, to, fill, unsubscribe, ideas);
+                ? styled(template, to, fill, unsubscribe, ideas, links)
+                : plain(template, to, fill, unsubscribe, ideas, links);
     }
 
     /** What a mail's placeholders become for one recipient: {name} their first name, {company} their brand. */
@@ -472,7 +493,7 @@ public class CreatorMailService {
         }
     }
 
-    private PlatformMailer.Mail plain(Template template, String to, Fill fill, String unsubscribe, List<MailIdea> ideas) {
+    private PlatformMailer.Mail plain(Template template, String to, Fill fill, String unsubscribe, List<MailIdea> ideas, TrackedLinks links) {
         String subject = fill.apply(template.subject());
         String body = fill.apply(template.body());
         StringBuilder html = new StringBuilder(html(body));
@@ -485,14 +506,15 @@ public class CreatorMailService {
                 html.append("<li style=\"margin:0 0 6px\">").append(MailRenderer.escape(idea.title() + credit)).append("</li>");
                 text.append("\n- ").append(idea.title()).append(credit);
             }
-            String watch = watchUrl(ideas.get(0));
-            html.append("</ul>").append(paragraph("You can watch them here: " + link(watch, MailRenderer.escape(watch))));
+            String watch = links.to(watchUrl(ideas.get(0)), "Watch the videos");
+            html.append("</ul>").append(paragraph("You can " + link(watch, "watch them on the inspiration board") + "."));
             text.append("\n\nYou can watch them here: ").append(watch);
         }
         if (template.ctaLabel() != null && template.ctaUrl() != null) {
             String label = fill.apply(template.ctaLabel());
-            html.append(paragraph(link(template.ctaUrl(), MailRenderer.escape(label))));
-            text.append("\n\n").append(label).append(": ").append(template.ctaUrl());
+            String url = links.to(template.ctaUrl(), label);
+            html.append(paragraph(link(url, MailRenderer.escape(label))));
+            text.append("\n\n").append(label).append(": ").append(url);
         }
         // "Akash from Dalai Llama" signs as "Akash" over "Dalai Llama".
         String signature = sender.name().replaceFirst("\\s+from\\s+", "\n");
@@ -506,7 +528,7 @@ public class CreatorMailService {
     }
 
     /** The designed platform mail: the shared layout, ideas as picture cards, the link as a button. */
-    private PlatformMailer.Mail styled(Template template, String to, Fill fill, String unsubscribe, List<MailIdea> ideas) {
+    private PlatformMailer.Mail styled(Template template, String to, Fill fill, String unsubscribe, List<MailIdea> ideas, TrackedLinks links) {
         String subject = fill.apply(template.subject());
         String body = fill.apply(template.body());
         String contentHtml = html(body);
@@ -516,7 +538,7 @@ public class CreatorMailService {
             StringBuilder cards = new StringBuilder("</td></tr>");
             StringBuilder cardsText = new StringBuilder();
             for (MailIdea idea : ideas) {
-                IdeaCard card = card(idea);
+                IdeaCard card = card(idea, links);
                 cards.append(renderer.html("idea_card", card));
                 cardsText.append(renderer.text("idea_card", card));
             }
@@ -524,7 +546,8 @@ public class CreatorMailService {
             contentText += "\n\n" + cardsText;
         }
         if (template.ctaLabel() != null && template.ctaUrl() != null) {
-            ButtonContext button = new ButtonContext(fill.apply(template.ctaLabel()), template.ctaUrl());
+            String label = fill.apply(template.ctaLabel());
+            ButtonContext button = new ButtonContext(label, links.to(template.ctaUrl(), label));
             contentHtml += "<div style=\"margin:8px 0 6px\">" + renderer.html("button", button) + "</div>";
             contentText += "\n\n" + renderer.text("button", button);
         }
@@ -532,18 +555,18 @@ public class CreatorMailService {
         MailLayout layout = new MailLayout(subject, flat.length() > 120 ? flat.substring(0, 120) : flat,
                 template.mailFor() == MailFor.BRANDS ? "FOR BRANDS" : "FOR CREATORS", contentHtml,
                 contentText, "You're getting this from Dalai Llama, the platform where brands find creators for their videos. ",
-                link(unsubscribe, "Unsubscribe"), "Unsubscribe: " + unsubscribe, "");
+                link(unsubscribe, "Unsubscribe"), "Unsubscribe: " + unsubscribe, links.openPixelHtml());
         return new PlatformMailer.Mail(to, subject, renderer.text("layout", layout), renderer.html("layout", layout),
                 Map.of("List-Unsubscribe", "<" + unsubscribe + ">", "List-Unsubscribe-Post", "List-Unsubscribe=One-Click"), sender);
     }
 
     /** An inspiration video as a card, credited to its maker; it plays on the public inspiration board. */
-    private IdeaCard card(MailIdea idea) {
+    private IdeaCard card(MailIdea idea, TrackedLinks links) {
         boolean vertical = idea.posterWidth() != null && idea.posterHeight() != null && idea.posterHeight() > idea.posterWidth();
         String industry = com.dalai.llama.tenant.leadmanagement.notify.MailLabels.industry(idea.industry());
         return new IdeaCard(idea.title(), idea.posterUrl(), vertical ? 240 : 542, vertical ? "18px 0" : "0", vertical ? "10px" : "14px 14px 0 0",
                 (industry == null ? "" : industry + " · ") + "Video idea", idea.makerName() == null ? "From the inspiration board" : "By " + idea.makerName(),
-                watchUrl(idea));
+                links.to(watchUrl(idea), idea.title()));
     }
 
     private static String paragraph(String innerHtml) {
