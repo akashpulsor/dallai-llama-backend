@@ -409,6 +409,28 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aBrandPreviewShowsTheVideosOfTheBrandsPicked_notAlwaysFood() {
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        jdbc.update("DELETE FROM inspiration_item");
+        contact(brand("loom-test.in", "Loom Studio", "FASHION", "IN", "SMALL"), "hi@loom-test.in", "Meera", 90);
+        contact(brand("hearth-test.in", "Hearth Foods", "FOOD_BEVERAGE", "IN", "SMALL"), "asha@hearth-test.in", "Asha", 90);
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '77700001', 'Food idea', 'FOOD_BEVERAGE', 'https://img.example/f.jpg')",
+                UUID.randomUUID());
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, '77700002', 'Fashion idea', 'FASHION', 'https://img.example/c.jpg')",
+                UUID.randomUUID());
+        var fashion = new CreatorMailStore.BrandFilter(List.of(com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry.FASHION), List.of(), List.of());
+
+        CreatorMailService.Preview preview = service.preview(new CreatorMailService.PreviewRequest("Ideas for {company}", "Hi {name}", null, null, 1,
+                null, null, CreatorMailStore.MailFor.BRANDS, fashion));
+
+        assertThat(preview.to()).isEqualTo("Loom Studio");
+        assertThat(preview.subject()).isEqualTo("Ideas for Loom Studio");
+        assertThat(preview.html()).contains("Fashion idea").doesNotContain("Food idea");
+        // A preview is not a send: nothing is remembered as mailed to the brand.
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_mail_idea_sent WHERE email = 'hi@loom-test.in'", Integer.class)).isZero();
+    }
+
+    @Test
     void aBrandGetsVideosAboutWhatItSells_andNewOnesInItsNextMail() {
         jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
         jdbc.update("DELETE FROM inspiration_item");

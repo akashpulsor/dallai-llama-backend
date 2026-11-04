@@ -42,6 +42,7 @@ import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -99,18 +100,19 @@ public class CreatorMailService {
     public record PreviewRequest(@Size(max = 200) String subject, @Size(max = 10000) String body, @Size(max = 40) String ctaLabel,
                                  @Size(max = 300) String ctaUrl,
                                  @jakarta.validation.constraints.Min(0) @jakarta.validation.constraints.Max(3) Integer ideaVideos,
-                                 ShowcaseIndustry ideaIndustry, MailStyle style, MailFor mailFor) {
+                                 ShowcaseIndustry ideaIndustry, MailStyle style, MailFor mailFor,
+                                 /* brand mail: the brands picked to send to; the preview is as mailed to the first */ BrandFilter brands) {
         public PreviewRequest(String subject, String body, String ctaLabel, String ctaUrl) {
-            this(subject, body, ctaLabel, ctaUrl, null, null, null, null);
+            this(subject, body, ctaLabel, ctaUrl, null, null, null, null, null);
         }
 
         public PreviewRequest(String subject, String body, String ctaLabel, String ctaUrl, Integer ideaVideos) {
-            this(subject, body, ctaLabel, ctaUrl, ideaVideos, null, null, null);
+            this(subject, body, ctaLabel, ctaUrl, ideaVideos, null, null, null, null);
         }
 
         public PreviewRequest(String subject, String body, String ctaLabel, String ctaUrl, Integer ideaVideos, ShowcaseIndustry ideaIndustry,
                               MailStyle style) {
-            this(subject, body, ctaLabel, ctaUrl, ideaVideos, ideaIndustry, style, null);
+            this(subject, body, ctaLabel, ctaUrl, ideaVideos, ideaIndustry, style, null, null);
         }
     }
 
@@ -127,7 +129,8 @@ public class CreatorMailService {
                       String unsubscribeHtml, String unsubscribeText, String openPixelHtml) {
     }
 
-    public record Preview(String subject, String html) {
+    /** {@code to}: the brand a brand mail's preview is shown as mailed to (null for creator mail). */
+    public record Preview(String subject, String html, String to) {
     }
 
     /** {@code audience} null: {@code testEmail} set = TEST, {@code tenantIds} given = CHOSEN, else ALL. */
@@ -225,17 +228,27 @@ public class CreatorMailService {
     }
 
     /** The draft rendered exactly as it will be mailed (first name "Asha" for {name}; a brand mail is
-     * shown as to Hearth Foods, a food brand). */
+     * shown as to the first brand the picked filter reaches, so its videos are that brand's). */
     public Preview preview(PreviewRequest r) {
         MailFor mailFor = r.mailFor() == null ? MailFor.CREATORS : r.mailFor();
         Template draft = new Template(null, "preview", blankTo(r.subject(), "(no subject)"), blankTo(r.body(), ""),
                 blank(r.ctaLabel()) ? null : r.ctaLabel().trim(), blank(r.ctaUrl()) ? null : r.ctaUrl().trim(), ideaVideos(r.ideaVideos()),
                 r.ideaIndustry(), style(r.style()), mailFor, true, null);
-        Recipient to = mailFor == MailFor.BRANDS
-                ? new Recipient("preview@example.com", "Asha", null, "Hearth Foods", ShowcaseIndustry.FOOD_BEVERAGE, "Snacks Hearth Foods")
-                : new Recipient("preview@example.com", "Asha", null);
+        Recipient to = mailFor == MailFor.BRANDS ? previewBrand(r.brands()) : new Recipient("preview@example.com", "Asha", null);
         PlatformMailer.Mail mail = mail(draft, to, null, ideasFor(draft, to));
-        return new Preview(mail.subject(), mail.html());
+        return new Preview(mail.subject(), mail.html(), to.company());
+    }
+
+    /** The first brand {@code filter} reaches, else a sample brand of its first industry (Hearth Foods
+     * with none picked). Read only: nothing is queued or remembered as sent. */
+    private Recipient previewBrand(BrandFilter filter) {
+        Optional<Recipient> first = filter == null ? Optional.empty() : store.brandContacts(filter).stream().findFirst();
+        if (first.isPresent()) return first.get();
+        ShowcaseIndustry industry = filter == null || filter.industries() == null || filter.industries().isEmpty()
+                ? ShowcaseIndustry.FOOD_BEVERAGE : filter.industries().get(0);
+        return industry == ShowcaseIndustry.FOOD_BEVERAGE
+                ? new Recipient("preview@example.com", "Asha", null, "Hearth Foods", industry, "Snacks Hearth Foods")
+                : new Recipient("preview@example.com", "Asha", null, "Your brand", industry, null);
     }
 
     /** Both button fields, or neither. */
