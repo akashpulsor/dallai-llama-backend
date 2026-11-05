@@ -387,7 +387,8 @@ public class CreatorMailService {
 
     private Audience audience(SendRequest r) {
         if (r.audience() != null) {
-            if (r.audience() == Audience.TEST && (r.testEmail() == null || r.testEmail().isBlank())) {
+            if (r.audience() == Audience.FOLLOWUP) throw new IllegalArgumentException("Follow-ups go out on their own schedule");
+            if (r.audience() == Audience.TEST &&(r.testEmail() == null || r.testEmail().isBlank())) {
                 throw new IllegalArgumentException("Give the address for the test");
             }
             return r.audience();
@@ -438,6 +439,14 @@ public class CreatorMailService {
         // A template that names an industry keeps to it; otherwise a brand's videos follow what it sells.
         String topics = brand && template.ideaIndustry() == null ? to.topics() : null;
         return mailIdeas.forRecipient(industry, topics, to.email(), template.ideaVideos());
+    }
+
+    /** Whether a mail of this template would show {@code to} a video it hasn't been sent. */
+    boolean hasNewIdeas(Template template, Recipient to) {
+        boolean brand = template.mailFor() == MailFor.BRANDS;
+        ShowcaseIndustry industry = template.ideaIndustry() != null ? template.ideaIndustry() : brand ? to.industry() : null;
+        String topics = brand && template.ideaIndustry() == null ? to.topics() : null;
+        return mailIdeas.hasNew(industry, topics, to.email());
     }
 
     /** For a brand mail to a brand known to sell something (with the videos following what it sells):

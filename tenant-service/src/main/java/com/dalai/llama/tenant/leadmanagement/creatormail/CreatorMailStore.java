@@ -19,8 +19,9 @@ import java.util.UUID;
 public class CreatorMailStore {
 
     /** Who a send went to: every active creator, chosen creators, creators whose profile has no video
-     * yet, the uploaded creator leads (not on the platform), or one address as a test. */
-    public enum Audience { ALL, CHOSEN, NO_VIDEO, LEADS, BRANDS, TEST }
+     * yet, the uploaded creator leads (not on the platform), or one address as a test. FOLLOWUP: the
+     * weekly brand follow-ups (BrandFollowUpService), never chosen by hand. */
+    public enum Audience { ALL, CHOSEN, NO_VIDEO, LEADS, BRANDS, TEST, FOLLOWUP }
 
     /** Who a template is written for: creators (the creator audiences) or brands (the brand directory). */
     public enum MailFor { CREATORS, BRANDS }
@@ -171,12 +172,21 @@ public class CreatorMailStore {
 
     /** Queues one mail; false when this template already reached (or is queued for) the address. */
     public boolean enqueue(UUID sendId, UUID templateId, Recipient to) {
+        return insertQueued(sendId, templateId, to, false);
+    }
+
+    /** Queues one weekly mail, which may use a template the address has had (it brings new videos). */
+    public void enqueueWeekly(UUID sendId, UUID templateId, Recipient to) {
+        insertQueued(sendId, templateId, to, true);
+    }
+
+    private boolean insertQueued(UUID sendId, UUID templateId, Recipient to, boolean weekly) {
         return jdbc.update("""
                 INSERT INTO ops_creator_mail_delivery (id, send_id, template_id, email, name, recipient_hash, unsubscribe_token, company, industry,
-                    topics)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (template_id, email) WHERE status <> 'TEST' DO NOTHING""",
+                    topics, weekly)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (template_id, email) WHERE status <> 'TEST' AND NOT weekly DO NOTHING""",
                 UUID.randomUUID(), sendId, templateId, to.email(), to.name(), to.recipientHash(), newToken(), to.company(),
-                code(to.industry()), to.topics()) == 1;
+                code(to.industry()), to.topics(), weekly) == 1;
     }
 
     /** Records a test mail (sent straight away) and returns its unsubscribe token, so the link in a

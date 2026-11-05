@@ -60,6 +60,15 @@ public final class MailThemes {
     private MailThemes() {
     }
 
+    public static Set<String> keys() {
+        return THEMES.keySet();
+    }
+
+    /** Text that reads as exactly these themes, to match videos by what a brand asked for. */
+    public static String topicsFor(List<String> keys) {
+        return keys.stream().map(key -> THEMES.get(key).get(0)).collect(java.util.stream.Collectors.joining(" "));
+    }
+
     /** The themes of free text: a video title, a brand's name, category or website. */
     public static Set<String> of(String text) {
         Set<String> themes = new TreeSet<>();

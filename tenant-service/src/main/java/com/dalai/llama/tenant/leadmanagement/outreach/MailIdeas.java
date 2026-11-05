@@ -46,6 +46,15 @@ public class MailIdeas {
      * <li>then at random.</li></ol>
      * With no {@code topics}, the videos all come from {@code industry} (or one random industry). */
     public List<MailIdea> forRecipient(ShowcaseIndustry industry, String topics, String email, int limit) {
+        return ranked(industry, topics, email).stream().limit(limit).map(InspirationStore.SeenIdea::idea).toList();
+    }
+
+    /** Whether any video that fits would be new to {@code email}. */
+    public boolean hasNew(ShowcaseIndustry industry, String topics, String email) {
+        return ranked(industry, topics, email).stream().anyMatch(s -> s.lastSent() == null);
+    }
+
+    private List<InspirationStore.SeenIdea> ranked(ShowcaseIndustry industry, String topics, String email) {
         java.util.Set<String> wanted = MailThemes.of(topics);
         List<InspirationStore.SeenIdea> all = store.forMailTo(email);
         if (all.isEmpty()) return List.of();
@@ -63,7 +72,7 @@ public class MailIdeas {
                 .thenComparing(s -> s.lastSent() == null ? java.time.Instant.MIN : s.lastSent())
                 .thenComparing(s -> -fit.get(s.idea().id()))
                 .thenComparing(s -> s.idea().industry() == home ? 0 : 1));
-        return pool.stream().limit(limit).map(InspirationStore.SeenIdea::idea).toList();
+        return pool;
     }
 
     /** Remembers which videos a mail to {@code email} carried. */

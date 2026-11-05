@@ -1,5 +1,6 @@
 package com.dalai.llama.tenant.leadmanagement.creatormail;
 
+import com.dalai.llama.tenant.leadmanagement.brand.BrandMailPriorityService;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.SendRequest;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.SendResult;
 import com.dalai.llama.tenant.leadmanagement.creatormail.CreatorMailService.TemplateRequest;
@@ -32,6 +33,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -57,7 +59,8 @@ import static org.mockito.Mockito.when;
 @Import({CreatorMailService.class, CreatorMailStore.class, MailRenderer.class, RecipientHasher.class, OutreachStore.class,
         CreatorProfileLinks.class, CreatorProfileService.class, HandlePolicy.class,
         com.dalai.llama.tenant.leadmanagement.outreach.MailIdeas.class, com.dalai.llama.tenant.showcase.inspiration.InspirationStore.class,
-        OpsMailHistoryStore.class, OpsMailHistoryService.class, OpsMailTrackingController.class, CreatorMailDbTest.TestConfig.class})
+        OpsMailHistoryStore.class, OpsMailHistoryService.class, OpsMailTrackingController.class,
+        BrandFollowUpStore.class, BrandFollowUpService.class, BrandMailPriorityService.class, CreatorMailDbTest.TestConfig.class})
 class CreatorMailDbTest extends ShowcaseDbTestSupport {
 
     private static final Instant NOW = Instant.parse("2026-10-31T10:00:00Z");
@@ -80,6 +83,8 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private OpsMailHistoryService histories;
     @Autowired private OpsMailTrackingController tracking;
+    @Autowired private BrandFollowUpService followUps;
+    @Autowired private BrandMailPriorityService priorities;
     @Autowired private com.dalai.llama.tenant.showcase.config.ShowcaseProperties showcase;
     @MockBean private PlatformMailer mailer;
     @MockBean private com.dalai.llama.tenant.leadmanagement.outreach.OpenAnalytics analytics;
@@ -544,6 +549,247 @@ class CreatorMailDbTest extends ShowcaseDbTestSupport {
         OpsMailHistoryStore.SentMail older = histories.brand("hi@stride-test.in").mails().get(0).mail();
         assertThat(older.subject()).isEqualTo("Meera, ideas for Stride");
         assertThat(older.html()).isNull();
+    }
+
+    private Template brandTemplate(String name) {
+        return service.create(new TemplateRequest(name, name, "Hi {name},", null, null, 1, null, CreatorMailStore.MailStyle.PLAIN,
+                CreatorMailStore.MailFor.BRANDS, null));
+    }
+
+    /** A brand mail that went {@code daysAgo} days ago. */
+    private void sentBrandMail(Template template, String email, String audience, int daysAgo, boolean opened, boolean clicked) {
+        UUID send = UUID.randomUUID();
+        Timestamp at = Timestamp.from(NOW.minus(Duration.ofDays(daysAgo)));
+        jdbc.update("INSERT INTO ops_creator_mail_send (id, template_id, subject, audience, recipients) VALUES (?, ?, 'S', ?, 1)", send, template.id(), audience);
+        jdbc.update("""
+                INSERT INTO ops_creator_mail_delivery (id, send_id, template_id, email, name, recipient_hash, unsubscribe_token, status, sent_at, opened_at, first_clicked_at, company, weekly)
+                VALUES (?, ?, ?, ?, 'Meera', ?, ?, 'SENT', ?, ?, ?, 'Stride', ?)""", UUID.randomUUID(), send, template.id(), email, hasher.hash(email),
+                UUID.randomUUID().toString().replace("-", ""), at, opened || clicked ? at : null, clicked ? at : null, "FOLLOWUP".equals(audience));
+    }
+
+    private void inspirationVideo(String title) {
+        jdbc.update("INSERT INTO inspiration_item (id, pin_id, title, industry, poster_url) VALUES (?, ?, ?, 'FASHION', 'https://img.example/v.jpg')",
+                UUID.randomUUID(), "%012d".formatted(Math.abs((long) title.hashCode())), title);
+    }
+
+    /** Sends what's queued and moves it a week back, so the next run finds the brand due. */
+    private void sendAndWaitAWeek() {
+        service.dispatch();
+        jdbc.update("UPDATE ops_creator_mail_delivery SET sent_at = sent_at - INTERVAL '8 days' WHERE status = 'SENT'");
+    }
+
+    private List<UUID> queuedFor(String email) {
+        return jdbc.queryForList("SELECT template_id FROM ops_creator_mail_delivery WHERE email = ? AND status = 'QUEUED'", UUID.class, email);
+    }
+
+    private BrandFollowUpService.FollowUpSettings followUpSettings(boolean on, List<UUID> notOpened, List<UUID> opened, List<UUID> clicked) {
+        return new BrandFollowUpService.FollowUpSettings(on, List.of(
+                new BrandFollowUpService.StageTemplates(BrandFollowUpStore.Stage.NOT_OPENED, notOpened),
+                new BrandFollowUpService.StageTemplates(BrandFollowUpStore.Stage.OPENED, opened),
+                new BrandFollowUpService.StageTemplates(BrandFollowUpStore.Stage.CLICKED, clicked)));
+    }
+
+    @Test
+    void eachBrandGetsTheFollowUpForItsStageAWeekAfterItsLastMailAndOnlyWhileSwitchedOn() {
+        jdbc.update("DELETE FROM lead_brand_inquiry WHERE brand_contact_id IN (SELECT id FROM lead_brand_contact WHERE email LIKE '%@funnel-test.in')");
+        jdbc.update("DELETE FROM lead_brand_contact WHERE email LIKE '%@funnel-test.in'");
+        jdbc.update("DELETE FROM inspiration_item");
+        inspirationVideo("Retro sneaker reveal");
+        Template first = brandTemplate("First");
+        Template notOpened = brandTemplate("Not opened");
+        Template opened = brandTemplate("Opened");
+        Template clicked = brandTemplate("Clicked");
+        sentBrandMail(first, "quiet@funnel-test.in", "BRANDS", 8, false, false);
+        sentBrandMail(first, "reader@funnel-test.in", "BRANDS", 8, true, false);
+        sentBrandMail(first, "keen@funnel-test.in", "BRANDS", 8, false, true);
+        sentBrandMail(first, "recent@funnel-test.in", "BRANDS", 3, false, false);
+        sentBrandMail(first, "gone@funnel-test.in", "BRANDS", 8, false, false);
+        outreach.suppress(hasher.hash("gone@funnel-test.in"), "UNSUBSCRIBED");
+        sentBrandMail(first, "buyer@funnel-test.in", "BRANDS", 8, false, true);
+        UUID contact = UUID.randomUUID();
+        jdbc.update("INSERT INTO lead_brand_contact (id, email, source) VALUES (?, 'buyer@funnel-test.in', 'SIGNUP')", contact);
+        jdbc.update("INSERT INTO lead_brand_inquiry (id, brand_contact_id, message, status, source) VALUES (?, ?, 'Ad', 'NEW', 'LANDING')", UUID.randomUUID(), contact);
+
+        // Off (the default): the funnel shows, nothing is queued.
+        followUps.save(followUpSettings(false, List.of(notOpened.id()), List.of(opened.id()), List.of(clicked.id())));
+        assertThat(followUps.run()).isZero();
+
+        BrandFollowUpService.FollowUpView funnel = followUps.view();
+        assertThat(funnel.enabled()).isFalse();
+        assertThat(funnel.stages()).extracting(BrandFollowUpService.StageView::stage, BrandFollowUpService.StageView::brands, BrandFollowUpService.StageView::due)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(BrandFollowUpStore.Stage.NOT_OPENED, 2, 1),
+                        org.assertj.core.groups.Tuple.tuple(BrandFollowUpStore.Stage.OPENED, 1, 1),
+                        org.assertj.core.groups.Tuple.tuple(BrandFollowUpStore.Stage.CLICKED, 1, 1));
+        assertThat(List.of(funnel.requested(), funnel.unsubscribed(), funnel.badAddress(), funnel.finished())).containsExactly(1, 1, 0, 0);
+
+        // On: each stage's own template, and nobody else.
+        followUps.save(followUpSettings(true, List.of(notOpened.id()), List.of(opened.id()), List.of(clicked.id())));
+        assertThat(followUps.run()).isEqualTo(3);
+        assertThat(queuedFor("quiet@funnel-test.in")).containsExactly(notOpened.id());
+        assertThat(queuedFor("reader@funnel-test.in")).containsExactly(opened.id());
+        assertThat(queuedFor("keen@funnel-test.in")).containsExactly(clicked.id());
+        assertThat(queuedFor("recent@funnel-test.in")).isEmpty();
+        assertThat(queuedFor("gone@funnel-test.in")).isEmpty();
+        assertThat(queuedFor("buyer@funnel-test.in")).isEmpty();
+        // Still in the queue: tomorrow's run adds nothing.
+        assertThat(followUps.run()).isZero();
+
+        // Off again: what hadn't gone is taken back, and can go later.
+        followUps.save(followUpSettings(false, List.of(notOpened.id()), List.of(opened.id()), List.of(clicked.id())));
+        assertThat(queuedFor("quiet@funnel-test.in")).isEmpty();
+        followUps.save(followUpSettings(true, List.of(notOpened.id()), List.of(opened.id()), List.of(clicked.id())));
+        assertThat(followUps.run()).isEqualTo(3);
+        followUps.save(followUpSettings(false, List.of(), List.of(), List.of()));
+    }
+
+    @Test
+    void theSameTemplatesComeRoundWeeklyWithNewVideosUntilTheyRunOutOrTheLimit() {
+        jdbc.update("DELETE FROM inspiration_item");
+        inspirationVideo("One");
+        inspirationVideo("Two");
+        Template first = brandTemplate("First");
+        Template a = brandTemplate("A");
+        Template b = brandTemplate("B");
+        sentBrandMail(first, "a@cap-test.in", "BRANDS", 8, false, false);
+        followUps.save(followUpSettings(true, List.of(a.id(), b.id()), List.of(), List.of()));
+
+        // Templates take turns.
+        assertThat(followUps.run()).isEqualTo(1);
+        assertThat(queuedFor("a@cap-test.in")).containsExactly(a.id());
+        sendAndWaitAWeek();
+        assertThat(followUps.run()).isEqualTo(1);
+        assertThat(queuedFor("a@cap-test.in")).containsExactly(b.id());
+        sendAndWaitAWeek();
+
+        // It has seen both videos, so no re-run of old ones, and no empty send in the ops history.
+        assertThat(followUps.run()).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_creator_mail_send s WHERE s.audience = 'FOLLOWUP' "
+                + "AND NOT EXISTS (SELECT 1 FROM ops_creator_mail_delivery d WHERE d.send_id = s.id)", Integer.class)).isZero();
+
+        // A new video on the board: a template it has had comes round again.
+        inspirationVideo("Three");
+        assertThat(followUps.run()).isEqualTo(1);
+        assertThat(queuedFor("a@cap-test.in")).containsExactly(a.id());
+        sendAndWaitAWeek();
+        inspirationVideo("Four");
+        assertThat(followUps.run()).isEqualTo(1);
+        sendAndWaitAWeek();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_creator_mail_delivery WHERE email = 'a@cap-test.in' AND template_id = ? AND status = 'SENT'",
+                Integer.class, a.id())).isEqualTo(2);
+
+        // Four weekly mails is the limit, new video or not.
+        inspirationVideo("Five");
+        assertThat(followUps.run()).isZero();
+        assertThat(followUps.view().finished()).isEqualTo(1);
+        followUps.save(followUpSettings(false, List.of(), List.of(), List.of()));
+    }
+
+    @Test
+    void aTemplateSentByHandStillReachesAnAddressOnce() {
+        jdbc.update("DELETE FROM lead_company WHERE provider = 'TEST'");
+        contact(brand("once-test.in", "Once", "FASHION", "IN", "SMALL"), "hi@once-test.in", "Isha", 90);
+        Template template = brandTemplate("Once");
+        CreatorMailStore.BrandFilter all = new CreatorMailStore.BrandFilter(List.of(), List.of(), List.of());
+        service.send(new SendRequest(template.id(), Audience.BRANDS, null, null, all));
+        service.send(new SendRequest(template.id(), Audience.BRANDS, null, null, all));
+        assertThat(queuedFor("hi@once-test.in")).containsExactly(template.id());
+    }
+
+    /** A brand that has had its first mail and every weekly one. */
+    private void hadEveryWeeklyMail(Template template, String email, boolean opened, boolean clicked) {
+        sentBrandMail(template, email, "BRANDS", 40, opened, clicked);
+        for (int i = 0; i < 4; i++) sentBrandMail(template, email, "FOLLOWUP", 8 + i, false, false);
+    }
+
+    private UUID brandAccount(String email) {
+        jdbc.update("DELETE FROM lead_brand_inquiry WHERE brand_contact_id IN (SELECT id FROM lead_brand_contact WHERE email = ?)", email);
+        jdbc.update("DELETE FROM lead_brand_contact WHERE email = ?", email);
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO lead_brand_contact (id, email, source) VALUES (?, ?, 'SIGNUP')", id, email);
+        return id;
+    }
+
+    private void stageTemplates(BrandFollowUpStore.Stage stage, UUID... ids) {
+        followUps.save(new BrandFollowUpService.FollowUpSettings(true, List.of(new BrandFollowUpService.StageTemplates(stage, List.of(ids)))));
+    }
+
+    @Test
+    void afterTheWeeklyMailsABrandWithNoRequestGetsOneLastMailEvenIfItOpenedOrClicked() {
+        jdbc.update("DELETE FROM inspiration_item");
+        Template weekly = brandTemplate("Weekly");
+        Template stillThere = service.create(new TemplateRequest("Another kind?", "Another kind?", "Hi {name},", null, null, 0, null, CreatorMailStore.MailStyle.STYLED,
+                CreatorMailStore.MailFor.BRANDS, null));
+        Template priorities = service.create(new TemplateRequest("Your priorities", "Your priorities", "Hi {name},", null, null, 0, null, CreatorMailStore.MailStyle.STYLED,
+                CreatorMailStore.MailFor.BRANDS, null));
+        hadEveryWeeklyMail(weekly, "never@last-test.in", false, false);
+        hadEveryWeeklyMail(weekly, "opened@last-test.in", true, false);
+        hadEveryWeeklyMail(weekly, "clicked@last-test.in", false, true);
+        hadEveryWeeklyMail(weekly, "buyer@last-test.in", false, true);
+        jdbc.update("INSERT INTO lead_brand_inquiry (id, brand_contact_id, message, status, source) VALUES (?, ?, 'Ad', 'NEW', 'LANDING')",
+                UUID.randomUUID(), brandAccount("buyer@last-test.in"));
+
+        followUps.save(followUpSettings(true, List.of(weekly.id()), List.of(weekly.id()), List.of(weekly.id())));
+        stageTemplates(BrandFollowUpStore.Stage.LAST_NOT_OPENED, stillThere.id());
+        stageTemplates(BrandFollowUpStore.Stage.LAST_OPENED, priorities.id());
+        assertThat(followUps.view().lastMails()).extracting(BrandFollowUpService.StageView::due).containsExactly(1, 2);
+
+        // No videos are needed for it (the board is empty), and a brand that sent a request doesn't get it.
+        assertThat(followUps.run()).isEqualTo(3);
+        assertThat(queuedFor("never@last-test.in")).containsExactly(stillThere.id());
+        assertThat(queuedFor("opened@last-test.in")).containsExactly(priorities.id());
+        assertThat(queuedFor("clicked@last-test.in")).containsExactly(priorities.id());
+        assertThat(queuedFor("buyer@last-test.in")).isEmpty();
+
+        // One last mail only.
+        sendAndWaitAWeek();
+        assertThat(followUps.run()).isZero();
+        assertThat(followUps.view().finished()).isEqualTo(3);
+        followUps.save(followUpSettings(false, List.of(), List.of(), List.of()));
+    }
+
+    @Test
+    void aBrandThatGivesItsPrioritiesKeepsGettingVideosOfWhatItAskedFor() {
+        jdbc.update("DELETE FROM inspiration_item");
+        inspirationVideo("Retro sneaker reveal");
+        inspirationVideo("Silk saree story");
+        Template weekly = brandTemplate("Weekly");
+        Template last = service.create(new TemplateRequest("Last", "Last", "Hi {name},", null, null, 0, null, CreatorMailStore.MailStyle.STYLED,
+                CreatorMailStore.MailFor.BRANDS, null));
+        hadEveryWeeklyMail(weekly, "told@priority-test.in", true, false);
+        UUID account = brandAccount("told@priority-test.in");
+        BrandMailPriorityService.MailPriorities saved = priorities.save(account,
+                new BrandMailPriorityService.MailPriorities(List.of("footwear"), " Nike, Bata "));
+        assertThat(saved.themes()).containsExactly("footwear");
+        assertThat(saved.adsFrom()).isEqualTo("Nike, Bata");
+        assertThat(priorities.get(account)).isEqualTo(saved);
+        assertThat(priorities.all()).extracting(BrandMailPriorityService.BrandPriorities::email).contains("told@priority-test.in");
+        assertThatThrownBy(() -> priorities.save(account, new BrandMailPriorityService.MailPriorities(List.of("nonsense"), null)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        followUps.save(followUpSettings(true, List.of(), List.of(weekly.id()), List.of()));
+        stageTemplates(BrandFollowUpStore.Stage.LAST_OPENED, last.id());
+
+        // Past the limit, but it answered: no "tell us" mail, and the weekly mail goes on with what it asked for.
+        assertThat(followUps.run()).isEqualTo(1);
+        assertThat(queuedFor("told@priority-test.in")).containsExactly(weekly.id());
+        clearInvocations(mailer);
+        service.dispatch();
+        assertThat(sent().get(0).html()).contains("Retro sneaker reveal").doesNotContain("Silk saree story");
+        followUps.save(followUpSettings(false, List.of(), List.of(), List.of()));
+    }
+
+    @Test
+    void followUpsCanOnlyUseBrandTemplatesAndCantBeSentByHand() {
+        Template forCreators = service.create(new TemplateRequest("Creators", "Hi", "Hi {name},", null, null, 0, null, CreatorMailStore.MailStyle.PLAIN,
+                CreatorMailStore.MailFor.CREATORS, null));
+        assertThatThrownBy(() -> followUps.save(followUpSettings(true, List.of(forCreators.id()), List.of(), List.of())))
+                .isInstanceOf(IllegalArgumentException.class);
+        Template noVideos = service.create(new TemplateRequest("No videos", "Hi", "Hi {name},", null, null, 0, null, CreatorMailStore.MailStyle.PLAIN,
+                CreatorMailStore.MailFor.BRANDS, null));
+        assertThatThrownBy(() -> followUps.save(followUpSettings(true, List.of(noVideos.id()), List.of(), List.of())))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.send(new SendRequest(brandTemplate("Brand").id(), Audience.FOLLOWUP, null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
