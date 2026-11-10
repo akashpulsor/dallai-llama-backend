@@ -99,7 +99,8 @@ public class YouTubeConnectionService implements PlatformYouTubeTokens {
         params.put("scope", String.join(" ", properties.scopes()));
         params.put("access_type", "offline");
         params.put("prompt", "consent");
-        params.put("include_granted_scopes", "true");
+        // No include_granted_scopes: the consent screen must show exactly the scopes submitted for Google's
+        // verification, never ones an account granted this app earlier.
         params.put("state", state);
         params.put("code_challenge", challenge(verifier));
         params.put("code_challenge_method", "S256");

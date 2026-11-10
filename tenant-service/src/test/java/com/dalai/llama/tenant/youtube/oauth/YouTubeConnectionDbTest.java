@@ -119,6 +119,10 @@ class YouTubeConnectionDbTest extends ShowcaseDbTestSupport {
         assertThat(url).startsWith("https://accounts.google.com/o/oauth2/v2/auth?client_id=client-123")
                 .contains("code_challenge_method=S256", "access_type=offline", "prompt=consent",
                         "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyt-analytics.readonly");
+        // Exactly the two submitted for Google's verification: nothing granted earlier is added.
+        assertThat(param(url, "scope").split(" "))
+                .containsExactly("https://www.googleapis.com/auth/youtube", "https://www.googleapis.com/auth/yt-analytics.readonly");
+        assertThat(url).doesNotContain("include_granted_scopes");
         String state = param(url, "state");
 
         String back = connections.complete(state, "auth-code", null);
