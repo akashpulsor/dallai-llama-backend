@@ -20,7 +20,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 
-/** Builds the landing grid (CREATOR_SHOWCASE.md §10.6): pinned ids, then active spotlights, then
+/** Builds the landing grid (CREATOR_SHOWCASE.md §10.6): the films ops put in the hero, pinned ids,
+ * then active spotlights, then
  * exploration slots, then the rest by score from creators at or above the landing floor. Caps per
  * creator and per industry apply to everything except pins. Below {@code minItemsToShow} the grid is
  * empty, so the landing page hides the section rather than showing a thin one. */
@@ -41,12 +42,14 @@ public class LandingAssembler {
         RankingProperties.Reinforcement reinforce = ranking.reinforcement();
         OffsetDateTime now = OffsetDateTime.now(clock);
 
-        // Everyone public, by score: exploration and pins may come from below the floor.
-        List<ShowcaseItem> everyone = showcase.rankedPublic(EnumSet.allOf(CreatorLevel.class), null, CANDIDATE_LIMIT);
+        // Everyone public and not taken off the landing by ops, by score: exploration and pins may
+        // come from below the floor.
+        List<ShowcaseItem> everyone = onLanding();
         CreatorLevel floor = showcase.currentFloors().landing();
         Map<UUID, CreatorLevel> levelOf = showcase.levelsOf(everyone);
 
         Grid grid = new Grid(landing);
+        heroes(everyone).forEach(grid::pin);
         for (String pinned : landing.pinnedPublicIds()) {
             everyone.stream().filter(i -> i.getPublicId().equals(pinned)).findFirst().ifPresent(grid::pin);
         }
@@ -71,6 +74,25 @@ public class LandingAssembler {
 
         List<ShowcaseItem> chosen = grid.items();
         return chosen.size() < landing.minItemsToShow() ? List.of() : showcase.toCards(chosen);
+    }
+
+    /** The films ops put in the hero, newest first. {@link #assemble()} starts with the same films,
+     * so a page that shows the first one in its hero drops it from the grid. */
+    public List<PublicShowcaseCard> hero() {
+        return showcase.toCards(heroes(onLanding()));
+    }
+
+    private List<ShowcaseItem> onLanding() {
+        return showcase.rankedPublic(EnumSet.allOf(CreatorLevel.class), null, CANDIDATE_LIMIT).stream()
+                .filter(i -> !i.isLandingHidden())
+                .toList();
+    }
+
+    private static List<ShowcaseItem> heroes(List<ShowcaseItem> items) {
+        return items.stream()
+                .filter(i -> i.getLandingHeroAt() != null)
+                .sorted(Comparator.comparing(ShowcaseItem::getLandingHeroAt).reversed())
+                .toList();
     }
 
     /** Variable reward (rule 14): a random pick, weighted by score so better new work wins more

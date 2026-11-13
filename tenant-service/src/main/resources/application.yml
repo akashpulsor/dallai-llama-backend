@@ -287,7 +287,7 @@ showcase:
                        platform, privacy, r, signup, support, terms, unsubscribe, verify, www]
 showcase-ranking:
   # Written next to every score; bump it whenever you change a number below.
-  version: v1
+  version: v2
   ladder:
     l2-min-platform-films: 1
     l3-min-funded-platform-films: 1
@@ -304,11 +304,13 @@ showcase-ranking:
     max-floor-step-per-run: 1
   scoring:
     weight-funded: 0.30
-    weight-like-rate: 0.20
+    # Likes weigh more than completion: a brand liking a film is the clearest signal we get.
+    weight-like-rate: 0.35
     weight-completion-rate: 0.15
     weight-brand-intent: 0.25
     weight-freshness: 0.10
-    smoothing-plays: 20
+    # Few plays yet, so a handful of likes has to move a film; 20 drowned them in the prior.
+    smoothing-plays: 5
     prior-like-rate: 0.05
     prior-completion-rate: 0.30
     brand-intent-saturation: 3
@@ -321,7 +323,8 @@ showcase-ranking:
     exploration-max-plays: 50
   landing:
     size: 12
-    min-items-to-show: 6
+    # The landing page puts inspiration videos after these, so even one creator film shows.
+    min-items-to-show: 1
     max-per-creator: 2
     max-per-industry: 4
     pinned-public-ids: []

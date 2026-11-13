@@ -76,9 +76,14 @@ class RankingModelTest {
         assertThat(funded).isGreaterThan(unfunded);
         assertThat(unfunded).isGreaterThan(old);
 
-        // One like on one play barely moves an item: the smoothing stops it from winning.
+        // A single like visibly lifts an item (likes weigh most among engagement signals), but it
+        // can't outrank funded work on its own.
         double oneLike = scorer.quality(item(false, 1, 1, 1, 0, NOW), priors, NOW);
-        assertThat(oneLike - unfunded).isLessThan(0.02);
+        assertThat(oneLike - unfunded).isGreaterThan(0.04);
+        assertThat(oneLike).isLessThan(funded);
+        // More likes on the same plays rank clearly higher.
+        assertThat(scorer.quality(item(false, 3, 5, 2, 0, NOW), priors, NOW))
+                .isGreaterThan(scorer.quality(item(false, 0, 5, 2, 0, NOW), priors, NOW) + 0.05);
         // Strong engagement plus saturated brand interest (3 requests) overtakes a fresh funded film;
         // likes and plays alone don't, by design: funding leads until brands start asking.
         assertThat(scorer.quality(item(false, 60, 200, 150, 0, NOW), priors, NOW)).isLessThan(funded);

@@ -83,6 +83,12 @@ public class PublicShowcaseController {
         return landingAssembler.assemble();
     }
 
+    /** The films ops put at the top of the landing page, newest first; empty when there are none. */
+    @GetMapping("/api/v1/public/showcase/landing/hero")
+    public java.util.List<com.dalai.llama.tenant.showcase.dto.PublicShowcaseCard> landingHero() {
+        return landingAssembler.hero();
+    }
+
     /** Only when the SELF host fallback is on (rule 5): a short-lived link to our own copy of a
      * platform film. 404 otherwise; the card's {@code host} says which to use. */
     @GetMapping("/api/v1/public/showcase/{publicId}/source")

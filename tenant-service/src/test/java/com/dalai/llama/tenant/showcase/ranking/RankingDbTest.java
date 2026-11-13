@@ -13,6 +13,7 @@ import com.dalai.llama.tenant.showcase.dto.PublicShowcaseCard;
 import com.dalai.llama.tenant.showcase.service.CreatorProfileService;
 import com.dalai.llama.tenant.showcase.service.HandlePolicy;
 import com.dalai.llama.tenant.showcase.service.LandingAssembler;
+import com.dalai.llama.tenant.showcase.service.LandingPlacementService;
 import com.dalai.llama.tenant.showcase.service.PublicShowcaseService;
 import com.dalai.llama.tenant.showcase.service.ShowcaseModerationService;
 import com.dalai.llama.tenant.showcase.dto.UpdatePublicProfileRequest;
@@ -51,7 +52,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, RankingRunJob.class, CreatorLadder.class, VisibilityFloor.class, ShowcaseScorer.class, CreatorFactsCollector.class,
-        com.dalai.llama.tenant.leadmanagement.inquiry.InquiryConvertedRequestCounter.class, VisibilityService.class, PublicShowcaseService.class, LandingAssembler.class,
+        com.dalai.llama.tenant.leadmanagement.inquiry.InquiryConvertedRequestCounter.class, VisibilityService.class, PublicShowcaseService.class, LandingAssembler.class, LandingPlacementService.class,
         ShowcaseModerationService.class, CreatorProfileService.class, HandlePolicy.class, VideoEligibility.class,
         RankingDbTest.TestConfig.class})
 class RankingDbTest extends ShowcaseDbTestSupport {
@@ -75,6 +76,7 @@ class RankingDbTest extends ShowcaseDbTestSupport {
     @Autowired private RankingRunJob run;
     @Autowired private PublicShowcaseService publicService;
     @Autowired private LandingAssembler landing;
+    @Autowired private LandingPlacementService placement;
     @Autowired private VisibilityService visibility;
     @Autowired private ShowcaseModerationService moderation;
     @Autowired private CreatorProfileService profileService;
@@ -104,7 +106,7 @@ class RankingDbTest extends ShowcaseDbTestSupport {
         assertThat(result.getLandingFloor()).isEqualTo(CreatorLevel.L1);
         String top = jdbc.queryForObject("SELECT tenant_id::text FROM showcase_item ORDER BY global_score DESC LIMIT 1", String.class);
         assertThat(top).isEqualTo(proven.toString());
-        assertThat(jdbc.queryForObject("SELECT score_version FROM showcase_item LIMIT 1", String.class)).isEqualTo("v1");
+        assertThat(jdbc.queryForObject("SELECT score_version FROM showcase_item LIMIT 1", String.class)).isEqualTo("v2");
     }
 
     @Test
@@ -133,7 +135,7 @@ class RankingDbTest extends ShowcaseDbTestSupport {
     @Test
     void landingPutsSpotlightsFirst_capsEachCreator_andHidesWhenThin() {
         UUID a = creator("Alpha", 0, 0, 3);
-        assertThat(landing.assemble()).as("3 items is below min-items-to-show (6)").isEmpty();
+        assertThat(landing.assemble()).as("one creator is enough to show (min 1), capped at 2 per creator").hasSize(2);
 
         creator("Beta", 0, 0, 3);
         UUID gamma = creator("Gamma", 0, 1, 2);
@@ -146,6 +148,39 @@ class RankingDbTest extends ShowcaseDbTestSupport {
         assertThat(grid.get(0).origin().name()).isEqualTo("PLATFORM");
         assertThat(grid.stream().filter(c -> c.creator().displayName().equals("Alpha")).count()).isLessThanOrEqualTo(2);
         assertThat(grid).hasSizeGreaterThanOrEqualTo(6);
+    }
+
+    @Test
+    void opsPlaceFilmsOnTheLandingOnly_heroesFirstNewestFirst_removedOnesStayOnTheProfile() {
+        creator("Alpha", 0, 0, 2);
+        creator("Beta", 0, 0, 2);
+        run.run();
+        List<String> ids = jdbc.queryForList("SELECT public_id FROM showcase_item ORDER BY public_id", String.class);
+        String older = ids.get(0), newer = ids.get(1), removed = ids.get(2);
+
+        assertThat(landing.hero()).isEmpty();
+        placement.place(older, false, true);
+        clock.advance(Duration.ofMinutes(1));
+        placement.place(newer, false, true);
+        placement.place(removed, true, false);
+
+        assertThat(landing.hero()).extracting(PublicShowcaseCard::publicId).containsExactly(newer, older);
+        List<PublicShowcaseCard> grid = landing.assemble();
+        assertThat(grid).extracting(PublicShowcaseCard::publicId).startsWith(newer, older).doesNotContain(removed);
+        assertThat(publicService.feed(PublicShowcaseService.FeedTab.ALL, null, null, 0).items())
+                .as("taking a film off the landing leaves it on the profile and in the feeds")
+                .extracting(PublicShowcaseCard::publicId).contains(removed);
+
+        // Saving a hero again keeps its place in the hero order; a removed film can come back.
+        placement.place(older, false, true);
+        assertThat(landing.hero()).extracting(PublicShowcaseCard::publicId).containsExactly(newer, older);
+        placement.place(removed, false, false);
+        assertThat(landing.assemble()).extracting(PublicShowcaseCard::publicId).contains(removed);
+        assertThat(placement.list()).filteredOn(v -> v.publicId().equals(newer)).singleElement()
+                .satisfies(v -> assertThat(v.landingHeroAt()).isNotNull());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> placement.place(older, true, true))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

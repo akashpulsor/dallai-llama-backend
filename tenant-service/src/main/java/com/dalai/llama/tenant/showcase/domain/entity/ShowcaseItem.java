@@ -165,6 +165,14 @@ public class ShowcaseItem {
     private OffsetDateTime spotlightUntil;
 
     /** When the creator confirmed they may show this video (the client agreed, or it is theirs). */
+    /** Ops took it off the landing page; it stays on the creator's profile and in the feeds. */
+    @Column(name = "landing_hidden", nullable = false)
+    private boolean landingHidden;
+
+    /** When ops put it in the landing page's hero (newest first); null when it isn't a hero. */
+    @Column(name = "landing_hero_at")
+    private OffsetDateTime landingHeroAt;
+
     @Column(name = "rights_confirmed_at", nullable = false)
     private OffsetDateTime rightsConfirmedAt;
 

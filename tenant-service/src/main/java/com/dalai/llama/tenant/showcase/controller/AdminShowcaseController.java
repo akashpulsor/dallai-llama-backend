@@ -5,6 +5,8 @@ import com.dalai.llama.tenant.showcase.domain.ProfileStatus;
 import com.dalai.llama.tenant.showcase.domain.entity.ShowcaseItem;
 import com.dalai.llama.tenant.showcase.domain.entity.ShowcaseRankingRun;
 import com.dalai.llama.tenant.showcase.ranking.RankingRunJob;
+import com.dalai.llama.tenant.showcase.dto.LandingPlacementView;
+import com.dalai.llama.tenant.showcase.service.LandingPlacementService;
 import com.dalai.llama.tenant.showcase.service.ShowcaseModerationService;
 import com.dalai.llama.tenant.showcase.service.VideoHostHealth;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -35,6 +37,7 @@ public class AdminShowcaseController {
 
     private final RankingRunJob rankingRun;
     private final ShowcaseModerationService moderation;
+    private final LandingPlacementService landingPlacement;
     private final VideoHostHealth health;
 
     public record RankingRunView(OffsetDateTime runAt, BigDecimal maturity, CreatorLevel landingFloor,
@@ -58,6 +61,9 @@ public class AdminShowcaseController {
     public record ProfileStatusRequest(@NotNull ProfileStatus status) {
     }
 
+    public record LandingPlacementRequest(@NotNull Boolean hidden, @NotNull Boolean hero) {
+    }
+
     @PostMapping("/rescore")
     public RankingRunView rescore() {
         return RankingRunView.of(rankingRun.run());
@@ -66,6 +72,18 @@ public class AdminShowcaseController {
     @PatchMapping("/items/{publicId}")
     public ItemModerationView hideItem(@PathVariable String publicId, @Valid @RequestBody HideRequest request) {
         return ItemModerationView.of(moderation.setItemHidden(publicId, request.hidden()));
+    }
+
+    /** Creators' films for the landing page, best score first, with where ops placed each. */
+    @GetMapping("/landing-items")
+    public List<LandingPlacementView> landingItems() {
+        return landingPlacement.list();
+    }
+
+    /** Off the landing page or back on it, in or out of the hero; the creator's profile keeps it. */
+    @PatchMapping("/landing-items/{publicId}")
+    public LandingPlacementView placeOnLanding(@PathVariable String publicId, @Valid @RequestBody LandingPlacementRequest request) {
+        return landingPlacement.place(publicId, request.hidden(), request.hero());
     }
 
     @PatchMapping("/profiles/{handle}")
