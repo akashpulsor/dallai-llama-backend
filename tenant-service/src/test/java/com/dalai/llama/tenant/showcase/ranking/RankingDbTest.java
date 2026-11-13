@@ -120,11 +120,16 @@ class RankingDbTest extends ShowcaseDbTestSupport {
         clock.advance(Duration.ofDays(1));
         assertThat(run.run().getLandingFloor()).isEqualTo(CreatorLevel.L3);
 
-        // The external-only starter is now below the landing floor: off the landing grid, still on
-        // the All tab and their own page. The Top tab is sized for 24 (36 items needed), so 18
-        // funded films don't lift its floor yet.
-        List<PublicShowcaseCard> grid = landing.assemble();
-        assertThat(grid).isNotEmpty().allSatisfy(card -> assertThat(card.creator().displayName()).startsWith("Proven"));
+        // The external-only starter is now below the landing floor: after every proven film on the
+        // landing grid (only room left), still on the All tab and their own page. The Top tab is
+        // sized for 24 (36 items needed), so 18 funded films don't lift its floor yet.
+        List<String> grid = landing.assemble().stream().map(card -> card.creator().displayName()).toList();
+        assertThat(grid).isNotEmpty();
+        assertThat(grid.get(0)).startsWith("Proven");
+        int firstStarter = grid.indexOf("Starter");
+        if (firstStarter >= 0) {
+            assertThat(grid.subList(firstStarter, grid.size())).allMatch("Starter"::equals);
+        }
         assertThat(jdbc.queryForObject("SELECT top_floor FROM showcase_ranking_run ORDER BY run_at DESC LIMIT 1", String.class))
                 .isEqualTo("L1");
         assertThat(publicService.feed(PublicShowcaseService.FeedTab.ALL, null, null, 0).items())
@@ -181,6 +186,21 @@ class RankingDbTest extends ShowcaseDbTestSupport {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> placement.place(older, true, true))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void creatorsBelowTheFloorFillTheLandingWhenThereIsRoom() {
+        UUID proven = creator("Proven", 0, 2, 0);
+        UUID newcomer = creator("Newcomer", 0, 0, 2);
+        jdbc.update("UPDATE creator_public_profile SET level = 'L3' WHERE tenant_id = ?", proven);
+        jdbc.update("UPDATE creator_public_profile SET level = 'L0' WHERE tenant_id = ?", newcomer);
+        jdbc.update("INSERT INTO showcase_ranking_run (id, run_at, maturity, landing_floor, top_floor, auto_floor, config_version, creators_ranked, items_scored) "
+                + "VALUES (?, ?, 0, 'L3', 'L1', 'L1', 'v2', 2, 4)", UUID.randomUUID(), Timestamp.from(NOW));
+
+        List<String> grid = landing.assemble().stream().map(card -> card.creator().displayName()).toList();
+
+        assertThat(grid).as("the floor orders; it no longer leaves the landing without creators' films")
+                .containsExactly("Proven", "Proven", "Newcomer", "Newcomer");
     }
 
     @Test

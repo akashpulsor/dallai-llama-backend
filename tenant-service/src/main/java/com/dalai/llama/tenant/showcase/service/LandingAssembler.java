@@ -22,7 +22,8 @@ import java.util.UUID;
 
 /** Builds the landing grid (CREATOR_SHOWCASE.md §10.6): the films ops put in the hero, pinned ids,
  * then active spotlights, then
- * exploration slots, then the rest by score from creators at or above the landing floor. Caps per
+ * exploration slots, then the rest by score from creators at or above the landing floor, then any
+ * room left by score from creators below it. Caps per
  * creator and per industry apply to everything except pins. Below {@code minItemsToShow} the grid is
  * empty, so the landing page hides the section rather than showing a thin one. */
 @Service
@@ -71,6 +72,9 @@ public class LandingAssembler {
         everyone.stream()
                 .filter(i -> levelOf.getOrDefault(i.getTenantId(), CreatorLevel.L0).atLeast(floor))
                 .forEach(grid::add);
+        // Room left: creators below the floor fill it, still by score, so the landing page shows
+        // creators' films before inspiration while there are few of them. The floor only orders.
+        everyone.forEach(grid::add);
 
         List<ShowcaseItem> chosen = grid.items();
         return chosen.size() < landing.minItemsToShow() ? List.of() : showcase.toCards(chosen);
