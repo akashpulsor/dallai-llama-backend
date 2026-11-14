@@ -24,7 +24,8 @@ import java.util.UUID;
  * then active spotlights, then
  * exploration slots, then the rest by score from creators at or above the landing floor, then any
  * room left by score from creators below it. Caps per
- * creator and per industry apply to everything except pins. Below {@code minItemsToShow} the grid is
+ * creator and per industry apply to all of that except pins; any room still left takes the
+ * remaining films past the caps, so few creators don't leave the grid half empty. Below {@code minItemsToShow} the grid is
  * empty, so the landing page hides the section rather than showing a thin one. */
 @Service
 @RequiredArgsConstructor
@@ -75,6 +76,9 @@ public class LandingAssembler {
         // Room left: creators below the floor fill it, still by score, so the landing page shows
         // creators' films before inspiration while there are few of them. The floor only orders.
         everyone.forEach(grid::add);
+        // Still room: every remaining film, past the per-creator and per-industry caps. The caps keep
+        // variety first; with few creators they would otherwise hide most of their work.
+        everyone.forEach(grid::fill);
 
         List<ShowcaseItem> chosen = grid.items();
         return chosen.size() < landing.minItemsToShow() ? List.of() : showcase.toCards(chosen);
@@ -127,6 +131,11 @@ public class LandingAssembler {
         }
 
         void pin(ShowcaseItem item) {
+            if (items.size() < rules.size()) put(item);
+        }
+
+        /** Up to the grid's size, past the caps. */
+        void fill(ShowcaseItem item) {
             if (items.size() < rules.size()) put(item);
         }
 

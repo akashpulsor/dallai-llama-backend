@@ -140,7 +140,7 @@ class RankingDbTest extends ShowcaseDbTestSupport {
     @Test
     void landingPutsSpotlightsFirst_capsEachCreator_andHidesWhenThin() {
         UUID a = creator("Alpha", 0, 0, 3);
-        assertThat(landing.assemble()).as("one creator is enough to show (min 1), capped at 2 per creator").hasSize(2);
+        assertThat(landing.assemble()).as("one creator is enough to show (min 1); with room, all their work shows").hasSize(3);
 
         creator("Beta", 0, 0, 3);
         UUID gamma = creator("Gamma", 0, 1, 2);
@@ -151,8 +151,21 @@ class RankingDbTest extends ShowcaseDbTestSupport {
         List<PublicShowcaseCard> grid = landing.assemble();
         assertThat(grid.get(0).creator().displayName()).isEqualTo("Gamma");
         assertThat(grid.get(0).origin().name()).isEqualTo("PLATFORM");
-        assertThat(grid.stream().filter(c -> c.creator().displayName().equals("Alpha")).count()).isLessThanOrEqualTo(2);
-        assertThat(grid).hasSizeGreaterThanOrEqualTo(6);
+        // The caps keep variety first: each creator's third film comes only after everyone's first two.
+        List<String> names = grid.stream().map(c -> c.creator().displayName()).toList();
+        assertThat(names.subList(0, 6)).filteredOn("Alpha"::equals).hasSizeLessThanOrEqualTo(2);
+        assertThat(grid).as("with room in the grid, no film is left out").hasSize(9);
+    }
+
+    @Test
+    void theCapsStillHoldWhenTheGridIsFull() {
+        for (int n = 0; n < 8; n++) creator("Maker " + n, 0, 0, 3); // 24 films, grid of 12
+        run.run();
+
+        List<String> names = landing.assemble().stream().map(c -> c.creator().displayName()).toList();
+
+        assertThat(names).hasSize(12);
+        assertThat(names.stream().distinct().count()).as("12 slots, at most 2 per creator").isGreaterThanOrEqualTo(6);
     }
 
     @Test
