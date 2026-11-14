@@ -120,6 +120,14 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
             ORDER BY i.publishedAt""")
     List<ShowcaseItem> findPortfolioUploadsToPublish(@Param("tenantId") UUID tenantId);
 
+    /** The YouTube ids of creators' uploads on Dalaillama's channel, checked often so a deleted or
+     * private one falls back to our own copy quickly. */
+    @Query("""
+            SELECT i.youtubeVideoId FROM ShowcaseItem i
+            WHERE i.channel = com.dalai.llama.tenant.showcase.domain.VideoChannel.OFFICIAL
+              AND i.uploadObjectKey IS NOT NULL AND i.youtubeVideoId IS NOT NULL""")
+    List<String> findOfficialPortfolioVideoIds();
+
     List<ShowcaseItem> findByReportCountGreaterThanOrderByReportCountDesc(int reportCount);
 
     /** Public items ranked by score, limited to creators at the given levels (a surface's floor and

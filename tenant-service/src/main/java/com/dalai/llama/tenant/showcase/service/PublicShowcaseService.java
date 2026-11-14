@@ -212,7 +212,7 @@ public class PublicShowcaseService {
                 i.getFormat(),
                 i.getClientLabel(),
                 YouTubeLinks.watch(i.getYoutubeVideoId(), shape.vertical(), duration),
-                hostFor(i),
+                hostFor(i, v),
                 i.getLikeCount(),
                 new PublicShowcaseCard.Creator(p.getHandle(), p.getDisplayName(), CreatorAvatar.of(p, channel),
                         properties.publicBaseUrl() + "/c/" + p.getHandle()));
@@ -267,8 +267,21 @@ public class PublicShowcaseService {
     /** A film made on Dalaillama, or a video the creator uploaded, plays from our own copy in our own
      * player -- neither need be public on YouTube. Only a pick from the creator's channel plays
      * through YouTube. */
-    private static VideoHostType hostFor(ShowcaseItem item) {
-        return item.playsOwnCopy() ? VideoHostType.SELF : VideoHostType.YOUTUBE;
+    /** Our own copy when the item plays it, and also for a creator's upload whose copy on
+     * Dalaillama's channel YouTube no longer plays here (deleted, private, embedding off): the site
+     * falls back to our file rather than a broken embed. */
+    static VideoHostType hostFor(ShowcaseItem item, YouTubeVideo video) {
+        if (item.playsOwnCopy()) return VideoHostType.SELF;
+        if (item.getUploadObjectKey() != null && !playsOnYouTube(video)) return VideoHostType.SELF;
+        return VideoHostType.YOUTUBE;
+    }
+
+    private static boolean playsOnYouTube(YouTubeVideo video) {
+        return video != null && video.getGoneAt() == null
+                && Boolean.TRUE.equals(video.getEmbeddable())
+                && !Boolean.TRUE.equals(video.getAgeRestricted())
+                && !Boolean.TRUE.equals(video.getMadeForKids())
+                && ("public".equals(video.getPrivacyStatus()) || "unlisted".equals(video.getPrivacyStatus()));
     }
 
     private OffsetDateTime freshAfter() {

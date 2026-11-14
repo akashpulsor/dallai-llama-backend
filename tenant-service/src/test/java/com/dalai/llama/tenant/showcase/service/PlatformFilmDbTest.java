@@ -63,12 +63,12 @@ import static org.mockito.Mockito.when;
 @DataJpaTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true",
         "video-host.official-channel.enabled=true", "video-host.official-channel.client-id=c",
-        "video-host.official-channel.client-secret=s", "video-host.official-channel.refresh-token=r"})
+        "video-host.official-channel.client-secret=s", "video-host.official-channel.refresh-token=r", "youtube.api-key=test-key"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, PlatformPublishService.class, OfficialUploadWorker.class, FundingVerifier.class, ShowcasePickService.class,
         PublicShowcaseService.class, PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class,
-        VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class, PortfolioOfficialUploadService.class,
+        VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class, PortfolioOfficialUploadService.class, OfficialVideoCheckJob.class,
         com.dalai.llama.tenant.youtube.publish.YouTubeQuotaService.class, PlatformFilmDbTest.TestConfig.class})
 class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
@@ -98,6 +98,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     @Autowired private CreatorProfileService profileService;
     @Autowired private OfficialUploadJobRepository jobs;
     @Autowired private AutoOfficialUploadJob autoQueue;
+    @Autowired private OfficialVideoCheckJob officialCheck;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private com.dalai.llama.tenant.showcase.repository.ShowcaseItemRepository items;
 
@@ -276,6 +277,14 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
         assertThat(card.youtubeVideoId()).isEqualTo("portfolioV1");
         assertThat(card.thumbnailUrl()).as("the poster the creator chose stays").endsWith("/showcase/" + item.getPublicId() + "/poster");
         assertThat(autoQueue.run()).as("on YouTube now, so never queued again").isZero();
+
+        // Deleted from the channel: the hourly check notices and the film plays our own copy again,
+        // without a re-upload fighting whoever deleted it.
+        when(youTube.videos(List.of("portfolioV1"))).thenReturn(List.of());
+        assertThat(officialCheck.run()).isEqualTo(1);
+        var deleted = items.findById(film).orElseThrow();
+        assertThat(publicService.toCards(List.of(deleted)).get(0).host()).isEqualTo(com.dalai.llama.tenant.showcase.domain.VideoHostType.SELF);
+        assertThat(autoQueue.run()).isZero();
     }
 
     @Test
