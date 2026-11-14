@@ -17,6 +17,6 @@ public final class TestRanking {
                 new RankingProperties.Bootstrap(40, 0.3, 1.5, 1),
                 new RankingProperties.Scoring(0.30, 0.35, 0.15, 0.25, 0.10, 5, 0.05, 0.30, 3, 21),
                 new RankingProperties.Reinforcement(72, 2, 3, 14, 50),
-                new RankingProperties.Landing(12, 1, 2, 4, List.of(), 24, 9));
+                new RankingProperties.Landing(12, 1, 12, 12, List.of(), 24, 9));
     }
 }

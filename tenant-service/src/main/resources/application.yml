@@ -322,11 +322,13 @@ showcase-ranking:
     exploration-max-age-days: 14
     exploration-max-plays: 50
   landing:
+    # The ranked part of the grid (it also sizes the floor); every other creator film follows it, up to
+    # LandingAssembler.MAX_FILMS. No per-creator or per-industry rule on the landing (2026-11-14): the
+    # page tops up with inspiration only while there are few creator films.
     size: 12
-    # The landing page puts inspiration videos after these, so even one creator film shows.
     min-items-to-show: 1
-    max-per-creator: 2
-    max-per-industry: 4
+    max-per-creator: 12
+    max-per-industry: 12
     pinned-public-ids: []
     top-surface-size: 24
     auto-surface-size: 9

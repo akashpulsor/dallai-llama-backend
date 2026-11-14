@@ -23,9 +23,9 @@ import java.util.UUID;
 /** Builds the landing grid (CREATOR_SHOWCASE.md §10.6): the films ops put in the hero, pinned ids,
  * then active spotlights, then
  * exploration slots, then the rest by score from creators at or above the landing floor, then any
- * room left by score from creators below it. Caps per
- * creator and per industry apply to all of that except pins; any room still left takes the
- * remaining films past the caps, so few creators don't leave the grid half empty. Below {@code minItemsToShow} the grid is
+ * room left by score from creators below it -- the ranked part, {@code landing.size} long, with
+ * the configured caps except for pins. Every other creator film follows it by score, up to
+ * {@link #MAX_FILMS}: the landing page shows all of their work. Below {@code minItemsToShow} the grid is
  * empty, so the landing page hides the section rather than showing a thin one. */
 @Service
 @RequiredArgsConstructor
@@ -33,6 +33,9 @@ public class LandingAssembler {
 
     /** Candidates read per assembly; far more than the grid needs, so the caps have room. */
     private static final int CANDIDATE_LIMIT = 200;
+
+    /** Every creator film shows: after the ranked part ({@code landing.size}), the rest follow, up to this. */
+    static final int MAX_FILMS = 48;
 
     private final PublicShowcaseService showcase;
     private final RankingProperties ranking;
@@ -76,8 +79,7 @@ public class LandingAssembler {
         // Room left: creators below the floor fill it, still by score, so the landing page shows
         // creators' films before inspiration while there are few of them. The floor only orders.
         everyone.forEach(grid::add);
-        // Still room: every remaining film, past the per-creator and per-industry caps. The caps keep
-        // variety first; with few creators they would otherwise hide most of their work.
+        // Then every remaining creator film, by score: the landing shows all their work.
         everyone.forEach(grid::fill);
 
         List<ShowcaseItem> chosen = grid.items();
@@ -134,9 +136,9 @@ public class LandingAssembler {
             if (items.size() < rules.size()) put(item);
         }
 
-        /** Up to the grid's size, past the caps. */
+        /** After the ranked part, past its size and caps, up to MAX_FILMS. */
         void fill(ShowcaseItem item) {
-            if (items.size() < rules.size()) put(item);
+            if (items.size() < MAX_FILMS) put(item);
         }
 
         void add(ShowcaseItem item) {
