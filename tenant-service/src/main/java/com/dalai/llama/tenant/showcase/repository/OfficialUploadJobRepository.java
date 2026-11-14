@@ -12,6 +12,8 @@ public interface OfficialUploadJobRepository extends JpaRepository<OfficialUploa
 
     Optional<OfficialUploadJob> findByProjectId(UUID projectId);
 
+    Optional<OfficialUploadJob> findByShowcaseItemId(UUID showcaseItemId);
+
     Optional<OfficialUploadJob> findFirstByStatusOrderByCreatedAtAsc(OfficialUploadStatus status);
 
     List<OfficialUploadJob> findByStatusIn(List<OfficialUploadStatus> statuses);

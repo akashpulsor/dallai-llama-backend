@@ -57,7 +57,7 @@ public class FilmStampService {
             render.setStampAttempts(render.getStampAttempts() + 1);
             renders.save(render);
             try {
-                publisher.publish(new FilmStampRequestedEvent(render.getRenderId(), render.getTenantId(), render.getProjectId()));
+                publisher.publish(FilmStampRequestedEvent.film(render.getRenderId(), render.getTenantId(), render.getProjectId()));
             } catch (RuntimeException ex) {
                 log.warn("Could not queue the stamp for renderId={} (the next sweep retries): {}", render.getRenderId(), ex.getMessage());
             }
@@ -71,13 +71,7 @@ public class FilmStampService {
         if (render == null || render.getStampedObjectKey() != null || render.getObjectKey() == null) return;
         Path workDir = ffmpeg.createWorkDir("stamp-" + renderId);
         try {
-            Path mark = workDir.resolve("stamp.png");
-            try (InputStream in = new ClassPathResource("stamp/dalaillama-stamp.png").getInputStream()) {
-                Files.copy(in, mark, StandardCopyOption.REPLACE_EXISTING);
-            }
-            int[] geometry = FfmpegClipProcessor.stampGeometry(render.getWidth() == null ? 1080 : render.getWidth());
-            Path output = workDir.resolve("stamped.mp4");
-            ffmpeg.stamp(objectStore.internalPresignedUrl(render.getBucket(), render.getObjectKey()), mark, geometry[0], geometry[1], output);
+            Path output = burnMark(ffmpeg, objectStore.internalPresignedUrl(render.getBucket(), render.getObjectKey()), render.getWidth(), workDir);
             String key = stampedKey(render);
             objectStore.upload(key, output, "video/mp4");
             render.setStampedObjectKey(key);
@@ -93,6 +87,20 @@ public class FilmStampService {
         } finally {
             ffmpeg.deleteQuietly(workDir);
         }
+    }
+
+    /** Burns the Dalaillama mark into the film at {@code sourceUrl}, sized for its {@code width}
+     * (1080 when unknown); returns the stamped file, written in {@code workDir}. Shared by films and
+     * creators' uploads (UploadStampService). */
+    static Path burnMark(FfmpegClipProcessor ffmpeg, String sourceUrl, Integer width, Path workDir) throws IOException {
+        Path mark = workDir.resolve("stamp.png");
+        try (InputStream in = new ClassPathResource("stamp/dalaillama-stamp.png").getInputStream()) {
+            Files.copy(in, mark, StandardCopyOption.REPLACE_EXISTING);
+        }
+        int[] geometry = FfmpegClipProcessor.stampGeometry(width == null ? 1080 : width);
+        Path output = workDir.resolve("stamped.mp4");
+        ffmpeg.stamp(sourceUrl, mark, geometry[0], geometry[1], output);
+        return output;
     }
 
     /** Short-lived URL of the stamped copy, or null while it isn't ready. */

@@ -30,7 +30,11 @@ public record VideoHostProperties(
             /* "{creatorName}" and "{profileUrl}" are filled in. */
             String descriptionTemplate,
             /* Ask the creator to require client consent and verified funding before uploading. */
-            boolean requireFundedAndConsent
+            boolean requireFundedAndConsent,
+            /* Creators' uploaded portfolio films go on the channel too (stamped first). */
+            boolean portfolioUploads,
+            /* For those: "{creatorName}" and "{profileUrl}" are filled in. */
+            String portfolioDescriptionTemplate
     ) {
         public boolean configured() {
             return enabled && notBlank(clientId) && notBlank(clientSecret) && notBlank(refreshToken);

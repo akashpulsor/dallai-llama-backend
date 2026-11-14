@@ -72,7 +72,8 @@ public class ShowcaseItem {
     @Column(name = "platform_proof", length = 16)
     private PlatformProof platformProof;
 
-    /** Whose channel holds a PLATFORM film; null for EXTERNAL (always the creator's). */
+    /** Whose channel holds a PLATFORM film; null for EXTERNAL (always the creator's), except
+     * OFFICIAL for a creator's upload once its stamped copy is on Dalaillama's channel. */
     @Enumerated(EnumType.STRING)
     @Column(name = "channel", length = 10)
     private VideoChannel channel;
@@ -129,9 +130,22 @@ public class ShowcaseItem {
     @Column(name = "poster_object_key", length = 512)
     private String posterObjectKey;
 
-    /** Plays from our own copy in our own player: a film made here, or a video the creator uploaded. */
-    public boolean playsOwnCopy() {
+    /** Has a copy on our own storage, with the poster its creator chose: a film made here, or a
+     * video the creator uploaded. */
+    public boolean hasOwnCopy() {
         return origin == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM || uploadObjectKey != null;
+    }
+
+    /** On Dalaillama's YouTube channel: for a creator's upload, its stamped copy uploaded there. */
+    public boolean onOfficialChannel() {
+        return channel == com.dalai.llama.tenant.showcase.domain.VideoChannel.OFFICIAL && youtubeVideoId != null;
+    }
+
+    /** Plays from our own copy in our own player: a film made here, or an upload not yet on
+     * Dalaillama's channel. Once it is, YouTube streams it, far faster than our full-size file. */
+    public boolean playsOwnCopy() {
+        return origin == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.PLATFORM
+                || (uploadObjectKey != null && !onOfficialChannel());
     }
 
     @Column(name = "play_count", nullable = false)

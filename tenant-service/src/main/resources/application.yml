@@ -344,6 +344,10 @@ video-host:
     privacy: public
     description-template: "Made by {creatorName} on Dalaillama · {profileUrl}"
     require-funded-and-consent: true
+    # Creators' uploaded portfolio films too: stamped, uploaded, then the landing page streams them from
+    # YouTube. Public by decision (2026-11-14); no client consent step for portfolio uploads.
+    portfolio-uploads: ${YT_OFFICIAL_PORTFOLIO_UPLOADS:true}
+    portfolio-description-template: "From {creatorName}'s portfolio on Dalaillama · {profileUrl}\nMade with Dalaillama Creator Studio · https://creator.dalaillama.in"
   health:
     probe-video-id: ${YT_PROBE_VIDEO_ID:}
 

@@ -111,6 +111,15 @@ public interface ShowcaseItemRepository extends JpaRepository<ShowcaseItem, UUID
 
     List<ShowcaseItem> findByStatus(ShowcaseItemStatus status);
 
+    /** A creator's uploaded films that are live and not yet on any YouTube channel, oldest first:
+     * what goes on Dalaillama's channel. */
+    @Query("""
+            SELECT i FROM ShowcaseItem i
+            WHERE i.tenantId = :tenantId AND i.uploadObjectKey IS NOT NULL AND i.youtubeVideoId IS NULL
+              AND i.status = com.dalai.llama.tenant.showcase.domain.ShowcaseItemStatus.LIVE AND i.hiddenByOps = false
+            ORDER BY i.publishedAt""")
+    List<ShowcaseItem> findPortfolioUploadsToPublish(@Param("tenantId") UUID tenantId);
+
     List<ShowcaseItem> findByReportCountGreaterThanOrderByReportCountDesc(int reportCount);
 
     /** Public items ranked by score, limited to creators at the given levels (a surface's floor and

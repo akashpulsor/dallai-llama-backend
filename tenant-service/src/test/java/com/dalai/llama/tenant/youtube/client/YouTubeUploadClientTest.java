@@ -124,7 +124,7 @@ class YouTubeUploadClientTest {
     private VideoHostProperties properties(boolean enabled) {
         return new VideoHostProperties(VideoHostType.YOUTUBE, new VideoHostProperties.OfficialChannel(
                 enabled, "client-1", "secret-1", "rt-1", base() + "/token", base() + "/upload", "public",
-                "Made by {creatorName} on Dalaillama · {profileUrl}", true));
+                "Made by {creatorName} on Dalaillama · {profileUrl}", true, true, "From {creatorName} · {profileUrl}"));
     }
 
     private String base() {

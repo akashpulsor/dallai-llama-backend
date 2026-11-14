@@ -41,6 +41,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -67,7 +68,7 @@ import static org.mockito.Mockito.when;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({com.dalai.llama.tenant.showcase.service.ShowcasePosterLinks.class, PlatformPublishService.class, OfficialUploadWorker.class, FundingVerifier.class, ShowcasePickService.class,
         PublicShowcaseService.class, PublicIdGenerator.class, CreatorProfileService.class, HandlePolicy.class,
-        VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class,
+        VideoEligibility.class, YouTubeVideoCache.class, OfficialChannelAccess.class, AutoOfficialUploadJob.class, PortfolioOfficialUploadService.class,
         com.dalai.llama.tenant.youtube.publish.YouTubeQuotaService.class, PlatformFilmDbTest.TestConfig.class})
 class PlatformFilmDbTest extends ShowcaseDbTestSupport {
 
@@ -89,6 +90,7 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     @MockBean private PreProductionShowcaseClient preProduction;
     @MockBean private YouTubeDataClient youTube;
     @MockBean private YouTubeUploadClient uploadClient;
+    @MockBean private com.dalai.llama.tenant.showcase.client.PostProductionStampClient stampClient;
     @Autowired private PlatformPublishService publishService;
     @Autowired private OfficialUploadWorker worker;
     @Autowired private ShowcasePickService pickService;
@@ -238,6 +240,63 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void anUploadedPortfolioFilmIsStampedUploadedCreditingTheCreator_thenPlaysFromOurChannel() {
+        UUID film = uploadedFilm("Lipgloss product ad", "showcase/riya/lipgloss.mp4");
+        when(mediaStore.bucket()).thenReturn("creator-assets");
+
+        assertThat(autoQueue.run()).as("every creator's live uploads are queued").isEqualTo(1);
+        assertThat(autoQueue.run()).isZero();
+        var job = jobs.findByShowcaseItemId(film).orElseThrow();
+
+        // Still being stamped: no attempt used, nothing sent.
+        when(stampClient.request(job.getId(), creator, "creator-assets", "showcase/riya/lipgloss.mp4", 1920))
+                .thenReturn(new com.dalai.llama.tenant.showcase.client.PostProductionStampClient.Stamp("PENDING", null, null));
+        worker.runOnce();
+        job = jobs.findByShowcaseItemId(film).orElseThrow();
+        assertThat(job.getStatus()).isEqualTo(OfficialUploadStatus.QUEUED);
+        assertThat(job.getAttempts()).isZero();
+        assertThat(job.getError()).isEqualTo(OfficialUploadWorker.STAMP_NOTE);
+        verify(uploadClient, never()).upload(any());
+
+        when(stampClient.request(job.getId(), creator, "creator-assets", "showcase/riya/lipgloss.mp4", 1920))
+                .thenReturn(new com.dalai.llama.tenant.showcase.client.PostProductionStampClient.Stamp("DONE", "https://media/lipgloss-stamped.mp4", null));
+        when(uploadClient.upload(any())).thenReturn(new YouTubeUploadClient.UploadResult("portfolioV1", "public"));
+        when(youTube.videos(List.of("portfolioV1"))).thenReturn(List.of());
+        worker.runOnce();
+
+        verify(uploadClient).upload(argThat(r -> r.sourceUrl().equals("https://media/lipgloss-stamped.mp4")
+                && r.title().equals("Lipgloss product ad · by Riya Motion · Dalaillama")
+                && r.description().contains("https://dalaillama.in/c/riya-motion") && r.description().contains("Creator Studio")));
+        assertThat(jobs.findByShowcaseItemId(film).orElseThrow().getStatus()).isEqualTo(OfficialUploadStatus.DONE);
+        var item = items.findById(film).orElseThrow();
+        assertThat(item.getYoutubeVideoId()).isEqualTo("portfolioV1");
+        assertThat(item.playsOwnCopy()).as("YouTube streams it now").isFalse();
+        var card = publicService.toCards(List.of(item)).get(0);
+        assertThat(card.host()).isEqualTo(com.dalai.llama.tenant.showcase.domain.VideoHostType.YOUTUBE);
+        assertThat(card.youtubeVideoId()).isEqualTo("portfolioV1");
+        assertThat(card.thumbnailUrl()).as("the poster the creator chose stays").endsWith("/showcase/" + item.getPublicId() + "/poster");
+        assertThat(autoQueue.run()).as("on YouTube now, so never queued again").isZero();
+    }
+
+    @Test
+    void aPortfolioStampThatGaveUpFailsItsJob_withoutAnUpload() {
+        UUID film = uploadedFilm("Perfume product visuals", "showcase/riya/perfume.mp4");
+        when(mediaStore.bucket()).thenReturn("creator-assets");
+        autoQueue.run();
+        var job = jobs.findByShowcaseItemId(film).orElseThrow();
+        when(stampClient.request(any(), any(), any(), any(), any()))
+                .thenReturn(new com.dalai.llama.tenant.showcase.client.PostProductionStampClient.Stamp("FAILED", null, "ffmpeg failed"));
+
+        worker.runOnce();
+
+        job = jobs.findByShowcaseItemId(film).orElseThrow();
+        assertThat(job.getStatus()).isEqualTo(OfficialUploadStatus.FAILED);
+        assertThat(job.getError()).contains("ffmpeg failed");
+        verify(uploadClient, never()).upload(any());
+        assertThat(items.findById(film).orElseThrow().playsOwnCopy()).isTrue();
+    }
+
+    @Test
     void eligibleFilmsAreQueuedForOurChannelAutomatically_once() {
         jdbc.update("INSERT INTO creator_profile_industry (tenant_id, industry) VALUES (?, 'BEAUTY')", creator);
         UUID unpaid = UUID.randomUUID();
@@ -372,6 +431,18 @@ class PlatformFilmDbTest extends ShowcaseDbTestSupport {
         // A pick from the creator's channel plays through YouTube.
         assertThat(cards.stream().filter(c -> c.origin() == com.dalai.llama.tenant.showcase.domain.ShowcaseOrigin.EXTERNAL))
                 .extracting(PublicShowcaseCard::host).containsOnly(VideoHostType.YOUTUBE);
+    }
+
+    /** A film the creator uploaded to their profile, as the upload flow leaves it. */
+    private UUID uploadedFilm(String title, String objectKey) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO showcase_item (id, public_id, tenant_id, origin, industry, format, status, title_override,
+                    upload_object_key, poster_object_key, film_width, film_height, film_duration_seconds, rights_confirmed_at, published_at)
+                VALUES (?, ?, ?, 'EXTERNAL', 'BEAUTY', 'PRODUCT_AD', 'LIVE', ?, ?, ?, 1920, 1080, 27.0, ?, ?)""",
+                id, id.toString().substring(0, 10), creator, title, objectKey, objectKey + ".jpg",
+                Timestamp.from(NOW), Timestamp.from(NOW));
+        return id;
     }
 
     private static LinkPlatformFilmRequest link(String url) {

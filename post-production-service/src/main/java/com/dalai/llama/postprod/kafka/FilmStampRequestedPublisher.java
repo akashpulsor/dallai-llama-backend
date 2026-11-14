@@ -21,6 +21,6 @@ public class FilmStampRequestedPublisher {
     }
 
     public void publish(FilmStampRequestedEvent event) {
-        kafkaTemplate.send(topic, event.projectId().toString(), event);
+        kafkaTemplate.send(topic, event.key(), event);
     }
 }

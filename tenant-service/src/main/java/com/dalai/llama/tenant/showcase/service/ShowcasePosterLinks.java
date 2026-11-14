@@ -14,6 +14,6 @@ public class ShowcasePosterLinks {
     private String publicApiBaseUrl;
 
     public String of(ShowcaseItem item) {
-        return item.playsOwnCopy() ? publicApiBaseUrl + "/showcase/" + item.getPublicId() + "/poster" : null;
+        return item.hasOwnCopy() ? publicApiBaseUrl + "/showcase/" + item.getPublicId() + "/poster" : null;
     }
 }

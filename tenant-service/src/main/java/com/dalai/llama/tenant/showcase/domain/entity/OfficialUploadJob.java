@@ -37,8 +37,13 @@ public class OfficialUploadJob {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "project_id", nullable = false, unique = true)
+    /** The film made in this project; null for a creator's uploaded film (showcaseItemId). */
+    @Column(name = "project_id", unique = true)
     private UUID projectId;
+
+    /** A creator's uploaded portfolio film (V79); null for a project's film. */
+    @Column(name = "showcase_item_id", unique = true)
+    private UUID showcaseItemId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "industry", nullable = false, length = 32)

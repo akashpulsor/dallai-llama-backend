@@ -39,6 +39,11 @@ public class ShowcaseMediaStore {
         }
     }
 
+    /** The bucket creators' uploads live in; post-production reads them from it to stamp them. */
+    public String bucket() {
+        return bucket;
+    }
+
     public void delete(String key) {
         s3Client.deleteObject(b -> b.bucket(bucket).key(key));
     }
