@@ -37,8 +37,13 @@ public final class BrandDtos {
             @NotBlank @Email @Size(max = 254) String email,
             @NotBlank @Size(max = 80) String contactName,
             @Size(max = 120) String companyName,
-            @Size(max = 255) @Pattern(regexp = "^$|^https?://\\S+$", message = "must be an http(s) link") String websiteUrl
+            @Size(max = 255) @Pattern(regexp = "^$|^https?://\\S+$", message = "must be an http(s) link") String websiteUrl,
+            /* Phone / WhatsApp, optional: digits with an optional +, spaces, dashes or brackets. */
+            @Size(max = 20) @Pattern(regexp = "^$|^\\+?[0-9 ()-]{7,20}$", message = "must be a phone number") String phone
     ) {
+        public GuestContact(String email, String contactName, String companyName, String websiteUrl) {
+            this(email, contactName, companyName, websiteUrl, null);
+        }
     }
 
     /** What a completed sign-in tells the page. The session itself travels only in the HttpOnly

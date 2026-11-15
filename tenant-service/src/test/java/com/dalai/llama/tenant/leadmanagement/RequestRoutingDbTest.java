@@ -225,6 +225,26 @@ class RequestRoutingDbTest extends ShowcaseDbTestSupport {
     }
 
     @Test
+    void aRequestFromAnAdKeepsTheBrandsWhatsApp_andWhichAdBroughtIt_forOps() {
+        SubmitInquiryRequest fromAd = new SubmitInquiryRequest(null, null, BrandInquiry.BudgetBand.NOT_SURE, BrandInquiry.Timeline.THIS_MONTH,
+                "A 30s reel for our mango pickle", null, null, null, null, 30, List.of("Hindi"), ShowcaseIndustry.FOOD_BEVERAGE, null,
+                "meta", "creator-films-blr-pun-mum");
+
+        UUID id = inquiries.submitAsGuest(new GuestContact("ravi@ghar.example", "Ravi", null, null, "+91 98765 43210"), fromAd,
+                List.of(), List.of()).id();
+
+        assertThat(jdbc.queryForMap("SELECT c.phone, i.utm_source, i.utm_campaign FROM lead_brand_contact c "
+                + "JOIN lead_brand_inquiry i ON i.brand_contact_id = c.id WHERE i.id = ?", id))
+                .containsEntry("phone", "+91 98765 43210").containsEntry("utm_source", "meta")
+                .containsEntry("utm_campaign", "creator-films-blr-pun-mum");
+        var shown = java.util.stream.Stream.concat(
+                store.waiting().stream().filter(w -> w.id().equals(id)).map(w -> List.of(String.valueOf(w.phone()), String.valueOf(w.utmSource()))),
+                store.unpaid().stream().filter(u -> u.id().equals(id)).map(u -> List.of(String.valueOf(u.phone()), String.valueOf(u.utmSource()))))
+                .findFirst().orElseThrow();
+        assertThat(shown).as("ops see who to WhatsApp and which ad brought them").containsExactly("+91 98765 43210", "meta");
+    }
+
+    @Test
     void aGuestUsingAKnownBrandsEmail_addsTheRequestToThatBrand_withoutChangingItsDetails() {
         UUID id = inquiries.submitAsGuest(new GuestContact("ask@hearth.example", "Someone Else", "Other Co", "https://other.example"),
                 guestRequest(), List.of(), List.of()).id();

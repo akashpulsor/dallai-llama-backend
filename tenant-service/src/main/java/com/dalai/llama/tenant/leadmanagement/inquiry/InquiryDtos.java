@@ -31,8 +31,19 @@ public final class InquiryDtos {
             /* The brand's industry for this video; routes a request sent to Dalaillama. */
             com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry,
             /* A request sent to Dalaillama from a creator's mail: the creator (handle) it goes to first. */
-            @Size(max = 40) String creator
+            @Size(max = 40) String creator,
+            /* The ad that brought the brand: the landing page's utm_source / utm_campaign. */
+            @Size(max = 64) @jakarta.validation.constraints.Pattern(regexp = "^[A-Za-z0-9._-]*$") String utmSource,
+            @Size(max = 64) @jakarta.validation.constraints.Pattern(regexp = "^[A-Za-z0-9._-]*$") String utmCampaign
     ) {
+        public SubmitInquiryRequest(String publicId, String attributionToken, BrandInquiry.BudgetBand budgetBand,
+                                    BrandInquiry.Timeline timeline, String message, String productName, String productDescription,
+                                    String targetAudience, String campaignDirection, Integer durationSeconds,
+                                    java.util.List<String> languages, com.dalai.llama.tenant.showcase.domain.ShowcaseIndustry industry,
+                                    String creator) {
+            this(publicId, attributionToken, budgetBand, timeline, message, productName, productDescription, targetAudience,
+                    campaignDirection, durationSeconds, languages, industry, creator, null, null);
+        }
     }
 
     /** The brief details a brand filled in (rule 48); null fields were left empty. */

@@ -188,6 +188,8 @@ public class BrandInquiryService {
                 .brandContactId(brandContactId)
                 .showcaseItemId(film.map(ShowcaseItem::getId).orElse(null))
                 .attributionToken(request.attributionToken())
+                .utmSource(blankToNull(request.utmSource()))
+                .utmCampaign(blankToNull(request.utmCampaign()))
                 .budgetBand(request.budgetBand())
                 .timeline(request.timeline())
                 .message(request.message().trim())

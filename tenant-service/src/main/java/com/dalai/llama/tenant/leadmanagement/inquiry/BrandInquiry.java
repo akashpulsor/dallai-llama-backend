@@ -67,6 +67,13 @@ public class BrandInquiry {
     @Column(name = "attribution_token", length = 32)
     private String attributionToken;
 
+    /** The ad that brought the request (the landing page's utm_source / utm_campaign), if any (V80). */
+    @Column(name = "utm_source", length = 64)
+    private String utmSource;
+
+    @Column(name = "utm_campaign", length = 64)
+    private String utmCampaign;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "budget_band", length = 16)
     private BudgetBand budgetBand;

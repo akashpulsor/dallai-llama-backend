@@ -85,6 +85,8 @@ public class BrandAccountService {
         if (contact.getCompanyName() == null) contact.setCompanyName(blankToNull(guest.companyName()));
         if (contact.getWebsiteUrl() == null) contact.setWebsiteUrl(blankToNull(guest.websiteUrl()));
         if (contact.getIndustry() == null) contact.setIndustry(industry);
+        // The latest number wins: a brand that left one before may give a newer WhatsApp.
+        if (blankToNull(guest.phone()) != null) contact.setPhone(guest.phone().trim());
         // Flushed now: the request row is written next and references this one.
         return contactRepository.saveAndFlush(contact).getId();
     }

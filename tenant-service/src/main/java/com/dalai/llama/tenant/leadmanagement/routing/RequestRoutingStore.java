@@ -189,33 +189,38 @@ public class RequestRoutingStore {
     public record WaitingRequest(UUID id, String brand, String email, ShowcaseIndustry industry, String message,
                                  OffsetDateTime createdAt,
                                  /* Held by Dalaillama's account: paid when, and offered to creators until when. */
-                                 OffsetDateTime paidAt, OffsetDateTime matchingUntil) {
+                                 OffsetDateTime paidAt, OffsetDateTime matchingUntil,
+                                 /* Phone / WhatsApp if given, and the ad that brought it (utm_source/utm_campaign). */
+                                 String phone, String utmSource, String utmCampaign) {
     }
 
     /** A request a creator holds whose brief the brand hasn't paid yet: ops can expire it. */
-    public record UnpaidRequest(UUID id, String brand, String email, String creatorHandle, String status, OffsetDateTime createdAt) {
+    public record UnpaidRequest(UUID id, String brand, String email, String creatorHandle, String status, OffsetDateTime createdAt,
+                                String phone, String utmSource, String utmCampaign) {
     }
 
     public List<UnpaidRequest> unpaid() {
         return jdbc.query("""
-                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, p.handle, q.status, q.created_at
+                SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, p.handle, q.status, q.created_at,
+                       c.phone, q.utm_source, q.utm_campaign
                 FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
                 JOIN creator_public_profile p ON p.tenant_id = q.tenant_id
                 WHERE q.paid_at IS NULL AND q.status IN ('NEW', 'VIEWED', 'CONVERTED') ORDER BY q.created_at""",
                 (rs, n) -> new UnpaidRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3), rs.getString(4),
-                        rs.getString(5), rs.getObject(6, OffsetDateTime.class)));
+                        rs.getString(5), rs.getObject(6, OffsetDateTime.class), rs.getString(7), rs.getString(8), rs.getString(9)));
     }
 
     public List<WaitingRequest> waiting() {
         return jdbc.query("""
                 SELECT q.id, COALESCE(c.company_name, c.contact_name, c.email), c.email, q.industry, q.message, q.created_at,
-                       q.paid_at, q.matching_until
+                       q.paid_at, q.matching_until, c.phone, q.utm_source, q.utm_campaign
                 FROM lead_brand_inquiry q JOIN lead_brand_contact c ON c.id = q.brand_contact_id
                 WHERE q.source = 'LANDING' AND ((q.tenant_id IS NULL AND q.status IN ('NEW', 'VIEWED'))
                                                 OR (q.provisional AND q.status <> 'EXPIRED'))
                 ORDER BY q.created_at""",
                 (rs, n) -> new WaitingRequest(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
                         rs.getString(4) == null ? null : ShowcaseIndustry.valueOf(rs.getString(4)), rs.getString(5),
-                        rs.getObject(6, OffsetDateTime.class), rs.getObject(7, OffsetDateTime.class), rs.getObject(8, OffsetDateTime.class)));
+                        rs.getObject(6, OffsetDateTime.class), rs.getObject(7, OffsetDateTime.class), rs.getObject(8, OffsetDateTime.class),
+                        rs.getString(9), rs.getString(10), rs.getString(11)));
     }
 }

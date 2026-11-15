@@ -48,6 +48,10 @@ public class BrandContact {
     @Column(name = "website_url", length = 255)
     private String websiteUrl;
 
+    /** Phone / WhatsApp, when the brand gave one on the request form (V80). */
+    @Column(name = "phone", length = 20)
+    private String phone;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "industry", length = 32)
     private ShowcaseIndustry industry;
